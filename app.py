@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import sqlite3
 import aiosqlite
@@ -87,11 +87,30 @@ def upload_file():
 # 接口3：获取所有订单列表（给你们后台看的）
 @app.route('/orders')
 def get_orders():
-    # 暂时返回假数据，让你看到效果
-    return jsonify([
-        {'id': 1, 'filename': '测试文档.pdf', 'status': '待打印'},
-        {'id': 2, 'filename': '照片.jpg', 'status': '可取了'}
-    ])
+    # 1. 连接到数据库
+    conn = sqlite3.connect('print_service.db')
+    cursor = conn.cursor()
+    
+    # 2. 按时间倒序查询所有订单（最新的排最前面）
+    cursor.execute('SELECT id, filename, file_path, status FROM orders ORDER BY create_time DESC')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # 3. 把查询结果组装成前端需要的JSON格式
+    orders = []
+    for row in rows:
+        orders.append({
+            'id': row[0],
+            'filename': row[1],
+            'file_path': row[2],
+            'status': row[3]  # 直接返回 "待打印" 或 "可取了"
+        })
+    
+    return jsonify(orders)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
 
 # ---------- 启动服务 ----------
 if __name__ == '__main__':
