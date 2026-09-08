@@ -28,16 +28,22 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)  # 如果没有这个文件夹，自动创建
 
 # 创建数据库表的函数
-async def init_db():
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT NOT NULL,
-                status TEXT DEFAULT '待打印'
-            )
-        ''')
-        await db.commit()
+def init_database():
+    conn = sqlite3.connect('print_service.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            color_type TEXT,
+            duplex TEXT,
+            status TEXT DEFAULT '待打印',
+            create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 # ---------- 接口 ----------
 
@@ -60,7 +66,7 @@ def upload_file():
     save_path = os.path.join(UPLOAD_FOLDER, new_filename)
     file.save(save_path)
     
-    conn = sqlite3.connect('print_service.db')  # 连接数据库文件
+    conn = sqlite3.connect('print_service.db')  #连接数据库文件
     cursor = conn.cursor()
     
     # 执行插入语句
@@ -89,5 +95,5 @@ def get_orders():
 
 # ---------- 启动服务 ----------
 if __name__ == '__main__':
-    asyncio.run(init_db())
+    init_database()  # 确保表存在
     app.run(host='0.0.0.0', port=8080, debug=True)
