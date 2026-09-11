@@ -5,6 +5,14 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#数据库
+*.db
+# 忽略所有 .md 文件
+*.md
+
+# 但保留 README.md
+!README.md
+
 # C extensions
 *.so
 
@@ -131,6 +139,10 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.production
+.env.*.local
+!.env.example
 .venv
 env/
 venv/
@@ -174,6 +186,14 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# 业务数据库文件（属于运行时数据，不提交仓库）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
