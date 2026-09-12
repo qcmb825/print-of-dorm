@@ -12,3 +12,9 @@ Flask-Cors==6.0.5
 # 生产环境 WSGI 服务器（替代 Flask 自带开发服务器，详见 DEPLOY.md）
 waitress==3.0.2
 
+# 密码可逆加密（Fernet 对称加密）：
+# 用于「超级管理员查看各账号密码」这一需求——单靠哈希无法还原明文，
+# 所以密码做双重存储：password_hash 只用于登录校验（不可逆），
+# password_enc 用 Fernet 加密（可逆），仅超管接口解密返回。
+cryptography==46.0.3
+

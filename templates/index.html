@@ -3,286 +3,1529 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>打印</title>
+    <title>宿舍打印服务</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: system-ui, "Microsoft YaHei", Arial, sans-serif; max-width: 880px; margin: 0 auto; padding: 20px; background: #f5f6f8; color: #222; }
-        h1 { font-size: 22px; }
-        h3 { margin-top: 0; }
-        .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
-        label { font-size: 14px; color: #555; }
-        input, select, button { padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
-        button { background: #007bff; color: #fff; border: none; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        button.ghost { background: #6c757d; }
-        button.ghost:hover { background: #565e64; }
+        :root {
+            --bg: #f0f2f5; --card: #fff; --ink: #1f2328; --muted: #6b7280; --line: #e5e7eb;
+            --primary: #2563eb; --primary-dark: #1d4ed8; --ok: #16a34a; --err: #dc2626;
+        }
+        body { font-family: system-ui, "Microsoft YaHei", Arial, sans-serif; max-width: 1080px; margin: 0 auto; padding: 16px; background: var(--bg); color: var(--ink); }
+        h1 { font-size: 20px; margin: 0; }
+        h3 { margin: 0 0 12px; font-size: 16px; }
+        .card { background: var(--card); padding: 18px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; }
+        label { font-size: 13px; color: var(--muted); }
+        input, select, textarea, button { padding: 9px 11px; margin: 4px 0; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; }
+        input, select, textarea { width: 100%; background: #fff; }
+        input:focus, select:focus, textarea:focus { outline: 2px solid rgba(37,99,235,.25); border-color: var(--primary); }
+        button { width: auto; background: var(--primary); color: #fff; border: none; cursor: pointer; transition: background .15s; }
+        button:hover { background: var(--primary-dark); }
+        button.ghost { background: #6b7280; } button.ghost:hover { background: #4b5563; }
+        button.danger { background: var(--err); } button.danger:hover { background: #b91c1c; }
+        button:disabled { background: #9ca3af; cursor: not-allowed; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 8px; border-bottom: 1px solid #eee; text-align: left; font-size: 14px; }
-        .status-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
-        .st-待打印 { background: #ffc107; color: #333; }
-        .st-打印中 { background: #17a2b8; color: #fff; }
-        .st-可取了 { background: #28a745; color: #fff; }
-        .st-已取件 { background: #9e9e9e; color: #fff; }
-        .msg { margin-top: 10px; font-size: 14px; }
-        .msg.ok { color: #1e7e34; }
-        .msg.err { color: #dc3545; }
-        .muted { color: #888; font-size: 12px; }
-        .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-        .row-actions button { padding: 5px 10px; font-size: 12px; }
+        th, td { padding: 9px 8px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: top; }
+        th { color: var(--muted); font-weight: 600; background: #fafafa; }
+        .status-badge { padding: 3px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; display: inline-block; }
+        .st-待打印 { background: #fef3c7; color: #92400e; }
+        .st-打印中 { background: #cffafe; color: #155e75; }
+        .st-可取了 { background: #dcfce7; color: #166534; }
+        .st-已取件 { background: #e5e7eb; color: #374151; }
+        .role-badge { padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+        .role-user { background: #e0e7ff; color: #3730a3; }
+        .role-admin { background: #fde68a; color: #92400e; }
+        .role-super { background: #ddd6fe; color: #5b21b6; }
+        .msg { margin-top: 8px; font-size: 13px; min-height: 18px; }
+        .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+        .muted { color: var(--muted); font-size: 12px; }
+        .topbar { display: flex; align-items: center; gap: 10px; background: var(--card); padding: 12px 18px; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 16px; flex-wrap: wrap; }
+        .topbar .spacer { flex: 1; }
+        .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+        .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+        .tabs button { flex: 1; background: #eef2ff; color: #3730a3; }
+        .tabs button.active { background: var(--primary); color: #fff; }
+        .row-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+        .row-actions button { padding: 4px 9px; font-size: 12px; margin: 0; }
+        .field { margin-bottom: 8px; }
+        .kpi { text-align: center; }
+        .kpi .num { font-size: 26px; font-weight: 700; }
+        .kpi .lab { font-size: 12px; color: var(--muted); }
+        .chart svg { width: 100%; height: auto; display: block; }
+        .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
+        .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; }
+        .pw { font-family: ui-monospace, Consolas, monospace; background: #f9fafb; padding: 2px 6px; border-radius: 6px; }
+        .nowrap { white-space: nowrap; }
+        /* ---------- 公告栏（顶部悬浮） ---------- */
+        .announce-bar { position: sticky; top: 8px; z-index: 40; display: flex; align-items: flex-start; gap: 10px;
+            background: linear-gradient(135deg, #eef4ff 0%, #f7fbff 100%); border: 1px solid #dbe7ff;
+            border-left: 4px solid var(--primary); border-radius: 12px; padding: 11px 14px; margin-bottom: 14px;
+            box-shadow: 0 6px 18px rgba(37,99,235,.10); animation: announceIn .28s ease; }
+        .announce-bar .announce-icon { font-size: 16px; line-height: 1.5; }
+        .announce-bar .announce-body { flex: 1; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+        .announce-bar .announce-close { background: transparent; color: var(--muted); border: none; padding: 0 5px;
+            font-size: 14px; line-height: 1.4; cursor: pointer; border-radius: 6px; }
+        .announce-bar .announce-close:hover { background: rgba(0,0,0,.06); color: var(--ink); }
+        @keyframes announceIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+        .icon-btn { display: inline-flex; align-items: center; gap: 5px; background: #eef2ff; color: #3730a3; border: 1px solid #e0e7ff; }
+        .icon-btn:hover { background: #e0e7ff; }
+        .badge-dot { display: inline-block; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px;
+            background: var(--err); color: #fff; font-size: 11px; line-height: 17px; text-align: center; font-weight: 600; }
+        /* ---------- 公告编辑 ---------- */
+        .announce-preview { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px; background: #fbfcfe;
+            white-space: pre-wrap; word-break: break-word; min-height: 42px; }
+        .style-row { display: grid; gap: 10px; grid-template-columns: 1.4fr 1fr 1fr; align-items: end; }
+        /* ---------- 工单 ---------- */
+        .ticket-item { display: flex; gap: 12px; align-items: center; padding: 11px 12px; border: 1px solid var(--line);
+            border-radius: 10px; margin-top: 8px; cursor: pointer; background: #fff; transition: border-color .15s, background .15s; }
+        .ticket-item:hover { border-color: #bfd3ff; background: #f8fbff; }
+        .ticket-item .t-main { flex: 1; min-width: 0; }
+        .ticket-item .t-subject { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .ticket-item .t-preview { color: var(--muted); font-size: 12px; margin-top: 3px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+        .ticket-item .t-meta { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
+        .status-open { background: #dbeafe; color: #1d4ed8; }
+        .status-closed { background: #e5e7eb; color: #4b5563; }
+        .modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.45); display: flex; align-items: center;
+            justify-content: center; padding: 16px; z-index: 100; }
+        .modal { background: #fff; border-radius: 14px; width: 100%; max-width: 560px; max-height: 84vh;
+            display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 18px 48px rgba(0,0,0,.28); }
+        .modal-head { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+        .modal-head .m-title { font-weight: 600; font-size: 15px; flex: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .modal-body { flex: 1; overflow-y: auto; padding: 16px; background: #f7f8fa; display: flex;
+            flex-direction: column; gap: 12px; }
+        .modal-foot { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: flex-end; }
+        .bubble-row { display: flex; flex-direction: column; max-width: 84%; }
+        .bubble-row.mine { align-self: flex-end; align-items: flex-end; }
+        .bubble-meta { font-size: 11px; color: var(--muted); margin: 0 4px 3px; }
+        .bubble { padding: 8px 12px; border-radius: 12px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap;
+            word-break: break-word; background: #fff; border: 1px solid var(--line); border-top-left-radius: 4px; }
+        .bubble-row.mine .bubble { background: var(--primary); color: #fff; border-color: var(--primary);
+            border-top-left-radius: 12px; border-top-right-radius: 4px; }
+        .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px 0; }
+        @media (max-width: 640px) {
+            th, td { font-size: 12px; padding: 7px 5px; }
+            .style-row { grid-template-columns: 1fr 1fr; }
+            .modal { max-height: 90vh; }
+        }
     </style>
 </head>
 <body>
-    <h1>🖨️</h1>
+    <div id="app">加载中…</div>
 
-    <!-- 学生：上传下单 -->
-    <div class="card">
-        <h3>📤 上传文件下单</h3>
-        <form id="uploadForm" enctype="multipart/form-data">
-            <div>
-                <label>选择文件：</label>
-                <input type="file" id="fileInput" name="file" required>
-            </div>
-            <div>
-                <label>颜色：</label>
-                <select name="color" id="colorSelect">
-                    <option value="black">黑白</option>
-                    <option value="color">彩色</option>
-                </select>
-                <label>双面：</label>
-                <select name="duplex" id="duplexSelect">
-                    <option value="single">单面</option>
-                    <option value="double">双面</option>
-                </select>
-            </div>
-            <button type="submit">🚀 提交订单</button>
-            <span class="muted">支持格式：pdf、jpg、jpeg、png、doc、docx</span>
-        </form>
-        <div id="uploadMsg" class="msg"></div>
-    </div>
-
-    <!-- 学生：凭取件码查单 -->
-    <div class="card">
-        <h3>🔍 我的订单</h3>
-        <div>
-            <input type="text" id="queryCode" inputmode="numeric" placeholder="输入取件码，如 1234" maxlength="8">
-            <button onclick="queryMyOrders()">查询</button>
-        </div>
-        <div id="myOrdersMsg" class="msg"></div>
-        <div id="myOrdersResult"></div>
-    </div>
-
-    <!-- 店主后台 -->
-    <div class="card">
-        <h3>📋 订单管理（店主）</h3>
-        <div>
-            <label>管理口令：</label>
-            <input type="password" id="adminToken" placeholder="服务端未配置 ADMIN_TOKEN 时可留空">
-            <button class="ghost" onclick="saveToken()">保存口令</button>
-        </div>
-        <div style="margin:10px 0;">
-            <label>状态筛选：</label>
-            <select id="statusFilter" onchange="loadOrders()">
-                <option value="">全部</option>
-                <option value="待打印">待打印</option>
-                <option value="打印中">打印中</option>
-                <option value="可取了">可取了</option>
-                <option value="已取件">已取件</option>
-            </select>
-            <button onclick="loadOrders()">🔄 刷新列表</button>
-            <label style="margin-left:10px;"><input type="checkbox" id="autoRefresh" checked style="width:auto;"> 每 10 秒自动刷新</label>
-        </div>
-        <div id="orderList">
-            <table>
-                <thead><tr><th>ID</th><th>文件名</th><th>取件码</th><th>状态</th><th>下单时间</th><th>操作</th></tr></thead>
-                <tbody id="orderBody"></tbody>
-            </table>
-        </div>
-        <div id="orderMsg" class="msg"></div>
-    </div>
 
     <script>
+        'use strict';
+
+        /* =========================================================
+         * 全局状态与常量
+         * ========================================================= */
         const STATUSES = ['待打印', '打印中', '可取了', '已取件'];
-        const TOKEN_KEY = 'print_admin_token';
+        const ROLE_LABELS = { user: '普通用户', admin: '管理员', super: '超级管理员' };
+        const ROLE_ORDER = ['super', 'admin', 'user'];
+        const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
         const AUTO_REFRESH_MS = 10000;
-        let autoTimer = null;
 
-        // ---------- 工具函数 ----------
-        function getToken() {
-            return sessionStorage.getItem(TOKEN_KEY) || '';
+        // 公告字体：键必须与后端 ANNOUNCE_FONTS 保持一致，前端负责把「键」翻译成 CSS
+        const ANNOUNCE_FONTS = {
+            system: { label: '系统默认', css: 'system-ui, "Microsoft YaHei", Arial, sans-serif' },
+            songti: { label: '宋体', css: '"SimSun", "Songti SC", serif' },
+            heiti: { label: '黑体', css: '"Microsoft YaHei", "PingFang SC", sans-serif' },
+            kaiti: { label: '楷体', css: '"KaiTi", "STKaiti", serif' },
+            mono: { label: '等宽', css: 'ui-monospace, Consolas, monospace' },
+        };
+        // 联系方式的填写提示 + 填写时的即时校验。
+        // 正则和后端的 WECHAT_RE / QQ_RE / EMAIL_RE 保持一致；前端校验只是为了
+        // 「填错马上知道」，真正的把关在后端（前端代码可以被改掉或绕过）。
+        const CONTACT_HINTS = {
+            wechat: {
+                label: '微信号',
+                hint: '5-20 位，以字母开头，可含字母、数字、_ 和 -',
+                re: /^[A-Za-z][A-Za-z0-9_-]{4,19}$/,
+                reMsg: '微信号需为 5-20 位、以字母开头（可含字母、数字、_ 和 -）',
+            },
+            qq: {
+                label: 'QQ 号',
+                hint: '5-12 位数字',
+                re: /^[1-9]\d{4,11}$/,
+                reMsg: 'QQ 号需为 5-12 位数字，且不能以 0 开头',
+            },
+            email: {
+                label: '邮箱',
+                hint: '常用邮箱格式',
+                re: /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/,
+                reMsg: '邮箱格式不正确',
+            },
+        };
+        // 公告颜色：后端只接受 #rrggbb 这种六位写法（ANNOUNCE_COLOR_RE），
+        // 前端回填数据库里的颜色前要先判断一下，不合法的就退回默认色，避免把脏值塞进 <input type=color>
+        const ANNOUNCE_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+        // csrf 令牌只放在内存里，页面刷新后由 /api/me 重新下发
+        // showPasswords：是否把账号列表切成带密码的版本。只有超管能打开，
+        //   而且每次都要向服务器重新申请（前端不缓存任何密码）
+        const state = { user: null, csrf: '', tab: 'login', orderScope: 'all', orderStatus: '', timer: null,
+            showPasswords: false, announcement: null, announcementHidden: false, tickets: [], ticketFilter: '',
+            editingAnnouncementId: null, announceFlash: null };
+
+        /* =========================================================
+         * DOM 工具：所有文本一律走 textContent，天然免疫 XSS
+         * ========================================================= */
+        function $(id) { return document.getElementById(id); }
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+
+        function el(tag, attrs, children) {
+            const node = document.createElement(tag);
+            Object.entries(attrs || {}).forEach(([k, v]) => {
+                if (v === null || v === undefined) return;
+                if (k === 'text') node.textContent = String(v);
+                else if (k === 'class') node.className = String(v);
+                else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+                // 布尔属性：true 表示「加上这个属性」，false 表示「不加」。
+                // 千万不能把 false 写成字符串 "false" —— 对 disabled / checked / selected
+                // 这类布尔属性来说，只要属性名字出现就一律生效，结果会完全反过来。
+                else if (v === false) return;
+                else node.setAttribute(k, v === true ? '' : String(v));
+            });
+            (Array.isArray(children) ? children : (children === undefined ? [] : [children])).forEach(c => {
+                if (c === null || c === undefined || c === false) return;
+                node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+            });
+            return node;
         }
 
-        function saveToken() {
-            const value = document.getElementById('adminToken').value.trim();
-            if (value) {
-                sessionStorage.setItem(TOKEN_KEY, value);
-            } else {
-                sessionStorage.removeItem(TOKEN_KEY);
-            }
-            setMsg('orderMsg', value ? '口令已保存' : '已清空口令', 'ok');
-            loadOrders();
+        function svgEl(tag, attrs) {
+            const node = document.createElementNS(SVG_NS, tag);
+            Object.entries(attrs || {}).forEach(([k, v]) => node.setAttribute(k, String(v)));
+            return node;
         }
 
-        // 统一封装 fetch：自动带上管理口令
-        async function apiFetch(url, options = {}) {
-            const token = getToken();
-            const headers = Object.assign({}, options.headers || {});
-            if (token) headers['X-Admin-Token'] = token;
-            return fetch(url, Object.assign({}, options, { headers }));
-        }
-
-        function setMsg(id, text, type) {
-            const el = document.getElementById(id);
-            el.textContent = text || '';
-            el.className = 'msg' + (type ? ' ' + type : '');
-        }
-
-        // 用 textContent 生成单元格，天然免疫 XSS
         function td(text) {
             const cell = document.createElement('td');
             cell.textContent = text == null ? '' : String(text);
             return cell;
         }
 
-        // ---------- 学生：上传下单 ----------
-        document.getElementById('uploadForm').onsubmit = async function (e) {
-            e.preventDefault();
-            setMsg('uploadMsg', '⏳ 正在上传...', '');
-            try {
-                const response = await fetch('/upload', { method: 'POST', body: new FormData(this) });
-                const result = await response.json();
-                if (result.code === 0) {
-                    setMsg('uploadMsg', '✅ 下单成功！订单号 ' + result.order_id + '，取件码 ' + result.pickup_code, 'ok');
-                    this.reset();
-                    if (typeof loadOrders === 'function') loadOrders();
-                } else {
-                    setMsg('uploadMsg', '❌ 上传失败：' + result.msg, 'err');
-                }
-            } catch (error) {
-                setMsg('uploadMsg', '❌ 网络错误，请确认后端正在运行！', 'err');
-            }
-        };
+        function statusBadge(status) {
+            return el('span', { class: 'status-badge st-' + status, text: status });
+        }
 
-        // ---------- 学生：凭取件码查单 ----------
-        async function queryMyOrders() {
-            const code = document.getElementById('queryCode').value.trim();
-            const box = document.getElementById('myOrdersResult');
-            box.textContent = '';
-            if (!code) {
-                setMsg('myOrdersMsg', '请先输入取件码', 'err');
+        function setMsg(id, text, type) {
+            const node = $(id);
+            if (!node) return;
+            node.textContent = text || '';
+            node.className = 'msg' + (type ? ' ' + type : '');
+        }
+
+        function roleLabel(role) { return ROLE_LABELS[role] || role; }
+        function colorLabel(v) { return v === 'color' ? '彩色' : '黑白'; }
+        function duplexLabel(v) { return v === 'double' ? '双面' : '单面'; }
+
+        /* =========================================================
+         * 统一请求封装：自动带上 CSRF 令牌，会话失效自动回登录页
+         * ========================================================= */
+        async function api(url, options) {
+            const opts = Object.assign({}, options || {});
+            opts.headers = Object.assign({}, opts.headers || {});
+            if (state.csrf) opts.headers['X-CSRF-Token'] = state.csrf;
+            if (opts.body && !(opts.body instanceof FormData)) {
+                opts.headers['Content-Type'] = 'application/json';
+            }
+            let res;
+            try {
+                res = await fetch(url, opts);   // 会话 Cookie 同源自动携带
+            } catch (e) {
+                return { code: -1, msg: '网络错误，请确认后端服务已启动' };
+            }
+            let data;
+            try { data = await res.json(); }
+            catch (e) { data = { code: res.status, msg: '服务器返回了非 JSON 响应' }; }
+            if (data && data.csrf) state.csrf = data.csrf;   // 后端每次响应都会下发新令牌
+            if (res.status === 401 && data.code === 401 && state.user) {
+                state.user = null;
+                renderAuth();
+            }
+            return data;
+        }
+
+        /* =========================================================
+         * 会话初始化 / 登出
+         * ========================================================= */
+        async function bootstrap() {
+            const data = await api('/api/me');
+            if (data.code === 0 && data.user) {
+                state.user = data.user;
+                await refreshAll();
+            } else {
+                state.user = null;
+                renderAuth();
+            }
+        }
+
+        async function refreshAll() {
+            // 公告必须在首次渲染前拿到，否则首屏会先没公告栏、再「跳」出来
+            if (state.user) await fetchAnnouncement();
+            await redraw();
+        }
+
+        // 整页重绘 + 重新拉取所有面板数据。
+        // renderApp() 会清空整个 DOM，所以重绘之后必须把数据重新填口去，
+        // 否则表格会变空白 —— 凡是「一定要重绘」的场合都走这里。
+        // （公告栏的显示/隐藏特意不走这条路，见 setAnnouncementHidden）
+        async function redraw() {
+            renderApp();
+            if (!state.user) return;
+            // 工单条目的渲染依赖 renderApp 建好的 #ticketList，所以放在渲染之后
+            await loadTickets();
+            if (state.user.role === 'user') {
+                await loadMyOrders();
+            } else {
+                // 管理员和超管看到的是同一套面板，差异只在「有没有密码列 / 能不能操作」，
+                // 由 usersCard 内部按角色自行裁剪
+                await Promise.all([loadOrders(), loadStats(), loadUsers(), loadAnnouncementsAdmin()]);
+                setupAutoRefresh();
+            }
+        }
+
+        async function logout() {
+            try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 忽略 */ }
+            state.user = null;
+            state.showPasswords = false;   // 退出时把「查看密码」关掉，别留给下一个人
+            stopAutoRefresh();
+            renderAuth();
+            await api('/api/me');   // 重新获取一个有效的 CSRF 令牌
+        }
+
+        /* =========================================================
+         * 登录 / 注册：所有角色共用同一个入口
+         * ========================================================= */
+        function renderAuth() {
+            stopAutoRefresh();
+            const app = $('app');
+            app.textContent = '';
+            const card = el('div', { class: 'card', style: 'max-width:470px;margin:32px auto;' });
+            card.appendChild(el('h1', { text: '🖨️ 宿舍打印服务', style: 'text-align:center;' }));
+            card.appendChild(el('p', {
+                class: 'muted',
+                text: '实名注册 · 统一入口登录 · 按账号类别显示不同功能',
+                style: 'text-align:center;margin:6px 0 14px;',
+            }));
+
+            const tabs = el('div', { class: 'tabs' });
+            tabs.appendChild(el('button', {
+                text: '登录', class: state.tab === 'login' ? 'active' : '',
+                onclick: () => { state.tab = 'login'; renderAuth(); },
+            }));
+            tabs.appendChild(el('button', {
+                text: '注册', class: state.tab === 'register' ? 'active' : '',
+                onclick: () => { state.tab = 'register'; renderAuth(); },
+            }));
+            card.appendChild(tabs);
+            const form = state.tab === 'register' ? registerForm() : loginForm();
+            card.appendChild(form);
+            app.appendChild(card);
+            // 打开页面或切换标签后自动聚焦第一个输入框，省掉一次鼠标点击
+            const first = form.querySelector('input, select');
+            if (first) first.focus();
+        }
+
+        function loginForm() {
+            const form = el('form');
+            const identifier = el('input', { type: 'text', placeholder: '姓名或昵称', autocomplete: 'username', maxlength: 20, required: true });
+            const password = el('input', { type: 'password', placeholder: '密码', autocomplete: 'current-password', maxlength: 64, required: true });
+            form.appendChild(el('div', { class: 'field' }, [el('label', { text: '姓名 / 昵称' }), identifier]));
+            form.appendChild(el('div', { class: 'field' }, [el('label', { text: '密码' }), password]));
+            const msg = el('div', { class: 'msg' });
+            const btn = el('button', { type: 'submit', text: '登录', style: 'width:100%;margin-top:10px;' });
+            form.appendChild(btn);
+            form.appendChild(msg);
+
+            const fields = [identifier, password];
+            // 用户一旦重新输入，就把上一次的红色报错清掉，
+            // 否则「明明已经改了，提示还挂着」会让人以为没生效
+            fields.forEach(f => f.addEventListener('input', () => {
+                if (msg.classList.contains('err')) {
+                    msg.className = 'msg';
+                    msg.textContent = '';
+                }
+            }));
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const setBusy = (busy) => {
+                    fields.forEach(f => { f.disabled = busy; });
+                    btn.disabled = busy;
+                };
+                setBusy(true);
+                msg.className = 'msg';
+                msg.textContent = '⏳ 登录中…';
+                const data = await api('/api/login', {
+                    method: 'POST',
+                    body: JSON.stringify({ identifier: identifier.value.trim(), password: password.value }),
+                });
+                if (data.code === 0) {
+                    state.user = data.user;
+                    msg.textContent = '';
+                    await refreshAll();
+                } else {
+                    msg.className = 'msg err';
+                    msg.textContent = '❌ ' + (data.msg || '登录失败');
+                }
+                setBusy(false);
+            });
+            return form;
+        }
+
+        function registerForm() {
+            const form = el('form');
+            // hintText 是可选的：填写后会在输入框下方补一行灰色小字说明
+            const addField = (labelText, attrs, hintText) => {
+                const input = el('input', attrs);
+                const children = [el('label', { text: labelText }), input];
+                if (hintText) {
+                    children.push(el('div', { class: 'muted', style: 'margin-top:2px;line-height:1.5;', text: hintText }));
+                }
+                form.appendChild(el('div', { class: 'field' }, children));
+                return input;
+            };
+            // 标签只写字段名，长度 / 格式等说明放到输入框下方的灰色小字里，
+            // 这样标题栏不会被括号塞得又长又花
+            const nickname = addField('昵称', { type: 'text', placeholder: '', maxlength: 20, required: true });
+            const realName = addField('姓名', { type: 'text', placeholder: '', maxlength: 20, required: true });
+            const studentId = addField('学号',
+                { type: 'text', inputmode: 'numeric', placeholder: '', maxlength: 20, required: true },
+                '学号仅用于核对身份。');
+            const dorm = addField('宿舍位置', { type: 'text', placeholder: '例：2号北201', maxlength: 50, required: true });
+
+            // 联系方式（必填）：先选类型，再填对应的号码。
+            // 没选类型时输入框保持禁用 —— 不用隐藏/显示来回切换，避免表单高度跳动。
+            const contactType = el('select', { onchange: applyContactHint }, [
+                // 占位项：值为空、禁用，而且必须写 selected ——
+                // 浏览器自动选默认项时会跳过 disabled 的选项，只写 disabled 的话
+                // 默认会落到「微信」上，结果输入框一进页面就能填。
+                el('option', { value: '', text: '请选择', disabled: true, selected: true }),
+                el('option', { value: 'wechat', text: '微信' }),
+                el('option', { value: 'qq', text: 'QQ' }),
+                el('option', { value: 'email', text: '邮箱' }),
+            ]);
+            const contact = el('input', { type: 'text', placeholder: '', maxlength: 50, disabled: true });
+            const contactHint = el('div', { class: 'muted', style: 'margin-top:2px;line-height:1.5;' });
+            form.appendChild(el('div', { class: 'field' }, [
+                el('label', { text: '联系方式' }),
+                el('div', { style: 'display:grid;grid-template-columns:118px 1fr;gap:8px;' }, [contactType, contact]),
+                contactHint,
+            ]));
+            // 提示文字直接写进上面创建好的节点。
+            // 这里不能用 $('contactHint') 去找：本函数执行时表单还不在页面上，
+            // document.getElementById 会返回 null，提示就会一直是空白。
+            let lastType = null;
+            function applyContactHint() {
+                const info = CONTACT_HINTS[contactType.value];
+                // 换了类型就清空旧号码：QQ 号填进「邮箱」栏没有任何意义，
+                // 留在框里反而让人以为已经填好了
+                if (contactType.value !== lastType) {
+                    contact.value = '';
+                    lastType = contactType.value;
+                }
+                contact.disabled = !info;
+                contactHint.textContent = info ? info.label + '：' + info.hint : '请先选择联系方式类型，再填写对应的号码。';
+            }
+            applyContactHint();
+
+            const password = addField('密码',
+                { type: 'password', autocomplete: 'new-password', maxlength: 64, required: true },
+                '8-64 位，需同时包含字母和数字。');
+            const confirm = addField('再次输入密码', { type: 'password', autocomplete: 'new-password', maxlength: 64, required: true });
+            const msg = el('div', { class: 'msg' });
+            const btn = el('button', { type: 'submit', text: '注册并登录', style: 'width:100%;margin-top:10px;' });
+            form.appendChild(btn);
+            form.appendChild(msg);
+
+            const fields = [nickname, realName, studentId, dorm, contactType, contact, password, confirm];
+            const warn = (text, focusEl) => {
+                msg.className = 'msg err';
+                msg.textContent = '❌ ' + text;
+                if (focusEl) focusEl.focus();   // 光标直接跳到出错的那一栏，不用自己找
+            };
+            // 提交期间锁住整张表单，避免连点两次重复提交
+            const setBusy = (busy) => {
+                fields.forEach(f => { f.disabled = busy; });
+                btn.disabled = busy;
+                if (!busy) applyContactHint();  // 解锁后由它把联系方式输入框恢复成正确状态
+            };
+            fields.forEach(f => f.addEventListener('input', () => {
+                if (msg.classList.contains('err')) {
+                    msg.className = 'msg';
+                    msg.textContent = '';
+                }
+            }));
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                // 先在本地把能查出来的问题查掉，少一次往返；后端还会再校验一遍
+                const info = CONTACT_HINTS[contactType.value];
+                if (!info) {
+                    warn('请选择联系方式类型', contactType);
+                    return;
+                }
+                if (!contact.value.trim()) {
+                    warn('请填写' + info.label, contact);
+                    return;
+                }
+                if (!info.re.test(contact.value.trim())) {
+                    warn(info.reMsg, contact);
+                    return;
+                }
+                if (password.value !== confirm.value) {
+                    warn('两次输入的密码不一致', confirm);
+                    return;
+                }
+                setBusy(true);
+                msg.className = 'msg';
+                msg.textContent = '⏳ 提交中…';
+                const data = await api('/api/register', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        nickname: nickname.value.trim(),
+                        real_name: realName.value.trim(),
+                        student_id: studentId.value.trim(),
+                        dorm: dorm.value.trim(),
+                        contact_type: contactType.value,
+                        contact: contact.value.trim(),
+                        password: password.value,
+                        confirm_password: confirm.value,
+                    }),
+                });
+                if (data.code === 0) {
+                    state.user = data.user;
+                    msg.textContent = '';
+                    await refreshAll();
+                } else {
+                    msg.className = 'msg err';
+                    msg.textContent = '❌ ' + (data.msg || '注册失败');
+                }
+                setBusy(false);
+            });
+            return form;
+        }
+
+        /* =========================================================
+         * 主界面：按账号类别渲染不同内容
+         * ========================================================= */
+        function renderApp() {
+            const app = $('app');
+            app.textContent = '';
+            const u = state.user;
+
+            // 公告区：按「悬浮公告 > 关闭后的重开入口 > 管理员编辑」的优先级，
+            // 同一时刻最多出现一个，避免界面臃肿
+            if (state.announcement && !state.announcementHidden) app.appendChild(announcementBar());
+
+            const bar = el('div', { class: 'topbar' });
+            bar.appendChild(el('h1', { text: '🖨️ 宿舍打印服务' }));
+            bar.appendChild(el('span', { class: 'role-badge role-' + u.role, text: roleLabel(u.role) }));
+            // 姓名 / 宿舍都允许留空（内置超管就是空的），空的部分直接不显示，
+            // 否则会渲染成「qcmb（）· 」这种悬空括号 + 悬空分隔符
+            const info = (u.real_name ? '（' + u.real_name + '）' : '') + (u.dorm ? ' · ' + u.dorm : '');
+            bar.appendChild(el('span', { class: 'muted', text: u.nickname + info }));
+            bar.appendChild(el('div', { class: 'spacer' }));
+            // 「📢 公告」按钮平时是隐藏的，只在公告被关闭后才显形，所以不会占位置。
+            // 它和公告栏的显示/隐藏都是局部 DOM 操作，不触发整页重绘，
+            // 这样点一下不会把已经加载好的表格、图表全部清空。
+            if (state.announcement) {
+                bar.appendChild(el('button', {
+                    id: 'announceToggle', class: 'ghost icon-btn', text: '📢 公告',
+                    style: state.announcementHidden ? '' : 'display:none;',
+                    onclick: () => setAnnouncementHidden(false),
+                }));
+            }
+            bar.appendChild(el('button', { class: 'ghost', text: '退出登录', onclick: logout }));
+            app.appendChild(bar);
+
+            if (u.role === 'user') {
+                app.appendChild(uploadCard());
+                app.appendChild(myOrdersCard());
+                app.appendChild(ticketsCard(false));
                 return;
             }
-            try {
-                const response = await fetch('/my-orders?code=' + encodeURIComponent(code));
-                const result = await response.json();
-                if (result.code !== 0) {
-                    setMsg('myOrdersMsg', '❌ ' + result.msg, 'err');
-                    return;
-                }
-                if (result.orders.length === 0) {
-                    setMsg('myOrdersMsg', '没有找到该取件码对应的订单', 'err');
-                    return;
-                }
-                setMsg('myOrdersMsg', '共 ' + result.orders.length + ' 个订单', 'ok');
-                result.orders.forEach(order => {
-                    const line = document.createElement('div');
-                    line.className = 'muted';
-                    line.textContent = '订单 ' + order.id + ' · ' + order.filename +
-                        ' · ' + (order.color_type === 'color' ? '彩色' : '黑白') +
-                        ' · ' + (order.duplex === 'double' ? '双面' : '单面') +
-                        ' · ' + order.status + ' · ' + (order.create_time || '');
-                    box.appendChild(line);
-                });
-            } catch (error) {
-                setMsg('myOrdersMsg', '❌ 网络错误，请稍后重试', 'err');
-            }
+            app.appendChild(orderAdminCard());
+            // 图表 + 账号列表：管理员与超管都能看（密码列只有超管能打开）
+            app.appendChild(el('div', { id: 'statsBox' }));
+            app.appendChild(usersCard());
+            app.appendChild(ticketsCard(true));
+            app.appendChild(announcementAdminCard());
         }
 
-        // ---------- 店主：订单列表 ----------
-        async function loadOrders() {
-            const tbody = document.getElementById('orderBody');
-            const status = document.getElementById('statusFilter').value;
-            const url = '/orders?size=100' + (status ? '&status=' + encodeURIComponent(status) : '');
-            try {
-                const response = await apiFetch(url);
-                if (response.status === 401) {
-                    setMsg('orderMsg', '❌ 需要管理口令，请在上方输入后点「保存口令」', 'err');
-                    return;
-                }
-                const result = await response.json();
-                tbody.textContent = '';
-                setMsg('orderMsg', '共 ' + result.total + ' 条订单', 'ok');
+        /* ---------------- 普通用户：上传下单 ---------------- */
+        function uploadCard() {
+            const card = el('div', { class: 'card' });
+            card.appendChild(el('h3', { text: '📤 上传文件下单' }));
+            const form = el('form', { enctype: 'multipart/form-data' });
+            const file = el('input', { type: 'file', name: 'file', required: true });
+            const color = el('select', { name: 'color' }, [
+                el('option', { value: 'black', text: '黑白' }),
+                el('option', { value: 'color', text: '彩色' }),
+            ]);
+            const duplex = el('select', { name: 'duplex' }, [
+                el('option', { value: 'single', text: '单面' }),
+                el('option', { value: 'double', text: '双面' }),
+            ]);
+            const remark = el('textarea', {
+                name: 'remark', rows: 2, maxlength: 200,
+                placeholder: '备注（可选）：如 打印 3 份、装订、指定页码…',
+            });
+            form.appendChild(el('div', { class: 'field' }, [el('label', { text: '选择文件' }), file]));
+            form.appendChild(el('div', { class: 'grid' }, [
+                el('div', { class: 'field' }, [el('label', { text: '打印类别' }), color]),
+                el('div', { class: 'field' }, [el('label', { text: '单 / 双面' }), duplex]),
+            ]));
+            form.appendChild(el('div', { class: 'field' }, [el('label', { text: '备注' }), remark]));
+            form.appendChild(el('div', {}, [el('button', { type: 'submit', text: '🚀 提交订单' })]));
+            form.appendChild(el('div', { class: 'muted', text: '支持格式：pdf、jpg、jpeg、png、doc、docx' }));
+            card.appendChild(form);
+            card.appendChild(el('div', { class: 'msg', id: 'uploadMsg' }));
 
-                result.orders.forEach(order => {
-                    const tr = document.createElement('tr');
-                    tr.appendChild(td(order.id));
-                    tr.appendChild(td(order.filename));
-                    tr.appendChild(td(order.pickup_code || '-'));
-
-                    const statusCell = document.createElement('td');
-                    const badge = document.createElement('span');
-                    badge.className = 'status-badge st-' + order.status;
-                    badge.textContent = order.status;
-                    statusCell.appendChild(badge);
-                    tr.appendChild(statusCell);
-
-                    tr.appendChild(td(order.create_time || ''));
-
-                    const actionCell = document.createElement('td');
-                    const actions = document.createElement('div');
-                    actions.className = 'row-actions';
-                    STATUSES.forEach(target => {
-                        if (target === order.status) return;
-                        const btn = document.createElement('button');
-                        btn.textContent = '→ ' + target;
-                        btn.onclick = () => updateStatus(order.id, target);
-                        actions.appendChild(btn);
-                    });
-                    actionCell.appendChild(actions);
-                    tr.appendChild(actionCell);
-                    tbody.appendChild(tr);
-                });
-            } catch (error) {
-                setMsg('orderMsg', '❌ 加载订单失败，请检查后端服务', 'err');
-            }
-        }
-
-        async function updateStatus(orderId, status) {
-            if (!confirm('确定把订单 #' + orderId + ' 改为「' + status + '」吗？')) return;
-            try {
-                const response = await apiFetch('/order/' + orderId + '/status', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: status })
-                });
-                const result = await response.json();
-                if (result.code === 0) {
-                    setMsg('orderMsg', '✅ ' + result.msg, 'ok');
-                    loadOrders();
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const btn = form.querySelector('button[type="submit"]');
+                btn.disabled = true;
+                setMsg('uploadMsg', '⏳ 正在上传…', '');
+                const data = await api('/api/upload', { method: 'POST', body: new FormData(form) });
+                if (data.code === 0) {
+                    setMsg('uploadMsg', '✅ 下单成功！订单号 ' + data.order_id + '，取件码 ' + data.pickup_code, 'ok');
+                    form.reset();
+                    await loadMyOrders();
                 } else {
-                    setMsg('orderMsg', '❌ ' + result.msg, 'err');
+                    setMsg('uploadMsg', '❌ ' + (data.msg || '上传失败'), 'err');
                 }
-            } catch (error) {
-                setMsg('orderMsg', '❌ 网络错误，请稍后重试', 'err');
+                btn.disabled = false;
+            });
+            return card;
+        }
+
+        function myOrdersCard() {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;' });
+            head.appendChild(el('h3', { text: '📦 我的订单', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadMyOrders }));
+            card.appendChild(head);
+
+            const table = el('table', { style: 'margin-top:12px;' });
+            table.appendChild(el('thead', {}, [el('tr', {}, [
+                '订单号', '文件名', '打印参数', '备注', '状态', '取件码', '接单情况', '下单时间',
+            ].map(t => el('th', { text: t })))]));
+            table.appendChild(el('tbody', { id: 'myOrderBody' }));
+            card.appendChild(table);
+            card.appendChild(el('div', { class: 'msg', id: 'myOrderMsg' }));
+            return card;
+        }
+
+        async function loadMyOrders() {
+            const tbody = $('myOrderBody');
+            if (!tbody) return;
+            const data = await api('/api/my-orders');
+            tbody.textContent = '';
+            if (data.code !== 0) {
+                setMsg('myOrderMsg', '❌ ' + (data.msg || '加载失败'), 'err');
+                return;
+            }
+            if (!data.orders.length) {
+                setMsg('myOrderMsg', '还没有订单，上传一个文件试试吧', '');
+                return;
+            }
+            setMsg('myOrderMsg', '共 ' + data.orders.length + ' 个订单', 'ok');
+            data.orders.forEach(o => {
+                const tr = el('tr');
+                tr.appendChild(td(o.id));
+                tr.appendChild(td(o.filename));
+                tr.appendChild(td(colorLabel(o.color_type) + ' / ' + duplexLabel(o.duplex)));
+                tr.appendChild(td(o.remark || '-'));
+                tr.appendChild(el('td', {}, [statusBadge(o.status)]));
+                tr.appendChild(td(o.pickup_code || '-'));
+                tr.appendChild(td(o.claimer_nickname ? '已由 ' + o.claimer_nickname + ' 接单' : '等待接单'));
+                tr.appendChild(td(o.create_time || ''));
+                tbody.appendChild(tr);
+            });
+        }
+
+        /* ---------------- 管理员 / 超管：订单管理 ---------------- */
+        function orderAdminCard() {
+            const card = el('div', { class: 'card' });
+            card.appendChild(el('h3', { text: '📋 订单管理' }));
+
+            const scope = el('select', { onchange: () => { state.orderScope = scope.value; loadOrders(); } }, [
+                el('option', { value: 'all', text: '全部订单' }),
+                el('option', { value: 'pool', text: '待接单池（无人接）' }),
+                el('option', { value: 'mine', text: '我接的订单' }),
+            ]);
+            const status = el('select', { onchange: () => { state.orderStatus = status.value; loadOrders(); } },
+                [el('option', { value: '', text: '全部状态' })].concat(STATUSES.map(s => el('option', { value: s, text: s }))));
+            const auto = el('input', { type: 'checkbox', id: 'autoRefresh', checked: true, style: 'width:auto;' });
+            const autoWrap = el('label', { style: 'display:flex;align-items:center;gap:6px;' });
+            autoWrap.appendChild(auto);
+            autoWrap.appendChild(document.createTextNode('每 10 秒自动刷新'));
+
+            const controls = el('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;' });
+            controls.appendChild(el('div', { class: 'field', style: 'min-width:190px;margin:0;' }, [el('label', { text: '范围' }), scope]));
+            controls.appendChild(el('div', { class: 'field', style: 'min-width:140px;margin:0;' }, [el('label', { text: '状态' }), status]));
+            controls.appendChild(el('div', {}, [el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadOrders })]));
+            controls.appendChild(el('div', { class: 'muted' }, [autoWrap]));
+            card.appendChild(controls);
+
+            const table = el('table', { style: 'margin-top:12px;' });
+            table.appendChild(el('thead', {}, [el('tr', {}, [
+                '订单号', '下单人', '宿舍', '文件名', '打印参数', '备注', '状态', '接单账户', '下单时间', '操作',
+            ].map(t => el('th', { text: t })))]));
+            table.appendChild(el('tbody', { id: 'orderBody' }));
+            card.appendChild(table);
+            card.appendChild(el('div', { class: 'msg', id: 'orderMsg' }));
+            return card;
+        }
+
+        function orderRow(o) {
+            const tr = el('tr');
+            tr.appendChild(td(o.id));
+            tr.appendChild(td(o.owner_nickname || '（账号已注销）'));
+            tr.appendChild(td(o.owner_dorm || '-'));
+            tr.appendChild(td(o.filename));
+            tr.appendChild(td(colorLabel(o.color_type) + ' / ' + duplexLabel(o.duplex)));
+            tr.appendChild(td(o.remark || '-'));
+            tr.appendChild(el('td', {}, [statusBadge(o.status)]));
+            tr.appendChild(td(o.claimer_nickname || '待接单'));
+            tr.appendChild(td(o.create_time || ''));
+
+            const actions = el('div', { class: 'row-actions' });
+            if (o.claimed_by == null) {
+                actions.appendChild(el('button', { text: '✋ 接单', onclick: () => claimOrder(o.id) }));
+            } else if (o.is_mine || state.user.role === 'super') {
+                actions.appendChild(el('button', { class: 'ghost', text: '释放', onclick: () => releaseOrder(o.id) }));
+            }
+            if (o.can_manage) {
+                STATUSES.forEach(s => {
+                    if (s === o.status) return;
+                    actions.appendChild(el('button', { text: '→ ' + s, onclick: () => updateStatus(o.id, s) }));
+                });
+                actions.appendChild(el('button', { class: 'ghost', text: '⬇ 下载', onclick: () => downloadOrder(o.id) }));
+            } else if (o.claimed_by != null) {
+                actions.appendChild(el('span', { class: 'muted', text: '已被他人接单，无权操作' }));
+            }
+            tr.appendChild(el('td', {}, [actions]));
+            return tr;
+        }
+
+        async function loadOrders() {
+            const tbody = $('orderBody');
+            if (!tbody) return;
+            const params = new URLSearchParams({ size: '100', scope: state.orderScope });
+            if (state.orderStatus) params.set('status', state.orderStatus);
+            const data = await api('/api/orders?' + params.toString());
+            tbody.textContent = '';
+            if (data.code !== 0) {
+                setMsg('orderMsg', '❌ ' + (data.msg || '加载失败'), 'err');
+                return;
+            }
+            setMsg('orderMsg', '共 ' + data.total + ' 条订单', 'ok');
+            if (!data.orders.length) {
+                tbody.appendChild(el('tr', {}, [el('td', { colspan: 10, class: 'muted', text: '没有符合条件的订单' })]));
+                return;
+            }
+            data.orders.forEach(o => tbody.appendChild(orderRow(o)));
+        }
+
+        async function claimOrder(id) {
+            const data = await api('/api/order/' + id + '/claim', { method: 'POST' });
+            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) {
+                await loadOrders();
+                if (state.user.role === 'super') await loadStats();
             }
         }
 
-        // ---------- 自动刷新 ----------
+        async function releaseOrder(id) {
+            if (!window.confirm('确定释放订单 #' + id + ' 吗？释放后其他管理员可以接单。')) return;
+            const data = await api('/api/order/' + id + '/release', { method: 'POST' });
+            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) {
+                await loadOrders();
+                if (state.user.role === 'super') await loadStats();
+            }
+        }
+
+        async function updateStatus(id, status) {
+            const data = await api('/api/order/' + id + '/status', {
+                method: 'PUT', body: JSON.stringify({ status: status }),
+            });
+            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) {
+                await loadOrders();
+                if (state.user.role === 'super') await loadStats();
+            }
+        }
+
+        function filenameFromDisposition(cd) {
+            if (!cd) return null;
+            let m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+            if (m) { try { return decodeURIComponent(m[1]); } catch (e) { /* 忽略 */ } }
+            m = /filename="?([^";]+)"?/i.exec(cd);
+            return m ? m[1] : null;
+        }
+
+        async function downloadOrder(id) {
+            setMsg('orderMsg', '⏳ 正在下载…', '');
+            let res;
+            try {
+                res = await fetch('/api/order/' + id + '/download');
+            } catch (e) {
+                setMsg('orderMsg', '❌ 网络错误，下载失败', 'err');
+                return;
+            }
+            if (!res.ok) {
+                let msg = '下载失败（HTTP ' + res.status + '）';
+                try { const d = await res.json(); if (d && d.msg) msg = d.msg; } catch (e) { /* 忽略 */ }
+                setMsg('orderMsg', '❌ ' + msg, 'err');
+                return;
+            }
+            const blob = await res.blob();
+            const name = filenameFromDisposition(res.headers.get('Content-Disposition')) || ('order-' + id);
+            const url = URL.createObjectURL(blob);
+            const a = el('a', { href: url, download: name });
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            setMsg('orderMsg', '✅ 已开始下载：' + name, 'ok');
+        }
+
         function setupAutoRefresh() {
-            const toggle = document.getElementById('autoRefresh');
+            stopAutoRefresh();
+            const toggle = $('autoRefresh');
+            if (!toggle) return;
             const apply = () => {
-                if (autoTimer) clearInterval(autoTimer);
-                autoTimer = toggle.checked ? setInterval(loadOrders, AUTO_REFRESH_MS) : null;
+                stopAutoRefresh();
+                if (toggle.checked) state.timer = window.setInterval(loadOrders, AUTO_REFRESH_MS);
             };
-            toggle.onchange = apply;
+            toggle.addEventListener('change', apply);
             apply();
         }
 
-        // ---------- 初始化 ----------
-        window.onload = function () {
-            document.getElementById('adminToken').value = getToken();
-            setupAutoRefresh();
-            loadOrders();
-        };
+        function stopAutoRefresh() {
+            if (state.timer) { window.clearInterval(state.timer); state.timer = null; }
+        }
+
+        /* =========================================================
+         * SVG 可视化图表（原生手绘，不依赖任何外部 CDN）
+         * ========================================================= */
+        function barChart(items, color) {
+            const w = 660, h = 210, pad = { l: 30, r: 10, t: 14, b: 24 };
+            const max = Math.max(1, items.reduce((m, d) => Math.max(m, d.value), 0));
+            const bw = (w - pad.l - pad.r) / Math.max(items.length, 1);
+            const plotH = h - pad.t - pad.b;
+            const svg = svgEl('svg', { viewBox: '0 0 ' + w + ' ' + h, role: 'img' });
+            svg.appendChild(svgEl('line', { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: '#e5e7eb', 'stroke-width': 1 }));
+            svg.appendChild(svgEl('line', { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: '#e5e7eb', 'stroke-width': 1 }));
+            items.forEach((d, i) => {
+                const bh = plotH * (d.value / max);
+                const x = pad.l + i * bw;
+                const rect = svgEl('rect', {
+                    x: (x + bw * 0.22).toFixed(1),
+                    y: (h - pad.b - bh).toFixed(1),
+                    width: Math.max(bw * 0.56, 2).toFixed(1),
+                    height: Math.max(bh, d.value > 0 ? 2 : 0).toFixed(1),
+                    rx: 3, fill: color || '#2563eb',
+                });
+                const tip = svgEl('title', {});
+                tip.textContent = d.label + '：' + d.value;
+                rect.appendChild(tip);
+                svg.appendChild(rect);
+                if (d.value > 0) {
+                    const num = svgEl('text', {
+                        x: (x + bw / 2).toFixed(1), y: (h - pad.b - bh - 4).toFixed(1),
+                        'font-size': 11, 'text-anchor': 'middle', fill: '#6b7280',
+                    });
+                    num.textContent = d.value;
+                    svg.appendChild(num);
+                }
+                const lab = svgEl('text', {
+                    x: (x + bw / 2).toFixed(1), y: h - 8,
+                    'font-size': 10, 'text-anchor': 'middle', fill: '#6b7280',
+                });
+                lab.textContent = String(d.label).slice(5);
+                svg.appendChild(lab);
+            });
+            const top = svgEl('text', { x: pad.l - 6, y: pad.t + 8, 'font-size': 11, 'text-anchor': 'end', fill: '#6b7280' });
+            top.textContent = String(max);
+            svg.appendChild(top);
+            return svg;
+        }
+
+        function donutChart(items) {
+            const size = 170, r = 62, sw = 24, cx = size / 2, cy = size / 2;
+            const total = items.reduce((s, d) => s + d.value, 0);
+            const svg = svgEl('svg', { viewBox: '0 0 ' + size + ' ' + size, width: size, height: size, role: 'img' });
+            if (total <= 0) {
+                svg.appendChild(svgEl('circle', { cx: cx, cy: cy, r: r, fill: 'none', stroke: '#e5e7eb', 'stroke-width': sw }));
+            } else {
+                const C = 2 * Math.PI * r;
+                let offset = 0;
+                items.forEach((d, i) => {
+                    if (d.value <= 0) return;
+                    const len = C * (d.value / total);
+                    const arc = svgEl('circle', {
+                        cx: cx, cy: cy, r: r, fill: 'none',
+                        stroke: PALETTE[i % PALETTE.length], 'stroke-width': sw,
+                        'stroke-dasharray': len.toFixed(2) + ' ' + (C - len).toFixed(2),
+                        'stroke-dashoffset': (-offset).toFixed(2),
+                        transform: 'rotate(-90 ' + cx + ' ' + cy + ')',
+                    });
+                    const tip = svgEl('title', {});
+                    tip.textContent = d.label + '：' + d.value;
+                    arc.appendChild(tip);
+                    svg.appendChild(arc);
+                    offset += len;
+                });
+            }
+            const num = svgEl('text', {
+                x: cx, y: cy + 8, 'text-anchor': 'middle',
+                'font-size': 24, 'font-weight': 700, fill: '#1f2328',
+            });
+            num.textContent = String(total);
+            svg.appendChild(num);
+            return svg;
+        }
+
+        function kpiCard(num, label) {
+            return el('div', { class: 'card kpi' }, [
+                el('div', { class: 'num', text: String(num) }),
+                el('div', { class: 'lab', text: label }),
+            ]);
+        }
+
+        function barCard(title, items) {
+            const card = el('div', { class: 'card' });
+            card.appendChild(el('h3', { text: title }));
+            card.appendChild(el('div', { class: 'chart' }, [barChart(items)]));
+            return card;
+        }
+
+        function donutCard(title, items) {
+            const card = el('div', { class: 'card' });
+            card.appendChild(el('h3', { text: title }));
+            const clean = items.filter(i => i.value > 0);
+            if (!clean.length) {
+                card.appendChild(el('p', { class: 'muted', text: '暂无数据' }));
+                return card;
+            }
+            const wrap = el('div', { style: 'display:flex;gap:14px;align-items:center;flex-wrap:wrap;' });
+            wrap.appendChild(donutChart(clean));
+            const lg = el('div', { class: 'legend', style: 'flex-direction:column;gap:6px;' });
+            clean.forEach((d, i) => lg.appendChild(el('span', {}, [
+                el('i', { style: 'background:' + PALETTE[i % PALETTE.length] }),
+                d.label + '：' + d.value,
+            ])));
+            wrap.appendChild(lg);
+            card.appendChild(wrap);
+            return card;
+        }
+
+        /* ---------------- 管理员 / 超管：数据可视化 ---------------- */
+        async function loadStats() {
+            const box = $('statsBox');
+            if (!box) return;
+            const data = await api('/api/admin/stats');
+            box.textContent = '';
+            if (data.code !== 0) {
+                box.appendChild(el('div', { class: 'card', text: '❌ 统计数据加载失败' }));
+                return;
+            }
+            const kpis = el('div', { class: 'grid' });
+            kpis.appendChild(kpiCard(data.users.total, '注册账号总数'));
+            kpis.appendChild(kpiCard(data.users.active, '启用账号'));
+            kpis.appendChild(kpiCard(data.users.disabled, '已禁用账号'));
+            kpis.appendChild(kpiCard(data.users.new_7d, '近 7 天新增账号'));
+            kpis.appendChild(kpiCard(data.orders.total, '订单总数'));
+            kpis.appendChild(kpiCard(data.orders.claimed, '已被接单'));
+            kpis.appendChild(kpiCard(data.orders.unclaimed, '待接单'));
+            box.appendChild(kpis);
+
+            const charts = el('div', { class: 'grid' });
+            charts.appendChild(barCard('每日下单量（近 14 天）', (data.daily || []).map(d => ({ label: d.date, value: d.count }))));
+            charts.appendChild(donutCard('账号角色分布', ROLE_ORDER.map(r => ({
+                label: roleLabel(r), value: (data.users.by_role || {})[r] || 0,
+            }))));
+            charts.appendChild(donutCard('订单状态分布', STATUSES.map(s => ({
+                label: s, value: (data.orders.by_status || {})[s] || 0,
+            }))));
+            charts.appendChild(donutCard('打印类别分布', [
+                { label: '黑白', value: (data.orders.by_color || {}).black || 0 },
+                { label: '彩色', value: (data.orders.by_color || {}).color || 0 },
+            ]));
+            charts.appendChild(donutCard('单 / 双面分布', [
+                { label: '单面', value: (data.orders.by_duplex || {}).single || 0 },
+                { label: '双面', value: (data.orders.by_duplex || {}).double || 0 },
+            ]));
+            box.appendChild(charts);
+
+            const top = el('div', { class: 'card' });
+            top.appendChild(el('h3', { text: '接单排行 Top 5' }));
+            const list = data.top_claimers || [];
+            if (!list.length) {
+                top.appendChild(el('p', { class: 'muted', text: '暂无接单记录' }));
+            } else {
+                list.forEach((t, i) => top.appendChild(el('div', { text: (i + 1) + '. ' + t.nickname + ' —— ' + t.c + ' 单' })));
+            }
+            box.appendChild(top);
+        }
+
+        /* ---------------- 管理员 / 超管：账号管理 ----------------
+         * 两种角色共用同一张表，列由 userColumns() 按角色现算：
+         *   - 密码列：默认不存在，只有超管点开「查看密码」才出现
+         *   - 操作列：只有超管有（改角色 / 禁用 / 删除都是超管专属）
+         * ----------------------------------------------------- */
+        function userColumns() {
+            const cols = ['ID', '昵称', '姓名', '学号', '宿舍', '联系方式'];
+            if (state.showPasswords) cols.push('密码');
+            cols.push('角色', '状态', '下单数', '接单数', '注册时间', '最后登录');
+            if (state.user && state.user.role === 'super') cols.push('操作');
+            return cols;
+        }
+
+        function usersCard() {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;' });
+            head.appendChild(el('h3', { text: '👥 账号管理', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadUsers }));
+            card.appendChild(head);
+
+            const table = el('table', { style: 'margin-top:12px;' });
+            table.appendChild(el('thead', {}, [el('tr', { id: 'userHeadRow' })]));
+            table.appendChild(el('tbody', { id: 'userBody' }));
+            card.appendChild(table);
+            card.appendChild(el('div', { class: 'msg', id: 'userMsg' }));
+
+            // 「查看密码」故意做得很不起眼，塞在右下角：默认没人会注意到，
+            // 需要时超管自己点一下，列表才切换成带密码的版本。
+            if (state.user && state.user.role === 'super') {
+                const foot = el('div', { style: 'text-align:right;margin-top:8px;' });
+                foot.appendChild(el('button', {
+                    id: 'pwToggle',
+                    text: state.showPasswords ? '🔒 隐藏密码' : '🔑 查看密码',
+                    style: 'font-size:12px;padding:2px 6px;color:#9ca3af;background:none;'
+                         + 'border:none;cursor:pointer;text-decoration:underline dotted;',
+                    onclick: togglePasswords,
+                }));
+                card.appendChild(foot);
+            }
+            return card;
+        }
+
+        function userRow(u) {
+            const tr = el('tr');
+            tr.appendChild(td(u.id));
+            tr.appendChild(td(u.nickname));
+            // 留空的字段显示「-」，避免表格出现一片看不清是「空」还是「没渲染」的空白
+            tr.appendChild(td(u.real_name || '-'));
+            tr.appendChild(td(u.student_id || '-'));
+            tr.appendChild(td(u.dorm || '-'));
+            const cInfo = CONTACT_HINTS[u.contact_type];
+            tr.appendChild(td(u.contact ? (cInfo ? cInfo.label + '：' : '') + u.contact : '-'));
+            if (state.showPasswords) {
+                tr.appendChild(el('td', {}, [el('span', { class: 'pw', text: u.password || '（无法解密）' })]));
+            }
+            tr.appendChild(el('td', {}, [el('span', { class: 'role-badge role-' + u.role, text: u.role_label })]));
+            tr.appendChild(td(u.status === 'active' ? '启用' : '已禁用'));
+            tr.appendChild(td(u.order_count));
+            tr.appendChild(td(u.claimed_count));
+            tr.appendChild(td(u.create_time || ''));
+            tr.appendChild(td(u.last_login || '从未登录'));
+
+            // 操作列只有超管有：改角色 / 禁用 / 删除都是超管专属
+            if (!(state.user && state.user.role === 'super')) return tr;
+
+            const box = el('div', { class: 'row-actions' });
+            const isSelf = state.user && u.id === state.user.id;
+            if (u.role === 'super') {
+                box.appendChild(el('span', { class: 'muted', text: '超级管理员' }));
+            } else {
+                if (u.role === 'user') {
+                    box.appendChild(el('button', { text: '升为管理员', onclick: () => setRole(u.id, 'admin') }));
+                } else {
+                    box.appendChild(el('button', { class: 'ghost', text: '降为普通用户', onclick: () => setRole(u.id, 'user') }));
+                }
+                if (!isSelf) {
+                    if (u.status === 'active') {
+                        box.appendChild(el('button', { class: 'danger', text: '禁用', onclick: () => setUserStatus(u.id, 'disabled') }));
+                    } else {
+                        box.appendChild(el('button', { text: '启用', onclick: () => setUserStatus(u.id, 'active') }));
+                    }
+                    box.appendChild(el('button', { class: 'danger', text: '删除', onclick: () => deleteUser(u) }));
+                }
+            }
+            tr.appendChild(el('td', {}, [box]));
+            return tr;
+        }
+
+        async function loadUsers() {
+            const tbody = $('userBody');
+            if (!tbody) return;
+            // 密码要显式申请；服务器只认超管的这个参数，管理员带了也拿不到
+            const data = await api('/api/admin/users' + (state.showPasswords ? '?with_password=1' : ''));
+            tbody.textContent = '';
+            if (data.code !== 0) {
+                setMsg('userMsg', '❌ ' + (data.msg || '加载失败'), 'err');
+                return;
+            }
+            // 以服务器返回为准同步开关，避免前端状态和实际拿到的数据对不上
+            state.showPasswords = !!data.with_password;
+            syncPasswordToggle();
+
+            const headRow = $('userHeadRow');
+            if (headRow) {
+                headRow.textContent = '';
+                userColumns().forEach(t => headRow.appendChild(el('th', { text: t })));
+            }
+            setMsg('userMsg', '共 ' + data.total_users + ' 个账号', 'ok');
+            data.users.forEach(u => tbody.appendChild(userRow(u)));
+        }
+
+        function syncPasswordToggle() {
+            const btn = $('pwToggle');
+            if (btn) btn.textContent = state.showPasswords ? '🔒 隐藏密码' : '🔑 查看密码';
+        }
+
+        async function togglePasswords() {
+            state.showPasswords = !state.showPasswords;
+            syncPasswordToggle();
+            await loadUsers();
+        }
+
+        async function setRole(id, role) {
+            const data = await api('/api/admin/user/' + id + '/role', {
+                method: 'PUT', body: JSON.stringify({ role: role }),
+            });
+            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) { await loadUsers(); await loadStats(); }
+        }
+
+        async function setUserStatus(id, status) {
+            const data = await api('/api/admin/user/' + id + '/status', {
+                method: 'PUT', body: JSON.stringify({ status: status }),
+            });
+            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) { await loadUsers(); await loadStats(); }
+        }
+
+        async function deleteUser(u) {
+            const who = u.nickname + (u.real_name ? '（' + u.real_name + '）' : '');
+            if (!window.confirm('确定删除账号「' + who + '」吗？该账号的订单会保留但解除归属。')) return;
+            const data = await api('/api/admin/user/' + u.id, { method: 'DELETE' });
+            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) { await loadUsers(); await loadStats(); }
+        }
+
+        /* =========================================================
+         * 公告
+         * ========================================================= */
+        // 只负责拉取并写入 state，不动 DOM。
+        // 之前把「获取 + renderApp」放在一个函数里，曾在 refreshAll 中与 loadTickets 并行执行，
+        // 结果 renderApp 把刚填好的工单列表整个重建掉 —— 所以拆开来、并显式控制渲染时机。
+        async function fetchAnnouncement() {
+            const data = await api('/api/announcement');
+            if (data.code !== 0) return;
+            const before = state.announcement ? state.announcement.id : null;
+            state.announcement = data.announcement;
+            // 换了一条新公告就重新弹出来；同一条公告则尊重用户之前「已关闭」的选择
+            if (!state.announcement || state.announcement.id !== before) state.announcementHidden = false;
+        }
+
+        function announcementBar() {
+            const a = state.announcement;
+            const font = ANNOUNCE_FONTS[a.font_family] || ANNOUNCE_FONTS.system;
+            const barEl = el('div', { class: 'announce-bar' });
+            barEl.appendChild(el('span', { class: 'announce-icon', text: '📢' }));
+            // 内容只用 textContent：即使管理员写了 HTML 也只会当普通文字展示
+            barEl.appendChild(el('div', {
+                class: 'announce-body',
+                text: a.content,
+                style: 'font-family:' + font.css + ';font-size:' + a.font_size + 'px;color:' + a.font_color + ';',
+            }));
+            barEl.appendChild(el('button', {
+                class: 'announce-close', text: '✕', title: '关闭公告',
+                onclick: () => setAnnouncementHidden(true),
+            }));
+            return barEl;
+        }
+
+        // 只动公告栏和顶栏按钮这两个节点，不重建整页
+        function setAnnouncementHidden(hidden) {
+            state.announcementHidden = hidden;
+            const app = $('app');
+            const barNode = app.querySelector('.announce-bar');
+            if (hidden) {
+                if (barNode) barNode.remove();
+            } else if (state.announcement && !barNode) {
+                app.insertBefore(announcementBar(), app.firstChild);
+            }
+            const toggle = $('announceToggle');
+            if (toggle) toggle.style.display = (state.announcement && hidden) ? '' : 'none';
+        }
+
+        function applyAnnounceStyle(node, content, fontKey, size, color) {
+            const font = ANNOUNCE_FONTS[fontKey] || ANNOUNCE_FONTS.system;
+            node.textContent = content || '（公告预览）';
+            node.style.fontFamily = font.css;
+            node.style.fontSize = Math.min(28, Math.max(12, Number(size) || 15)) + 'px';
+            node.style.color = color || '#1f2328';
+        }
+
+        function announcementAdminCard() {
+            const editing = state.editingAnnouncementId != null;
+            const a = editing ? (state.announcements || []).find(x => x.id === state.editingAnnouncementId) : null;
+
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;' });
+            head.appendChild(el('h3', { text: editing ? '✏️ 修改公告' : '📢 发布公告', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            if (editing) {
+                head.appendChild(el('button', { class: 'ghost', text: '取消修改', onclick: () => {
+                    state.editingAnnouncementId = null;
+                    redraw();
+                } }));
+            }
+            card.appendChild(head);
+
+            const content = el('textarea', {
+                rows: 3, placeholder: '输入公告内容，例如：今晚 22:00-23:00 打印机保养，暂停接单',
+                style: 'resize:vertical;line-height:1.6;',
+            });
+
+            const fontSel = el('select');
+            Object.keys(ANNOUNCE_FONTS).forEach(k => fontSel.appendChild(el('option', { value: k, text: ANNOUNCE_FONTS[k].label })));
+            const sizeInput = el('input', { type: 'number', min: 12, max: 28, value: 15 });
+            const colorInput = el('input', { type: 'color', value: '#1f2328', style: 'height:38px;padding:2px;' });
+
+            const styleRow = el('div', { class: 'style-row' }, [
+                el('label', {}, [el('div', { class: 'muted', text: '字体' }), fontSel]),
+                el('label', {}, [el('div', { class: 'muted', text: '字号 (12-28)' }), sizeInput]),
+                el('label', {}, [el('div', { class: 'muted', text: '颜色' }), colorInput]),
+            ]);
+
+            const preview = el('div', { class: 'announce-preview' });
+            function syncPreview() {
+                applyAnnounceStyle(preview, content.value.trim(), fontSel.value, sizeInput.value, colorInput.value);
+            }
+            content.addEventListener('input', syncPreview);
+            fontSel.addEventListener('change', syncPreview);
+            sizeInput.addEventListener('input', syncPreview);
+            colorInput.addEventListener('input', syncPreview);
+
+            card.appendChild(el('div', { class: 'field' }, [el('label', { text: '公告内容' }), content]));
+            card.appendChild(styleRow);
+            card.appendChild(el('div', { class: 'field' }, [el('label', { text: '效果预览' }), preview]));
+
+            const msg = el('div', { class: 'msg', id: 'announceAdminMsg' });
+            const actions = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' }, [
+                el('button', { text: editing ? '保存修改' : '发布公告', onclick: submit }),
+            ]);
+            card.appendChild(el('div', { class: 'field' }, [actions, msg]));
+
+            const list = el('div', { id: 'announceList', style: 'margin-top:6px;' });
+            card.appendChild(list);
+
+            // 预填要编辑的公告（放在最后，保证上面的 preview 等节点已就位）
+            if (a) {
+                content.value = a.content || '';
+                fontSel.value = ANNOUNCE_FONTS[a.font_family] ? a.font_family : 'system';
+                sizeInput.value = a.font_size || 15;
+                colorInput.value = ANNOUNCE_COLOR_RE.test(a.font_color || '') ? a.font_color : '#1f2328';
+            }
+            syncPreview();
+
+            async function submit() {
+                const text = content.value.trim();
+                if (!text) { setMsg('announceAdminMsg', '❌ 公告内容不能为空', 'err'); return; }
+                const body = {
+                    content: text,
+                    font_family: fontSel.value,
+                    font_size: Number(sizeInput.value) || 15,
+                    font_color: colorInput.value,
+                };
+                // 编辑走 PUT（不改变是否生效），发布走 POST（自动成为当前生效公告）
+                const data = editing
+                    ? await api('/api/admin/announcements/' + state.editingAnnouncementId, { method: 'PUT', body: JSON.stringify(body) })
+                    : await api('/api/admin/announcements', { method: 'POST', body: JSON.stringify(body) });
+                setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+                if (data.code === 0) {
+                    state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
+                    state.editingAnnouncementId = null;
+                    await fetchAnnouncement();
+                    await redraw();
+                }
+            }
+            return card;
+        }
+
+        async function loadAnnouncementsAdmin() {
+            const list = $('announceList');
+            if (!list) return;
+            // 操作成功后会发生整页重绘，提示条也会被重建 —— 所以用 flash 把结果重新贴回去
+            if (state.announceFlash) {
+                setMsg('announceAdminMsg', state.announceFlash.text, state.announceFlash.type);
+                state.announceFlash = null;
+            }
+            const data = await api('/api/admin/announcements');
+            list.textContent = '';
+            if (data.code !== 0) {
+                list.appendChild(el('div', { class: 'empty', text: '公告列表加载失败' }));
+                return;
+            }
+            state.announcements = data.announcements;
+            if (!data.announcements.length) {
+                list.appendChild(el('div', { class: 'empty', text: '暂无历史公告' }));
+                return;
+            }
+            list.appendChild(el('h4', { text: '历史公告', style: 'margin:12px 0 0;' }));
+            data.announcements.forEach(a => {
+                const row = el('div', { class: 'ticket-item' });
+                const main = el('div', { class: 't-main' });
+                main.appendChild(el('div', { class: 't-subject' }, [
+                    el('span', { class: 'status-badge ' + (a.is_active ? 'status-open' : 'status-closed'),
+                        text: a.is_active ? '生效中' : '已停用' }),
+                    el('span', { text: a.content.length > 26 ? a.content.slice(0, 26) + '…' : a.content }),
+                ]));
+                main.appendChild(el('div', { class: 't-preview' },
+                    [el('span', { text: (a.author ? '发布人：' + a.author + ' · ' : '') + (a.update_time || '') })]));
+                row.appendChild(main);
+                const acts = el('div', { class: 'row-actions' });
+                acts.appendChild(el('button', { text: '编辑', onclick: (e) => {
+                    e.stopPropagation();
+                    state.editingAnnouncementId = a.id;
+                    redraw();
+                } }));
+                acts.appendChild(el('button', { class: a.is_active ? 'ghost' : '',
+                    text: a.is_active ? '停用' : '启用',
+                    onclick: (e) => { e.stopPropagation(); setAnnouncementActive(a.id, !a.is_active); } }));
+                acts.appendChild(el('button', { class: 'danger', text: '删除',
+                    onclick: (e) => { e.stopPropagation(); deleteAnnouncement(a.id); } }));
+                row.appendChild(acts);
+                list.appendChild(row);
+            });
+        }
+
+        async function setAnnouncementActive(id, active) {
+            const data = await api('/api/admin/announcements/' + id + '/active', {
+                method: 'PUT', body: JSON.stringify({ active: active }),
+            });
+            setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) {
+                state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
+                await fetchAnnouncement();
+                await redraw();
+            }
+        }
+
+        async function deleteAnnouncement(id) {
+            if (!window.confirm('确定删除这条公告吗？此操作不可恢复。')) return;
+            const data = await api('/api/admin/announcements/' + id, { method: 'DELETE' });
+            setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+            if (data.code === 0) {
+                if (state.editingAnnouncementId === id) state.editingAnnouncementId = null;
+                state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
+                await fetchAnnouncement();
+                await redraw();
+            }
+        }
+
+        /* =========================================================
+         * 工单（站内信）
+         * ========================================================= */
+        function ticketsCard(isStaff) {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;' });
+            head.appendChild(el('h3', { text: '🎫 工单', style: 'margin:0;' }));
+            head.appendChild(el('span', { class: 'badge-dot', id: 'ticketBadge', style: 'display:none;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            if (isStaff) {
+                const sel = el('select', { style: 'width:auto;', onchange: (e) => {
+                    state.ticketFilter = e.target.value;
+                    loadTickets();
+                } }, [
+                    el('option', { value: '', text: '全部状态' }),
+                    el('option', { value: 'open', text: '进行中' }),
+                    el('option', { value: 'closed', text: '已关闭' }),
+                ]);
+                sel.value = state.ticketFilter;
+                head.appendChild(sel);
+            }
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadTickets }));
+            card.appendChild(head);
+
+            if (!isStaff) {
+                const subject = el('input', { type: 'text', placeholder: '一句话描述问题，例如：打印出来缺页' });
+                const body = el('textarea', { rows: 3, placeholder: '详细描述：文件名 / 打印要求 / 出现的问题', style: 'resize:vertical;' });
+                const toggleBtn = el('button', { text: '＋ 发起工单', onclick: () => toggle() });
+                const formBox = el('div', { id: 'ticketForm', style: 'display:none;', });
+                formBox.appendChild(el('div', { class: 'field' }, [el('label', { text: '标题' }), subject]));
+                formBox.appendChild(el('div', { class: 'field' }, [el('label', { text: '详细描述' }), body]));
+                const msg = el('div', { class: 'msg', id: 'ticketMsg' });
+                formBox.appendChild(el('div', { class: 'field' }, [el('button', { text: '提交工单', onclick: submit }), msg]));
+                card.appendChild(el('div', { style: 'margin-top:12px;' }, [toggleBtn]));
+                card.appendChild(formBox);
+
+                function toggle() {
+                    const box = $('ticketForm');
+                    const opening = box.style.display === 'none';
+                    box.style.display = opening ? 'block' : 'none';
+                    toggleBtn.textContent = opening ? '✕ 收起' : '＋ 发起工单';
+                    if (opening) subject.focus();
+                }
+                async function submit() {
+                    const s = subject.value.trim();
+                    const b = body.value.trim();
+                    if (s.length < 2) { setMsg('ticketMsg', '❌ 标题至少 2 个字', 'err'); return; }
+                    if (b.length < 2) { setMsg('ticketMsg', '❌ 描述至少 2 个字', 'err'); return; }
+                    const data = await api('/api/tickets', {
+                        method: 'POST', body: JSON.stringify({ subject: s, body: b }),
+                    });
+                    setMsg('ticketMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
+                    if (data.code === 0) {
+                        subject.value = ''; body.value = '';
+                        await loadTickets();
+                        openTicket(data.id);
+                    }
+                }
+            }
+
+            card.appendChild(el('div', { id: 'ticketList', style: 'margin-top:6px;' }));
+            return card;
+        }
+
+        async function loadTickets() {
+            const list = $('ticketList');
+            if (!list) return;
+            const data = await api('/api/tickets' + (state.ticketFilter ? '?status=' + encodeURIComponent(state.ticketFilter) : ''));
+            list.textContent = '';
+            if (data.code !== 0) {
+                list.appendChild(el('div', { class: 'empty', text: '工单加载失败' }));
+                return;
+            }
+            state.tickets = data.tickets;
+            const badge = $('ticketBadge');
+            if (badge) {
+                badge.textContent = data.unread_total;
+                badge.style.display = data.unread_total ? 'inline-block' : 'none';
+            }
+            if (!data.tickets.length) {
+                list.appendChild(el('div', { class: 'empty',
+                    text: data.staff ? '暂无工单' : '还没有工单，遇到问题可以点上面「＋ 发起工单」' }));
+                return;
+            }
+            data.tickets.forEach(t => {
+                const item = el('div', { class: 'ticket-item', onclick: () => openTicket(t.id) });
+                const main = el('div', { class: 't-main' });
+                const sub = el('div', { class: 't-subject' });
+                sub.appendChild(el('span', { class: 'status-badge ' + (t.status === 'open' ? 'status-open' : 'status-closed'),
+                    text: t.status === 'open' ? '进行中' : '已关闭' }));
+                sub.appendChild(el('span', { text: t.subject }));
+                if (t.unread) sub.appendChild(el('span', { class: 'badge-dot', text: t.unread }));
+                main.appendChild(sub);
+                main.appendChild(el('div', { class: 't-preview', text: t.last_body || '' }));
+                item.appendChild(main);
+                const meta = el('div', { class: 't-meta' });
+                if (data.staff && t.owner_nickname) meta.appendChild(el('div', { text: '👤 ' + t.owner_nickname }));
+                meta.appendChild(el('div', { text: t.update_time || '' }));
+                meta.appendChild(el('div', { text: t.msg_count + ' 条消息' }));
+                item.appendChild(meta);
+                list.appendChild(item);
+            });
+        }
+
+        async function openTicket(id) {
+            const data = await api('/api/tickets/' + id);
+            if (data.code !== 0) {
+                alert(data.msg || '打开工单失败');
+                return;
+            }
+            const t = data.ticket;
+            const mask = el('div', { class: 'modal-mask', onclick: (e) => { if (e.target === mask) close(); } });
+            const modal = el('div', { class: 'modal' });
+
+            const head = el('div', { class: 'modal-head' });
+            head.appendChild(el('span', { class: 'status-badge ' + (t.status === 'open' ? 'status-open' : 'status-closed'),
+                text: t.status === 'open' ? '进行中' : '已关闭' }));
+            head.appendChild(el('span', { class: 'm-title', text: t.subject }));
+            head.appendChild(el('button', { class: 'announce-close', text: '✕', onclick: () => close() }));
+            modal.appendChild(head);
+
+            const bodyEl = el('div', { class: 'modal-body' });
+            if (!data.messages.length) {
+                bodyEl.appendChild(el('div', { class: 'empty', text: '暂无消息' }));
+            }
+            data.messages.forEach(m => {
+                // 气泡左右按「是不是自己发的」决定
+                const mine = m.sender_id === state.user.id;
+                // 署名要同时看「谁发的」和「发送者身份」：
+                // 只判断 sender_id 会把管理员发给我的回复也标成「我」，必须再按 sender_role 区分。
+                const senderIsStaff = m.sender_role !== 'user';
+                let who;
+                if (mine) who = senderIsStaff ? '我（管理员）' : '我';
+                else if (senderIsStaff) who = state.user.role === 'user' ? '客服' : '管理员 ' + (m.sender_nickname || '');
+                else who = '用户 ' + (m.sender_nickname || '');
+                const row = el('div', { class: 'bubble-row' + (mine ? ' mine' : '') });
+                row.appendChild(el('div', { class: 'bubble-meta', text: who + ' · ' + (m.create_time || '') }));
+                row.appendChild(el('div', { class: 'bubble', text: m.body }));
+                bodyEl.appendChild(row);
+            });
+            modal.appendChild(bodyEl);
+
+            const replyBox = el('input', { type: 'text', placeholder: t.status === 'closed' ? '工单已关闭' : '输入回复…',
+                disabled: t.status === 'closed' });
+            const foot = el('div', { class: 'modal-foot' });
+            foot.appendChild(replyBox);
+            // 工单关闭时连发送按钮一起禁用，避免看起来还能发但实际发不出去
+            foot.appendChild(el('button', { text: '发送', disabled: t.status === 'closed', onclick: send }));
+            foot.appendChild(el('button', { class: t.status === 'open' ? 'ghost' : '',
+                text: t.status === 'open' ? '关闭工单' : '重新打开', onclick: toggleStatus }));
+            modal.appendChild(foot);
+
+            mask.appendChild(modal);
+            document.body.appendChild(mask);
+            bodyEl.scrollTop = bodyEl.scrollHeight;
+            setTimeout(() => replyBox.focus(), 30);
+
+            function close() {
+                mask.remove();
+                // 关掉之后刷新列表：已读状态、未读数都会变
+                loadTickets();
+            }
+            async function send() {
+                const text = replyBox.value.trim();
+                if (!text) { alert('请输入回复内容'); return; }
+                const res = await api('/api/tickets/' + id + '/messages', {
+                    method: 'POST', body: JSON.stringify({ body: text }),
+                });
+                if (res.code !== 0) { alert(res.msg || '发送失败'); return; }
+                replyBox.value = '';
+                close();
+                openTicket(id);
+            }
+            async function toggleStatus() {
+                const next = t.status === 'open' ? 'closed' : 'open';
+                const res = await api('/api/tickets/' + id + '/status', {
+                    method: 'PUT', body: JSON.stringify({ status: next }),
+                });
+                if (res.code !== 0) { alert(res.msg || '操作失败'); return; }
+                close();
+                // 重开弹窗，让用户立刻看到状态变化（按钮也会跟着变）
+                openTicket(id);
+            }
+        }
+
+        /* =========================================================
+         * 启动
+         * ========================================================= */
+        bootstrap();
     </script>
 </body>
 </html>

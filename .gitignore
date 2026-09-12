@@ -13,6 +13,11 @@ __pycache__/
 # 但保留 README.md
 !README.md
 
+# 运行日志：含客户端 IP、账号、操作记录，属于隐私数据，绝对不能提交到公开仓库
+logs/
+*.log
+*.log.*
+
 # C extensions
 *.so
 
