@@ -10,8 +10,9 @@ __pycache__/
 # 忽略所有 .md 文件
 *.md
 
-# 但保留 README.md
+# 但保留 README.md 和 DEPLOY.md（部署说明属于项目文档，应当入库）
 !README.md
+!DEPLOY.md
 
 # C extensions
 *.so

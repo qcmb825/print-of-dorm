@@ -12,12 +12,16 @@
         .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
         label { font-size: 14px; color: #555; }
         input, select, button { padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        input[type=number] { width: 80px; }
         button { background: #007bff; color: #fff; border: none; cursor: pointer; }
         button:hover { background: #0056b3; }
         button.ghost { background: #6c757d; }
         button.ghost:hover { background: #565e64; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 10px 8px; border-bottom: 1px solid #eee; text-align: left; font-size: 14px; }
+        /* 列变多了，窄屏横向滚动兜底 */
+        .table-scroll { overflow-x: auto; }
+        .table-scroll th, .table-scroll td { white-space: nowrap; }
         .status-badge { padding: 4px 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
         .st-待打印 { background: #ffc107; color: #333; }
         .st-打印中 { background: #17a2b8; color: #fff; }
@@ -29,6 +33,16 @@
         .muted { color: #888; font-size: 12px; }
         .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
         .row-actions button { padding: 5px 10px; font-size: 12px; }
+        .queue-no { font-weight: 600; color: #007bff; }
+        /* 金额未知必须显眼——绝不能让店主误以为账是准的 */
+        .amount { font-weight: 600; white-space: nowrap; }
+        .amount.unknown { color: #d97706; }
+        .paid-tag { font-size: 11px; color: #888; display: block; }
+        .paid-tag.yes { color: #1e7e34; }
+        a.file-link { color: #007bff; text-decoration: none; }
+        a.file-link:hover { text-decoration: underline; }
+        a.dl-link { color: #888; text-decoration: none; margin-left: 6px; }
+        a.dl-link:hover { color: #007bff; }
     </style>
 </head>
 <body>
@@ -53,9 +67,12 @@
                     <option value="single">单面</option>
                     <option value="double">双面</option>
                 </select>
+                <label>份数：</label>
+                <input type="number" id="copiesInput" name="copies" min="1" max="50" value="1">
             </div>
             <button type="submit">🚀 提交订单</button>
             <span class="muted">支持格式：pdf、jpg、jpeg、png、doc、docx</span>
+            <div id="priceHint" class="muted"></div>
         </form>
         <div id="uploadMsg" class="msg"></div>
     </div>
@@ -91,9 +108,12 @@
             <button onclick="loadOrders()">🔄 刷新列表</button>
             <label style="margin-left:10px;"><input type="checkbox" id="autoRefresh" checked style="width:auto;"> 每 10 秒自动刷新</label>
         </div>
-        <div id="orderList">
+        <div id="orderList" class="table-scroll">
             <table>
-                <thead><tr><th>ID</th><th>文件名</th><th>取件码</th><th>状态</th><th>下单时间</th><th>操作</th></tr></thead>
+                <thead><tr>
+                    <th>队列</th><th>ID</th><th>文件名</th><th>规格</th><th>金额</th>
+                    <th>状态</th><th>取件码</th><th>下单时间</th><th>操作</th>
+                </tr></thead>
                 <tbody id="orderBody"></tbody>
             </table>
         </div>
@@ -136,10 +156,18 @@
             el.className = 'msg' + (type ? ' ' + type : '');
         }
 
-        // 用 textContent 生成单元格，天然免疫 XSS
+        // 用 textContent 生成单元格，天然免疫 XSS。
+        // 约定：这个函数只放纯文本，需要塞元素请用 tdNode()。
         function td(text) {
             const cell = document.createElement('td');
             cell.textContent = text == null ? '' : String(text);
+            return cell;
+        }
+
+        // 需要放子元素时用这个，别改 td()——保住它「纯文本免疫 XSS」的职责
+        function tdNode(node) {
+            const cell = document.createElement('td');
+            cell.appendChild(node);
             return cell;
         }
 
@@ -151,8 +179,13 @@
                 const response = await fetch('/upload', { method: 'POST', body: new FormData(this) });
                 const result = await response.json();
                 if (result.code === 0) {
-                    setMsg('uploadMsg', '✅ 下单成功！订单号 ' + result.order_id + '，取件码 ' + result.pickup_code, 'ok');
+                    let text = '✅ ' + result.msg + '｜订单号 ' + result.order_id + '，取件码 ' + result.pickup_code;
+                    if (!result.page_count_known) {
+                        text += '（页数与金额需店主确认，到店请核对）';
+                    }
+                    setMsg('uploadMsg', text, 'ok');
                     this.reset();
+                    document.getElementById('copiesInput').value = 1;
                     if (typeof loadOrders === 'function') loadOrders();
                 } else {
                     setMsg('uploadMsg', '❌ 上传失败：' + result.msg, 'err');
@@ -161,6 +194,21 @@
                 setMsg('uploadMsg', '❌ 网络错误，请确认后端正在运行！', 'err');
             }
         };
+
+        // 价目提示：从后端取，不在 HTML 里硬编码——否则店主改完 .env 页面会撒谎
+        async function loadPriceTable() {
+            try {
+                const response = await fetch('/price-table');
+                const data = await response.json();
+                const yuan = cents => (cents / 100).toFixed(2);
+                document.getElementById('priceHint').textContent =
+                    '💡 黑白 ' + yuan(data.prices.black_single) + ' 元/页（双面 ' + yuan(data.prices.black_double) + '/页）' +
+                    ' · 彩色 ' + yuan(data.prices.color_single) + ' 元/页（双面 ' + yuan(data.prices.color_double) + '/页）';
+                document.getElementById('copiesInput').max = data.max_copies;
+            } catch (error) {
+                // 价格提示加载失败不影响下单
+            }
+        }
 
         // ---------- 学生：凭取件码查单 ----------
         async function queryMyOrders() {
@@ -187,8 +235,7 @@
                     const line = document.createElement('div');
                     line.className = 'muted';
                     line.textContent = '订单 ' + order.id + ' · ' + order.filename +
-                        ' · ' + (order.color_type === 'color' ? '彩色' : '黑白') +
-                        ' · ' + (order.duplex === 'double' ? '双面' : '单面') +
+                        ' · ' + specText(order) + payText(order) +
                         ' · ' + order.status + ' · ' + (order.create_time || '');
                     box.appendChild(line);
                 });
@@ -197,8 +244,31 @@
             }
         }
 
+        // ---------- 展示辅助（金额文本一律由后端给，前端不做算术）----------
+        function specText(order) {
+            const pages = order.page_count == null ? '页数待定' : order.page_count + ' 页';
+            const sheets = order.sheet_count ? '（' + order.sheet_count + ' 张纸）' : '';
+            return (order.color_type === 'color' ? '彩色' : '黑白') + ' · ' +
+                (order.duplex === 'double' ? '双面' : '单面') + ' · ' +
+                pages + ' × ' + (order.copies || 1) + ' 份' + sheets;
+        }
+
+        function payText(order) {
+            if (order.amount_cents == null) return ' · 应付待定';
+            return ' · 应付 ¥' + order.amount_text + (order.paid ? '（已收款）' : '');
+        }
+
+        function fileUrl(orderId, download) {
+            let url = '/order/' + orderId + '/file?token=' + encodeURIComponent(getToken());
+            if (download) url += '&download=1';
+            return url;
+        }
+
         // ---------- 店主：订单列表 ----------
         async function loadOrders() {
+            // 页面切到后台就别再空转重建 DOM 了
+            if (document.hidden) return;
+
             const tbody = document.getElementById('orderBody');
             const status = document.getElementById('statusFilter').value;
             const url = '/orders?size=100' + (status ? '&status=' + encodeURIComponent(status) : '');
@@ -210,13 +280,54 @@
                 }
                 const result = await response.json();
                 tbody.textContent = '';
-                setMsg('orderMsg', '共 ' + result.total + ' 条订单', 'ok');
+                setMsg('orderMsg', '共 ' + result.total + ' 条订单' +
+                    (result.total > result.orders.length ? '（仅显示最新 ' + result.orders.length + ' 条）' : ''), 'ok');
 
                 result.orders.forEach(order => {
                     const tr = document.createElement('tr');
+
+                    // 队列位次：null 表示已完成，不在队列里
+                    const queueCell = document.createElement('span');
+                    queueCell.className = 'queue-no';
+                    queueCell.textContent = order.queue_no ? '#' + order.queue_no : '-';
+                    tr.appendChild(tdNode(queueCell));
+
                     tr.appendChild(td(order.id));
-                    tr.appendChild(td(order.filename));
-                    tr.appendChild(td(order.pickup_code || '-'));
+
+                    // 文件名：可点击预览 + 下载按钮。这两个链接就是「文件整理很乱」的解药
+                    const nameCell = document.createElement('td');
+                    const fileLink = document.createElement('a');
+                    fileLink.className = 'file-link';
+                    fileLink.href = fileUrl(order.id, false);
+                    fileLink.target = '_blank';
+                    fileLink.rel = 'noopener';
+                    fileLink.textContent = order.filename;
+                    fileLink.title = '点击预览（可直接 Ctrl+P 打印）';
+                    nameCell.appendChild(fileLink);
+
+                    const dlLink = document.createElement('a');
+                    dlLink.className = 'dl-link';
+                    dlLink.href = fileUrl(order.id, true);
+                    dlLink.textContent = '⬇';
+                    dlLink.title = '下载（保留原始文件名）';
+                    nameCell.appendChild(dlLink);
+                    tr.appendChild(nameCell);
+
+                    tr.appendChild(td(specText(order)));
+
+                    // 金额：未知时必须显眼，不能让店主以为账是准的
+                    const amountCell = document.createElement('td');
+                    const amountSpan = document.createElement('span');
+                    amountSpan.className = 'amount' + (order.amount_cents == null ? ' unknown' : '');
+                    amountSpan.textContent = order.amount_cents == null ? '待定' : '¥' + order.amount_text;
+                    amountCell.appendChild(amountSpan);
+                    if (order.amount_cents != null) {
+                        const paidTag = document.createElement('span');
+                        paidTag.className = 'paid-tag' + (order.paid ? ' yes' : '');
+                        paidTag.textContent = order.paid ? '已收款' : '未收款';
+                        amountCell.appendChild(paidTag);
+                    }
+                    tr.appendChild(amountCell);
 
                     const statusCell = document.createElement('td');
                     const badge = document.createElement('span');
@@ -225,20 +336,32 @@
                     statusCell.appendChild(badge);
                     tr.appendChild(statusCell);
 
+                    tr.appendChild(td(order.pickup_code || '-'));
                     tr.appendChild(td(order.create_time || ''));
 
                     const actionCell = document.createElement('td');
                     const actions = document.createElement('div');
                     actions.className = 'row-actions';
+
+                    // 收款标记独立于状态机，可反复切换
+                    if (order.amount_cents != null) {
+                        const payBtn = document.createElement('button');
+                        payBtn.className = 'ghost';
+                        payBtn.textContent = order.paid ? '↩ 取消收款' : '💰 标记已收';
+                        payBtn.onclick = () => togglePaid(order);
+                        actions.appendChild(payBtn);
+                    }
+
                     STATUSES.forEach(target => {
                         if (target === order.status) return;
                         const btn = document.createElement('button');
                         btn.textContent = '→ ' + target;
-                        btn.onclick = () => updateStatus(order.id, target);
+                        btn.onclick = () => updateStatus(order.id, target, order);
                         actions.appendChild(btn);
                     });
                     actionCell.appendChild(actions);
                     tr.appendChild(actionCell);
+
                     tbody.appendChild(tr);
                 });
             } catch (error) {
@@ -246,13 +369,40 @@
             }
         }
 
-        async function updateStatus(orderId, status) {
-            if (!confirm('确定把订单 #' + orderId + ' 改为「' + status + '」吗？')) return;
+        async function updateStatus(orderId, status, order) {
+            let prompt = '确定把订单 #' + orderId + ' 改为「' + status + '」吗？';
+            // 护栏：还没标记收款就取件，先把话说清楚
+            if (status === '已取件' && order && order.amount_cents != null && !order.paid) {
+                prompt += '\n（该单尚未标记收款 ¥' + order.amount_text + '）';
+            }
+            if (!confirm(prompt)) return;
             try {
                 const response = await apiFetch('/order/' + orderId + '/status', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ status: status })
+                });
+                const result = await response.json();
+                if (result.code === 0) {
+                    setMsg('orderMsg', '✅ ' + result.msg, 'ok');
+                    loadOrders();
+                } else {
+                    setMsg('orderMsg', '❌ ' + result.msg, 'err');
+                }
+            } catch (error) {
+                setMsg('orderMsg', '❌ 网络错误，请稍后重试', 'err');
+            }
+        }
+
+        async function togglePaid(order) {
+            const next = !order.paid;
+            const what = next ? '已收款' : '未收款';
+            if (!confirm('确定把订单 #' + order.id + ' 标记为「' + what + '」吗？')) return;
+            try {
+                const response = await apiFetch('/order/' + order.id + '/paid', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paid: next })
                 });
                 const result = await response.json();
                 if (result.code === 0) {
@@ -281,8 +431,14 @@
         window.onload = function () {
             document.getElementById('adminToken').value = getToken();
             setupAutoRefresh();
+            loadPriceTable();
             loadOrders();
         };
+
+        // 从后台切回前台时立刻刷一次，补上被 document.hidden 跳过的那些周期
+        document.addEventListener('visibilitychange', function () {
+            if (!document.hidden) loadOrders();
+        });
     </script>
 </body>
 </html>

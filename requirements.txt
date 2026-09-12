@@ -12,3 +12,6 @@ Flask-Cors==6.0.5
 # 生产环境 WSGI 服务器（替代 Flask 自带开发服务器，详见 DEPLOY.md）
 waitress==3.0.2
 
+# PDF 页数统计（纯 Python，无编译扩展，Windows 免编译）
+pypdf==6.18.1
+
