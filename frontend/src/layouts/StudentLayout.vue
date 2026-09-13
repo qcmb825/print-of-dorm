@@ -37,7 +37,9 @@ onMounted(() => {
     >
       <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:h-16 sm:px-5">
         <BrandMark />
-        <nav class="ml-4 hidden items-center gap-1 sm:flex" aria-label="主导航">
+        <!-- 横向导航放到 md：sm(640) 就显示的话，staff 的 4 个导航项会和品牌、
+             账号区挤在一行，实测在 640px 会溢出 31px。窄屏继续用底部标签栏。 -->
+        <nav class="ml-4 hidden items-center gap-1 md:flex" aria-label="主导航">
           <RouterLink
             v-for="item in navItems"
             :key="item.to"
@@ -68,9 +70,10 @@ onMounted(() => {
       <RouterView />
     </main>
 
-    <!-- 底部标签栏：仅窄屏。列数跟着导航项走，管理员会多一条"管理控制台" -->
+    <!-- 底部标签栏：窄屏用，与上面横向导航在 md 断点交接。
+         列数跟着导航项走，管理员会多一条"管理控制台" -->
     <nav
-      class="fixed inset-x-0 bottom-0 z-20 grid border-t backdrop-blur-xl sm:hidden"
+      class="fixed inset-x-0 bottom-0 z-20 grid border-t backdrop-blur-xl md:hidden"
       :style="{
         gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))`,
         backgroundColor: 'color-mix(in srgb, var(--background) 88%, transparent)',

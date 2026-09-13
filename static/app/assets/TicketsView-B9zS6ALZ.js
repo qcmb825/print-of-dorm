@@ -1,1 +1,0 @@
-import{Dn as e,Sn as t,Vn as n,hr as r}from"./endpoints-BzNG02YK.js";import{t as i}from"./TicketPanel-BMkmXgrm.js";import{t as a}from"./index-BX2avFHL.js";var o=e({__name:`TicketsView`,setup(e){let o=a();return(e,a)=>(n(),t(i,{staff:!1,"current-user-id":r(o).user?.id??0},null,8,[`current-user-id`]))}});export{o as default};

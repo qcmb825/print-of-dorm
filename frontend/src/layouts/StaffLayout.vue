@@ -69,9 +69,14 @@ onMounted(() => {
           {{ item.label }}
         </RouterLink>
       </nav>
-      <div class="mt-auto flex items-center gap-1 border-t px-3 py-3" style="border-color: var(--border)">
+      <!-- 主题切换固定宽度，账号区吃掉剩下的并允许收缩（min-w-0），
+           否则账号按钮会顶破 236px 的侧栏溢到外面去。 -->
+      <div
+        class="mt-auto flex items-center gap-1 border-t px-3 py-3"
+        style="border-color: var(--border)"
+      >
         <ThemeToggle />
-        <UserMenu />
+        <UserMenu stacked class="min-w-0 flex-1" />
       </div>
     </aside>
 
