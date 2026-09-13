@@ -200,6 +200,9 @@ cython_debug/
 *.sqlite
 *.sqlite3
 
+# 上传的文件（运行时数据，且含学生提交的内容，不提交仓库）
+print_files/
+
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
