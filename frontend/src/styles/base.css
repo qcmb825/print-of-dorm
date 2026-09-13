@@ -1,6 +1,28 @@
 /* 极简 base —— 只做必要的事，不引 tailwind preflight，免得和 Naive UI 打架 */
 @import './tokens.css';
 
+/* 这条刻意留在 @layer 外面，而且用 :root body 而不是 body。
+ *
+ * Naive UI 会在运行时往 <head> 插一条无层级的 body{font-family:v-sans…;font-size:14px}：
+ *   - 无层级样式一律赢过分层样式，所以这条要是放进 @layer base，字体和字号永远拿不到 ——
+ *     字号被压回 14px、字体被压回 v-sans，刚装上的 DM Sans 等于白装；
+ *   - 它眼下是插在我们样式表 <link> 之前的，同特异度下顺序对我们有利，但那是它的实现细节，
+ *     哪天改成 append 就反过来了，所以顺手把特异度提到 0,1,1，让结果与插入顺序无关。
+ * 改回 `body` 或挪进 @layer 都不会报错，只是静默失效 —— 界面上看不出「字变了」。 */
+:root body {
+  margin: 0;
+  background-color: var(--background);
+  background-image: var(--ambient);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--stack-body);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
 @layer base {
   /* 这几行必须自己写：我们刻意没引 tailwind 的 preflight（免得 reset 掉 Naive UI 的组件样式），
      但 preflight 里的 box-sizing 不能一起丢 —— 浏览器默认是 content-box，
@@ -19,20 +41,6 @@
   body,
   #app {
     height: 100%;
-  }
-
-  body {
-    margin: 0;
-    background-color: var(--background);
-    background-image: var(--ambient);
-    background-attachment: fixed;
-    color: var(--foreground);
-    font-family: var(--stack-body);
-    font-size: 15px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-    overflow-x: hidden;
   }
 
   h1,

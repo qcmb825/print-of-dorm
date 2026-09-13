@@ -204,7 +204,7 @@
 | 前端组件库 | Naive UI |
 | 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
 | 前端图标 | Lucide |
-| 字体 | Space Grotesk / DM Sans / JetBrains Mono（@fontsource 随产物自带，不走外部 CDN） |
+| 字体 | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、取件码），@fontsource 随产物自带，不走外部 CDN |
 | 前端构建 | Vite（产物直接落进 `static/app/`，由 Flask 托管） |
 | 图表 | ECharts（按需引入，只有看板页会加载） |
 
@@ -618,11 +618,6 @@ print-of-dorm/
       **进程内存**里，多进程部署时每个进程各算一份，阈值相当于被放大了。
 - [ ] **窄屏没有专门放大触控目标**。组件尺寸沿用 Naive UI 的默认高度，手机上的按钮偏小，
       要补得先覆写组件库的尺寸令牌。
-- [ ] **正文字体与字号没生效**。Naive UI 会注入一条 `body{font-family:v-sans…;font-size:14px}`，
-      它没放进任何 `@layer`，而无层级样式一律赢过分层样式 —— 于是 `base.css` 里 body 的
-      `--stack-body`（DM Sans）和 15px 全被压掉，正文实际是 Naive 的默认字体栈、14px。
-      标题不受影响（`h1`~`h4` 是元素选择器）。要修是把这两条挪出 `@layer base`，
-      或关掉 Naive 的预置样式（后者会连带改掉它自带的 normalize，得回归一遍界面）。
 - [ ] **数据库结构变更会重建订单表**。升级前请先备份数据库和上传目录。
 - [ ] **看板页的图表包偏大**（ECharts 单页约 200KB gzip）。已经做成懒加载，
       学生端不会下载；如果以后弱网环境仍嫌慢，可以换成更轻的图表库或退回手写 SVG。

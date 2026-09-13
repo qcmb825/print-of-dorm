@@ -94,6 +94,17 @@ config.py     ← 叶子模块，只依赖标准库 + cryptography，不 import 
 - **`box-sizing: border-box` 必须自己声明**：为了不和 Naive UI 打架，`base.css` 刻意没引 Tailwind 的
   preflight，但 preflight 里的 `box-sizing` 不能一起丢 —— 少了它，`w-full` + 内边距的元素会比容器
   正好宽出一个内边距，窄屏下整页横向溢出（表现为手机上能左右晃）。
+- **body 的字体/字号规则不能挪进 `@layer`**：Naive UI 会在运行时往 `<head>` 插一条**无层级**的
+  `body{font-family:v-sans…;font-size:14px}`，而无层级样式一律赢过分层样式 —— `base.css` 里
+  body 那条因此刻意写在 `@layer base` 外面，选择器用 `:root body`（同特异度下靠源码顺序是赌
+  它的插入位置，哪天它改成 append 就反过来）。改回 `body` 或挪进 `@layer` **都不报错**，
+  只是正文静默变回 v-sans / 14px，标题却正常 —— 装好的 DM Sans 等于白装。
+  Naive 组件不自己设字体，是靠继承拿 body 的，所以这一条同时决定组件里的字体。
+- **字体名写在 `tokens.css`，字体包在 `src/main.ts` 里导入**：`--stack-heading` / `--stack-body` /
+  `--stack-mono` 里只有字体名，包没装或 import 漏了都不会报错，字只是静默回落到系统字体
+  （Space Grotesk 和 DM Sans 就这么空转过一阵）。加字体时这两处都要动，并在浏览器里确认
+  字体真的从 200 加载、`document.fonts.check()` 为真 —— 纯拉丁字库里没有中文，
+  「没看到请求」有时只是因为页面上没有拉丁字形。
 - **布局里 `main` 必须带 `min-w-0`**：flex 子项默认 `min-width:auto`，会被内部 min-content 顶宽。
 - **所有请求只走 `src/api/client.ts`**：它负责挂 `X-CSRF-Token`、按响应轮换令牌、把错误归一成
   `ApiError`（带中文提示）。新增接口写进 `src/api/endpoints.ts`，DTO 类型写进 `src/api/types.ts`。
