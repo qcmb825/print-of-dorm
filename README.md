@@ -62,7 +62,7 @@
 一个轻量的**打印作业管理系统**，把「提交任务 → 接单处理 → 完成取件」这条流程搬到网页上：
 
 - **普通用户**：选文件 → 选黑白/彩色、单面/双面 → 留个备注 → 提交。提交后能随时看到任务卡在哪一步，还会拿到一个取件码。
-- **管理员**：看到所有待接单的任务，**先到先得地接单**，处理完点一下把状态推到「可取了」。在此之上还能管理账号、发公告、看数据看板、处理用户工单。
+- **管理员**：看到所有待接单的任务，**先到先得地接单**，处理完点一下把状态推到「可取了」。在此之上还能发布公告、查看数据看板、处理用户工单。
 
 整个系统是**一个 Python 文件 + 一个 HTML 文件**，没有 npm、没有构建步骤、没有数据库服务要装。装好依赖、启动，就能用。
 
@@ -76,10 +76,9 @@
 <td><b>账号体系</b></td>
 <td>
 
-- 登录 / 注册**同一个入口**，注册即实名（昵称 + 姓名 + 学号）
-- 昵称、姓名、学号三者都唯一，所以一个人只能有一个账号
-- 两种角色：普通用户 / 管理员，权限分级
-- 停用、改角色、删除账号都是管理员操作；**任何人都不能改自己的角色**，防手滑把自己锁死
+- 登录 / 注册**同一个入口**，注册时填基本信息
+- 昵称、姓名、学号唯一，一个人只能有一个账号
+- 两种角色：普通用户 / 管理员
 
 </td>
 </tr>
@@ -87,12 +86,11 @@
 <td><b>下单与接单</b></td>
 <td>
 
-- 上传文件按 UUID 重命名后落盘，原始文件名单独存库，对单用
-- 可选黑白/彩色、单面/双面、备注
-- 接单是**数据库层原子操作**，两个人同时点「接单」只有一个能成功，另一个收到「手慢了」
-- 接错了可以「放弃接单」，订单退回待接单池
-- 订单状态四档：`待打印` → `打印中` → `可取了` → `已取件`
-- 只有接单人能改状态，跨人操作会**记安全日志并返回 403**
+- 上传文件、选打印方式、留备注，一步提交
+- 可选黑白/彩色、单面/双面
+- 两个人同时点「接单」，只有一个能成功，不会重复接同一单
+- 支持「放弃接单」，订单退回待接单池
+- 订单状态：待打印 → 打印中 → 可取了 → 已取件
 
 </td>
 </tr>
@@ -100,9 +98,8 @@
 <td><b>文件下载</b></td>
 <td>
 
-- 只有**接单人**能下载订单文件 —— 包括下单人本人也不行
-- 这是刻意设计的：下单人只负责上传和查看状态，实体文件归接单的管理员使用
-- 下载前会校验「解析后的真实路径必须在上传目录内」，挡住路径穿越
+- 只有**接单人**能下载订单文件
+- 上传与取件分离：提交人只负责上传和看状态，实体文件归接单的管理员使用
 
 </td>
 </tr>
@@ -110,9 +107,8 @@
 <td><b>公告</b></td>
 <td>
 
-- 顶部悬浮公告栏，支持 5 种字体白名单 / 字号 12-28 / 颜色，正文上限 500 字
-- 同一时间只有一条生效，历史公告留着，随时切回来或改一改再发
-- 换公告会重新弹给用户，同一条则尊重用户「已关闭」的选择，不反复骚扰
+- 顶部悬浮公告栏，可设字体、字号、颜色
+- 同一时间只有一条生效，历史公告留存，可随时切回或再编辑
 
 </td>
 </tr>
@@ -121,8 +117,8 @@
 <td>
 
 - 用户遇到问题直接发站内工单，不用加好友
-- 两边都是气泡对话界面，双方各自有未读计数
-- 用「双方各自最后已读时间」算未读，天然支持**多个管理员一起处理**
+- 气泡对话界面，双方各有未读提示
+- 支持多个管理员一起处理
 
 </td>
 </tr>
@@ -131,8 +127,8 @@
 <td>
 
 - 订单总量、已接单/未接单、账号活跃数、近 7 天新增
-- 状态分布、彩色/单双面占比、近 14 天趋势、接单 Top 5
-- **图表是原生 SVG 手画的**，不引任何图表库和外部 CDN
+- 状态分布、彩色/单双面占比、近期趋势、接单排行
+- 图表为原生 SVG，不依赖任何图表库和外部 CDN
 
 </td>
 </tr>
@@ -140,7 +136,7 @@
 <td><b>日志与审计</b></td>
 <td>
 
-- 四个日志文件按用途分流：业务 / 访问 / 安全 / 第三方
+- 日志按用途分流（业务 / 访问 / 安全 / 第三方）
 - 按大小自动轮转，磁盘不会被刷爆
 - 敏感操作留痕，但**不记录任何凭据内容**
 
@@ -154,16 +150,12 @@
 
 | 能力 | 普通用户 | 管理员 |
 | :--- | :---: | :---: |
-| 上传文件下单 | ✅ | ✅ |
-| 查看自己的订单 + 取件码 | ✅ | ✅ |
-| 发起工单 / 回复工单 | ✅ | ✅ |
-| 查看待接单池、接单 / 放弃接单 | ❌ | ✅ |
-| 修改订单状态 | ❌ | 仅自己接的单 |
-| 下载订单文件 | ❌ | 仅自己接的单 |
-| 数据看板 | ❌ | ✅ |
-| 发公告 | ❌ | ✅ |
-| 查看账号列表 | ❌ | ✅ |
-| 停用 / 改角色 / 删除账号 | ❌ | ✅ |
+| 提交打印订单 | ✅ | ✅ |
+| 查看自己的订单 | ✅ | ✅ |
+| 发起 / 回复工单 | ✅ | ✅ |
+| 接单、处理订单 | ❌ | ✅ |
+| 下载订单文件 | ❌ | ✅ |
+| 数据看板、发布公告 | ❌ | ✅ |
 
 > 权限校验统一在服务端完成，前端只是根据角色决定渲染哪些界面。
 
@@ -171,62 +163,36 @@
 
 ## 🏗️ 技术栈
 
-| 层 | 选型 | 为什么是它 |
-| :--- | :--- | :--- |
-| 语言 | Python 3.9+（开发环境 3.11.9） | 开发与部署环境是 Windows，装个 Python 就能跑 |
-| 框架 | Flask 3.1.3 | 单机低并发，Flask 完全够用，也不需要学习成本 |
-| 数据库 | **标准库 `sqlite3`**（同步） | 数据量就几千条，单文件零运维，备份就是拷个文件 |
-| 跨域 | Flask-Cors 6.0.5 | 给将来做小程序端预留；**默认留空，只允许同源** |
-| 生产服务器 | waitress 3.0.2 | 纯 Python，Windows 上装得最省事，8 线程 |
-| 加密 | cryptography 46.0.3 | Fernet 对称加密，用于密码的加密存储 |
-| 前端 | 原生 HTML + JS + CSS，Jinja2 渲染 | 一个页面搞定，不引框架、不引 CDN、不需要构建 |
-
-<details>
-<summary><b>为什么数据库不换成 MySQL / 不上异步 ORM？</b></summary>
-
-<br />
-
-这项目从第一天就定位在**单机 + 低并发**：峰值也就是十几个人同时提交任务。
-
-- 数据量：累计也就几千条订单，SQLite 一个文件就能扛
-- 并发量：读写都是毫秒级，SQLite 的写锁根本不会成为瓶颈
-- 运维成本：SQLite 的备份 = 拷一个 `.db` 文件；接 MySQL 就要多一个要维护、要监控、会挂的服务
-
-上异步数据库反而更糟：整套代码得改成 `async`，Flask 要换成 Quart 之类的异步框架，多出一堆 await，**换来的收益是零**。
-
-真到了需要 MySQL 的那天，`app.py` 里已经把 `DB_*` 配置项预留好了。
-
-</details>
+| 层 | 选型 |
+| :--- | :--- |
+| 语言 | Python 3.9+ |
+| 框架 | Flask |
+| 数据库 | 标准库 `sqlite3` |
+| 生产服务器 | waitress |
+| 密码加密 | cryptography |
+| 前端 | 原生 HTML + JS + CSS（Jinja2 渲染） |
 
 ---
 
-## 🧠 架构与关键设计
-
-### 请求怎么走
+## 🧠 架构
 
 ```mermaid
 flowchart LR
-    A["浏览器<br/>原生 HTML + JS"]:::client
-    B["Flask 路由层<br/>29 个接口"]:::server
-    C["鉴权装饰器<br/>login_required<br/>roles_required"]:::guard
-    D["业务逻辑<br/>校验 / 事务"]:::server
-    E[("SQLite<br/>print_service.db")]:::store
-    F["上传目录<br/>UUID 重命名"]:::store
-    G["日志<br/>4 个轮转文件"]:::store
-    H["waitress<br/>8 线程"]:::server
+    A["浏览器"]:::client
+    B["Flask 服务"]:::server
+    C[("SQLite")]:::store
+    D["文件目录"]:::store
 
-    A -->|"同源 fetch<br/>带 X-CSRF-Token"| B
-    B --> C --> D
-    D --> E
-    D --> F
-    D --> G
-    H -.->|"DEBUG=false 时托管"| B
+    A --> B
+    B --> C
+    B --> D
 
     classDef client fill:#EEF2FF,stroke:#4F46E5,color:#1e1b4b
     classDef server fill:#ECFEFF,stroke:#06B6D4,color:#083344
-    classDef guard fill:#FEF3C7,stroke:#D97706,color:#451a03
     classDef store fill:#F0FDF4,stroke:#16A34A,color:#052e16
 ```
+
+单机单体服务：浏览器访问一个 Flask 进程，数据写 SQLite，上传的文件落本地目录。
 
 ### 订单状态流转
 
@@ -238,36 +204,12 @@ stateDiagram-v2
     state "可取了" as R
     state "已取件" as D
 
-    [*] --> P: 用户上传提交
+    [*] --> P: 用户提交
     P --> G: 管理员接单
     G --> R: 处理完成
     R --> D: 用户取件
-    G --> P: 放弃接单（退回池子）
+    G --> P: 放弃接单
 ```
-
-### 接单为什么不需要分布式锁
-
-两个人同时看到同一个待接单订单，同时点「接单」——靠的不是锁，而是**一条带条件的 UPDATE**：
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant A as 管理员 A
-    participant B as 管理员 B
-    participant S as 服务端
-    participant D as SQLite
-
-    A->>S: POST /api/order/12/claim
-    B->>S: POST /api/order/12/claim
-    S->>D: UPDATE orders SET claimed_by=A WHERE id=12 AND claimed_by IS NULL
-    D-->>S: rowcount = 1
-    S-->>A: 200 接单成功
-    S->>D: UPDATE orders SET claimed_by=B WHERE id=12 AND claimed_by IS NULL
-    D-->>S: rowcount = 0（已经被 A 改过了）
-    S-->>B: 409 手慢了，该订单已被他人接取
-```
-
-`WHERE claimed_by IS NULL` 这一句让判断和写入变成**一个原子操作**，数据库自己保证了「只有一个 UPDATE 能改到这一行」。所以日志里能看到「接单竞争失败」这种记录，但永远不会出现两个人同时接单成功。
 
 ---
 
@@ -297,7 +239,7 @@ Linux / macOS 换成 `.venv/bin/python -m pip install -r requirements.txt` 即�
 # 会话签名密钥
 .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))"
 
-# 密码加密密钥（注意结尾那个 = 号，是 Fernet 格式的一部分）
+# 密码加密密钥（连同结尾的 = 号一起复制）
 .\.venv\Scripts\python.exe -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
@@ -334,9 +276,9 @@ DEBUG=false
 | `DEBUG` | 实际用的服务器 | 适用场景 |
 | :--- | :--- | :--- |
 | `true` | Flask 内置开发服务器 | 本地调试，**会暴露源码，仅限本机** |
-| `false` | **waitress**（8 线程） | 生产环境 |
+| `false` | **waitress** | 生产环境 |
 
-首次启动会自动建表、按 `.env` 创建初始管理员账号，并在日志里打印一条**启动横幅**，内容包含数据文件路径、上传目录、允许的扩展名和登录锁定策略。
+首次启动会自动建表、按 `.env` 创建初始管理员账号，并在日志里打印一条**启动横幅**。
 
 浏览器打开 `http://<服务器IP>:8080`，用初始管理员账号登录即可。
 
@@ -349,223 +291,68 @@ DEBUG=false
 ## ⚙️ 配置项
 
 全部通过 `.env` 注入，**优先级：系统环境变量 > `.env` 文件 > 代码里的默认值**。
-所以临时改端口不用动文件：`$env:PORT='9000'`。
 
 <details>
-<summary><b>展开完整配置表</b></summary>
+<summary><b>展开常用配置</b></summary>
 
 <br />
-
-**网络与运行**
 
 | 变量 | 默认值 | 说明 |
 | :--- | :--- | :--- |
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `PORT` | `8080` | 监听端口 |
 | `DEBUG` | `false` | 生产必须 `false` |
-| `CORS_ORIGINS` | 空 | 跨域白名单，逗号分隔；**留空 = 只允许同源** |
-| `TRUST_PROXY` | `false` | 前面是否挂了反向代理（见下方安全提示） |
-
-**存储**
-
-| 变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `UPLOAD_FOLDER` | `C:/print/print_files/` | 打印文件目录，不存在会自动创建 |
-| `DATABASE_PATH` | `print_service.db` | SQLite 文件位置，相对路径按 `app.py` 所在目录解析 |
+| `DATABASE_PATH` | `print_service.db` | SQLite 文件位置 |
+| `UPLOAD_FOLDER` | `C:/print/print_files/` | 打印文件目录 |
 | `MAX_UPLOAD_MB` | `50` | 单文件上传上限 |
-| `ALLOWED_EXTENSIONS` | `pdf,jpg,jpeg,png,doc,docx` | 上传白名单，逗号分隔 |
-
-**安全**
-
-| 变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `SECRET_KEY` | 空（缺失时随机生成 + 告警） | 会话签名密钥，**必须固定**，否则每次重启全员掉线 |
-| `PASSWORD_ENC_KEY` | 空（缺失时告警） | 密码加密密钥，**必须固定且与数据库同寿命** |
+| `ALLOWED_EXTENSIONS` | `pdf,jpg,jpeg,png,doc,docx` | 上传白名单 |
+| `SECRET_KEY` | 空 | 会话签名密钥，**必须固定** |
+| `PASSWORD_ENC_KEY` | 空 | 密码加密密钥，**必须固定** |
 | `SESSION_DAYS` | `7` | 登录状态保持天数 |
-| `SESSION_COOKIE_SECURE` | `false` | **挂上 HTTPS 后务必改成 `true`** |
-| `LOGIN_MAX_FAILS` | `5` | 连续失败几次锁定该账号 |
-| `LOGIN_LOCK_SECONDS` | `300` | 锁定时长（秒） |
 
-**初始管理员账号**
+初始管理员账号（昵称、密码等）也在这里配置，变量名见 `app.py` 顶部的配置区。
 
-昵称、姓名、学号、位置、初始密码这五项都通过 `.env` 配置（变量名见 `app.py` 顶部的配置区）。
-
-> 昵称**兼作登录名**，也是程序判断「要不要创建这个账号」的唯一依据：昵称已存在就跳过，不会重设密码。姓名和学号在库里都是 `UNIQUE` 唯一约束，**空字符串也算一个值**，所以这两项同时留空只能有一个账号这么做，第二个会撞唯一约束（日志里报 `IntegrityError`）。
-
-**日志**
-
-| 变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `LOG_LEVEL` | `INFO` | `DEBUG` 会记录只读请求，排查时再用 |
-| `LOG_DIR` | `logs` | 日志目录 |
-| `LOG_FILE` | `app.log` | 业务日志文件名 |
-| `LOG_MAX_BYTES` | `5242880`（5MB） | 单文件上限，写满自动轮转 |
-| `LOG_BACKUP_COUNT` | `10` | 保留几个历史文件 |
-| `LOG_CONSOLE` | `true` | 是否同时输出到控制台 |
-| `LOG_ACCESS` | `true` | 是否记录访问日志 |
-
-**启动重试**
-
-| 变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `START_MAX_ATTEMPTS` | `3` | 端口被临时占用 / 被拒时最多重试几次 |
-| `START_RETRY_SECONDS` | `3` | 两次重试之间等几秒 |
-
-**预留未使用**
-
-| 变量 | 说明 |
-| :--- | :--- |
-| `DB_HOST` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` / `DB_CHARSET` | 为将来迁 MySQL 预留，**当前代码里完全没用到** |
+> 其余配置（登录锁定、日志、启动重试等）同样在 `app.py` 顶部，按需查看。
 
 </details>
 
 ---
 
-## 📡 API 一览
+## 📡 接口一览
 
-<details>
-<summary><b>展开 29 个接口</b></summary>
+接口统一返回 `{"code": 0, "msg": "..."}`，`code != 0` 即失败。写操作需要携带会话令牌。
 
-<br />
-
-所有接口统一返回 `{"code": 0, "msg": "..."}`，`code != 0` 即失败。
-**所有写操作都要带 CSRF 令牌**（见下方「安全设计」），用 Postman 裸调会收到 403，这是预期行为。
-
-**通用**
+只列主流程上用到的几个：
 
 | 方法 | 路径 | 权限 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/` | 公开 | 首页（登录页 / 主界面同一份 HTML） |
-| `GET` | `/hello` | 公开 | 存活探针 |
-| `POST` | `/api/register` | 公开 | 注册（昵称/姓名/学号重复返回 409） |
-| `POST` | `/api/login` | 公开 | 登录（**昵称或姓名都能当账号用**，含失败锁定，锁定时返回 429） |
-| `POST` | `/api/logout` | 公开 | 登出 |
-| `GET` | `/api/me` | 公开 | 当前用户信息 + **下发 CSRF 令牌**（未登录时返回 401 但依然发令牌） |
+| `POST` | `/api/register` | 公开 | 注册 |
+| `POST` | `/api/login` | 公开 | 登录 |
+| `POST` | `/api/upload` | 登录 | 上传文件并提交订单 |
+| `GET` | `/api/my-orders` | 登录 | 自己的订单列表 |
+| `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池） |
+| `POST` | `/api/order/<id>/claim` | 管理员 | 接单 |
+| `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态 |
 
-**订单**
-
-| 方法 | 路径 | 权限 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `POST` | `/api/upload` | 登录 | 上传文件并下单 |
-| `GET` | `/api/orders` | 管理员 | 订单列表（全部 / 待接单池 / 我接的） |
-| `GET` | `/api/my-orders` | 登录 | 只看自己的订单 |
-| `POST` | `/api/order/<id>/claim` | 管理员 | 接单（原子，失败 409） |
-| `POST` | `/api/order/<id>/release` | 管理员 | 放弃接单，退回池子 |
-| `PUT` | `/api/order/<id>/status` | 管理员 | 改状态，状态非法返回 400 |
-| `GET` | `/api/order/<id>/download` | 接单人 | 下载订单文件 |
-
-**账号管理**
-
-| 方法 | 路径 | 权限 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/admin/users` | 管理员 | 账号列表 |
-| `PUT` | `/api/admin/user/<id>/role` | 管理员 | 改角色 |
-| `PUT` | `/api/admin/user/<id>/status` | 管理员 | 停用 / 启用 |
-| `DELETE` | `/api/admin/user/<id>` | 管理员 | 删除账号（订单保留，解除归属） |
-| `GET` | `/api/admin/stats` | 管理员 | 数据看板 |
-
-**公告**
-
-| 方法 | 路径 | 权限 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/announcement` | 登录 | 取当前生效的公告 |
-| `GET` | `/api/admin/announcements` | 管理员 | 公告列表（含历史） |
-| `POST` | `/api/admin/announcements` | 管理员 | 新建并设为生效 |
-| `PUT` | `/api/admin/announcements/<id>` | 管理员 | 编辑 |
-| `PUT` | `/api/admin/announcements/<id>/active` | 管理员 | 切换生效公告 |
-| `DELETE` | `/api/admin/announcements/<id>` | 管理员 | 删除 |
-
-**工单**
-
-| 方法 | 路径 | 权限 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/tickets` | 登录 | 工单列表（按角色返回不同范围） |
-| `POST` | `/api/tickets` | 登录 | 发起工单 |
-| `GET` | `/api/tickets/<id>` | 登录 | 工单详情 + 消息（同时标记已读） |
-| `POST` | `/api/tickets/<id>/messages` | 登录 | 回复 |
-| `PUT` | `/api/tickets/<id>/status` | 登录 | 关闭 / 重新打开（工单归属人和管理员都能操作） |
-
-</details>
+> 公告、工单、看板、账号管理等其余接口不逐一列出，实现见 `app.py`。
 
 ---
 
 ## 🗄️ 数据模型
 
-```mermaid
-erDiagram
-    users {
-        INTEGER id PK
-        TEXT nickname UK
-        TEXT real_name UK
-        TEXT student_id UK
-        TEXT role
-        TEXT status
-        TEXT password_hash
-        TEXT password_enc
-        TEXT contact_type
-        TEXT contact
-        TIMESTAMP create_time
-        TIMESTAMP last_login
-    }
-    orders {
-        INTEGER id PK
-        INTEGER user_id FK
-        TEXT filename
-        TEXT file_path
-        TEXT color_type
-        TEXT duplex
-        TEXT remark
-        TEXT status
-        TEXT pickup_code
-        INTEGER claimed_by FK
-        TIMESTAMP claim_time
-        TIMESTAMP create_time
-        TIMESTAMP update_time
-    }
-    announcements {
-        INTEGER id PK
-        TEXT content
-        TEXT font_family
-        INTEGER font_size
-        TEXT font_color
-        INTEGER is_active
-        INTEGER created_by
-    }
-    tickets {
-        INTEGER id PK
-        INTEGER user_id FK
-        TEXT subject
-        TEXT status
-        INTEGER last_reply_by
-        TIMESTAMP user_read_time
-        TIMESTAMP admin_read_time
-    }
-    ticket_messages {
-        INTEGER id PK
-        INTEGER ticket_id FK
-        INTEGER sender_id FK
-        TEXT sender_role
-        TEXT body
-    }
-    schema_meta {
-        TEXT key PK
-        TEXT value
-    }
+SQLite 单库，共 6 张表：
 
-    users ||--o{ orders : "下单"
-    users ||--o{ orders : "接单"
-    users ||--o{ tickets : "发起"
-    users ||--o{ announcements : "发布"
-    tickets ||--o{ ticket_messages : "包含"
-```
-
-> 未读数不是「存一个数字」，而是用 **`user_read_time` / `admin_read_time` 两个时间戳 + 消息时间** 现算出来的。好处是天然支持多个管理员同时处理工单 —— 谁看过就更新谁那边的已读时间，不会互相覆盖。
+| 表 | 用途 |
+| :--- | :--- |
+| `users` | 账号 |
+| `orders` | 打印订单 |
+| `announcements` | 公告 |
+| `tickets` / `ticket_messages` | 工单与消息 |
+| `schema_meta` | 结构版本，用于自动建表与升级 |
 
 ---
 
 ## 🔐 安全设计
-
-这项目从原型到能上线，安全这块补了不少东西。逐条列一下，也当作自查清单：
 
 <table>
 <tr><th width="150">问题</th><th>做法</th></tr>
@@ -573,7 +360,7 @@ erDiagram
 <td><b>CSRF</b></td>
 <td>
 
-所有写操作都要带 `X-CSRF-Token` 请求头，令牌从 `/api/me` 下发、存在会话里，服务端用 `secrets.compare_digest` 做**定长时间比较**（防时序侧信道）。登录成功时会 `session.clear()` 重建会话，防会话固定攻击。
+写操作需携带会话令牌，登录成功后会重建会话。
 
 </td>
 </tr>
@@ -581,9 +368,7 @@ erDiagram
 <td><b>存储型 XSS</b></td>
 <td>
 
-文件名是用户可控的。原型版本用模板字符串拼 `innerHTML`，上传一个名字叫 `<img src=x onerror=...>` 的文件就能在管理页面上执行脚本。
-
-现在前端**所有文本一律走 `textContent`**，从根上免疫，不需要手写转义函数。
+前端统一按纯文本渲染，不拼接 HTML。
 
 </td>
 </tr>
@@ -591,7 +376,7 @@ erDiagram
 <td><b>上传滥用</b></td>
 <td>
 
-三重收口：扩展名**白名单**（默认 `pdf,jpg,jpeg,png,doc,docx`）+ `MAX_UPLOAD_MB` 大小限制 + 存盘时 **UUID 重命名**（原始文件名只进数据库）。
+扩展名白名单 + 大小上限 + 存盘重命名，三重收口。
 
 </td>
 </tr>
@@ -599,7 +384,7 @@ erDiagram
 <td><b>路径穿越</b></td>
 <td>
 
-下载前会 `resolve()` 出真实路径，再校验它确实在 `UPLOAD_FOLDER` 里面。库里的路径正常不可能跑到外面，所以一旦触发就按**安全事件**记日志。
+下载前校验文件真实路径必须位于上传目录内。
 
 </td>
 </tr>
@@ -607,7 +392,7 @@ erDiagram
 <td><b>越权</b></td>
 <td>
 
-`@login_required` / `@roles_required(*roles)` 两个装饰器统一收口。改状态和下载都额外校验「这单是不是你接的」，跨人操作返回 403 并记安全日志。
+权限在服务端统一校验，跨人操作返回 403。
 
 </td>
 </tr>
@@ -615,7 +400,7 @@ erDiagram
 <td><b>账号枚举</b></td>
 <td>
 
-登录失败对外**永远只回「账号或密码错误」**，但 `security.log` 里会写明真实原因（账号不存在 / 密码错误 / 账号已被停用），方便运维排查。
+登录失败对外只回「账号或密码错误」。
 
 </td>
 </tr>
@@ -623,23 +408,7 @@ erDiagram
 <td><b>暴力破解</b></td>
 <td>
 
-同一账号连续失败 `LOGIN_MAX_FAILS`（默认 5）次后锁定 `LOGIN_LOCK_SECONDS`（默认 300）秒。
-
-</td>
-</tr>
-<tr>
-<td><b>CSS 注入</b></td>
-<td>
-
-公告支持自定义字体、字号、颜色，但这些值都**先过白名单**：字体只能是白名单里的键、字号限制 12-28、颜色必须匹配 `#RRGGBB`。数据库里绝不存任意 CSS 字符串，免得公告表变成样式注入入口。
-
-</td>
-</tr>
-<tr>
-<td><b>IP 伪造</b></td>
-<td>
-
-`TRUST_PROXY` **默认关闭**。只有真的挂了 Nginx/Caddy 才打开 —— 打开后程序会采信 `X-Forwarded-For`，而这个头**客户端可以随便伪造**，代理不受你控制时开它等于让攻击者随意伪造 IP，安全日志就废了。
+连续失败达阈值后锁定账号一段时间。
 
 </td>
 </tr>
@@ -647,7 +416,7 @@ erDiagram
 <td><b>审计留痕</b></td>
 <td>
 
-越权访问、CSRF 拦截、路径穿越、敏感的账号操作，全部写进 `security.log`。但**只记「谁、何时、做了什么」，不记任何凭据内容** —— 日志不能变成第二个泄露源。
+越权、拦截、异常访问等写进安全日志，不记录任何凭据内容。
 
 </td>
 </tr>
@@ -657,23 +426,18 @@ erDiagram
 
 ## 📋 日志系统
 
-启动后 `LOG_DIR`（默认 `logs/`）下会有四个文件，按用途分流，出问题直接找对的那个：
+日志按用途分流，出问题直接找对应的文件：
 
-| 文件 | 里面是什么 | 什么时候看 |
-| :--- | :--- | :--- |
-| `app.log` | 业务日志：启动横幅、注册、登录、下单、接单、改状态、下载 | 想知道「系统都干了什么」 |
-| `access.log` | 访问日志：方法、路径、状态码、耗时、响应大小、IP、账号、UA | 想知道「哪个接口慢 / 谁在刷接口」 |
-| `security.log` | 安全日志：登录失败与锁定、CSRF 拦截、越权、路径穿越、审计留痕 | **怀疑被搞了，或者要追责某次管理操作** |
-| `other.log` | 框架/第三方库的 WARNING 以上告警（如 waitress 的提示） | 一般用不到 |
+| 文件 | 内容 |
+| :--- | :--- |
+| `app.log` | 业务日志：启动、注册、登录、订单流转 |
+| `access.log` | 访问日志：方法、路径、状态码、耗时、IP |
+| `security.log` | 安全日志：登录失败与锁定、越权、拦截、审计 |
+| `other.log` | 框架与第三方库的告警 |
 
-三个关键设计：
+日志按大小自动轮转，不会撑爆磁盘。
 
-- **分级落盘**：`5xx` → ERROR，`4xx` → WARNING，写操作 → INFO，**只读成功请求 → DEBUG（默认不落盘）**。
-  这不是洁癖：前端每 10 秒自动刷新一次订单列表，只读请求也按 INFO 记的话，日志半天就被刷爆了。要全量排查时把 `LOG_LEVEL` 调成 `DEBUG`。
-- **按大小轮转**：单文件超过 5MB 滚成 `app.log.1`，最多留 10 个，磁盘不会被撑爆。
-- **中文不乱码**：启动时会强制把控制台输出切成 UTF-8，Windows 下也不会出现乱码。
-
-> 🔒 `logs/` 里有客户端 IP、账号昵称、操作记录和文件路径，属于隐私数据。`.gitignore` 已经忽略，**不要提交到仓库**。
+> 🔒 `logs/` 里有客户端 IP、账号和操作记录，属于隐私数据。`.gitignore` 已忽略，**不要提交到仓库**。
 
 ---
 
@@ -695,7 +459,7 @@ print-of-dorm/
 ```
 ├── .env                   # 真实配置，含密钥，绝对不要提交
 ├── .venv/                 # 虚拟环境
-├── logs/                  # 四个日志文件
+├── logs/                  # 日志文件
 ├── *.db                   # SQLite 数据库
 └── *.md (除 README)       # 本地文档，比如 DEPLOY.md
 ```
@@ -706,16 +470,11 @@ print-of-dorm/
 
 ## 🧩 已知不足与后续计划
 
-列在这里，顺便当作后续开发的方向：
-
-- [ ] **前端单文件太长**。`templates/index.html` 一千多行，改一处要来回翻。计划拆成 `static/css/` + `static/js/` 多个模块。
-- [ ] **订单只增不减**。目前没有清理策略，也没有分页（数据量还小，先不管）。想加的话应该是「已取件 N 天后归档」。
-- [ ] **没有自动化测试**。现在是手工点一遍主要流程，这块确实欠着。
-- [ ] **CSRF 令牌存在会话里**，多标签页同时开太久需要刷新页面重新取令牌。
-- [ ] **没有限流**。上传接口目前只靠大小和白名单挡，恶意高频提交挡不住。
-- [ ] **时间统一用 UTC**。`CURRENT_TIMESTAMP` 写的是 UTC，展示层再转本地时间（近 14 天趋势那条 SQL 已经用 `localtime` 转过了）。
-- [ ] **初始管理员密码忘了没有自助找回**。程序只按昵称判断「要不要创建」，昵称还在就跳过、不会重设。补救办法是**在 `.env` 里换个新昵称重启**，补出一个新管理员账号，登录后到「账号管理」里把旧的删掉。
-- [ ] **数据库结构变更会重建订单表**。`schema_meta.schema_version` 不匹配时会 `DROP TABLE orders` 重建（当前版本 `3`），**升级前一定要先备份数据库和上传目录**。
+- [ ] **前端单文件太长**。页面逻辑都写在 `templates/index.html` 里，计划拆成多个模块。
+- [ ] **订单只增不减**。目前没有清理策略，也没有分页。
+- [ ] **没有自动化测试**。主要流程靠手工验证。
+- [ ] **没有接口限流**。上传接口只靠大小和白名单挡。
+- [ ] **数据库结构变更会重建订单表**。升级前请先备份数据库和上传目录。
 
 ---
 
