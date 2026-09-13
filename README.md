@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:4F46E5,100:06B6D4&height=190&section=header&text=%E6%89%93%E5%8D%B0%E4%BD%9C%E4%B8%9A%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F&fontSize=44&fontColor=ffffff&desc=Print%20of%20Dorm%20%C2%B7%20%E6%8F%90%E4%BA%A4%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8E%A5%E5%8D%95%E5%A4%84%E7%90%86&descAlign=50&descAlignY=72&fontAlignY=42" width="100%" alt="打印作业管理系统" />
+<!-- 头图配色跟着设计令牌走：黄 #D4A017 → 青 #008FA6，改版后不再是原来的靛蓝 -->
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:D4A017,100:008FA6&height=190&section=header&text=%E6%89%93%E5%8D%B0%E4%BD%9C%E4%B8%9A%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F&fontSize=44&fontColor=ffffff&desc=Print%20of%20Dorm%20%C2%B7%20%E6%8F%90%E4%BA%A4%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8E%A5%E5%8D%95%E5%A4%84%E7%90%86&descAlign=50&descAlignY=72&fontAlignY=42" width="100%" alt="打印作业管理系统" />
 
 一个轻量的 **打印作业管理系统**：提交打印任务、接单处理、完成取件全流程在一个网页里跑完。
 纯 Web 界面，不需要安装客户端。
@@ -14,17 +15,24 @@
 <img src="https://img.shields.io/badge/waitress-3.0.2-2C7A7B?style=flat-square" alt="waitress" />
 <img src="https://img.shields.io/badge/cryptography-46.0.3-7B61FF?style=flat-square" alt="cryptography" />
 
+<!-- 前端技术栈徽章 -->
+<a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white" alt="Vue 3" /></a>
+<a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" /></a>
+<a href="https://www.naiveui.com/"><img src="https://img.shields.io/badge/Naive%20UI-2-7B61FF?style=flat-square" alt="Naive UI" /></a>
+<a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind%20CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" /></a>
+<a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite" /></a>
+
 <!-- 项目状态徽章 -->
-<img src="https://img.shields.io/badge/JavaScript-%E5%8E%9F%E7%94%9F%EF%BC%8C%E9%9B%B6%E6%A1%86%E6%9E%B6-F7DF1E?style=flat-square&logo=javascript&logoColor=black" alt="Vanilla JS" />
 <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white" alt="Platform" />
 <img src="https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-%E5%8D%95%E6%9C%BA%E5%8D%B3%E5%8F%AF-brightgreen?style=flat-square" alt="部署" />
-<img src="https://img.shields.io/badge/%E5%89%8D%E7%AB%AF%E4%BE%9D%E8%B5%96-0%20%E4%B8%AA-blue?style=flat-square" alt="前端依赖" />
+<img src="https://img.shields.io/badge/%E5%89%8D%E7%AB%AF%E4%BA%A7%E7%89%A9-%E5%B7%B2%E5%85%A5%E5%BA%93%EF%BC%8C%E9%83%A8%E7%BD%B2%E6%9C%BA%E6%97%A0%E9%9C%80%20Node-D4A017?style=flat-square" alt="前端产物" />
+<img src="https://img.shields.io/badge/%E4%B8%BB%E9%A2%98-%E6%98%8E%E6%9A%97%E5%8F%8C%E5%A5%97-008FA6?style=flat-square" alt="主题" />
 <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
 <img src="https://img.shields.io/badge/License-All%20Rights%20Reserved-red?style=flat-square" alt="License" />
 
 <!-- 下面这几个徽章的数据由 GitHub 实时读出来，不用手动维护 -->
-<img src="https://img.shields.io/github/last-commit/qcmb825/print-of-dorm?style=flat-square&label=%E6%9C%80%E5%90%8E%E6%8F%90%E4%BA%A4&color=4F46E5" alt="最后提交" />
-<img src="https://img.shields.io/github/commit-activity/m/qcmb825/print-of-dorm?style=flat-square&label=%E6%AF%8F%E6%9C%88%E6%8F%90%E4%BA%A4&color=06B6D4" alt="每月提交" />
+<img src="https://img.shields.io/github/last-commit/qcmb825/print-of-dorm?style=flat-square&label=%E6%9C%80%E5%90%8E%E6%8F%90%E4%BA%A4&color=D4A017" alt="最后提交" />
+<img src="https://img.shields.io/github/commit-activity/m/qcmb825/print-of-dorm?style=flat-square&label=%E6%AF%8F%E6%9C%88%E6%8F%90%E4%BA%A4&color=008FA6" alt="每月提交" />
 <img src="https://img.shields.io/github/issues/qcmb825/print-of-dorm?style=flat-square&label=Issues&color=2C7A7B" alt="Issues" />
 <img src="https://img.shields.io/github/stars/qcmb825/print-of-dorm?style=flat-square&label=Star&color=F7DF1E" alt="Stars" />
 <img src="https://img.shields.io/github/languages/top/qcmb825/print-of-dorm?style=flat-square&label=%E4%B8%BB%E8%A6%81%E8%AF%AD%E8%A8%80&color=3776AB" alt="主要语言" />
@@ -67,6 +75,9 @@
 后端是**几个职责分明的 Python 模块**，前端是一个 **Vue 单页应用**（登录页、学生端、管理端都在同一个包里，按登录账号的角色切换界面）。
 前端构建产物已随仓库提供，**部署端不需要 Node**，也没有数据库服务要装——装好 Python 依赖、启动，就能用。
 
+界面是响应式的（手机、平板、桌面各一套布局），有**明暗两套主题**：默认跟随系统，也可以在右上角手动切换，
+选择会记在浏览器里。视觉语言是克制的黄 + 青、细边框、磨砂面板，动效只用在真正需要提示变化的地方。
+
 ---
 
 ## ✨ 功能一览
@@ -77,9 +88,10 @@
 <td><b>账号体系</b></td>
 <td>
 
-- 登录 / 注册**同一个入口**，注册时填基本信息
+- 登录 / 注册**同一个入口**
+- 注册时填昵称、姓名、学号、宿舍，以及联系方式（微信号 / QQ / 邮箱，各按自己的格式校验）
 - 昵称、姓名、学号唯一，一个人只能有一个账号
-- 三种角色：普通用户 / 管理员 / 超级管理员
+- 三种角色：普通用户 / 管理员 / 超级管理员，自助注册的一律是普通用户
 
 </td>
 </tr>
@@ -99,7 +111,7 @@
 <td><b>文件下载</b></td>
 <td>
 
-- 只有**接单人**能下载订单文件
+- 只有**接单人**（以及超管）能下载订单文件
 - 上传与取件分离：提交人只负责上传和看状态，实体文件归接单的管理员使用
 
 </td>
@@ -109,7 +121,20 @@
 <td>
 
 - 顶部悬浮公告栏，可设字体、字号、颜色
+- 正文颜色会按 **WCAG 对比度**兜底：和当前主题的纸面撞车时自动换成可读的颜色，
+  深浅两套主题下都看得清（管理页预览同时给出两套效果）
 - 同一时间只有一条生效，历史公告留存，可随时切回或再编辑
+
+</td>
+</tr>
+<tr>
+<td><b>界面与主题</b></td>
+<td>
+
+- 明暗两套主题，默认跟随系统，右上角可手动切换，选择记在本地
+- 响应式布局：桌面有侧栏、窄屏切成顶栏 + 抽屉，手机上不会横向溢出
+- 公告、图表、表格都跟着主题换色，深色下不会留一块刺眼的白纸
+- 尊重系统的「减少动效」偏好，开启后动效退化而不是硬放
 
 </td>
 </tr>
@@ -177,9 +202,13 @@
 | 密码加密 | cryptography |
 | 前端框架 | Vue 3 + Vue Router + Pinia |
 | 前端组件库 | Naive UI |
-| 前端样式 | Tailwind CSS v4（设计令牌，明暗双主题） |
+| 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
+| 前端图标 | Lucide |
 | 前端构建 | Vite（产物直接落进 `static/app/`，由 Flask 托管） |
 | 图表 | ECharts（按需引入，只有看板页会加载） |
+
+> 主题只有一处事实来源：颜色和动效曲线都写在 CSS 变量里，Tailwind 工具类和 Naive UI 的
+> 主题覆盖都从这些变量反读，所以换主题时组件库和手写样式不会各说一套。
 
 > 前端产物已入库，**部署机不需要 Node**；本机只有改前端时才需要 Node 20+。
 
@@ -198,8 +227,8 @@ flowchart LR
     B --> C
     B --> D
 
-    classDef client fill:#EEF2FF,stroke:#4F46E5,color:#1e1b4b
-    classDef server fill:#ECFEFF,stroke:#06B6D4,color:#083344
+    classDef client fill:#FFFBEB,stroke:#D4A017,color:#422006
+    classDef server fill:#ECFEFF,stroke:#008FA6,color:#083344
     classDef store fill:#F0FDF4,stroke:#16A34A,color:#052e16
 ```
 
@@ -260,15 +289,23 @@ Linux / macOS 换成 `.venv/bin/python -m pip install -r requirements.txt` 即�
 
 ### 4. 写 `.env`
 
-在项目根目录新建 `.env`。**最小可用配置**长这样：
+在项目根目录新建 `.env`。仓库里的 `.env.example` 是**完整模板**（每个变量都带中文说明），
+复制过去再改最省事：
+
+```powershell
+copy .env.example .env      # Linux / macOS 用 cp .env.example .env
+```
+
+**最小可用配置**长这样：
 
 ```ini
 # 必填：两个密钥，填上第 3 步生成的值
 SECRET_KEY=把上面第一个命令的输出粘这里
 PASSWORD_ENC_KEY=把上面第二个命令的输出粘这里
 
-# 必填：初始管理员账号的昵称和密码（密码必须 8-64 位）
-# 变量名见 config.py
+# 必填：初始超级管理员（昵称是登录名；密码至少 8 位）
+SUPER_ADMIN_NICKNAME=superadmin
+SUPER_ADMIN_PASSWORD=换成你自己的密码
 
 # 建议改：数据和文件放代码目录外面，升级代码时不会误删
 DATABASE_PATH=D:/print_data/print_service.db
@@ -278,7 +315,12 @@ UPLOAD_FOLDER=D:/print_data/files/
 DEBUG=false
 ```
 
-> ⚠️ 初始管理员的密码如果没设、或者位数不在 **8-64** 之间，程序**不会报错**，而是悄悄随机生成一个密码并只在日志里留一行 `WARNING`。然后你登录时会一直看到「账号或密码错误」，很容易在这里卡半天。所以这个值一定要显式写好。
+> ⚠️ 超管密码留空或**不足 8 位**时程序**不会报错**，而是随机生成一个，只在启动日志里留一行
+> `WARNING`（生成的密码本身也打在那行里，能从日志里捞回来，但别指望这个流程）。不设好的话，
+> 你登录时会一直看到「账号或密码错误」，很容易在这里卡半天。所以这个值一定要显式写好。
+>
+> `UPLOAD_FOLDER` 的相对路径按**启动时的当前目录**解析，所以务必在项目根目录启动；
+> `DATABASE_PATH` 则是相对 `app.py` 所在目录。换目录启动会让老订单的文件路径全部失效。
 
 ### 5. 启动
 
@@ -293,14 +335,14 @@ DEBUG=false
 | `true` | Flask 内置开发服务器 | 本地调试，**会暴露源码，仅限本机** |
 | `false` | **waitress** | 生产环境 |
 
-首次启动会自动建表、按 `.env` 创建初始管理员账号，并在日志里打印一条**启动横幅**。
+首次启动会自动建表、按 `.env` 创建内置超级管理员账号，并在日志里打印一条**启动横幅**。
 
-浏览器打开 `http://<服务器IP>:8080`，用初始管理员账号登录即可。
+浏览器打开 `http://<服务器IP>:8080`，用超管账号（昵称 + 密码）登录即可。
 
 ### 6. 改前端（可选，只有改界面才需要）
 
 前端源码在 `frontend/`，构建产物在 `static/app/`，**产物已入库**。
-只是想把服务跑起来的话，这一步可以完全跳过。
+只是想把服务跑起来的话，这一步可以完全跳过；需要 **Node 20+**。
 
 ```powershell
 cd frontend
@@ -309,16 +351,18 @@ npm run dev          # 开发服务器 :5173，已把 /api 反代到 :8080
 ```
 
 开发时**后端要同时跑着**（另一个终端执行 `python app.py`），`npm run dev` 只负责前端的秒级热更新。
+开发服和 Flask 都打开时，**调试用 `:5173`**，`:8080` 那边拿到的仍是仓库里的旧产物。
 
 改完要发布时：
 
 ```powershell
+npm run typecheck    # 只做类型检查，可选
 npm run build        # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
 ```
 
 `build` 里串了类型检查，**类型不过就不会出包**；急着出包可以临时用
 `npm run build:only` 跳过，但别养成习惯。构建完记得把 `static/app/` 一起提交，
-否则线上还是旧界面。
+否则线上还是旧界面。`vue-tsc` 依赖 **TypeScript 5.x**，别顺手升级到 TS 7（那条路目前装不起来）。
 
 ### 7. 设成开机自启
 
@@ -340,17 +384,23 @@ npm run build        # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `PORT` | `8080` | 监听端口 |
 | `DEBUG` | `false` | 生产必须 `false` |
-| `DATABASE_PATH` | `print_service.db` | SQLite 文件位置 |
-| `UPLOAD_FOLDER` | `C:/print/print_files/` | 打印文件目录 |
+| `DATABASE_PATH` | `print_service.db` | SQLite 文件位置，相对 `app.py` 所在目录 |
+| `UPLOAD_FOLDER` | `C:/print/print_files/` | 打印文件目录，相对路径按启动目录解析 |
 | `MAX_UPLOAD_MB` | `50` | 单文件上传上限 |
 | `ALLOWED_EXTENSIONS` | `pdf,jpg,jpeg,png,doc,docx` | 上传白名单 |
 | `SECRET_KEY` | 空 | 会话签名密钥，**必须固定** |
 | `PASSWORD_ENC_KEY` | 空 | 密码加密密钥，**必须固定** |
 | `SESSION_DAYS` | `7` | 登录状态保持天数 |
+| `SESSION_COOKIE_SECURE` | `false` | 上了 HTTPS 才设 `true`，否则登录会失效 |
+| `TRUST_PROXY` | `false` | 挂在反代后面才设 `true`，否则客户端能伪造 IP 绕过限流 |
+| `CORS_ORIGINS` | 空 | 跨域白名单，留空 = 只允许同源（推荐） |
+| `LOGIN_MAX_FAILS` / `LOGIN_LOCK_SECONDS` | `5` / `300` | 连续失败多少次锁定、锁多久 |
+| `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` | `5MB` / `10` | 日志轮转大小与保留份数 |
 
-初始管理员账号（昵称、密码等）也在这里配置，变量名见 `config.py`。
+初始超级管理员也用 `SUPER_ADMIN_NICKNAME` / `SUPER_ADMIN_PASSWORD` / `SUPER_ADMIN_REALNAME` 等变量在这里配置。
 
-> 其余配置（登录锁定、日志、启动重试等）同样在 `config.py` 里，按需查看。
+> 完整清单和逐项说明见仓库里的 **`.env.example`**（它就是配置模板，新增配置项会同步补进去）。
+> 日志级别、启动重试等少数变量直接读环境变量，实现在 `config.py` / `app.py`。
 
 </details>
 
@@ -358,19 +408,22 @@ npm run build        # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
 
 ## 📡 接口一览
 
-接口统一返回 `{"code": 0, "msg": "..."}`，`code != 0` 即失败。写操作需要携带会话令牌。
+接口统一返回 `{"code": 0, "msg": "..."}`，`code != 0` 即失败。写操作（POST/PUT/PATCH/DELETE）
+需要带上 `X-CSRF-Token` 请求头，令牌由页面入口和 `/api/me` 下发。
 
 只列主流程上用到的几个：
 
 | 方法 | 路径 | 权限 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/register` | 公开 | 注册 |
-| `POST` | `/api/login` | 公开 | 登录 |
+| `POST` | `/api/login` | 公开 | 登录（姓名或昵称都可作为账号） |
 | `POST` | `/api/upload` | 登录 | 上传文件并提交订单 |
 | `GET` | `/api/my-orders` | 登录 | 自己的订单列表 |
 | `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池） |
 | `POST` | `/api/order/<id>/claim` | 管理员 | 接单 |
-| `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态 |
+| `POST` | `/api/order/<id>/release` | 接单人 / 超管 | 放弃接单，退回待接单池 |
+| `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态（普通管理员只能改自己接的单） |
+| `GET` | `/api/order/<id>/download` | 接单人 / 超管 | 下载订单文件 |
 
 > 公告、工单、看板、账号管理等其余接口不逐一列出，实现见 `routes/` 下对应的模块。
 
@@ -407,7 +460,7 @@ SQLite 单库，共 6 张表：
 <td><b>存储型 XSS</b></td>
 <td>
 
-前端统一按纯文本渲染，不拼接 HTML。
+前端一律插值渲染、不拼接 HTML（公告正文这种管理员可写的内容也**绝不走 `v-html`**）。
 
 </td>
 </tr>
@@ -447,7 +500,8 @@ SQLite 单库，共 6 张表：
 <td><b>暴力破解</b></td>
 <td>
 
-连续失败达阈值后锁定账号一段时间。
+同一个 **IP + 账号**连续失败达阈值后锁定一段时间；注册接口另有同类的 IP 限流。
+计数存在进程内存里，多进程部署时每个进程各算一份（见「已知不足」）。
 
 </td>
 </tr>
@@ -501,7 +555,7 @@ print-of-dorm/
 ├── routes/                # 按功能域拆分的 Blueprint
 │   ├── __init__.py        #   蓝图注册
 │   ├── account.py         #   注册 / 登录 / 登出 / 当前用户
-│   ├── orders.py          #   上传下单 / 接单 / 改状态 / 下载
+│   ├── orders.py          #   上传下单 / 接单 / 释放 / 改状态 / 下载
 │   ├── admin.py           #   账号管理 / 数据看板
 │   ├── announcements.py   #   公告
 │   └── tickets.py         #   工单
@@ -510,13 +564,15 @@ print-of-dorm/
 ├── frontend/              # 前端源码（Vue 3 + TypeScript，只有改界面时才需要动）
 │   ├── index.html         #   Vite 入口：首屏前先定好主题，避免刷新时闪白底
 │   ├── vite.config.ts     #   构建配置：outDir 指向 ../static/app，base 为 /static/app/
+│   ├── public/            #   静态直通资源（favicon.svg，原样复制，文件名不带 hash）
 │   ├── src/
 │   │   ├── api/           #   接口层：axios 实例（CSRF / 令牌轮换 / 错误归一）+ DTO 类型
-│   │   ├── styles/        #   设计令牌与基础样式（明暗双主题）
-│   │   ├── theme/         #   把 CSS 令牌映射成 Naive UI 的 themeOverrides
+│   │   ├── styles/        #   设计令牌与基础样式（明暗双主题、动效曲线与时长）
+│   │   ├── theme/         #   从 CSS 令牌反读 Naive UI 主题、公告正文色的对比度兜底
 │   │   ├── layouts/       #   学生端布局 / 管理端布局
 │   │   ├── views/         #   各页面
 │   │   ├── components/    #   跨页面复用组件
+│   │   ├── composables/   #   组合式函数（统一的操作反馈）
 │   │   ├── charts/        #   ECharts 按需注册与图表 option 构造函数
 │   │   ├── stores/        #   Pinia：登录态、主题、公告
 │   │   ├── utils/         #   时间格式化、状态色映射、校验规则（后端规则的镜像）
@@ -527,6 +583,7 @@ print-of-dorm/
 ├── .env.example           # 配置项模板（复制成 .env 再改）
 ├── .gitignore
 ├── .gitattributes
+├── AGENTS.md              # 给 AI 编码助手的项目约定：依赖边界、后端/前端规则、踩过的坑
 └── README.md
 ```
 
@@ -556,7 +613,10 @@ print-of-dorm/
 - [ ] **订单只增不减**。没有清理策略，时间久了数据库和上传目录会持续变大。
       管理端的订单列表已支持分页，但 `/api/my-orders`（学生自己的订单）目前一次全返回。
 - [ ] **没有自动化测试**。主要流程靠手工验证；前端有 `vue-tsc` 类型检查兜底，后端没有。
-- [ ] **没有接口限流**。上传接口只靠大小和白名单挡。
+- [ ] **上传接口没有限流**。只靠大小和白名单挡。登录 / 注册倒是有失败计数，但它存在
+      **进程内存**里，多进程部署时每个进程各算一份，阈值相当于被放大了。
+- [ ] **窄屏没有专门放大触控目标**。组件尺寸沿用 Naive UI 的默认高度，手机上的按钮偏小，
+      要补得先覆写组件库的尺寸令牌。
 - [ ] **数据库结构变更会重建订单表**。升级前请先备份数据库和上传目录。
 - [ ] **看板页的图表包偏大**（ECharts 单页约 200KB gzip）。已经做成懒加载，
       学生端不会下载；如果以后弱网环境仍嫌慢，可以换成更轻的图表库或退回手写 SVG。
