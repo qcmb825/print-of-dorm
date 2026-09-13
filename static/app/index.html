@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#050505" />
+    <!-- 有图标之后浏览器就不会再去请求 /favicon.ico 了。
+         少了这一行，每次整页加载都会留下一条 404（被打成 WARNING 记进访问日志）。 -->
+    <link rel="icon" type="image/svg+xml" href="/static/app/favicon.svg" />
+    <title>宿舍打印服务</title>
+    <script>
+      // 在首屏绘制前定好主题，避免刷新时闪一下白底（FOUC）。
+      try {
+        var saved = localStorage.getItem('pod-theme')
+        var dark = saved === 'dark' || (saved !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+      } catch (e) {}
+    </script>
+    <script type="module" crossorigin src="/static/app/assets/index-BX2avFHL.js"></script>
+    <link rel="modulepreload" crossorigin href="/static/app/assets/endpoints-BzNG02YK.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/light-3uEDCpRo.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/fade-in-scale-up.cssr-6X4IxNMz.js">
+    <link rel="stylesheet" crossorigin href="/static/app/assets/index-BrUiw8WW.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

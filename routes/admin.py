@@ -194,10 +194,12 @@ def api_admin_stats():
             WHERE create_time >= datetime('now', '-13 days')
             GROUP BY d ORDER BY d
         ''').fetchall()
+        # 别名用 count 而不是 c：这是返回给前端的字段名，要和 daily 里的 count 保持一致。
+        # （当初写成 c，前端按 count 取就拿到 undefined，图表会静默画不出柱子。）
         top_claimers = conn.execute('''
-            SELECT u.nickname AS nickname, COUNT(*) AS c
+            SELECT u.nickname AS nickname, COUNT(*) AS count
             FROM orders o JOIN users u ON u.id = o.claimed_by
-            GROUP BY o.claimed_by ORDER BY c DESC LIMIT 5
+            GROUP BY o.claimed_by ORDER BY count DESC LIMIT 5
         ''').fetchall()
     finally:
         conn.close()

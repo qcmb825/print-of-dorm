@@ -203,6 +203,17 @@ cython_debug/
 # 上传的文件（运行时数据，且含学生提交的内容，不提交仓库）
 print_files/
 
+# ---------- 前端（frontend/） ----------
+frontend/node_modules/
+frontend/.vite/
+
+# 构建产物 static/app/ 是**刻意入库**的：部署机上通常只有 Python 环境，
+# 产物跟着仓库走就不用为了发个版本去装 Node。改完前端记得
+# npm run build 并把 static/app/ 一并提交，否则线上还是旧界面。
+
+# 团队共享的 agent 说明文件；*.md 整体忽略，这里给它开个口子
+!AGENTS.md
+
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

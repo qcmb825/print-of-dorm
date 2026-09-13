@@ -1,0 +1,248 @@
+/* 设计令牌 —— 视觉语言取自 maaend.com（黄 + 青、细边框、磨砂面板、方角主按钮）。
+ *
+ * 分两层：
+ *   1) 原始层（--background / --primary / --industrial-yellow ...）在此声明，浅深各一套；
+ *   2) 映射层（@theme inline）把原始令牌接到 Tailwind 的工具类上（bg-background、text-muted-foreground ...）。
+ * 用 inline 是为了让工具类引用 var() 而不是把值烤进去，换主题时才能实时生效。
+ *
+ * 刻意不引 tailwind 的 preflight：Naive UI 的组件样式不需要被 reset，两套一起上会互相打架。
+ */
+@layer theme, base, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============ 浅色（默认） ============ */
+:root {
+  color-scheme: light;
+
+  --background: #f9f9f9;
+  --foreground: #111111;
+  --card: #ffffffcc;
+  --card-foreground: #111111;
+  --primary: #d4a017;
+  --primary-foreground: #000000;
+  --secondary: #008fa6;
+  --secondary-foreground: #ffffff;
+  --muted: #f4f4f4;
+  --muted-foreground: #71717a;
+  --accent: #c49102;
+  --accent-foreground: #000000;
+  --border: #e2e2e2;
+  --border-subtle: #00000014;
+  --input: #e2e2e2;
+  --input-foreground: #111111;
+
+  --text-primary: #111111;
+  --text-secondary: #111111cc;
+  --text-tertiary: #11111199;
+  --text-quaternary: #11111166;
+  --text-disabled: #1111114d;
+
+  --industrial-yellow: #d4a017;
+  --tech-cyan: #008fa6;
+  --deep-void: #f4f4f4;
+  --technical-grey: #e2e2e2;
+
+  /* 订单状态：待打印 / 打印中 / 可取了 / 已取件 */
+  --status-pending: #52525b;
+  --status-pending-bg: #f4f4f4;
+  --status-printing: #0e7490;
+  --status-printing-bg: #ecfeff;
+  --status-ready: #8a6d00;
+  --status-ready-bg: #fef9c3;
+  --status-done: #15803d;
+  --status-done-bg: #dcfce7;
+
+  /* 角色：普通用户 / 管理员 / 超级管理员 */
+  --role-user: #0e7490;
+  --role-user-bg: #ecfeff;
+  --role-admin: #8a6d00;
+  --role-admin-bg: #fef9c3;
+  --role-super: #a21caf;
+  --role-super-bg: #fae8ff;
+
+  --ok: #15803d;
+  --err: #b91c1c;
+  --warn: #a16207;
+  --info: #0e7490;
+
+  /* 主色的低透明度填充：图标底、自己的消息气泡、提示条等。
+   * 单独做成令牌是因为深色下要用霓虹黄，直接写浅色那支会发闷。 */
+  --accent-tint: rgb(212 160 23 / 0.1);
+  --accent-tint-soft: rgb(212 160 23 / 0.13);
+  --accent-tint-border: rgb(212 160 23 / 0.34);
+  --warn-tint: rgb(251 191 36 / 0.1);
+  --warn-tint-border: rgb(251 191 36 / 0.4);
+
+  /* 浮层/输入框等需要**不透明**的表面。--card 是半透明的，浮层用它会透出底色。 */
+  --surface-overlay: #ffffff;
+  --surface-table-head: #fafafa;
+  --surface-input: #ffffff;
+  --surface-tooltip: #111111;
+
+  /* 公告纸张：**故意不跟随深色主题**。正文颜色是管理员在后台选的，
+   * 只保证在浅色纸面上可读；深色下也铺白纸，否则选深色的公告会看不见。 */
+  --paper: #ffffff;
+  --paper-line: #e7e7e7;
+  --paper-ink: #1f2328;
+  --paper-accent: #d4a017;
+  --paper-muted: #71717a;
+
+  /* 顶部环境光，对应参考站那层很淡的径向渐变 */
+  --ambient: radial-gradient(at 12% 0%, rgb(212 160 23 / 0.1) 0%, transparent 45%),
+    radial-gradient(at 88% 8%, rgb(0 143 166 / 0.08) 0%, transparent 40%);
+
+  --glow-primary: 0 0 20px 0 rgb(212 160 23 / 0.35);
+  --glow-secondary: 0 0 20px 0 rgb(0 143 166 / 0.3);
+
+  --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', ui-sans-serif, system-ui,
+    'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --stack-body: 'DM Sans Variable', 'DM Sans', ui-sans-serif, system-ui, 'Microsoft YaHei',
+    'PingFang SC', sans-serif;
+  --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Consolas,
+    'Courier New', monospace;
+}
+
+/* ============ 深色 ============ */
+.dark {
+  color-scheme: dark;
+
+  --background: #050505;
+  --foreground: #ffffff;
+  --card: #ffffff05;
+  --card-foreground: #ffffff;
+  --primary: #ffd000;
+  --primary-foreground: #000000;
+  --secondary: #00f0ff;
+  --secondary-foreground: #000000;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #ffe600;
+  --accent-foreground: #000000;
+  --border: #ffffff1a;
+  --border-subtle: #ffffff0d;
+  --input: #ffffff1a;
+  --input-foreground: #ffffff;
+
+  --text-primary: #ffffff;
+  --text-secondary: #ffffffcc;
+  --text-tertiary: #ffffff99;
+  --text-quaternary: #ffffff66;
+  --text-disabled: #ffffff4d;
+
+  --industrial-yellow: #ffd000;
+  --tech-cyan: #00f0ff;
+  --deep-void: #050505;
+  --technical-grey: #27272a;
+
+  --status-pending: #a1a1aa;
+  --status-pending-bg: #ffffff0f;
+  --status-printing: #22d3ee;
+  --status-printing-bg: #00f0ff1a;
+  --status-ready: #ffd000;
+  --status-ready-bg: #ffd0001f;
+  --status-done: #4ade80;
+  --status-done-bg: #4ade801f;
+
+  --role-user: #22d3ee;
+  --role-user-bg: #00f0ff1a;
+  --role-admin: #ffd000;
+  --role-admin-bg: #ffd0001f;
+  --role-super: #e879f9;
+  --role-super-bg: #e879f91f;
+
+  --ok: #4ade80;
+  --err: #f87171;
+  --warn: #fbbf24;
+  --info: #22d3ee;
+
+  /* 深色下换成霓虹黄的填充，浅色那支在深底上会显得发闷 */
+  --accent-tint: rgb(255 208 0 / 0.12);
+  --accent-tint-soft: rgb(255 208 0 / 0.15);
+  --accent-tint-border: rgb(255 208 0 / 0.34);
+  --warn-tint: rgb(251 191 36 / 0.12);
+  --warn-tint-border: rgb(251 191 36 / 0.38);
+
+  --surface-overlay: #111113;
+  --surface-table-head: #18181b;
+  --surface-input: #0f0f11;
+  --surface-tooltip: #18181b;
+
+  /* 与浅色主题刻意保持一致，理由见 :root 里的说明 */
+  --paper: #ffffff;
+  --paper-line: #e7e7e7;
+  --paper-ink: #1f2328;
+  --paper-accent: #d4a017;
+  --paper-muted: #71717a;
+
+  --ambient: radial-gradient(at 12% 0%, rgb(255 208 0 / 0.07) 0%, transparent 45%),
+    radial-gradient(at 88% 8%, rgb(0 240 255 / 0.06) 0%, transparent 40%);
+
+  --glow-primary: 0 0 24px 0 rgb(255 208 0 / 0.35);
+  --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
+}
+
+/* ============ 映射到 Tailwind 工具类 ============ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-input: var(--input);
+  --color-input-foreground: var(--input-foreground);
+
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-tertiary);
+  --color-ink-4: var(--text-quaternary);
+  --color-ink-disabled: var(--text-disabled);
+
+  --color-industrial-yellow: var(--industrial-yellow);
+  --color-tech-cyan: var(--tech-cyan);
+  --color-deep-void: var(--deep-void);
+  --color-technical-grey: var(--technical-grey);
+
+  --color-st-pending: var(--status-pending);
+  --color-st-pending-bg: var(--status-pending-bg);
+  --color-st-printing: var(--status-printing);
+  --color-st-printing-bg: var(--status-printing-bg);
+  --color-st-ready: var(--status-ready);
+  --color-st-ready-bg: var(--status-ready-bg);
+  --color-st-done: var(--status-done);
+  --color-st-done-bg: var(--status-done-bg);
+
+  --color-role-user: var(--role-user);
+  --color-role-user-bg: var(--role-user-bg);
+  --color-role-admin: var(--role-admin);
+  --color-role-admin-bg: var(--role-admin-bg);
+  --color-role-super: var(--role-super);
+  --color-role-super-bg: var(--role-super-bg);
+
+  --color-ok: var(--ok);
+  --color-err: var(--err);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
+
+  --color-paper: var(--paper);
+  --color-paper-line: var(--paper-line);
+  --color-paper-ink: var(--paper-ink);
+
+  --font-heading: var(--stack-heading);
+  --font-body: var(--stack-body);
+  --font-mono: var(--stack-mono);
+
+  --radius-panel: 12px;
+}
