@@ -117,16 +117,14 @@
     <script>
         'use strict';
 
-        /* =========================================================
-         * 全局状态与常量
-         * ========================================================= */
+        // ==== 全局状态与常量 ====
         const STATUSES = ['待打印', '打印中', '可取了', '已取件'];
         const ROLE_LABELS = { user: '普通用户', admin: '管理员', super: '超级管理员' };
         const ROLE_ORDER = ['super', 'admin', 'user'];
         const PALETTE = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
         const AUTO_REFRESH_MS = 10000;
 
-        // 公告字体：键必须与后端 ANNOUNCE_FONTS 保持一致，前端负责把「键」翻译成 CSS
+        // 公告字体：键要和后端 ANNOUNCE_FONTS 对齐，前端负责把键翻译成 CSS
         const ANNOUNCE_FONTS = {
             system: { label: '系统默认', css: 'system-ui, "Microsoft YaHei", Arial, sans-serif' },
             songti: { label: '宋体', css: '"SimSun", "Songti SC", serif' },
@@ -134,9 +132,9 @@
             kaiti: { label: '楷体', css: '"KaiTi", "STKaiti", serif' },
             mono: { label: '等宽', css: 'ui-monospace, Consolas, monospace' },
         };
-        // 联系方式的填写提示 + 填写时的即时校验。
-        // 正则和后端的 WECHAT_RE / QQ_RE / EMAIL_RE 保持一致；前端校验只是为了
-        // 「填错马上知道」，真正的把关在后端（前端代码可以被改掉或绕过）。
+        // 联系方式的填写提示和即时校验。
+        // 正则和后端的 WECHAT_RE / QQ_RE / EMAIL_RE 保持一致；前端只是让用户
+        // 填错马上知道，真正的把关在后端（前端代码可以被改掉或绕过）。
         const CONTACT_HINTS = {
             wechat: {
                 label: '微信号',
@@ -168,9 +166,7 @@
             showPasswords: false, announcement: null, announcementHidden: false, tickets: [], ticketFilter: '',
             editingAnnouncementId: null, announceFlash: null };
 
-        /* =========================================================
-         * DOM 工具：所有文本一律走 textContent，天然免疫 XSS
-         * ========================================================= */
+        // ==== DOM 工具：文本一律走 textContent，天然免疫 XSS ====
         function $(id) { return document.getElementById(id); }
         const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -181,9 +177,9 @@
                 if (k === 'text') node.textContent = String(v);
                 else if (k === 'class') node.className = String(v);
                 else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-                // 布尔属性：true 表示「加上这个属性」，false 表示「不加」。
-                // 千万不能把 false 写成字符串 "false" —— 对 disabled / checked / selected
-                // 这类布尔属性来说，只要属性名字出现就一律生效，结果会完全反过来。
+                // 布尔属性：true 就加上这个属性，false 就不加。
+                // 不能把 false 写成字符串 "false"，disabled / checked / selected
+                // 这类布尔属性只要名字出现就一律生效，结果会完全反过来。
                 else if (v === false) return;
                 else node.setAttribute(k, v === true ? '' : String(v));
             });
@@ -221,9 +217,7 @@
         function colorLabel(v) { return v === 'color' ? '彩色' : '黑白'; }
         function duplexLabel(v) { return v === 'double' ? '双面' : '单面'; }
 
-        /* =========================================================
-         * 统一请求封装：自动带上 CSRF 令牌，会话失效自动回登录页
-         * ========================================================= */
+        // ==== 统一请求封装：自动带 CSRF 令牌，会话失效自动回登录页 ====
         async function api(url, options) {
             const opts = Object.assign({}, options || {});
             opts.headers = Object.assign({}, opts.headers || {});
@@ -248,9 +242,7 @@
             return data;
         }
 
-        /* =========================================================
-         * 会话初始化 / 登出
-         * ========================================================= */
+        // ==== 会话初始化 / 登出 ====
         async function bootstrap() {
             const data = await api('/api/me');
             if (data.code === 0 && data.user) {
@@ -263,14 +255,14 @@
         }
 
         async function refreshAll() {
-            // 公告必须在首次渲染前拿到，否则首屏会先没公告栏、再「跳」出来
+            // 公告要在首次渲染前拿到，否则首屏会先没公告栏，再突然跳出来
             if (state.user) await fetchAnnouncement();
             await redraw();
         }
 
-        // 整页重绘 + 重新拉取所有面板数据。
-        // renderApp() 会清空整个 DOM，所以重绘之后必须把数据重新填口去，
-        // 否则表格会变空白 —— 凡是「一定要重绘」的场合都走这里。
+        // 整页重绘 + 重新拉所有面板数据。
+        // renderApp() 会清空整个 DOM，重绘之后必须把数据重新填回去，
+        // 否则表格会变空白，凡是必须重绘的场合都走这里。
         // （公告栏的显示/隐藏特意不走这条路，见 setAnnouncementHidden）
         async function redraw() {
             renderApp();
@@ -280,7 +272,7 @@
             if (state.user.role === 'user') {
                 await loadMyOrders();
             } else {
-                // 管理员和超管看到的是同一套面板，差异只在「有没有密码列 / 能不能操作」，
+                // 管理员和超管看的是同一套面板，差异只有有没有密码列、能不能操作，
                 // 由 usersCard 内部按角色自行裁剪
                 await Promise.all([loadOrders(), loadStats(), loadUsers(), loadAnnouncementsAdmin()]);
                 setupAutoRefresh();
@@ -290,15 +282,13 @@
         async function logout() {
             try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 忽略 */ }
             state.user = null;
-            state.showPasswords = false;   // 退出时把「查看密码」关掉，别留给下一个人
+            state.showPasswords = false;   // 退出时把查看密码关掉，别留给下一个人
             stopAutoRefresh();
             renderAuth();
             await api('/api/me');   // 重新获取一个有效的 CSRF 令牌
         }
 
-        /* =========================================================
-         * 登录 / 注册：所有角色共用同一个入口
-         * ========================================================= */
+        // ==== 登录 / 注册：所有角色共用一个入口 ====
         function renderAuth() {
             stopAutoRefresh();
             const app = $('app');
@@ -341,8 +331,8 @@
             form.appendChild(msg);
 
             const fields = [identifier, password];
-            // 用户一旦重新输入，就把上一次的红色报错清掉，
-            // 否则「明明已经改了，提示还挂着」会让人以为没生效
+            // 用户重新输入就把上一次的红色报错清掉，
+            // 否则明明已经改了、提示还挂着，会让人以为没生效
             fields.forEach(f => f.addEventListener('input', () => {
                 if (msg.classList.contains('err')) {
                     msg.className = 'msg';
@@ -397,12 +387,12 @@
                 '学号仅用于核对身份。');
             const dorm = addField('宿舍位置', { type: 'text', placeholder: '例：2号北201', maxlength: 50, required: true });
 
-            // 联系方式（必填）：先选类型，再填对应的号码。
-            // 没选类型时输入框保持禁用 —— 不用隐藏/显示来回切换，避免表单高度跳动。
+            // 联系方式必填：先选类型，再填对应号码。
+            // 没选类型时输入框保持禁用，不用隐藏/显示来回切，避免表单高度跳动。
             const contactType = el('select', { onchange: applyContactHint }, [
-                // 占位项：值为空、禁用，而且必须写 selected ——
+                // 占位项：值为空、禁用，还必须写 selected。
                 // 浏览器自动选默认项时会跳过 disabled 的选项，只写 disabled 的话
-                // 默认会落到「微信」上，结果输入框一进页面就能填。
+                // 默认会落到微信上，输入框一进页面就能填。
                 el('option', { value: '', text: '请选择', disabled: true, selected: true }),
                 el('option', { value: 'wechat', text: '微信' }),
                 el('option', { value: 'qq', text: 'QQ' }),
@@ -415,13 +405,13 @@
                 el('div', { style: 'display:grid;grid-template-columns:118px 1fr;gap:8px;' }, [contactType, contact]),
                 contactHint,
             ]));
-            // 提示文字直接写进上面创建好的节点。
-            // 这里不能用 $('contactHint') 去找：本函数执行时表单还不在页面上，
-            // document.getElementById 会返回 null，提示就会一直是空白。
+            // 提示文字直接写进上面建好的节点。
+            // 这里不能写 $('contactHint')：本函数执行时表单还不在页面上，
+            // document.getElementById 会返回 null，提示就一直是空白。
             let lastType = null;
             function applyContactHint() {
                 const info = CONTACT_HINTS[contactType.value];
-                // 换了类型就清空旧号码：QQ 号填进「邮箱」栏没有任何意义，
+                // 换了类型就清空旧号码，QQ 号填进邮箱栏没有意义，
                 // 留在框里反而让人以为已经填好了
                 if (contactType.value !== lastType) {
                     contact.value = '';
@@ -509,15 +499,13 @@
             return form;
         }
 
-        /* =========================================================
-         * 主界面：按账号类别渲染不同内容
-         * ========================================================= */
+        // ==== 主界面：按账号类别渲染不同内容 ====
         function renderApp() {
             const app = $('app');
             app.textContent = '';
             const u = state.user;
 
-            // 公告区：按「悬浮公告 > 关闭后的重开入口 > 管理员编辑」的优先级，
+            // 公告区：按悬浮公告 > 关闭后的重开入口 > 管理员编辑 的优先级，
             // 同一时刻最多出现一个，避免界面臃肿
             if (state.announcement && !state.announcementHidden) app.appendChild(announcementBar());
 
@@ -525,13 +513,13 @@
             bar.appendChild(el('h1', { text: '🖨️ 宿舍打印服务' }));
             bar.appendChild(el('span', { class: 'role-badge role-' + u.role, text: roleLabel(u.role) }));
             // 姓名 / 宿舍都允许留空（内置超管就是空的），空的部分直接不显示，
-            // 否则会渲染成「qcmb（）· 」这种悬空括号 + 悬空分隔符
+            // 否则会渲染成 qcmb（）· 这种悬空括号加悬空分隔符
             const info = (u.real_name ? '（' + u.real_name + '）' : '') + (u.dorm ? ' · ' + u.dorm : '');
             bar.appendChild(el('span', { class: 'muted', text: u.nickname + info }));
             bar.appendChild(el('div', { class: 'spacer' }));
-            // 「📢 公告」按钮平时是隐藏的，只在公告被关闭后才显形，所以不会占位置。
+            // 📢 公告按钮平时隐藏，只在公告被关闭后才显形，所以不占位置。
             // 它和公告栏的显示/隐藏都是局部 DOM 操作，不触发整页重绘，
-            // 这样点一下不会把已经加载好的表格、图表全部清空。
+            // 这样点一下不会把已经加载好的表格、图表全清空。
             if (state.announcement) {
                 bar.appendChild(el('button', {
                     id: 'announceToggle', class: 'ghost icon-btn', text: '📢 公告',
@@ -556,7 +544,7 @@
             app.appendChild(announcementAdminCard());
         }
 
-        /* ---------------- 普通用户：上传下单 ---------------- */
+        // ==== 普通用户：上传下单 ====
         function uploadCard() {
             const card = el('div', { class: 'card' });
             card.appendChild(el('h3', { text: '📤 上传文件下单' }));
@@ -649,7 +637,7 @@
             });
         }
 
-        /* ---------------- 管理员 / 超管：订单管理 ---------------- */
+        // ==== 管理员 / 超管：订单管理 ====
         function orderAdminCard() {
             const card = el('div', { class: 'card' });
             card.appendChild(el('h3', { text: '📋 订单管理' }));
@@ -813,9 +801,7 @@
             if (state.timer) { window.clearInterval(state.timer); state.timer = null; }
         }
 
-        /* =========================================================
-         * SVG 可视化图表（原生手绘，不依赖任何外部 CDN）
-         * ========================================================= */
+        // ==== SVG 图表：原生手绘，不依赖任何外部 CDN ====
         function barChart(items, color) {
             const w = 660, h = 210, pad = { l: 30, r: 10, t: 14, b: 24 };
             const max = Math.max(1, items.reduce((m, d) => Math.max(m, d.value), 0));
@@ -928,7 +914,7 @@
             return card;
         }
 
-        /* ---------------- 管理员 / 超管：数据可视化 ---------------- */
+        // ==== 管理员 / 超管：数据可视化 ====
         async function loadStats() {
             const box = $('statsBox');
             if (!box) return;
@@ -977,11 +963,10 @@
             box.appendChild(top);
         }
 
-        /* ---------------- 管理员 / 超管：账号管理 ----------------
-         * 两种角色共用同一张表，列由 userColumns() 按角色现算：
-         *   - 密码列：默认不存在，只有超管点开「查看密码」才出现
-         *   - 操作列：只有超管有（改角色 / 禁用 / 删除都是超管专属）
-         * ----------------------------------------------------- */
+        // ==== 管理员 / 超管：账号管理 ====
+        // 两种角色共用同一张表，列由 userColumns() 按角色现算：
+        //   密码列默认不存在，只有超管点开查看密码才出现；
+        //   操作列只有超管有（改角色 / 禁用 / 删除都是超管专属）。
         function userColumns() {
             const cols = ['ID', '昵称', '姓名', '学号', '宿舍', '联系方式'];
             if (state.showPasswords) cols.push('密码');
@@ -1004,8 +989,8 @@
             card.appendChild(table);
             card.appendChild(el('div', { class: 'msg', id: 'userMsg' }));
 
-            // 「查看密码」故意做得很不起眼，塞在右下角：默认没人会注意到，
-            // 需要时超管自己点一下，列表才切换成带密码的版本。
+            // 查看密码故意做得很不起眼，塞在右下角，默认没人会注意到，
+            // 需要时超管自己点一下，列表才切成带密码的版本。
             if (state.user && state.user.role === 'super') {
                 const foot = el('div', { style: 'text-align:right;margin-top:8px;' });
                 foot.appendChild(el('button', {
@@ -1024,7 +1009,7 @@
             const tr = el('tr');
             tr.appendChild(td(u.id));
             tr.appendChild(td(u.nickname));
-            // 留空的字段显示「-」，避免表格出现一片看不清是「空」还是「没渲染」的空白
+            // 留空的字段显示 -，免得表格出现一片分不清是空还是没渲染的空白
             tr.appendChild(td(u.real_name || '-'));
             tr.appendChild(td(u.student_id || '-'));
             tr.appendChild(td(u.dorm || '-'));
@@ -1124,18 +1109,16 @@
             if (data.code === 0) { await loadUsers(); await loadStats(); }
         }
 
-        /* =========================================================
-         * 公告
-         * ========================================================= */
+        // ==== 公告 ====
         // 只负责拉取并写入 state，不动 DOM。
-        // 之前把「获取 + renderApp」放在一个函数里，曾在 refreshAll 中与 loadTickets 并行执行，
-        // 结果 renderApp 把刚填好的工单列表整个重建掉 —— 所以拆开来、并显式控制渲染时机。
+        // 之前把获取 + renderApp 放在一个函数里，曾在 refreshAll 中与 loadTickets 并行执行，
+        // 结果 renderApp 把刚填好的工单列表整个重建掉，所以拆开来并显式控制渲染时机。
         async function fetchAnnouncement() {
             const data = await api('/api/announcement');
             if (data.code !== 0) return;
             const before = state.announcement ? state.announcement.id : null;
             state.announcement = data.announcement;
-            // 换了一条新公告就重新弹出来；同一条公告则尊重用户之前「已关闭」的选择
+            // 换了一条新公告就重新弹出来，同一条则尊重用户之前已关闭的选择
             if (!state.announcement || state.announcement.id !== before) state.announcementHidden = false;
         }
 
@@ -1269,7 +1252,7 @@
         async function loadAnnouncementsAdmin() {
             const list = $('announceList');
             if (!list) return;
-            // 操作成功后会发生整页重绘，提示条也会被重建 —— 所以用 flash 把结果重新贴回去
+            // 操作成功后会发生整页重绘、提示条也会被重建，所以用 flash 把结果重新贴回去
             if (state.announceFlash) {
                 setMsg('announceAdminMsg', state.announceFlash.text, state.announceFlash.type);
                 state.announceFlash = null;
@@ -1337,9 +1320,7 @@
             }
         }
 
-        /* =========================================================
-         * 工单（站内信）
-         * ========================================================= */
+        // ==== 工单（站内信） ====
         function ticketsCard(isStaff) {
             const card = el('div', { class: 'card' });
             const head = el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;' });
@@ -1463,10 +1444,10 @@
                 bodyEl.appendChild(el('div', { class: 'empty', text: '暂无消息' }));
             }
             data.messages.forEach(m => {
-                // 气泡左右按「是不是自己发的」决定
+                // 气泡左右按是不是自己发的决定
                 const mine = m.sender_id === state.user.id;
-                // 署名要同时看「谁发的」和「发送者身份」：
-                // 只判断 sender_id 会把管理员发给我的回复也标成「我」，必须再按 sender_role 区分。
+                // 署名要同时看谁发的和发送者身份：
+                // 只看 sender_id 会把管理员发给我的回复也标成我，必须再按 sender_role 区分。
                 const senderIsStaff = m.sender_role !== 'user';
                 let who;
                 if (mine) who = senderIsStaff ? '我（管理员）' : '我';
@@ -1522,9 +1503,7 @@
             }
         }
 
-        /* =========================================================
-         * 启动
-         * ========================================================= */
+        // ==== 启动 ====
         bootstrap();
     </script>
 </body>

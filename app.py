@@ -1,10 +1,10 @@
 import os
 import re
 import sys
-import uuid  # 用来生成唯一文件名
+import uuid  # 生成唯一的文件名
 import time
-import errno    # 端口绑定失败时用来识别错误类型
-import socket   # 启动前自检端口是否可用
+import errno  # 判断端口绑定失败的类型
+import socket  # 启动前检查端口是否可用
 import sqlite3
 import logging
 import secrets
@@ -19,12 +19,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet, InvalidToken
 
 
-# ---------- 环境变量（从 .env 读取，已存在的系统环境变量优先） ----------
+# 环境变量：从 .env 读取，系统里已经存在的优先
 def load_env_file(env_file='.env'):
-    """把 .env 里的配置读进 os.environ。
+    """把 .env 里的配置读进 os.environ，已经存在的系统环境变量不覆盖（方便在服务器上覆盖）。
 
-    支持 # 注释、空行、export KEY=VALUE、带引号的值。
-    已经存在的系统环境变量不会被文件覆盖，方便在服务器上用系统环境变量覆盖。
+    支持 # 注释、空行、export KEY=VALUE 和带引号的值。
     """
     path = Path(env_file)
     if not path.is_absolute():
@@ -49,26 +48,25 @@ load_env_file()
 
 
 def env_bool(name, default=False):
-    """把 true/1/yes/on 这类字符串转换成布尔值。"""
+    """true/1/yes/on 都当成 True。"""
     return os.getenv(name, str(default)).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
 def env_int(name, default):
-    """读取整数型环境变量，非法值回退到默认值。"""
+    """读整数型环境变量，值不合法就用默认值。"""
     try:
         return int(os.getenv(name, str(default)).strip())
     except (TypeError, ValueError):
         return default
 
 
-# ---------- 日志 ----------
-# 四层设计：
-#   1) 双出口：控制台给人看，文件给事后排查用；文件按大小轮转，不会撑爆磁盘
-#   2) 三分流：业务 / 访问 / 安全 各写一个文件 —— 出事时找对文件就能定位，
-#      混在一起的话，海量请求日志会把那几行关键的安全告警淹没
-#   3) 控制台强制 UTF-8：Windows 控制台默认 GBK，中文日志会变成乱码
-#   4) 访问日志分级：5xx=ERROR、4xx=WARNING、写操作=INFO、只读成功=DEBUG
-#      页面每 10 秒自动刷新一次订单列表，全按 INFO 记的话日志会被刷爆
+# 日志
+# 控制台给人看，文件留给事后排查，按大小轮转，不会撑爆磁盘。
+# 业务 / 访问 / 安全各写一个文件，出事时直接看对应的那个；
+# 全混在一起的话，海量请求日志会把关键的安全告警淹掉。
+# 控制台强制走 UTF-8，Windows 默认 GBK，中文日志会乱码。
+# 访问日志分级：5xx=ERROR、4xx=WARNING、写操作=INFO、只读成功=DEBUG。
+# 页面每 10 秒自动刷一次订单，全都按 INFO 记会把日志刷爆。
 LOG_LEVEL_NAME = os.getenv('LOG_LEVEL', 'INFO').strip().upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 LOG_DIR = os.getenv('LOG_DIR', 'logs').strip() or 'logs'
@@ -85,7 +83,7 @@ LOG_DATEFMT = '%Y-%m-%d %H:%M:%S'
 
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# 控制台强制 UTF-8，否则 Windows 下中文日志是乱码
+# 控制台转成 UTF-8，不然 Windows 下中文日志是乱码
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding='utf-8', errors='replace')
@@ -104,7 +102,7 @@ def _console_handler():
 
 
 def _file_handler(filename, level=logging.NOTSET):
-    """按大小轮转的文件处理器：写满 LOG_MAX_BYTES 换下一个，最多留 LOG_BACKUP_COUNT 个备份。"""
+    """按大小轮转：写满 LOG_MAX_BYTES 就换下一个，最多留 LOG_BACKUP_COUNT 个备份。"""
     handler = RotatingFileHandler(
         os.path.join(LOG_DIR, filename),
         maxBytes=LOG_MAX_BYTES,
@@ -118,7 +116,7 @@ def _file_handler(filename, level=logging.NOTSET):
 
 
 def _setup_logger(name, filename, level=None):
-    """搭建一个独立通道：写自己的文件（+ 可选控制台），不向 root 传播，避免重复输出。"""
+    """建一条独立的日志通道：写自己的文件（可选带上控制台），不向 root 传播，避免重复输出。"""
     target = logging.getLogger(name)
     target.setLevel(level or LOG_LEVEL)
     target.propagate = False
@@ -129,14 +127,14 @@ def _setup_logger(name, filename, level=None):
     return target
 
 
-# 业务日志：注册、登录、下单、接单、改状态、后台管理动作
+# 业务日志：注册、登录、下单、接单、改状态、后台管理
 logger = _setup_logger('print_service', LOG_FILE)
-# 访问日志：每个 HTTP 请求一行（方法、路径、状态、耗时、来源 IP、账号）
+# 访问日志：每个请求一行，含方法、路径、状态、耗时、来源 IP、账号
 access_logger = _setup_logger('print_service.access', 'access.log')
-# 安全日志：登录爆破、CSRF 拦截、越权访问、路径穿越、明文密码被查看
+# 安全日志：登录爆破、CSRF 拦截、越权、路径穿越、明文密码被查看
 security_logger = _setup_logger('print_service.security', 'security.log')
 
-# root 兜底：框架和第三方库的日志（waitress 的警告、werkzeug 的启动横幅）别丢
+# root 兜底，别把框架和第三方库的日志（waitress 警告、werkzeug 启动横幅）丢了
 _root_logger = logging.getLogger()
 _root_logger.setLevel(LOG_LEVEL)
 _root_logger.handlers.clear()
@@ -146,11 +144,10 @@ if LOG_TO_CONSOLE:
 
 
 class _DropWerkzeugRequestLines(logging.Filter):
-    """丢掉 werkzeug 自带的「每个请求一行」日志。
+    """过滤掉 werkzeug 自带的一请求一行日志。
 
-    werkzeug 的格式是： "GET /hello HTTP/1.1" 200 -
-    一定以双引号开头；启动横幅（* Running on ...）不受影响。
-    我们已经记了字段更全的访问日志，留着它只会重复刷屏。
+    它们一定以双引号开头（比如 "GET /hello HTTP/1.1" 200 -），启动横幅（* Running on ...）不受影响。
+    字段更全的访问日志我们已经记了，留着它只是重复刷屏。
     """
 
     def filter(self, record):
@@ -163,13 +160,10 @@ logging.getLogger('werkzeug').addFilter(_DropWerkzeugRequestLines())
 def client_ip():
     """取客户端 IP。
 
-    如果前面挂了 Nginx 之类的反向代理，真实 IP 在 X-Forwarded-For 里，
-    这时必须把 .env 的 TRUST_PROXY 设为 true 才会采用它。
-    注意：这个请求头客户端可以随便伪造，所以只有在自己完全掌控代理时才开启，
-    否则攻击者可以伪造 IP 让日志失去意义。
-
-    没有 HTTP 请求时（比如启动时创建超管、以后的定时任务）返回 '-'，
-    因为那种场合根本不存在「客户端」这个概念。
+    前面挂了 Nginx 之类的反代时，真实 IP 在 X-Forwarded-For 里，得把 .env 的 TRUST_PROXY
+    设成 true 才会采用它。但这个头客户端可以随便伪造，只有自己完全掌控代理时才该开，
+    否则攻击者能伪造 IP，日志就失去意义了。
+    没有 HTTP 请求时（比如启动时建超管、以后的定时任务）返回 '-'，那种场合本来就没有客户端。
     """
     if not has_request_context():
         return '-'
@@ -181,10 +175,10 @@ def client_ip():
 
 
 def actor_label():
-    """当前请求的操作者标签，例如 #3/bob(admin)；未登录时是「匿名」。
+    """当前请求的操作者标签，比如 #3/bob(admin)，没登录时是 "匿名"。
 
-    没有 HTTP 请求时返回 'system'（系统自身发起的动作），
-    与「匿名」（有请求但没登录）区分开 —— 否则启动日志会误报成有人在操作。
+    没有 HTTP 请求时返回 'system'（系统自己发起的动作），和 "匿名"（有请求但没登录）
+    区分开，否则启动日志会看着像有人在操作。
     """
     if not has_request_context():
         return 'system'
@@ -195,42 +189,41 @@ def actor_label():
 
 
 def security_event(event, detail=''):
-    """安全事件统一出口，写 security.log。
+    """安全事件的统一出口，写 security.log。
 
-    单独一个文件是为了让「可疑行为」不被海量业务日志淹没；
-    将来要接告警或做审计，盯这一个文件就行。
+    单独放一个文件是为了让可疑行为不被海量业务日志淹没，以后要接告警或者做审计，盯这一个文件就够。
     """
     try:
         security_logger.warning('event=%s ip=%s user=%s %s', event, client_ip(), actor_label(), detail)
     except Exception:
-        # 记日志是辅助功能，绝不能因为写不进去就把主流程搞崩；
-        # 但也不能静默失败，所以用 logger.exception 把错误本身记下来。
+        # 记日志只是辅助，不能因为写不进去把主流程搞崩；也不能悄悄吞掉，
+        # 所以用 logger.exception 把错误本身记下来。
         logger.exception('写安全日志失败 event=%s', event)
 
 
 def audit_action(action, detail=''):
-    """敏感管理动作留痕（改角色、禁用/删除账号、查看明文密码）。"""
+    """敏感管理动作留痕：改角色、禁用/删除账号、查看明文密码。"""
     try:
         security_logger.info('audit=%s ip=%s user=%s %s', action, client_ip(), actor_label(), detail)
     except Exception:
         logger.exception('写审计日志失败 action=%s', action)
 
-# 数据库文件路径（默认放在项目目录下）
+# 数据库文件路径，默认放在项目目录下
 DATABASE_PATH = os.getenv('DATABASE_PATH', 'print_service.db')
 if not os.path.isabs(DATABASE_PATH):
     DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATABASE_PATH)
 
-# 文件保存路径（文件夹不存在时自动创建）
+# 上传文件保存路径，目录不存在会自动创建
 UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'C:/print/print_files/')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
 def ensure_database_directory():
-    """确保 SQLite 数据库所在目录存在，避免目录缺失导致创建失败。"""
+    """确保 SQLite 数据库所在目录存在，免得目录缺失导致建库失败。"""
     db_dir = Path(DATABASE_PATH).resolve().parent
     db_dir.mkdir(parents=True, exist_ok=True)
 
-# 允许上传的扩展名白名单（不在名单里的一律拒绝）
+# 允许上传的扩展名白名单，不在名单里的一律拒绝
 ALLOWED_EXTENSIONS = {
     ext.strip().lower().lstrip('.')
     for ext in os.getenv('ALLOWED_EXTENSIONS', 'pdf,jpg,jpeg,png,doc,docx').split(',')
@@ -251,39 +244,39 @@ ROLE_SUPER = 'super'
 ROLES = (ROLE_USER, ROLE_ADMIN, ROLE_SUPER)
 ROLE_LABELS = {ROLE_USER: '普通用户', ROLE_ADMIN: '管理员', ROLE_SUPER: '超级管理员'}
 
-# 注册字段的格式约束（服务端必须校验；前端校验只是体验，永远不能当作安全边界）
+# 注册字段的格式约束。服务端必须校验，前端的只是体验，不能当安全边界
 NICKNAME_RE = re.compile(r'^[0-9A-Za-z_\u4e00-\u9fa5]{2,20}$')
 REALNAME_RE = re.compile(r'^[\u4e00-\u9fa5A-Za-z·]{2,20}$')
 STUDENT_ID_RE = re.compile(r'^\d{4,20}$')
 
-# 联系方式：注册时必填，且只能从微信 / QQ / 邮箱里选一种
+# 联系方式：注册必填，微信 / QQ / 邮箱里选一种
 CONTACT_TYPES = ('wechat', 'qq', 'email')
 CONTACT_LABELS = {'wechat': '微信号', 'qq': 'QQ 号', 'email': '邮箱地址'}
-WECHAT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{4,19}$')   # 5-20 位，字母开头
-QQ_RE = re.compile(r'^[1-9]\d{4,11}$')                      # 5-12 位数字，不以 0 开头
+WECHAT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{4,19}$')  # 5-20 位，字母开头
+QQ_RE = re.compile(r'^[1-9]\d{4,11}$')  # 5-12 位数字，不以 0 开头
 EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
-# 工单（站内信）状态与长度约束
+# 工单（站内信）状态和长度限制
 TICKET_OPEN = 'open'
 TICKET_CLOSED = 'closed'
 TICKET_STATUSES = (TICKET_OPEN, TICKET_CLOSED)
-TICKET_MAX_OPEN = 5           # 同一用户同时「进行中」的工单上限，防止刷屏占满队列
+TICKET_MAX_OPEN = 5  # 同一用户同时进行中的工单上限，防止刷屏占满队列
 TICKET_SUBJECT_MAX = 60
 TICKET_BODY_MAX = 1000
 
-# 公告：字体只允许白名单内的键，前端按同样的键映射成 CSS，两端保持一致
+# 公告：字体只能用白名单里的键，前端按同样的键映射成 CSS，两端保持一致
 ANNOUNCE_FONTS = ('system', 'songti', 'heiti', 'kaiti', 'mono')
 ANNOUNCE_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
 ANNOUNCE_CONTENT_MAX = 500
 
-# ---------- 密钥 ----------
-# SECRET_KEY 用于给会话 Cookie 签名，泄露 = 他人可伪造登录态，务必自己配置且不要外传
+# 密钥
+# SECRET_KEY 用来给会话 Cookie 签名。泄露出去别人就能伪造登录态，务必自己配好、别外传
 SECRET_KEY = os.getenv('SECRET_KEY', '').strip()
 if not SECRET_KEY:
     SECRET_KEY = secrets.token_hex(32)
     logger.warning('未配置 SECRET_KEY，已临时生成；重启后所有登录态会失效，请在 .env 中固定配置')
 
-# PASSWORD_ENC_KEY 用于「可逆加密」密码（仅超级管理员可查看），必须是合法的 Fernet 密钥
+# PASSWORD_ENC_KEY 用来可逆加密密码（只有超管能查看），必须是合法的 Fernet 密钥
 _enc_key = os.getenv('PASSWORD_ENC_KEY', '').strip()
 FERNET = None
 if _enc_key:
@@ -294,11 +287,11 @@ if _enc_key:
 else:
     logger.error('未配置 PASSWORD_ENC_KEY，超级管理员将无法查看明文密码')
 
-# 1. 创建应用
+# 创建应用
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = env_int('MAX_UPLOAD_MB', 50) * 1024 * 1024
 
-# 会话安全：HttpOnly 阻止 JS 读取 Cookie；SameSite 阻止跨站携带；Secure 仅在 HTTPS 下开启
+# 会话安全：HttpOnly 让 JS 读不到 Cookie，SameSite 挡跨站携带，Secure 只在 HTTPS 下开
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -306,35 +299,35 @@ app.config['SESSION_COOKIE_SECURE'] = env_bool('SESSION_COOKIE_SECURE', False)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=env_int('SESSION_DAYS', 7))
 app.json.ensure_ascii = False  # 返回中文不转义成 \uXXXX
 
-# 2. 跨域：默认只允许同源；确需给小程序/其它域名调用时，在 .env 配置 CORS_ORIGINS
+# 跨域：默认只允许同源。确实要给小程序或别的域名调用时，在 .env 里配 CORS_ORIGINS
 _cors_origins = [o.strip() for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
 if _cors_origins:
     CORS(app, origins=_cors_origins, allow_headers=['Content-Type', 'X-CSRF-Token'])
 
-# 登录失败限制（内存计数，单进程有效；多进程部署请换成 Redis 之类的共享存储）
+# 登录失败限制。内存计数只在单进程有效，多进程部署得换成 Redis 之类的共享存储
 LOGIN_MAX_FAILS = env_int('LOGIN_MAX_FAILS', 5)
 LOGIN_LOCK_SECONDS = env_int('LOGIN_LOCK_SECONDS', 300)
 _login_failures = {}
 
-# 调试开关：生产环境必须为 false —— 调试器会暴露源码和任意代码执行的口子
+# 调试开关。生产环境必须为 false，调试器会暴露源码，还留了任意代码执行的口子
 DEBUG_MODE = env_bool('DEBUG', False)
 
 
 def get_db():
-    """打开一个带行名访问的 SQLite 连接。调用方负责 close()。"""
+    """开一个支持按行名访问的 SQLite 连接，调用方记得 close()。"""
     ensure_database_directory()
     conn = sqlite3.connect(DATABASE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-# ---------- 密码处理 ----------
+# 密码处理
 
 def make_password_records(password):
     """返回 (哈希, 可逆密文)。
 
-    哈希（pbkdf2）用于登录校验，不可逆，是真正的安全防线；
-    密文（Fernet）仅供超级管理员在后台查看，密钥在 .env 的 PASSWORD_ENC_KEY。
+    哈希走 pbkdf2，用来登录校验，不可逆，是真正的安全防线；
+    密文走 Fernet，只有超管能在后台查看，密钥在 .env 的 PASSWORD_ENC_KEY。
     """
     password_hash = generate_password_hash(password, method='pbkdf2:sha256', salt_length=16)
     password_enc = None
@@ -347,7 +340,7 @@ def make_password_records(password):
 
 
 def verify_password(password_hash, password):
-    """校验密码；任何异常都返回 False，绝不因此抛出 500。"""
+    """校验密码。任何异常都返回 False，绝不往外抛 500。"""
     if not password_hash:
         return False
     try:
@@ -358,7 +351,7 @@ def verify_password(password_hash, password):
 
 
 def decrypt_password(password_enc):
-    """解密密码供超级管理员查看；密钥缺失或密文损坏时返回 None。"""
+    """解密密码给超管查看，密钥缺失或密文损坏就返回 None。"""
     if not password_enc or FERNET is None:
         return None
     try:
@@ -367,18 +360,18 @@ def decrypt_password(password_enc):
         return None
 
 
-# 数据库结构版本：用于一次性迁移判断
-# v2 → v3：新增联系方式列、工单表、公告表（全部是「加法」，老数据一律保留）
+# 数据库结构版本，用来判断是否要做一次性迁移
+# 从 v2 升到 v3：新增了联系方式列、工单表和公告表，全是加东西，老数据一概保留
 SCHEMA_VERSION = '3'
 
 
 def init_database():
     """建立 / 升级数据表。
 
-    本次「账号体系」改造按用户要求：旧订单不迁移。
-    判断依据是 schema_meta 里的 schema_version：
-      - 没有版本标记（全新库或旧库）→ 先 DROP 旧的 orders 表，再按新结构重建；
-      - 已有版本标记 → 只做 CREATE IF NOT EXISTS，不再清空数据。
+    这次账号体系改造按用户要求：旧订单不迁移。
+    判断看 schema_meta 里的 schema_version：
+      没有版本标记（全新库或旧库）就先 DROP 掉旧 orders 表，再按新结构重建；
+      已有标记就只做 CREATE IF NOT EXISTS，不再清空数据。
     """
     conn = get_db()
     try:
@@ -386,7 +379,7 @@ def init_database():
         cursor.execute('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)')
         row = cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
         if row is None:
-            cursor.execute('DROP TABLE IF EXISTS orders')  # 一次性清空旧结构
+            cursor.execute('DROP TABLE IF EXISTS orders')  # 一次性清掉旧结构
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -424,18 +417,18 @@ def init_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_claimed ON orders(claimed_by)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)')
 
-        # 本轮新增「联系方式」：给已有的 users 表补两列。
-        # CREATE TABLE IF NOT EXISTS 对已存在的表不会做任何改动，所以老库必须靠 ALTER TABLE；
-        # 先用 PRAGMA 查一遍现有列，保证重复执行也安全（幂等）。
+        # 这轮新增联系方式，给已有的 users 表补两列。
+        # CREATE TABLE IF NOT EXISTS 对已存在的表没有任何改动，老库只能靠 ALTER TABLE；
+        # 先用 PRAGMA 查一下现有的列，保证重复执行也安全（幂等）。
         user_columns = {row[1] for row in cursor.execute('PRAGMA table_info(users)').fetchall()}
         if 'contact_type' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN contact_type TEXT')
         if 'contact' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN contact TEXT')
 
-        # 工单（站内信）：tickets 是「会话」，ticket_messages 是「会话里的消息」。
-        # user_read_time / admin_read_time 分别记录双方最后一次已读时刻，
-        # 未读数 = 「对方发的、且晚于我上次已读时刻」的消息条数 —— 天然支持多个管理员共同处理。
+        # 工单（站内信）：tickets 是会话，ticket_messages 是会话里的消息。
+        # user_read_time / admin_read_time 分别记录双方最后一次已读的时刻，
+        # 未读数就是对方发的、且比我上次已读更晚的消息条数，天然支持多个管理员一起处理。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -463,7 +456,7 @@ def init_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ticket_msgs ON ticket_messages(ticket_id)')
 
-        # 公告：同一时间只保留一条 is_active=1 的记录，历史公告留着方便编辑/回滚。
+        # 公告：同一时间只有一条 is_active=1，历史公告留着方便编辑或回滚。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS announcements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -488,16 +481,16 @@ def init_database():
 
 
 def seed_super_admin():
-    """按配置创建内置超级管理员账号（同昵称已存在则跳过，可安全地重复执行）。
+    """按配置创建内置超级管理员账号，同昵称已存在就跳过，可以放心重复执行。
 
-    判断依据是「这个昵称是否已存在」，而不是老写法里的「系统里有没有超管」。
-    两者的区别很关键：后者会导致「配置里新增一个内置超管」时被已有的超管挡住，
-    永远建不出来 —— 想要换内置超管就只能手工动数据库。
-    改成按昵称判断后：新增配置 → 自动补建；重复启动 → 不会重复创建（幂等）。
+    判断的是昵称有没有被占用，不是系统里有没有超管。
+    这个区别很关键：后者会让新加的内置超管被已有的超管挡住，
+    永远建不出来，想换内置超管只能手工改数据库。
+    改成按昵称判断之后：新增配置就自动补建，重复启动也不会重复创建（幂等）。
     """
-    # 昵称是登录名，必须非空；姓名/学号/宿舍允许留空（数据库里存空字符串）
-    # 因为 real_name 和 student_id 都是 UNIQUE 字段，空字符串也算一个值，
-    # 所以「多个内置超管不能同时留空」——第二个会撞唯一约束，日志里会提示。
+    # 昵称是登录名，必须非空；姓名/学号/宿舍可以留空（数据库里存空字符串）。
+    # real_name 和 student_id 都是 UNIQUE 字段，空字符串也算一个值，
+    # 所以多个内置超管不能同时留空，第二个会撞唯一约束，日志里会提示。
     nickname = os.getenv('SUPER_ADMIN_NICKNAME', 'superadmin').strip() or 'superadmin'
     real_name = os.getenv('SUPER_ADMIN_REALNAME', '').strip()
     student_id = os.getenv('SUPER_ADMIN_STUDENT_ID', '').strip()
@@ -520,7 +513,7 @@ def seed_super_admin():
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (nickname, real_name, student_id, dorm, password_hash, password_enc, ROLE_SUPER))
             conn.commit()
-            # 超管账号的创建必须留痕：这是系统里权限最高的那一把钥匙
+            # 超管账号的创建必须留痕，这是系统里权限最高的那把钥匙
             logger.info('已创建超级管理员账号 #%s：昵称=%s 姓名=%s 学号=%s',
                         cursor.lastrowid, nickname, real_name or '(空)', student_id or '(空)')
             audit_action('create_super_admin', '系统初始化时创建超管 #%s/%s' % (cursor.lastrowid, nickname))
@@ -533,10 +526,10 @@ def seed_super_admin():
 
 
 def log_startup_summary():
-    """启动横幅：把关键配置一次性写进日志。
+    """启动横幅，把关键配置一次性写进日志。
 
-    排查故障时先看这一段，能立刻确认「服务到底读了哪些配置」——
-    很多「改了 .env 却不生效」的问题，看一眼这里就明白了。
+    排查故障先看这一段，能马上确认服务到底读了哪些配置，
+    比如 .env 改了却不生效，看一眼这里基本就明白了。
     """
     logger.info('=' * 62)
     logger.info('宿舍自助打印服务 —— 启动')
@@ -559,16 +552,16 @@ def log_startup_summary():
 
 
 ensure_database_directory()
-init_database()  # 模块加载时就建好表，gunicorn/waitress 这类部署方式同样生效
+init_database()  # 模块加载时就建好表，gunicorn/waitress 这类部署方式一样生效
 seed_super_admin()
 log_startup_summary()
 
 
-# ---------- 鉴权 / 会话 ----------
+# 鉴权 / 会话
 
 @app.before_request
 def load_current_user():
-    """每个请求开头把当前登录用户放进 g.user，供后续视图使用。"""
+    """每个请求开头把当前登录用户放进 g.user，后面的视图直接用。"""
     g.user = None
     uid = session.get('uid')
     if not uid:
@@ -583,7 +576,7 @@ def load_current_user():
     finally:
         conn.close()
     if row is None or row['status'] != 'active':
-        session.clear()  # 账号被删除 / 禁用后，已登录的 Cookie 立即失效
+        session.clear()  # 账号被删或被禁用后，已登录的 Cookie 立刻失效
         logger.info('会话已失效：uid=%s 账号不存在或已被禁用 ip=%s', uid, client_ip())
         return
     g.user = dict(row)
@@ -591,7 +584,7 @@ def load_current_user():
 
 @app.after_request
 def set_security_headers(resp):
-    """补几个通用的安全响应头，降低点击劫持、MIME 嗅探等风险。"""
+    """补几个常见的安全响应头，降低点击劫持、MIME 嗅探的风险。"""
     resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
     resp.headers.setdefault('X-Frame-Options', 'DENY')
     resp.headers.setdefault('Referrer-Policy', 'same-origin')
@@ -606,13 +599,13 @@ def record_request_start():
 
 @app.after_request
 def log_request(resp):
-    """访问日志：每个请求一行，含状态码、耗时、响应大小、来源 IP、账号身份。
+    """访问日志，每个请求一行，含状态码、耗时、响应大小、来源 IP 和账号身份。
 
-    分级写入（页面每 10 秒自动刷新一次，全按 INFO 记会把日志刷爆）：
-      5xx      → ERROR    服务端出错，必须一眼看到
-      4xx      → WARNING  参数错 / 未登录 / 越权 / 被限流
-      写操作   → INFO     谁改了什么，属于业务留痕
-      只读成功 → DEBUG    默认不落盘；要全量排查时把 LOG_LEVEL 改成 DEBUG
+    按级别写（页面每 10 秒自动刷一次，全按 INFO 记会把日志刷爆）：
+    5xx 记 ERROR，服务端出错，要一眼看到；
+    4xx 记 WARNING，参数错 / 未登录 / 越权 / 被限流；
+    写操作记 INFO，谁改了什么，算业务留痕；
+    只读成功记 DEBUG，默认不落盘，要全量排查就把 LOG_LEVEL 改成 DEBUG。
     """
     if not LOG_ACCESS:
         return resp
@@ -641,7 +634,7 @@ def log_request(resp):
         else:
             access_logger.debug(message)
     except Exception:
-        logger.exception('写访问日志失败')  # 记日志本身绝不能影响正常响应
+        logger.exception('写访问日志失败')  # 记日志本身不能影响正常响应
     return resp
 
 
@@ -663,7 +656,7 @@ def roles_required(*roles):
             if g.get('user') is None:
                 return jsonify({'code': 401, 'msg': '请先登录'}), 401
             if g.user['role'] not in roles:
-                # 越权尝试必须留痕：这是攻击者在「试探」的最典型特征
+                # 越权尝试必须留痕，这是攻击者在试探的最典型特征
                 security_event('permission_denied',
                                'role=%s need=%s method=%s path=%s'
                                % (g.user['role'], '/'.join(roles), request.method, request.path))
@@ -684,24 +677,24 @@ def ensure_csrf_token():
 
 @app.before_request
 def csrf_protect():
-    """所有写操作必须携带与会话匹配的 X-CSRF-Token，防止跨站伪造请求（CSRF）。"""
+    """所有写操作都要带上与会话匹配的 X-CSRF-Token，防止跨站伪造请求（CSRF）。"""
     if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
         return
     expected = session.get('csrf')
     sent = request.headers.get('X-CSRF-Token', '')
     if not expected or not sent or not secrets.compare_digest(expected, sent):
-        # 令牌对不上通常是两种情况：页面放太久令牌过期，或者有人在跨站伪造请求。
-        # 两种都值得记一笔 —— 后者密集出现就是被攻击的信号。
+        # 令牌对不上一般就两种情况：页面放太久令牌过期，或者有人在跨站伪造请求。
+        # 两种都值得记一笔，后者要是密集出现，就是被攻击的信号。
         security_event('csrf_failed',
                        'method=%s path=%s has_session_token=%s has_header_token=%s'
                        % (request.method, request.path, bool(expected), bool(sent)))
         return jsonify({'code': 403, 'msg': '请求校验失败，请刷新页面后重试'}), 403
 
 
-# ---------- 辅助函数 ----------
+# 辅助函数
 
 def allowed_file(filename):
-    """扩展名白名单校验，避免上传可执行文件。"""
+    """按白名单校验扩展名，避免上传可执行文件。"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
@@ -711,12 +704,12 @@ def generate_pickup_code(conn, length=4):
         code = ''.join(secrets.choice('0123456789') for _ in range(length))
         if conn.execute('SELECT 1 FROM orders WHERE pickup_code = ?', (code,)).fetchone() is None:
             return code
-    # 数字码极端冲突时退化为短码，保证下单不被阻塞
+    # 数字码极端冲突时退化成短码，保证下单不被卡住
     return uuid.uuid4().hex[:6].upper()
 
 
 def positive_int(value, default, maximum=None):
-    """把查询参数解析成正整数，非法或超范围时回退。"""
+    """把查询参数解析成正整数，不合法或超范围就回退。"""
     try:
         result = int(value)
     except (TypeError, ValueError):
@@ -734,7 +727,7 @@ def login_key(identifier):
 
 
 def login_blocked(key):
-    """返回剩余锁定秒数；未锁定返回 0。"""
+    """返回剩余锁定秒数，没被锁就返回 0。"""
     entry = _login_failures.get(key)
     if not entry:
         return 0
@@ -743,7 +736,7 @@ def login_blocked(key):
 
 
 def record_login_failure(key):
-    """记录一次失败；达到阈值就锁定一段时间。"""
+    """记一次失败，到阈值就锁一段时间。"""
     now = time.monotonic()
     count, first_ts, _ = _login_failures.get(key, (0, now, 0))
     if now - first_ts > LOGIN_LOCK_SECONDS:  # 超出统计窗口，重新计数
@@ -751,7 +744,7 @@ def record_login_failure(key):
     count += 1
     lock_until = now + LOGIN_LOCK_SECONDS if count >= LOGIN_MAX_FAILS else 0
     _login_failures[key] = (count, first_ts, lock_until)
-    if len(_login_failures) > 5000:  # 简单清理，避免字典无限增长
+    if len(_login_failures) > 5000:  # 简单清理一下，避免字典无限增长
         for k, (_, ts, _) in list(_login_failures.items()):
             if now - ts > LOGIN_LOCK_SECONDS * 4:
                 _login_failures.pop(k, None)
@@ -762,15 +755,15 @@ def clear_login_failures(key):
 
 
 def validate_registration(data):
-    """校验注册字段，返回 (清洗后的字典, 错误信息)；失败时字典为 None。"""
+    """校验注册字段，返回 (清洗后的字典, 错误信息)，失败时字典为 None。"""
     nickname = (data.get('nickname') or '').strip()
     real_name = (data.get('real_name') or '').strip()
     student_id = (data.get('student_id') or '').strip()
     dorm = (data.get('dorm') or '').strip()
     password = data.get('password') or ''
     confirm = data.get('confirm_password') or ''
-    # 联系方式必填：先选类型（微信 / QQ / 邮箱），号码再按该类型的格式校验。
-    # 前端也会校验一遍，但那只是为了让用户少等一次请求，真正的把关必须在后端。
+    # 联系方式必填：先选类型（微信 / QQ / 邮箱），号码再按对应类型校验格式。
+    # 前端也会校验一遍，但那只是让用户少等一次请求，真正的把关必须在后端。
     contact_type = (data.get('contact_type') or '').strip().lower()
     contact = (data.get('contact') or '').strip()
 
@@ -812,19 +805,19 @@ def validate_registration(data):
         'password': password,
     }, None
 
-# ---------- 接口 ----------
+# 接口
 
-# 接口1：测试服务器是否活着（对应Java的/hello）
+# 探活接口，对应 Java 那边的 /hello
 @app.route('/hello')
 def hello():
     return '打印服务已启动！'
 
 
-# ---------- 账户接口 ----------
+# 账户接口
 
 @app.route('/api/me')
 def api_me():
-    """前端启动时调用：返回当前登录用户和 CSRF 令牌。"""
+    """前端启动时调，返回当前登录用户和 CSRF 令牌。"""
     token = ensure_csrf_token()
     if g.get('user') is None:
         return jsonify({'code': 401, 'msg': '未登录', 'csrf': token, 'user': None}), 401
@@ -838,7 +831,7 @@ def api_register():
     data = request.get_json(silent=True) or {}
     payload, error = validate_registration(data)
     if error:
-        # 校验失败只记 DEBUG：正常用户打错密码太常见，记 WARNING 会淹没真问题
+        # 校验失败只记 DEBUG，用户填错很常见，记 WARNING 会把真正的问题淹了
         logger.debug('注册参数校验不通过：%s ip=%s', error, client_ip())
         return jsonify({'code': 400, 'msg': error}), 400
 
@@ -877,7 +870,7 @@ def api_register():
     finally:
         conn.close()
 
-    session.clear()  # 防会话固定攻击：登录前后换一个全新的会话
+    session.clear()  # 防会话固定攻击，登录前后换个全新的会话
     session['uid'] = uid
     session['csrf'] = secrets.token_urlsafe(32)
     session.permanent = True
@@ -913,8 +906,8 @@ def api_login():
             'SELECT * FROM users WHERE nickname = ? COLLATE NOCASE OR real_name = ? LIMIT 1',
             (identifier, identifier),
         ).fetchone()
-        # 返回给用户的永远是同一句话，避免泄露「账号是否存在」；
-        # 但日志里要记清真实原因，否则运维排查时完全抓瞎。两者必须分开。
+        # 返回给用户的永远是同一句话，避免泄露账号是否存在；
+        # 但日志里要记清真实原因，不然后面排查完全抓瞎。这两者必须分开。
         if row is None:
             fail_reason = '账号不存在'
         elif not verify_password(row['password_hash'], password):
@@ -931,10 +924,10 @@ def api_login():
         conn.close()
 
     clear_login_failures(key)
-    session.clear()                    # 防会话固定攻击
+    session.clear()  # 防会话固定攻击
     session['uid'] = row['id']
     session['csrf'] = secrets.token_urlsafe(32)
-    session.permanent = True           # 配合 PERMANENT_SESSION_LIFETIME 实现「保持登录」
+    session.permanent = True  # 配合 PERMANENT_SESSION_LIFETIME 实现保持登录
     logger.info('用户登录 #%s 昵称=%s 角色=%s ip=%s', row['id'], row['nickname'], row['role'], client_ip())
     return jsonify({'code': 0, 'csrf': session['csrf'], 'user': {
         'id': row['id'], 'nickname': row['nickname'], 'real_name': row['real_name'],
@@ -946,7 +939,7 @@ def api_login():
 
 @app.route('/api/logout', methods=['POST'])
 def api_logout():
-    who = actor_label()   # 必须在清空会话之前取，否则拿不到是谁退出的
+    who = actor_label()  # 必须在清空会话之前取，不然拿不到是谁退出的
     session.clear()
     logger.info('用户退出登录 %s ip=%s', who, client_ip())
     return jsonify({'code': 0, 'msg': '已退出登录'})
@@ -955,28 +948,28 @@ def api_logout():
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
-    # 1. 接收文件和参数（缺参数返回 400 而不是 500）
+    # 先收文件和参数，缺参数返回 400 而不是 500
     file = request.files.get('file')
     if file is None or not file.filename:
         return jsonify({'code': 1, 'msg': '请选择要上传的文件'}), 400
 
     color = request.form.get('color', 'black')
     duplex = request.form.get('duplex', 'single')
-    remark = (request.form.get('remark') or '').strip()[:200]  # 备注限长，防止塞入超长文本
+    remark = (request.form.get('remark') or '').strip()[:200]  # 备注限长，防止有人塞超长文本
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
 
-    # 2. 文件名安全处理 + 扩展名白名单校验
+    # 文件名安全处理 + 扩展名白名单校验
     original_name = os.path.basename(file.filename)
     if not allowed_file(original_name):
-        # 上传可执行文件/脚本是典型的攻击试探，必须单独留痕
+        # 上传可执行文件或脚本是典型的攻击试探，必须单独留痕
         security_event('upload_blocked_type', '文件「%s」不在白名单内' % original_name[:80])
         return jsonify({
             'code': 1,
             'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
         }), 400
     
-    # 3. 先落盘，再写库；任一步失败都保证不留下孤儿文件
+    # 先落盘再写库，哪一步失败都不留下孤儿文件
     ext = original_name.rsplit('.', 1)[1].lower()
     new_filename = f"{uuid.uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_filename)
@@ -997,7 +990,7 @@ def api_upload():
     except Exception:
         if conn is not None:
             conn.rollback()
-        if os.path.exists(save_path):  # 写库失败 -> 删掉已保存的文件
+        if os.path.exists(save_path):  # 写库失败就把已保存的文件删掉
             try:
                 os.remove(save_path)
             except OSError:
@@ -1012,7 +1005,7 @@ def api_upload():
     logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
                 color, duplex, pickup_code, client_ip())
-    # 只返回订单号与取件码，不暴露服务器绝对路径
+    # 只返回订单号和取件码，不暴露服务器绝对路径
     return jsonify({
         'code': 0,
         'msg': '上传成功！订单已记录',
@@ -1020,7 +1013,7 @@ def api_upload():
         'pickup_code': pickup_code
     })
 
-# 订单列表（管理员 / 超管；支持分页、状态筛选、范围筛选）
+# 订单列表，管理员和超管可看，支持分页、状态筛选、范围筛选
 @app.route('/api/orders')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_orders():
@@ -1033,7 +1026,7 @@ def api_orders():
     if status in ORDER_STATUSES:
         where.append('o.status = ?')
         params.append(status)
-    if scope == 'pool':      # 待接单池：还没人接
+    if scope == 'pool':      # 待接单池，还没人接
         where.append('o.claimed_by IS NULL')
     elif scope == 'mine':    # 我接的单
         where.append('o.claimed_by = ?')
@@ -1067,13 +1060,13 @@ def api_orders():
     for row in rows:
         item = dict(row)
         item['is_mine'] = item['claimed_by'] == my_id
-        # 能否改状态：超管任意；管理员仅限自己接的单
+        # 能不能改状态：超管随便，管理员只限自己接的单
         item['can_manage'] = is_super or item['is_mine']
         orders.append(item)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
 
 
-# 接单：原子更新，保证同一订单不会被两个账户同时接走
+# 接单，用原子更新保证同一订单不会被两个人同时接走
 @app.route('/api/order/<int:order_id>/claim', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_claim_order(order_id):
@@ -1091,7 +1084,7 @@ def api_claim_order(order_id):
                 return jsonify({'code': 404, 'msg': '订单不存在'}), 404
             claimer = conn.execute('SELECT nickname FROM users WHERE id = ?', (row['claimed_by'],)).fetchone()
             name = claimer['nickname'] if claimer else '其他账户'
-            # 抢单失败属于正常的并发竞争，不是攻击行为，记 INFO 即可，别滥用安全告警
+            # 抢单失败是正常的并发竞争，不算攻击，记 INFO 就行，别滥用安全告警
             logger.info('接单竞争失败：订单 #%s 已被「%s」接取，操作人=%s',
                         order_id, name, g.user['nickname'])
             return jsonify({'code': 409, 'msg': f'手慢了，该订单已被「{name}」接取'}), 409
@@ -1103,7 +1096,7 @@ def api_claim_order(order_id):
     return jsonify({'code': 0, 'msg': '接单成功'})
 
 
-# 释放订单（接单人本人或超管），便于误点后撤回
+# 释放订单，接单人本人或超管可用，方便误点后撤回
 @app.route('/api/order/<int:order_id>/release', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_release_order(order_id):
@@ -1131,7 +1124,7 @@ def api_release_order(order_id):
     return jsonify({'code': 0, 'msg': '已释放订单'})
 
 
-# 更改订单状态（超管可改任意；普通管理员只能改自己接的单）
+# 改订单状态，超管可以改任意单，普通管理员只能改自己接的
 @app.route('/api/order/<int:order_id>/status', methods=['PUT'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_update_status(order_id):
@@ -1171,7 +1164,7 @@ def api_update_status(order_id):
     return jsonify({'code': 0, 'msg': f'订单 {order_id} 已更新为「{new_status}」'})
 
 
-# 普通用户查自己的订单（只能看到自己的）
+# 普通用户查自己的订单，只能看到自己的
 @app.route('/api/my-orders')
 @login_required
 def api_my_orders():
@@ -1193,7 +1186,7 @@ def api_my_orders():
     return jsonify({'code': 0, 'orders': [dict(row) for row in rows]})
 
 
-# 下载订单文件：只有「接单人」和「超管」可以下载
+# 下载订单文件，只有接单人和超管可以下
 @app.route('/api/order/<int:order_id>/download')
 @login_required
 def api_download(order_id):
@@ -1213,11 +1206,11 @@ def api_download(order_id):
                        % (order_id, row['claimed_by']))
         return jsonify({'code': 403, 'msg': '只有接单人可以下载该订单的文件'}), 403
 
-    # 双重校验：解析后的真实路径必须位于上传目录内，防止路径穿越
+    # 双重校验：解析后的真实路径必须在上传目录内，防止路径穿越
     upload_root = Path(UPLOAD_FOLDER).resolve()
     file_path = Path(row['file_path']).resolve()
     if upload_root != file_path.parent and upload_root not in file_path.parents:
-        # 数据库里的路径跑到上传目录外面 —— 只有被篡改才可能发生，按安全事件记
+        # 库里的路径跑到上传目录外面，只有被篡改才可能发生，按安全事件记
         security_event('path_traversal_blocked',
                        '订单 #%s 的 file_path=%s 不在上传目录内' % (order_id, row['file_path']))
         return jsonify({'code': 400, 'msg': '文件路径不合法'}), 400
@@ -1230,31 +1223,29 @@ def api_download(order_id):
     return send_file(file_path, as_attachment=True, download_name=row['filename'])
 
 
-# ---------- 超级管理员接口 ----------
+# 超级管理员接口
 
-# 账号列表（超管看全部；管理员看不到超管，也看不到密码）
+# 账号列表，超管看全部，管理员看不到超管也看不到密码
 @app.route('/api/admin/users')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_users():
-    """账号列表：管理员和超管都能看，但两类敏感信息分别做了收口。
+    """账号列表：管理员和超管都能看，但两类敏感信息各自做了收口。
 
-    1) 密码：默认响应里根本没有 password 字段，只有超管显式带 ?with_password=1
-       才解密，并强制审计留痕；
-    2) 超管账号：管理员看不到。
+    密码默认不出现在响应里，只有超管显式带 ?with_password=1 才解密，而且强制审计留痕；
+    超管账号则是管理员看不到。
 
-    第 2 点刻意放在 SQL 里过滤，而不是让前端「不渲染」——
-    前端过滤只是蒙眼睛：数据早就躺在响应体里了，按 F12 看网络请求、
-    或者直接 curl 一把就全看见，等于没隐藏。敏感数据的正确做法是
-    「不该给的人，拿都拿不到」，而不是「给了但希望他不看」。
+    超管账号这条故意放在 SQL 里过滤，不是让前端不渲染：
+    前端过滤只是蒙眼睛，数据早就躺在响应体里了，按 F12 看网络请求或者 curl 一把就全看得见，
+    等于没隐藏。敏感数据的正确做法是让不该给的人拿都拿不到，而不是给了但指望他不看。
     """
     is_super = g.user['role'] == ROLE_SUPER
     want_password = is_super and request.args.get('with_password') in ('1', 'true', 'yes')
 
     conn = get_db()
     try:
-        # 片段是代码里写死的常量，值一律走 ? 占位符 —— 这样既没有注入口子，
-        # 也不用把整条 SQL 抄两遍。（注意：以后往这条 SQL 里加其他 {}
-        # 会和 .format 打架，届时改成拼两条完整语句更稳。）
+        # 片段都是代码里写死的常量，值一律走 ? 占位符，这样既没有注入口子，
+        # 也不用把整条 SQL 抄两遍。（以后往这条 SQL 里加别的 {} 会和 .format 打架，
+        # 到时候改成拼两条完整语句更稳。）
         where, params = '', ()
         if not is_super:
             where, params = 'WHERE u.role != ?', (ROLE_SUPER,)
@@ -1275,7 +1266,7 @@ def api_admin_users():
     users = []
     for row in rows:
         item = dict(row)
-        item.pop('password_enc', None)   # 密文绝不进响应体
+        item.pop('password_enc', None)  # 密文绝不进响应体
         if want_password:
             item['password'] = decrypt_password(row['password_enc']) or '（无法解密）'
         item['role_label'] = ROLE_LABELS.get(item['role'], item['role'])
@@ -1283,14 +1274,14 @@ def api_admin_users():
 
     if want_password:
         # 一次性吐出全部账号的明文密码，是系统里最敏感的操作，必须留痕。
-        # 但只记「谁、什么时候、拉了几个账号」，绝不记密码本身 —— 日志不能变成第二个泄露源。
+        # 但只记是谁、什么时候、拉了几个账号，绝不记密码本身，日志不能变成第二个泄露源。
         audit_action('view_plaintext_passwords',
                      '拉取全部账号列表 %s 个（含明文密码）' % len(users))
     return jsonify({'code': 0, 'total_users': len(users),
                     'with_password': want_password, 'users': users})
 
 
-# 升级 / 降级账号角色（超管专属；不能动超管自己的角色）
+# 升级 / 降级账号角色，超管专属，也不能动超管自己的角色
 @app.route('/api/admin/user/<int:user_id>/role', methods=['PUT'])
 @roles_required(ROLE_SUPER)
 def api_admin_set_role(user_id):
@@ -1313,7 +1304,7 @@ def api_admin_set_role(user_id):
         conn.commit()
     finally:
         conn.close()
-    # 提权 / 降权是权限体系的核心动作，必须审计留痕，并且记清「改前 → 改后」
+    # 提权 / 降权是权限体系的核心动作，必须审计留痕，还要记清改前改后
     audit_action('change_role',
                  '目标 #%s/%s %s -> %s' % (user_id, target['nickname'], target['role'], new_role))
     return jsonify({'code': 0, 'msg': f'已设置为{ROLE_LABELS[new_role]}'})
@@ -1347,7 +1338,7 @@ def api_admin_set_status(user_id):
     return jsonify({'code': 0, 'msg': '已启用' if new_status == 'active' else '已禁用'})
 
 
-# 删除账号（订单作为业务凭证保留，只解除关联）
+# 删除账号，订单作为业务凭证保留，只解除关联
 @app.route('/api/admin/user/<int:user_id>', methods=['DELETE'])
 @roles_required(ROLE_SUPER)
 def api_admin_delete_user(user_id):
@@ -1373,14 +1364,14 @@ def api_admin_delete_user(user_id):
     return jsonify({'code': 0, 'msg': '账号已删除'})
 
 
-# 可视化统计数据（管理员 / 超管都能看；这里只有只读聚合数据，不含任何敏感字段）
+# 可视化统计数据，管理员和超管都能看，这里只有只读聚合数据，不含敏感字段
 @app.route('/api/admin/stats')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_stats():
     # 管理员视角下，超管账号在统计里也必须"不存在"。
     # 否则账号列表显示 3 个、统计却说总数 4，等于变相告诉管理员
-    # 「还有一个你看不到的账号」—— 挡了列表却漏了数字，等于没挡。
-    # 超管看自己的系统，自然要完整口径，不加这个条件。
+    # 还有一个你看不到的账号。挡了列表却漏了数字，等于没挡。
+    # 超管看自己的系统要完整口径，不加这个条件。
     role_filter = '' if g.user['role'] == ROLE_SUPER else " AND role != 'super'"
 
     conn = get_db()
@@ -1448,13 +1439,13 @@ def api_admin_stats():
     })
 
 
-# ---------- 公告接口 ----------
+# 公告接口
 
 def _parse_announcement(data):
     """校验并清洗公告的内容与样式，返回 (字典, 错误信息)。
 
-    字体只接受白名单里的键（不直接存 CSS 字符串）—— 这样前端怎么渲染由前端决定，
-    数据库不会变成一段可以被塞任意样式的「CSS 注入」入口。
+    字体只收白名单里的键，不直接存 CSS 字符串，前端怎么渲染由前端决定，
+    免得数据库变成能塞任意样式的 CSS 注入入口。
     """
     content = (data.get('content') or '').strip()
     if not content:
@@ -1488,7 +1479,7 @@ def _parse_announcement(data):
 @app.route('/api/announcement')
 @login_required
 def api_announcement():
-    """前台读取当前生效的公告；没有则返回 null（前端据此隐藏公告栏）。"""
+    """前台读当前生效的公告，没有就返回 null，前端据此隐藏公告栏。"""
     conn = get_db()
     try:
         row = conn.execute('''
@@ -1506,7 +1497,7 @@ def api_announcement():
 @app.route('/api/admin/announcements')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_announcements():
-    """公告列表（管理员 / 超管）：含已停用的历史公告，方便编辑和重新启用。"""
+    """公告列表，管理员 / 超管可看，含已停用的历史公告，方便编辑和重新启用。"""
     conn = get_db()
     try:
         rows = conn.execute('''
@@ -1526,7 +1517,7 @@ def api_admin_announcements():
 @app.route('/api/admin/announcements', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_create_announcement():
-    """发布公告：新公告生效时会自动把旧的生效公告停用（同一时间只悬浮一条）。"""
+    """发布公告，新公告生效时会自动停用旧的，同一时间只悬浮一条。"""
     payload, error = _parse_announcement(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
@@ -1551,7 +1542,7 @@ def api_admin_create_announcement():
 @app.route('/api/admin/announcements/<int:aid>', methods=['PUT'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_update_announcement(aid):
-    """修改公告内容或样式（不改生效状态）。"""
+    """改公告内容或样式，不动生效状态。"""
     payload, error = _parse_announcement(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
@@ -1577,7 +1568,7 @@ def api_admin_update_announcement(aid):
 @app.route('/api/admin/announcements/<int:aid>/active', methods=['PUT'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_toggle_announcement(aid):
-    """启用 / 停用公告。启用一条时会先停用其它生效中的公告，保证只有一条悬浮。"""
+    """启用 / 停用公告，启用一条时会先停用其它生效中的，保证只有一条悬浮。"""
     data = request.get_json(silent=True) or {}
     active = bool(data.get('active'))
     conn = get_db()
@@ -1612,22 +1603,22 @@ def api_admin_delete_announcement(aid):
     return jsonify({'code': 0, 'msg': '公告已删除'})
 
 
-# ---------- 工单（站内信）接口 ----------
+# 工单（站内信）接口
 
 def _is_staff(user):
-    """管理员 / 超管统称「工单的另一方」。"""
+    """管理员和超管统称工单的另一方。"""
     return user['role'] in (ROLE_ADMIN, ROLE_SUPER)
 
 
 @app.route('/api/tickets')
 @login_required
 def api_tickets():
-    """工单列表：普通用户只看自己的；管理员 / 超管看全部，可按状态筛选。
+    """工单列表：普通用户只看自己的，管理员 / 超管看全部，可按状态筛选。
 
-    未读数是「算」出来的，不是存出来的：
+    未读数是算出来的，不是存出来的：
       用户侧未读 = 对方（管理员）发的、且晚于我上次已读时刻的消息数；
       管理侧未读 = 用户发的、且晚于管理员上次已读时刻的消息数。
-    这样多个管理员共用同一队列时，谁点开谁就算已读，不会各自维护一份标记。
+    这样多个管理员共用同一个队列时，谁点开就算谁已读，不用各自维护一份标记。
     """
     staff = _is_staff(g.user)
     status = (request.args.get('status') or '').strip()
@@ -1683,7 +1674,7 @@ def api_tickets():
 @app.route('/api/tickets', methods=['POST'])
 @login_required
 def api_create_ticket():
-    """普通用户发起工单，第一条消息（详细描述）同时写入。"""
+    """普通用户发起工单，第一条消息（详细描述）同时写进去。"""
     if _is_staff(g.user):
         return jsonify({'code': 403, 'msg': '管理员无需发起工单，直接在工单列表里回复即可'}), 403
 
@@ -1701,7 +1692,7 @@ def api_create_ticket():
             "SELECT COUNT(*) AS c FROM tickets WHERE user_id = ? AND status = 'open'",
             (g.user['id'],)).fetchone()['c']
         if open_count >= TICKET_MAX_OPEN:
-            # 限流：防止有人用工单刷屏，把管理员的处理队列占满
+            # 限流，防止有人拿工单刷屏，把管理员的处理队列占满
             return jsonify({'code': 429,
                             'msg': '你有 %s 个进行中的工单，请等处理完再发起新的' % TICKET_MAX_OPEN}), 429
         cursor = conn.execute(
@@ -1723,7 +1714,7 @@ def api_create_ticket():
 @app.route('/api/tickets/<int:tid>')
 @login_required
 def api_ticket_detail(tid):
-    """读取工单详情与全部消息，同时把自己这一侧的已读时间推进到现在。"""
+    """读工单详情和全部消息，顺便把自己这一侧的已读时间推进到现在。"""
     staff = _is_staff(g.user)
     conn = get_db()
     try:
@@ -1731,7 +1722,7 @@ def api_ticket_detail(tid):
         if ticket is None:
             return jsonify({'code': 404, 'msg': '工单不存在'}), 404
         if not staff and ticket['user_id'] != g.user['id']:
-            # 水平越权：普通用户试图翻别人的工单，必须留痕
+            # 水平越权：普通用户想翻别人的工单，必须留痕
             security_event('ticket_access_denied',
                            '工单 #%s 属于 uid=%s，访问者=%s' % (tid, ticket['user_id'], actor_label()))
             return jsonify({'code': 403, 'msg': '无权查看该工单'}), 403
@@ -1772,7 +1763,7 @@ def api_ticket_detail(tid):
 @app.route('/api/tickets/<int:tid>/messages', methods=['POST'])
 @login_required
 def api_ticket_reply(tid):
-    """回复工单：工单归属人和管理员 / 超管都可以回。"""
+    """回复工单，工单归属人和管理员 / 超管都能回。"""
     staff = _is_staff(g.user)
     data = request.get_json(silent=True) or {}
     body = (data.get('body') or '').strip()
@@ -1795,7 +1786,7 @@ def api_ticket_reply(tid):
             INSERT INTO ticket_messages (ticket_id, sender_id, sender_role, body)
             VALUES (?, ?, ?, ?)
         ''', (tid, g.user['id'], g.user['role'], body))
-        # 回复即刷新会话时间；顺手推进自己这一侧的已读时间，避免刚发完还显示未读
+        # 回复就刷新会话时间，顺手推进自己这一侧的已读时间，免得刚发完还显示未读
         conn.execute('''
             UPDATE tickets
             SET update_time = CURRENT_TIMESTAMP,
@@ -1815,7 +1806,7 @@ def api_ticket_reply(tid):
 @app.route('/api/tickets/<int:tid>/status', methods=['PUT'])
 @login_required
 def api_ticket_status(tid):
-    """关闭 / 重新打开工单：工单归属人和管理员 / 超管都可以操作。"""
+    """关闭 / 重新打开工单，工单归属人和管理员 / 超管都能操作。"""
     staff = _is_staff(g.user)
     data = request.get_json(silent=True) or {}
     new_status = (data.get('status') or '').strip()
@@ -1844,19 +1835,19 @@ def api_ticket_status(tid):
 
 @app.route('/')
 def index():
-    ensure_csrf_token()  # 页面一打开就下发 CSRF 令牌（写入会话 Cookie）
+    ensure_csrf_token()  # 页面一打开就下发 CSRF 令牌，写进会话 Cookie
     return render_template('index.html')
 
 
-# ---------- 统一错误处理 ----------
+# 统一错误处理
 
 @app.errorhandler(404)
 def handle_404(err):
     """访问了不存在的路径。
 
     正常用户走不到这里（我们自己会把错误处理干净），
-    所以密集的 404 通常是有人在扫描后台路径 —— 值得留痕。
-    忽略 favicon.ico，那是浏览器自动请求的，记了只是噪音。
+    所以密集的 404 通常是有人在扫后台路径，值得留痕。
+    favicon.ico 跳过，那是浏览器自动请求的，记了只是噪音。
     """
     if request.path != '/favicon.ico':
         security_event('not_found', '访问了不存在的路径')
@@ -1873,9 +1864,9 @@ def handle_413(err):
 
 @app.errorhandler(500)
 def handle_500(err):
-    """未捕获异常：日志里带上完整堆栈，返回给用户的则是不含细节的通用提示。
+    """未捕获异常：日志里带完整堆栈，返回给用户的只给不含细节的通用提示。
 
-    区分这两者很重要 —— 把堆栈暴露给用户等于免费给攻击者送情报。
+    这两个必须分开，把堆栈暴露给用户等于免费给攻击者送情报。
     """
     original = getattr(err, 'original_exception', None)
     if original is not None:
@@ -1885,45 +1876,43 @@ def handle_500(err):
     return jsonify({'code': 500, 'msg': '服务器内部错误，请稍后重试'}), 500
 
 
-# ---------- 启动服务 ----------
+# 启动服务
 #
-# 为什么这里要额外写一段「端口自检」：
-#   werkzeug 在内部就把绑定端口的 OSError 捕获了，只往 stderr 打一句系统原文
-#   （Windows 上就是「以一种访问权限不允许的方式做了一个访问套接字的尝试。」），
-#   紧接着执行 sys.exit(1)。等错误传到 __main__ 这里，只剩下一个空壳的 SystemExit，
-#   错误码已经丢了 —— 于是用户看到的是一句完全无法下手的系统提示。
-#   所以改成：在启动服务器之前，先用一个普通 socket 自己绑一次端口。
-#   只有这一步由我们自己来做，才拿得到确切的错误码，进而分辨原因、给出中文建议、
-#   并在可恢复的情况下自动重试。
+# 这里为什么要单独做一段端口自检：
+#   werkzeug 内部就把绑定端口的 OSError 吞掉了，只往 stderr 打一句系统原文
+#   （Windows 上提示“以一种访问权限不允许的方式做了一个访问套接字的尝试”），
+#   紧接着 sys.exit(1)。等错误传到 __main__，只剩一个空壳 SystemExit，错误码已经丢了，
+#   用户看到的就只有一句没法下手的系统提示。
+#   改成启动前先用普通 socket 自己绑一次端口，只有这一步由我们来做，
+#   才拿得到确切的错误码，进而分辨原因、给中文建议、能恢复的就自动重试。
 #
-# 两个写这段代码前实测过的结论（本机 Windows + Python 3.11）：
-#   1) 端口被别的程序占用 -> errno=10048 winerror=10048
-#      端口被系统拒绝     -> errno=13    winerror=10013   ← 本次故障就是这一种
-#   2) 自检时「不能」打开 SO_REUSEADDR：
-#      Windows 下开了它，即使端口正被别的进程监听也能绑成功（就测不出占用了）；
-#      而对「被拒绝」的情况，开不开都照样失败，所以关掉它不影响我们要抓的错误。
+# 写这段之前在本机实测（Windows + Python 3.11）的两个结论：
+#   端口被别的程序占用是 errno=10048 / winerror=10048，
+#   端口被系统拒绝则是 errno=13 / winerror=10013，本次故障就是后一种；
+#   自检时不能打开 SO_REUSEADDR：Windows 下开了它，端口即使正被别的进程监听也照样绑成功，
+#   就测不出占用了；而被拒绝的情况开不开都一样失败，所以关掉它不影响我们要抓的错误。
 
-# 同一类错误在不同平台上的编号不同，统一登记在这里，便于跨平台判断
-_BIND_PERMISSION_CODES = (10013, errno.EACCES, errno.EPERM)     # 端口「不允许使用」
-_BIND_IN_USE_CODES = (10048, errno.EADDRINUSE)                  # 端口已被占用
-_BIND_NO_ADDRESS_CODES = (10049, errno.EADDRNOTAVAIL)           # 地址不是本机的
+# 同一类错误在不同平台编号不同，统一登记在这里方便跨平台判断
+_BIND_PERMISSION_CODES = (10013, errno.EACCES, errno.EPERM)  # 端口不允许使用
+_BIND_IN_USE_CODES = (10048, errno.EADDRINUSE)  # 端口已被占用
+_BIND_NO_ADDRESS_CODES = (10049, errno.EADDRNOTAVAIL)  # 地址不是本机的
 
-# 「端口被拒绝」往往是本机代理 / 加速器类软件临时占用造成的，过几秒会自己恢复，
-# 所以自动重试几次 —— 让人感觉到「等一下就自己起来了」，而不是被一句报错劝退。
+# 端口被拒绝多半是本机代理 / 加速器类软件临时占用，过几秒会自己恢复，
+# 所以自动重试几次，让人感觉等一下就自己起来了，而不是被一句报错劝退。
 START_MAX_ATTEMPTS = max(1, env_int('START_MAX_ATTEMPTS', 3))
 START_RETRY_SECONDS = max(1, env_int('START_RETRY_SECONDS', 3))
 
 
 def describe_bind_error(exc):
-    """把「端口绑定失败」翻译成 (原因, [处理建议], 处理方式)。
+    """把端口绑定失败翻译成 (原因, [处理建议], 处理方式)。
 
     处理方式有三种：
-      'retry'    瞬时故障 → 自动重试几次，仍失败才放弃
-      'continue' 只提醒，不阻断启动（有些报错其实并不影响最终绑定成功）
-      'stop'     确定性问题 → 直接把原因和建议说清楚后退出
+      'retry'    瞬时故障，自动重试几次，还失败才放弃；
+      'continue' 只提醒，不阻断启动（有些报错其实不影响最终绑定成功）；
+      'stop'     确定性问题，把原因和建议说清楚后退出。
 
-    认不出来的错误返回 None，交给上层原样抛出 —— 不能把没见过的问题也一起吞掉，
-    否则以后真出了别的故障会很难排查。
+    认不出来的错误返回 None，交给上层原样抛出，不能把没见过的问题也一起吞掉，
+    否则以后真出了别的故障很难排查。
     """
     code = getattr(exc, 'winerror', None) or getattr(exc, 'errno', None)
     if code in _BIND_PERMISSION_CODES:
@@ -1946,9 +1935,9 @@ def describe_bind_error(exc):
                 '确认占用者：netstat -ano | findstr :{port}',
                 '或者把 .env 里的 PORT 换成别的端口。',
             ],
-            # 只提醒不阻断：werkzeug 自己打开了 SO_REUSEADDR，多数情况仍能绑上；
-            # 而「刚停掉服务又立刻重启」时端口可能还在 TIME_WAIT，也会报这个错，
-            # 若在这里直接退出，正常的重启就会被误伤。
+            # 只提醒不阻断：werkzeug 自己开了 SO_REUSEADDR，多数情况还能绑上；
+            # 而且刚停掉服务又立刻重启时端口可能还在 TIME_WAIT，也会报这个错，
+            # 在这里直接退出会把正常的重启误伤。
             'continue',
         )
     if code in _BIND_NO_ADDRESS_CODES:
@@ -1964,9 +1953,9 @@ def describe_bind_error(exc):
 
 
 def probe_port(host, port):
-    """先用一个普通 socket 试绑端口：成功返回 None，失败返回那个 OSError。
+    """先用普通 socket 试绑端口，成功返回 None，失败返回那个 OSError。
 
-    这里故意不设置 SO_REUSEADDR，原因见本段开头的实测结论 2。
+    这里故意不设 SO_REUSEADDR，原因见本段开头实测结论的第二条。
     """
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -1979,7 +1968,7 @@ def probe_port(host, port):
 
 
 def report_bind_failure(exc, host, port, reason, hints):
-    """把失败原因和处理建议一次性写清楚（控制台和日志文件都能看到）。"""
+    """把失败原因和处理建议一次写清楚，控制台和日志文件都能看到。"""
     logger.error('=' * 62)
     logger.error('启动失败：%s', reason.format(host=host, port=port))
     logger.error('  监听地址：%s:%s', host, port)
@@ -1990,21 +1979,21 @@ def report_bind_failure(exc, host, port, reason, hints):
 
 
 def _run_dev_server(host, port):
-    """Flask 内置服务器：只适合本地调试，并发差且有安全限制，生产别用。
+    """Flask 内置服务器，只适合本地调试，并发差还有安全限制，生产别用。
 
     关掉自动重载：重载会 fork 出子进程重复导入本模块，
-    结果是启动横幅打印两遍、日志文件被两个进程同时写入。
+    结果就是启动横幅打印两遍、日志文件被两个进程同时写。
     """
     app.run(host=host, port=port, debug=DEBUG_MODE, use_reloader=False)
 
 
 def start_server(host, port):
-    """启动服务器：端口不可用时给出中文说明，瞬时故障自动重试。"""
+    """启动服务器，端口不可用时给中文说明，瞬时故障自动重试。"""
     for attempt in range(1, START_MAX_ATTEMPTS + 1):
         exc = probe_port(host, port)
         described = describe_bind_error(exc) if exc is not None else None
 
-        # 端口可用，或遇到我们没见过的错误 —— 都交给服务器自己去处理
+        # 端口可用，或者碰到我们没见过的错误，都交给服务器自己处理
         if described is None:
             break
 
@@ -2036,9 +2025,9 @@ def start_server(host, port):
                 logger.info('使用 waitress 生产服务器启动：http://%s:%s（8 线程）', host, port)
                 serve(app, host=host, port=port, threads=8)
     except (OSError, SystemExit) as exc:
-        # 自检通过、但真正绑定时仍然失败：属于极小概率的竞争（自检释放端口到服务器绑定
-        # 之间被别的程序抢走），此时没有更好的补救办法，如实报出来即可。
-        # 这里必须连 SystemExit 一起接住 —— werkzeug 绑定失败时是直接 sys.exit(1) 退出的。
+        # 自检通过、真正绑定时仍然失败：属于极小概率的竞争（自检释放端口到服务器绑定
+        # 之间被别的程序抢走），这种情况没什么好办法，如实报出来就行。
+        # 这里必须连 SystemExit 一起接住，werkzeug 绑定失败时是直接 sys.exit(1) 退出的。
         report_bind_failure(exc, host, port,
                             '端口在启动瞬间被抢占或被拒绝（自检通过之后又被占用）',
                             ['先关掉多余的实例后重试；',
