@@ -85,7 +85,15 @@ watch(() => props.ticketId, load)
 
     <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
       <NSpin :show="loading && !messages.length">
-        <ul class="flex list-none flex-col gap-3 p-0">
+        <!-- 消息按 id 升序追加在末尾，所以新气泡从下方 4px 升起 —— 和「发出去的东西落在
+             列表底部」这件事在空间上对得上。 -->
+        <TransitionGroup
+          tag="ul"
+          class="flex list-none flex-col gap-3 p-0"
+          enter-active-class="transition duration-[200ms] ease-out"
+          enter-from-class="opacity-0 translate-y-1"
+          move-class="transition duration-[200ms] ease-out"
+        >
           <li
             v-for="item in messages"
             :key="item.id"
@@ -115,7 +123,7 @@ watch(() => props.ticketId, load)
               </div>
             </div>
           </li>
-        </ul>
+        </TransitionGroup>
       </NSpin>
     </div>
 

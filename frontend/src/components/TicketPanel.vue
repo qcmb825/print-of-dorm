@@ -138,7 +138,17 @@ onMounted(async () => {
             <template #icon><Inbox :size="30" /></template>
           </NEmpty>
         </div>
-        <ul v-else class="flex max-h-[62vh] list-none flex-col overflow-y-auto p-0">
+        <!-- 工单按 update_time 倒序：新工单从上方落下，有人回复的旧工单会移回顶部。
+             那段「让位 / 回到顶部」的位移由 move-class 负责 —— 30 秒轮询下这是唯一能看出
+             「哪条动过」的线索。 -->
+        <TransitionGroup
+          v-else
+          tag="ul"
+          class="flex max-h-[62vh] list-none flex-col overflow-y-auto p-0"
+          enter-active-class="transition duration-[200ms] ease-out"
+          enter-from-class="opacity-0 -translate-y-1"
+          move-class="transition duration-[200ms] ease-out"
+        >
           <li v-for="ticket in tickets" :key="ticket.id">
             <button
               type="button"
@@ -171,7 +181,7 @@ onMounted(async () => {
               </p>
             </button>
           </li>
-        </ul>
+        </TransitionGroup>
       </div>
 
       <!-- 详情：宽屏常驻 -->

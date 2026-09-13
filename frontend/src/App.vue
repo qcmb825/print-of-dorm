@@ -2,6 +2,7 @@
 import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, dateZhCN, zhCN } from 'naive-ui'
 import { RouterView } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
+import RouteTransition from '@/components/RouteTransition.vue'
 import { useThemeStore } from '@/stores/theme'
 
 const theme = useThemeStore()
@@ -19,7 +20,11 @@ const theme = useThemeStore()
       <NDialogProvider>
         <NLoadingBarProvider>
           <AppBridge />
-          <RouterView />
+          <RouterView v-slot="{ Component }">
+            <RouteTransition>
+              <component :is="Component" />
+            </RouteTransition>
+          </RouterView>
         </NLoadingBarProvider>
       </NDialogProvider>
     </NMessageProvider>

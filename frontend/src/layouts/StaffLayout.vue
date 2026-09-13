@@ -14,6 +14,7 @@ import { NDrawer, NDrawerContent } from 'naive-ui'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import RouteTransition from '@/components/RouteTransition.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -132,7 +133,11 @@ onMounted(() => {
       <AnnouncementBar />
 
       <main class="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
-        <RouterView />
+        <RouterView v-slot="{ Component }">
+          <RouteTransition>
+            <component :is="Component" />
+          </RouteTransition>
+        </RouterView>
       </main>
     </div>
   </div>

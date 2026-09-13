@@ -398,8 +398,16 @@ onMounted(async () => {
         :row-key="(row: Order) => row.id"
       />
 
-      <!-- 窄屏：卡片 -->
-      <ul v-else class="flex list-none flex-col p-0">
+      <!-- 窄屏：卡片。入场规则与学生端订单列表一致：10 秒轮询下只有新单会动。
+           宽屏那张 NDataTable 是组件内部渲染的行，套不上 TransitionGroup，所以桌面端没有这项。 -->
+      <TransitionGroup
+        v-else
+        tag="ul"
+        class="flex list-none flex-col p-0"
+        enter-active-class="transition duration-[200ms] ease-out"
+        enter-from-class="opacity-0 -translate-y-1"
+        move-class="transition duration-[200ms] ease-out"
+      >
         <li
           v-for="order in orders"
           :key="order.id"
@@ -457,7 +465,7 @@ onMounted(async () => {
             </NButton>
           </div>
         </li>
-      </ul>
+      </TransitionGroup>
     </div>
 
     <div v-if="total > size" class="mt-4 flex justify-center">

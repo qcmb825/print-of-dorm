@@ -5,6 +5,7 @@ import { ClipboardList, LayoutDashboard, MessageSquare, Upload } from '@lucide/v
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import RouteTransition from '@/components/RouteTransition.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -67,7 +68,11 @@ onMounted(() => {
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
     <main class="mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <RouteTransition>
+          <component :is="Component" />
+        </RouteTransition>
+      </RouterView>
     </main>
 
     <!-- 底部标签栏：窄屏用，与上面横向导航在 md 断点交接。

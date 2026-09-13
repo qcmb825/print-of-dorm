@@ -120,7 +120,11 @@ onMounted(load)
     </div>
 
     <template v-else>
-      <div class="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <!-- 八张卡片一起出现会像「整块糊上来」，这里给 40ms 的错峰。
+           只加在这组轻量卡片上：下面那几块图表面板是 ECharts 实打实画出来的，
+           让它们错峰入场等于把绘制压力排队，反而更容易掉帧。
+           数值刷新（点「刷新」）时元素是原地打补丁的，不会重放动画。 -->
+      <div class="motion-stagger mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="订单总数" :value="orderStats?.total ?? 0" :icon="Package" />
         <StatCard label="已接单" :value="orderStats?.claimed ?? 0" :icon="CheckCircle2" accent />
         <StatCard label="待接单" :value="orderStats?.unclaimed ?? 0" :icon="Clock" />

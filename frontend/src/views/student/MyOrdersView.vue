@@ -93,7 +93,18 @@ onMounted(async () => {
       </NEmpty>
     </div>
 
-    <ul v-else class="flex list-none flex-col gap-3 p-0">
+    <!-- 列表用 TransitionGroup 而不是 Transition：接口每 20 秒轮询一次，数组是整体替换的，
+         按 key 打补丁时只有「真正新进来」的订单会跑入场动画 —— 每次轮询都重放一遍的话
+         就是一屏东西在定时乱动。订单按 id 倒序，新单出在最上面，所以从上方 4px 落下。
+         move-class 管的是「新单插进来、后面的项往下让位」这一段位移（FLIP）。 -->
+    <TransitionGroup
+      v-else
+      tag="ul"
+      class="flex list-none flex-col gap-3 p-0"
+      enter-active-class="transition duration-[200ms] ease-out"
+      enter-from-class="opacity-0 -translate-y-1"
+      move-class="transition duration-[200ms] ease-out"
+    >
       <li v-for="order in orders" :key="order.id" class="panel p-3.5 sm:p-4">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
@@ -137,6 +148,6 @@ onMounted(async () => {
           <span v-if="order.claimer_nickname">接单：{{ order.claimer_nickname }}</span>
         </div>
       </li>
-    </ul>
+    </TransitionGroup>
   </div>
 </template>

@@ -35,10 +35,13 @@ const authorLine = computed(() => {
 </script>
 
 <template>
+  <!-- 从上方 8px 落下、关闭时原路收回 —— 这条公告就长在页面顶部，来的方向和它的位置对得上。
+       退场原先写的是 ease-in：它会「慢慢起步再加速」，而起步那一刻正是用户盯着看的时候，
+       观感上比 200ms 的 ease-out 还慢。UI 上的进出场一律 ease-out。 -->
   <Transition
-    enter-active-class="transition duration-200 ease-out"
+    enter-active-class="transition duration-[180ms] ease-out"
     enter-from-class="-translate-y-2 opacity-0"
-    leave-active-class="transition duration-150 ease-in"
+    leave-active-class="transition duration-[150ms] ease-out"
     leave-to-class="-translate-y-2 opacity-0"
   >
     <div v-if="store.visible && announcement" class="px-3 pt-3 sm:px-5 sm:pt-4">

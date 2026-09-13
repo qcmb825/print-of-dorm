@@ -78,44 +78,54 @@ async function submit(): Promise<void> {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <!-- 成功回执：取件码是页面上最该被看到的信息 -->
-    <section
-      v-if="receipt"
-      class="panel mb-4 border-primary/40 p-4 sm:p-5"
-      role="status"
-      aria-live="polite"
+    <!-- 成功回执：取件码是页面上最该被看到的信息。
+         这里给整页唯一一段「有分量」的动效（rare 档，一单只出现一次）：0.97→1 的缩放配淡入，
+         只用透明度会像换了张图，不像「东西出现了」。起点是 0.97 而不是 0 —— 现实里没有东西
+         从虚无里冒出来，scale(0) 一律禁止。 -->
+    <Transition
+      enter-active-class="transition duration-[240ms] ease-out"
+      enter-from-class="opacity-0 scale-[0.97]"
+      leave-active-class="transition duration-[140ms] ease-out"
+      leave-to-class="opacity-0"
     >
-      <div class="flex items-start gap-3">
-        <span
-          class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg"
-          style="background-color: var(--status-done-bg); color: var(--status-done)"
-          aria-hidden="true"
-        >
-          <CircleCheck :size="17" />
-        </span>
-        <div class="min-w-0 flex-1">
-          <h2 class="font-heading text-base font-bold">下单成功</h2>
-          <p class="mt-0.5 truncate text-[13px] text-ink-3">
-            订单 #{{ receipt.orderId }} · {{ receipt.filename }}
-          </p>
-          <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
-            <div>
-              <div class="tech-label mb-1 text-ink-4">取件码</div>
-              <div
-                class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
-                style="color: var(--primary)"
-              >
-                {{ pickupCodeLabel(receipt.code) }}
+      <section
+        v-if="receipt"
+        class="panel mb-4 border-primary/40 p-4 sm:p-5"
+        role="status"
+        aria-live="polite"
+      >
+        <div class="flex items-start gap-3">
+          <span
+            class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg"
+            style="background-color: var(--status-done-bg); color: var(--status-done)"
+            aria-hidden="true"
+          >
+            <CircleCheck :size="17" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <h2 class="font-heading text-base font-bold">下单成功</h2>
+            <p class="mt-0.5 truncate text-[13px] text-ink-3">
+              订单 #{{ receipt.orderId }} · {{ receipt.filename }}
+            </p>
+            <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
+              <div>
+                <div class="tech-label mb-1 text-ink-4">取件码</div>
+                <div
+                  class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
+                  style="color: var(--primary)"
+                >
+                  {{ pickupCodeLabel(receipt.code) }}
+                </div>
               </div>
+              <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
-            <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
+            <p class="mt-3 text-[12px] text-ink-4">
+              管理员接单并打印完成后，凭上面的取件码到打印点取件。
+            </p>
           </div>
-          <p class="mt-3 text-[12px] text-ink-4">
-            管理员接单并打印完成后，凭上面的取件码到打印点取件。
-          </p>
         </div>
-      </div>
-    </section>
+      </section>
+    </Transition>
 
     <div class="panel p-4 sm:p-5">
       <h1 class="font-heading text-lg font-bold sm:text-xl">下单打印</h1>

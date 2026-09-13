@@ -185,6 +185,27 @@
   --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
 }
 
+/* ============ 动效（与主题无关，深浅共用一套） ============
+ *
+ * 前缀刻意用 motion- 而不是直接叫 --ease-out：映射层要把它接到 Tailwind 的
+ * `--ease-*` 命名空间上，同名的话 @theme inline 会写出 `--ease-out: var(--ease-out)`
+ * 这种自引用，浏览器直接当无效值丢掉。
+ *
+ * 三条曲线不是随手写的：内置的 ease-out 太弱，入场会显得"拖"，UI 上要的是起步快、
+ * 尾段长的强缓动（easing.dev 的常用值）。禁止在组件里另写裸 cubic-bezier。
+ */
+:root {
+  --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* 时长：交互反馈 < 200ms，内容切换 180~240ms。UI 动效一律不超过 300ms —— 再长就"钝"了。 */
+  --motion-dur-press: 120ms;
+  --motion-dur-fast: 150ms;
+  --motion-dur-base: 180ms;
+  --motion-dur-slow: 240ms;
+}
+
 /* ============ 映射到 Tailwind 工具类 ============ */
 @theme inline {
   --color-background: var(--background);
@@ -243,6 +264,11 @@
   --font-heading: var(--stack-heading);
   --font-body: var(--stack-body);
   --font-mono: var(--stack-mono);
+
+  /* 覆盖 Tailwind 自带的 ease-out / ease-in-out（那两条太弱）。这样组件里写
+   * `ease-out` 拿到的就是令牌里的强缓动，不需要到处堆 arbitrary value。 */
+  --ease-out: var(--motion-ease-out);
+  --ease-in-out: var(--motion-ease-in-out);
 
   --radius-panel: 12px;
 }

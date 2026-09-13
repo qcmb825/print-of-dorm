@@ -239,7 +239,16 @@ onMounted(load)
           </NEmpty>
         </div>
 
-        <ul v-else class="flex list-none flex-col gap-3 p-0">
+        <!-- 列表按「生效中 > id 倒序」排：新公告从上方落下，启停后那位「生效中」挪到顶部
+             也看得见。每次保存都会整表重拉，按 key 打补丁，所以只有真正变化的项会动。 -->
+        <TransitionGroup
+          v-else
+          tag="ul"
+          class="flex list-none flex-col gap-3 p-0"
+          enter-active-class="transition duration-[200ms] ease-out"
+          enter-from-class="opacity-0 -translate-y-1"
+          move-class="transition duration-[200ms] ease-out"
+        >
           <li
             v-for="item in list"
             :key="item.id"
@@ -290,7 +299,7 @@ onMounted(load)
               </NButton>
             </div>
           </li>
-        </ul>
+        </TransitionGroup>
       </section>
     </div>
   </div>

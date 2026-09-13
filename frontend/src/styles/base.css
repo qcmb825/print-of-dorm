@@ -115,6 +115,52 @@
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
     background-size: 32px 32px;
   }
+
+  /* 一组内容同时出现（看板的指标卡）时逐项入场：40ms 步进，第 8 项之后不再累加 ——
+   * 8 项已经是 280ms，再往后末尾要等半秒才出现，反而显得慢。
+   * backwards 填充不能省：排在后面的项要在延迟期间保持透明，否则会先整组闪一下再逐个动。 */
+  .motion-stagger > * {
+    animation: motion-enter var(--motion-dur-slow) var(--motion-ease-out) backwards;
+  }
+  .motion-stagger > :nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .motion-stagger > :nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .motion-stagger > :nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .motion-stagger > :nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .motion-stagger > :nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .motion-stagger > :nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .motion-stagger > :nth-child(7) {
+    animation-delay: 240ms;
+  }
+  .motion-stagger > :nth-child(n + 8) {
+    animation-delay: 280ms;
+  }
+}
+
+/* 只写 from：to 就是元素本来的样式，动画结束后不留残余的 transform
+ * （留了会给 fixed 子元素造出新的包含块）。 */
+@keyframes motion-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes motion-enter-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 /* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
@@ -126,5 +172,13 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* 减少动效不等于零动效：位移、缩放这种会让眼睛跟着跑的动作去掉，但"内容出现了"这个
+   * 信号要留下。必须显式覆盖 animation-delay —— 上面那条全局规则只压 duration，
+   * 延迟原样保留的话，错峰入场的项会在延迟里一直透明、最后一起闪出来，比不做还糟。 */
+  .motion-stagger > * {
+    animation: motion-enter-fade var(--motion-dur-fast) var(--motion-ease-out) backwards !important;
+    animation-delay: 0ms !important;
   }
 }
