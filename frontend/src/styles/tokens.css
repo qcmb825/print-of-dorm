@@ -14,8 +14,14 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ============ 浅色（默认） ============ */
-:root {
+/* ============ 浅色（默认） ============
+ *
+ * 除 :root 外还挂了一个 .light 类：:root 就是 <html> 本身，想在一个页面里同时拿到
+ * 深浅两套令牌（公告预览要做对比度检查，见 theme/paper.ts）就必须有一个能套在子树上的
+ * 选择器。值只有这一份，两个选择器共用，不是抄了两遍。
+ */
+:root,
+.light {
   color-scheme: light;
 
   --background: #f9f9f9;
@@ -83,8 +89,11 @@
   --surface-input: #ffffff;
   --surface-tooltip: #111111;
 
-  /* 公告纸张：**故意不跟随深色主题**。正文颜色是管理员在后台选的，
-   * 只保证在浅色纸面上可读；深色下也铺白纸，否则选深色的公告会看不见。 */
+  /* 公告纸张：跟随主题。
+   * 正文颜色由管理员在后台选，纸面颜色由主题决定，两者会撞车 —— 亮黄写在白纸上、
+   * 深墨写在深纸上都会看不见。所以正文色上屏前要过一道 WCAG 对比度检查，
+   * 不够就回落到 --paper-ink（它与纸面同属一套令牌，必然可读）。
+   * 判定逻辑在 theme/color.ts 的 readableInk()，深浅两个方向都会触发。 */
   --paper: #ffffff;
   --paper-line: #e7e7e7;
   --paper-ink: #1f2328;
@@ -171,12 +180,16 @@
   --surface-input: #0f0f11;
   --surface-tooltip: #18181b;
 
-  /* 与浅色主题刻意保持一致，理由见 :root 里的说明 */
-  --paper: #ffffff;
-  --paper-line: #e7e7e7;
-  --paper-ink: #1f2328;
-  --paper-accent: #d4a017;
-  --paper-muted: #71717a;
+  /* 公告纸面在深色下换成深色表面（跟 --surface-overlay 同族），不再是刺眼的白块。
+   * 管理员选的颜色由 readableInk() 决定用不用得上，这里的 --paper-ink 是它的兜底值。
+   * --paper-accent / --paper-muted 也一并换成深色那套，否则公告条上的图标和关闭按钮
+   * 会沿用浅色配色 —— 深色下关闭按钮的悬停是 12% 白盖在深纸上，那是看得见的；
+   * 反过来（深色配色盖在白纸上）才是完全看不见的。 */
+  --paper: #111113;
+  --paper-line: #ffffff1a;
+  --paper-ink: #ffffff;
+  --paper-accent: #ffd000;
+  --paper-muted: #a1a1aa;
 
   --ambient: radial-gradient(at 12% 0%, rgb(255 208 0 / 0.07) 0%, transparent 45%),
     radial-gradient(at 88% 8%, rgb(0 240 255 / 0.06) 0%, transparent 40%);

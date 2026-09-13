@@ -21,6 +21,8 @@ import { ANNOUNCE_FONTS, type AnnounceFont, type Announcement } from '@/api/type
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
 import { useAnnouncementStore } from '@/stores/announcement'
+import { needsInkFallback } from '@/theme/color'
+import { readPaperTokens } from '@/theme/paper'
 import { shortTime } from '@/utils/format'
 
 const message = useMessage()
@@ -44,11 +46,28 @@ const fontOptions = (Object.keys(ANNOUNCE_FONTS) as AnnounceFont[]).map((key) =>
   value: key,
 }))
 
-const previewStyle = computed(() => ({
+const previewFont = computed(() => ({
   fontFamily: ANNOUNCE_FONTS[form.font_family].css,
   fontSize: `${form.font_size}px`,
-  color: form.font_color,
 }))
+
+/** 预览要同时给出深浅两套。
+ *  正文颜色是管理员选的、纸面颜色跟主题走，只预览当前主题的话，落在另一套主题上
+ *  被对比度兜底换掉的颜色就成了「惊喜」—— 所见即所得才算数。 */
+const previews = computed(() =>
+  (['light', 'dark'] as const).map((key) => {
+    const tokens = readPaperTokens()[key]
+    const overridden = needsInkFallback(tokens.paper, form.font_color, form.font_size)
+    return {
+      key,
+      label: key === 'dark' ? '深色主题' : '浅色主题',
+      paper: tokens.paper,
+      line: tokens.line,
+      ink: overridden ? tokens.ink : form.font_color,
+      overridden,
+    }
+  }),
+)
 
 const canSubmit = computed(() => form.content.trim().length > 0 && !saving.value)
 
@@ -188,19 +207,27 @@ onMounted(load)
           <NColorPicker v-model:value="form.font_color" :show-alpha="false" :modes="['hex']" />
         </NFormItem>
 
-        <!-- 实时预览：与顶部公告条用同一套字体映射和纸面配色 -->
+        <!-- 实时预览：深浅两套都给出，与顶部公告条共用同一套字体映射和同一道对比度判定 -->
         <div class="mb-3">
           <div class="tech-label mb-1.5 flex items-center gap-1.5 text-ink-4">
             <Eye :size="12" />
             预览
           </div>
-          <div
-            class="rounded-[12px] border p-3"
-            :style="{ backgroundColor: 'var(--paper)', borderColor: 'var(--paper-line)' }"
-          >
-            <p class="whitespace-pre-wrap break-words" :style="previewStyle">
-              {{ form.content.trim() || '公告内容会显示在这里' }}
-            </p>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <div v-for="item in previews" :key="item.key">
+              <div class="tech-label mb-1 text-ink-4">{{ item.label }}</div>
+              <div
+                class="rounded-[12px] border p-3"
+                :style="{ backgroundColor: item.paper, borderColor: item.line }"
+              >
+                <p class="whitespace-pre-wrap break-words" :style="[previewFont, { color: item.ink }]">
+                  {{ form.content.trim() || '公告内容会显示在这里' }}
+                </p>
+              </div>
+              <p v-if="item.overridden" class="mt-1 text-[11px] text-ink-4">
+                所选颜色与{{ item.label }}纸面对比度不足，实际会回落到主题文字色
+              </p>
+            </div>
           </div>
         </div>
 

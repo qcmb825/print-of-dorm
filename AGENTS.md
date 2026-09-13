@@ -109,8 +109,21 @@ config.py     ← 叶子模块，只依赖标准库 + cryptography，不 import 
 
 - **公告字体键要与 `config.ANNOUNCE_FONTS` 对齐**，前端在 `api/types.ts` 的 `ANNOUNCE_FONTS` 里把键翻成 CSS；
   公告正文一律插值渲染，**绝不 `v-html`**（那是存储型 XSS 入口）。
+  > **公告正文色不能直接上屏**：正文颜色由管理员选、纸面颜色由主题决定，两者会撞车。
+  > 必须过 `theme/color.ts` 的 `readableInk()`（WCAG 对比度，大字放宽到 3:1），
+  > 不够就回落到 `--paper-ink`。改回 `color: item.font_color` 会让深色主题下的公告看不见。
+  > 公告管理页的预览要给深浅两套，否则管理员看不到自己在另一套主题里被换掉的颜色。
 - **无障碍**：只用 `:focus-visible`（禁止裸 `:focus`）；弹窗与抽屉用 Naive 的 `NModal` / `NDrawer`，
   焦点陷阱和 Esc 关闭由组件库提供；新增动画必须在 `prefers-reduced-motion` 下退化。
+- **动效只认令牌**：曲线与时长在 `tokens.css` 的 `--motion-*` 里，组件里不要写裸 `cubic-bezier` / 毫秒数；
+  映射层已把 Tailwind 的 `ease-out` / `ease-in-out` 覆盖成强缓动（内置那两条太弱，入场会显得拖）。
+  路由与页面切换统一走 `components/RouteTransition.vue`，别在各页自己加 `<Transition>`。
+  > 减少动效**不等于**零动效：`base.css` 的全局兜底会把第三方动画时长压到最短，但 `.motion-stagger`
+  > 这类错峰入场必须显式把 `animation-delay` 也归零 —— 只压 duration 的话，排在后面的项会在延迟里
+  > 一直保持透明、最后一起闪出来，比不做还糟。
+- **模板注释里不要写 ASCII 双引号（`"`），用「」**：注释如果落在**组件插槽内**，`vue-tsc` 会静默丢掉
+  它后面整个模板区域的类型检查，报出来的是「import 未使用」，完全不会提到注释。踩过一次，很难查。
+  > 普通元素里的注释带 ASCII 引号没问题，但既然这个坑只有插槽会踩、而且症状离现场很远，全仓统一成「」更省事。
   > **目前没有针对 `(pointer: coarse)` 放大触控目标** —— 旧前端有一版，重写时没带过来。
   > 组件尺寸走的是 Naive 默认高度（中号 38px）。要补的话得覆写 `heightMedium` / `heightLarge` 这类令牌，
   > 别只在个别按钮上改。
