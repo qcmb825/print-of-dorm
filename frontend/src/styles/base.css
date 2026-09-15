@@ -168,112 +168,38 @@
   }
 
   /* RouteTransition 的专用舞台。转场不再碰布局根本身，固定底栏和侧栏就不会在过场中
-     改变定位参照；min-width: 0 与外层 main 的收缩约定保持一致。 */
+     改变定位参照；min-width: 0 与外层 main 的收缩约定保持一致。
+
+     重构说明（2026-09-15）：
+     - 移除所有装饰性动画层（边界锚点、粒子、测距标尺、HUD 卡片）
+     - 保留基础的淡入淡出过渡 */
   .route-stage {
     position: relative;
     min-width: 0;
     min-height: 100%;
     isolation: isolate;
+    background-image:
+      linear-gradient(var(--border-subtle) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: center;
   }
 
-  /* 工业终端式的页面接入：一个斜切面从右侧展开，不做普通网页式的上下漂浮。 */
+  /* 页面入场：简单淡入 */
   .route-enter-active {
-    transition:
-      clip-path var(--motion-dur-route-enter) var(--motion-ease-out),
-      opacity var(--motion-dur-route-enter) var(--motion-ease-out),
-      transform var(--motion-dur-route-enter) var(--motion-ease-out);
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+    transition: opacity 200ms var(--motion-ease-out);
   }
 
   .route-enter-from {
     opacity: 0;
-    transform: translate3d(var(--motion-route-enter-x), 0, 0);
-    clip-path: polygon(0 0, var(--motion-route-cut) 0, 0 100%, 0 100%);
   }
 
   .route-leave-active {
-    transition:
-      clip-path var(--motion-dur-route-leave) var(--motion-ease-out),
-      opacity var(--motion-dur-route-leave) var(--motion-ease-out),
-      transform var(--motion-dur-route-leave) var(--motion-ease-out);
-    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+    transition: opacity 150ms var(--motion-ease-out);
   }
 
   .route-leave-to {
     opacity: 0;
-    transform: translate3d(var(--motion-route-leave-x), 0, 0);
-    clip-path: polygon(calc(100% - var(--motion-route-cut)) 0, 100% 0, 100% 100%, 100% 100%);
-  }
-
-  /* 扫描层与 HUD 都属于 route-stage，绝不使用 fixed 定位，防止跨布局过场时盖住导航。 */
-  .route-stage::before {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      transparent 38%,
-      var(--accent-tint) 45%,
-      var(--primary) 49.2%,
-      var(--secondary) 50.8%,
-      var(--accent-tint) 56%,
-      transparent 63%,
-      transparent 100%
-    );
-    content: '';
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  /* 扫描条走 linear：位移是"匀速扫过"，不是"入场"。挂 --motion-ease-out 的话，
-   * 时长一旦拉长就变成起步猛冲、后半程爬行，反而更像卡顿。 */
-  .route-enter-active::before {
-    animation: route-sweep-forward var(--motion-dur-route-sweep) linear both;
-  }
-
-  .route-leave-active::before {
-    animation: route-sweep-reverse var(--motion-dur-route-leave) linear both;
-  }
-
-  .route-stage__hud {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    z-index: 11;
-    display: grid;
-    grid-template-columns: auto auto;
-    column-gap: 10px;
-    align-items: baseline;
-    border-top: 1px solid var(--accent-tint-border);
-    padding-top: 5px;
-    color: var(--primary);
-    font-family: var(--stack-mono);
-    pointer-events: none;
-    opacity: 0;
-  }
-
-  .route-stage__hud-kicker {
-    grid-column: 1 / -1;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.13em;
-  }
-
-  .route-stage__hud-title {
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
-
-  .route-stage__hud-index {
-    color: var(--secondary);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-  }
-
-  .route-enter-active .route-stage__hud {
-    animation: route-hud-pass var(--motion-dur-route-enter) var(--motion-ease-out) both;
   }
 
   /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理 */
@@ -358,57 +284,6 @@
   }
 }
 
-/* 扫描层是一次性的页面接入提示，沿固定路径走完后完全透明；HUD 则在中段短暂显示，
- * 让过场有明确的「系统正在切换」信息，而不是无意义的装饰。
- *
- * 亮度必须**中段保持**、只在尾段收。之前写成「14% 冲到峰值、其余全程衰减」，
- * 形状上就是个眨眼，扫描条再快一点就只剩"闪一下"的观感，看不出在扫。 */
-@keyframes route-sweep-forward {
-  from {
-    opacity: 0;
-    transform: translate3d(-100%, 0, 0);
-  }
-  10%,
-  72% {
-    opacity: 0.88;
-  }
-  to {
-    opacity: 0;
-    transform: translate3d(100%, 0, 0);
-  }
-}
-
-@keyframes route-sweep-reverse {
-  from {
-    opacity: 0;
-    transform: translate3d(100%, 0, 0);
-  }
-  12%,
-  70% {
-    opacity: 0.68;
-  }
-  to {
-    opacity: 0;
-    transform: translate3d(-100%, 0, 0);
-  }
-}
-
-@keyframes route-hud-pass {
-  from {
-    opacity: 0;
-    transform: translate3d(12px, 0, 0);
-  }
-  24%,
-  68% {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-  to {
-    opacity: 0;
-    transform: translate3d(-6px, 0, 0);
-  }
-}
-
 /* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -426,24 +301,6 @@
   .motion-stagger > * {
     animation: motion-enter-fade var(--motion-dur-fast) var(--motion-ease-out) backwards !important;
     animation-delay: 0ms !important;
-  }
-
-  .route-enter-active,
-  .route-leave-active {
-    transition:
-      opacity var(--motion-dur-fast) ease;
-  }
-
-  .route-enter-from,
-  .route-leave-to {
-    transform: none;
-    clip-path: none;
-  }
-
-  .route-enter-active::before,
-  .route-leave-active::before,
-  .route-stage__hud {
-    display: none;
   }
 
   .n-skeleton::after {
