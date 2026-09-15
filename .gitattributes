@@ -1,2 +1,19 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# 前端构建产物按二进制处理，不做行尾规范化。
+# 两个原因：
+#   1) 这些文件的字节应该和构建器产出的一模一样（文件名里还带着内容 hash）；
+#   2) git 判断二进制只看开头 8000 字节里有没有 NUL，将来某个体积很小的二进制资源
+#      （例如纯色 PNG）可能被误判成文本，一规范化就把文件搞坏了。
+static/app/** -text
+
+# 上面那条「产物不做规范化」要成立，前提是「构建器产出跨机器一致」，
+# 所以喂给 Vite 的源文件必须锁定 LF。Vite 会把 index.html 和 public/ 下的资源
+# 原样搬进产物（不重新生成行尾），而 * text=auto 遇到 core.autocrlf=true
+# 的机器（Git for Windows 的默认值）检出的是 CRLF，产物就跟着变成 CRLF ——
+# 表现为每次 npm run build 之后，static/app/index.html 和 favicon.svg
+# 都显示「已修改」，产物永远提交不干净，两边机器还会互相覆盖回去。
+# 只有这两处需要，因为其余源码都经过打包器重写，行尾由打包器自己决定。
+frontend/index.html text eol=lf
+frontend/public/** text eol=lf

@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>打印服务</title>
+    <!-- 图标。缺了这条，浏览器每次整页加载都会额外去要 /favicon.ico，拿到 404
+         并被打成 WARNING 记进访问日志 —— 那个级别是留给参数错/未登录/越权的，
+         不该被缺图标刷屏。
+         指到 static/app/favicon.svg，也就是新版界面在用的那一份：同一个物理文件
+         两套界面共用，不另存一份，否则两个图标早晚各改各的。
+         路径照样走 url_for，将来静态目录挪地方只改这一行。 -->
+    <link rel="icon" href="{{ url_for('static', filename='app/favicon.svg') }}" type="image/svg+xml">
     <style>
         *, *::before, *::after { box-sizing: border-box; }
 
@@ -1358,6 +1365,11 @@
                 }));
                 links.appendChild(el('a', { href: '#', text: '还没有账号？去注册', onclick: toTab('register') }));
             }
+            // 换一套界面。放这里而不是顶栏，是因为登录页还没有顶栏，
+            // 而「一进来看到的是哪一套」恰恰是登录前最该能改的东西。
+            // 用真的 <a> + 整页跳转：两套界面是两份独立代码，DOM 层面切不过去；
+            // 顺便也就有了中键新标签页、右键复制链接这些原生行为。
+            links.appendChild(el('a', { href: '/?ui=vue', text: '换个界面 →' }));
             main.appendChild(links);
 
             card.appendChild(main);
@@ -1717,6 +1729,16 @@
             const info = (u.real_name ? '（' + u.real_name + '）' : '') + (u.dorm ? ' · ' + u.dorm : '');
             bar.appendChild(el('span', { class: 'muted', text: u.nickname + info }));
             bar.appendChild(el('div', { class: 'spacer' }));
+            // 换一套界面。必须是整页跳转：两套界面是两份完全不同的代码
+            // （这一份是 Jinja 渲染出来的单文件，另一份是 Vue 打包产物），
+            // 靠改 DOM 切不过去，只能带上 ?ui= 让后端重新发一次页面。
+            // 后端看到参数会把它写进 pod-ui Cookie，后续请求就跟着走了。
+            bar.appendChild(el('button', {
+                class: 'ghost',
+                text: '🎨 换个界面',
+                title: '切换到新版界面',
+                onclick: () => { location.href = '/?ui=vue'; },
+            }));
             bar.appendChild(el('button', { class: 'ghost', text: '退出登录', onclick: logout }));
             app.appendChild(bar);
 
@@ -2437,7 +2459,9 @@
                 }));
                 line.appendChild(el('span', {
                     style: 'flex:none;font-variant-numeric:tabular-nums;',
-                    text: r.c + ' 单',
+                    // 计数列后端叫 count，与 daily 里的字段名一致。
+                    // 旧版这里读的是 c，而服务端早已统一成 count —— 图表不报错、只是空白。
+                    text: r.count + ' 单',
                 }));
                 card.appendChild(line);
             });

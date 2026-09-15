@@ -337,6 +337,20 @@ LOGIN_LOCK_SECONDS = env_int('LOGIN_LOCK_SECONDS', 300)
 DEBUG_MODE = env_bool('DEBUG', False)
 
 
+# 前端界面版本。两套界面共用同一套 /api 接口，区别只在外壳：
+#   classic —— templates/index.html，单文件 Jinja 模板（樱花主题）
+#   vue     —— static/app/，Vue 3 构建产物
+#   random  —— 每个浏览器会话随机挑一套（默认）
+#
+# 这里给的只是默认值：app.py 的 _pick_ui() 里 ?ui= 参数优先级更高。
+# 拼错的值不会报错、只会静默按 random 走，很难发现，所以这里主动记一条 error。
+UI_MODE = os.getenv('UI_MODE', 'random').strip().lower()
+
+if UI_MODE not in ('classic', 'vue', 'random'):
+    logger.error('UI_MODE=%s 不是有效值，只认 classic / vue / random，已按 random 处理', UI_MODE)
+    UI_MODE = 'random'
+
+
 
 # 启动服务
 #

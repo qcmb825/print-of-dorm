@@ -6,7 +6,9 @@ import time
 import socket
 import secrets
 from datetime import timedelta
-from flask import Flask, g, jsonify, render_template, request, session
+from pathlib import Path
+from flask import (Flask, abort, g, jsonify, make_response, render_template,
+                   request, send_from_directory, session)
 from flask_cors import CORS
 from waitress import serve
 
@@ -26,6 +28,7 @@ from config import (
     START_MAX_ATTEMPTS,
     START_RETRY_SECONDS,
     STATUS_ACTIVE,
+    UI_MODE,
     UPLOAD_FOLDER,
     _BIND_IN_USE_CODES,
     _BIND_NO_ADDRESS_CODES,
@@ -88,6 +91,7 @@ def log_startup_summary():
     logger.info('  允许上传 : %s', '、'.join(sorted(ALLOWED_EXTENSIONS)))
     logger.info('  登录策略 : 连续失败 %s 次锁定 %s 秒；登录态保持 %s 天',
                 LOGIN_MAX_FAILS, LOGIN_LOCK_SECONDS, env_int('SESSION_DAYS', 7))
+    logger.info('  界面版本 : %s（URL 加 ?ui=classic / ?ui=vue / ?ui=random 可临时切换）', UI_MODE)
     logger.info('  调试模式 : %s', DEBUG_MODE)
     if DEBUG_MODE:
         logger.warning('调试模式已开启！该模式会暴露源码并允许执行任意代码，仅供本地开发，'
@@ -215,10 +219,137 @@ def log_request(resp):
 
 
 
+# 两套前端的标识，同时也是 ?ui= 参数的合法取值。
+# 改这两个字符串等于改对外接口（书签、教程里都会写），中途不要重命名。
+UI_CLASSIC = 'classic'
+UI_VUE = 'vue'
+UI_CHOICES = (UI_CLASSIC, UI_VUE)
+
+# 界面选择存在这个独立 Cookie 里，刻意不用 Flask 的 session。
+# 原因：登录 / 注册 / 登出都会 session.clear()（防会话固定攻击），选择放在 session
+# 里会被顺手清掉，用户刚登进来就莫名其妙换了一套界面。
+# 不带 Max-Age，浏览器一关就忘 —— 正好等于「每个浏览器会话随机一次」。
+UI_COOKIE = 'pod-ui'
+
+# 前端产物目录。Vite 的 outDir 直接指向这里（见 frontend/vite.config.ts），
+# 所以后端不需要 Node，也不需要在部署机上构建。
+SPA_DIR = Path(app.static_folder or '') / 'app'
+SPA_INDEX = SPA_DIR / 'index.html'
+
+
+def _spa_missing_response():
+    """产物不存在时给一句能直接照做的话，而不是丢一个 500 或白屏。"""
+    logger.error('前端产物缺失：%s 不存在。请在 frontend/ 目录下执行：'
+                 'npm install && npm run build', SPA_INDEX)
+    return (
+        '<!doctype html><meta charset="utf-8"><title>前端产物缺失</title>'
+        '<body style="font-family:system-ui;padding:40px;line-height:1.7">'
+        '<h1 style="font-size:20px">前端产物缺失</h1>'
+        '<p>没有找到 <code>static/app/index.html</code>，页面无法渲染。</p>'
+        '<p>构建一次即可：</p>'
+        '<pre style="background:#f4f4f4;padding:12px;border-radius:8px">'
+        'cd frontend\nnpm install\nnpm run build</pre>'
+        '<p>后端接口不受影响，可以先访问 <code>/hello</code> 自检。</p>'
+        '</body>'
+    ), 503
+
+
+def _serve_spa():
+    """下发 SPA 外壳：确保会话里有 CSRF 令牌，并禁止缓存入口 HTML。
+
+    带 hash 的静态资源可以长缓存，但入口 HTML 绝不能缓存，
+    否则发新版本后用户会一直拿着旧的 index.html 去请求已经不存在的资源。
+    """
+    ensure_csrf_token()  # 前端启动时还会通过 /api/me 再领一张，这里先垫一张
+    if not SPA_INDEX.is_file():
+        return _spa_missing_response()
+    resp = send_from_directory(SPA_DIR, 'index.html')
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    return resp
+
+
+def _classic_page():
+    """下发经典版页面（templates/index.html）。
+
+    模板里有 url_for('static', ...) 生成的资源路径，必须渲染过才能发，
+    所以不能像 Vue 那样直接读文件送出去。
+    """
+    ensure_csrf_token()  # 先把令牌写进会话，页面里的 JS 再从 /api/me 领新的那张
+    resp = make_response(render_template('index.html'))
+    # 入口页不缓存，理由同 _serve_spa：发新版后别让用户拿着旧页面去找已删除的资源。
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    return resp
+
+
+def _pick_ui():
+    """决定这次用哪一套前端，返回 'classic' 或 'vue'。
+
+    三个来源，优先级从高到低，顺序不能调：
+
+    1) URL 参数 ?ui=classic / ?ui=vue —— 临时看另一套，也用来回答
+       「是只有我这套有问题，还是两套都这样」。带上就跟着走，不用反复写。
+       ?ui=random 是反过来用：不要记住的那套，重新掷一次。
+
+    2) 环境变量 UI_MODE —— 部署时全局定死一套。故意排在参数之后：
+       定死了还能用参数临时切回来看另一套，否则只能改配置重启。
+
+    3) 随机 —— 但粒度是「每个会话一次」，不是「每次请求一次」。
+       每次请求都重掷的话，用户点一下页面就从一套界面换成另一套，
+       连按钮在哪都不认识了，那不叫随机试用，叫故障。
+    """
+    wanted = (request.args.get('ui') or '').strip().lower()
+    if wanted in UI_CHOICES:
+        return wanted
+    if wanted == 'random':
+        return secrets.choice(UI_CHOICES)
+    # 认不出来的值既不报错也不记安全事件：多半是手打错的参数，不值得留痕。
+
+    if UI_MODE in UI_CHOICES:
+        return UI_MODE
+
+    remembered = (request.cookies.get(UI_COOKIE) or '').strip().lower()
+    if remembered in UI_CHOICES:
+        return remembered  # 这个会话已经定过了，保持稳定
+
+    return secrets.choice(UI_CHOICES)
+
+
+def _page_response():
+    """按当前选择返回页面入口。两套界面共用同一套 /api，不同的只是外壳。"""
+    ui = _pick_ui()
+    resp = _serve_spa() if ui == UI_VUE else _classic_page()
+    # 把这次的结果记进 Cookie，浏览器下次会自己带回来，就不用再掷一次。
+    if (request.cookies.get(UI_COOKIE) or '') != ui:
+        resp.set_cookie(UI_COOKIE, ui, httponly=True, samesite='Lax',
+                        secure=app.config['SESSION_COOKIE_SECURE'])
+    return resp
+
+
 @app.route('/')
 def index():
-    ensure_csrf_token()  # 页面一打开就下发 CSRF 令牌，写进会话 Cookie
-    return render_template('index.html')
+    """页面入口：按当前选择下发经典版或 Vue 版前端。
+
+    登录页、学生端、管理端都在同一套前端里，由前端按登录账号的角色切换界面，
+    所以这里不需要按角色分支，也不用给模板传任何上下文。
+    """
+    return _page_response()
+
+
+@app.route('/<path:path>')
+def spa_fallback(path):
+    """前端路由兜底 —— 少一个这个，刷新页面就会挂。
+
+    Vue 版用的是 history 模式：/upload、/my-orders、/staff/dashboard 这些路径
+    只存在于它的路由表里。用户刷新页面、点书签、或者从别的站跳进来时，
+    浏览器是真的拿这个路径来请求后端的；没有这条兜底就会返回一个 JSON 404，
+    用户看到的是"接口不存在"而不是页面。
+    经典版没有 URL 路由（换页只重绘 DOM），这条对它相当于「兜底回首页」。
+
+    带 /api 前缀的路径不在此列 —— 那些是真接口，认不出来就该老实返回 JSON 404。
+    """
+    if path == 'api' or path.startswith('api/') or path == 'favicon.ico':
+        abort(404)
+    return _page_response()
 
 
 

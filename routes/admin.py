@@ -320,17 +320,21 @@ def api_admin_stats():
         # 按昵称分组的话，一个注销的人和一个刚注册的同名新人会被算成同一行，
         # 两家的单量被悄悄加在一起，还找不到是谁算错的。
         # 顺带把 u.status 取出来，交给 _rank_rows 决定要不要标注。
+        #
+        # 计数列的别名统一叫 count、不叫 c：这个字段是直接发给前端的，
+        # 要和下面 daily 里的 count 对齐。历史上这里写过 c，前端按 count 取就是
+        # undefined —— 图表不报错、只是静默画不出柱子，非常难查。
         top_orderers = conn.execute('''
-            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS c
+            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS count
             FROM orders o LEFT JOIN users u ON u.id = o.user_id
             WHERE 1 = 1{rank_filter}
-            GROUP BY o.user_id ORDER BY c DESC LIMIT 5
+            GROUP BY o.user_id ORDER BY count DESC LIMIT 5
         '''.format(rank_filter=rank_filter), rank_params).fetchall()
         top_claimers = conn.execute('''
-            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS c
+            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS count
             FROM orders o JOIN users u ON u.id = o.claimed_by
             WHERE 1 = 1{rank_filter}
-            GROUP BY o.claimed_by ORDER BY c DESC LIMIT 5
+            GROUP BY o.claimed_by ORDER BY count DESC LIMIT 5
         '''.format(rank_filter=rank_filter), rank_params).fetchall()
     finally:
         conn.close()
