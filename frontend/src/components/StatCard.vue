@@ -15,7 +15,10 @@ withDefaults(
 </script>
 
 <template>
-  <div class="panel flex flex-col gap-2 p-4 sm:p-5" :class="accent && 'border-primary/40'">
+  <div
+    class="panel panel-raised flex flex-col gap-2 p-4 sm:p-5"
+    :class="accent && 'border-primary/40'"
+  >
     <div class="flex items-center justify-between gap-2">
       <span class="tech-label text-ink-3">{{ label }}</span>
       <component

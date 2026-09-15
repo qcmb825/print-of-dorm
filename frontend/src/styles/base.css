@@ -102,11 +102,178 @@
 @layer utilities {
   /* 磨砂面板：参考站的 glass-panel，用细边框而非阴影来分层 */
   .panel {
+    position: relative;
     background-color: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+  }
+
+  /* 磨砂只留给登录首屏这种低频、面积可控的场景；订单表和图表不应在滚动时
+     为每个面板持续重算背景。 */
+  .login-card {
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* 让需要承载数字或主要操作的卡片有一层克制的抬升感；普通容器不跟着动，
+     避免表格和大块内容在滚动时显得浮躁。 */
+  .panel-raised {
+    box-shadow: var(--shadow-raised);
+    transition:
+      transform var(--motion-dur-base) var(--motion-ease-out),
+      border-color var(--motion-dur-fast) ease,
+      box-shadow var(--motion-dur-base) var(--motion-ease-out);
+  }
+
+  @media (hover: hover) {
+    .panel-raised:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent-tint-border);
+    }
+  }
+
+  .nav-link {
+    position: relative;
+    transition:
+      color var(--motion-dur-fast) ease,
+      background-color var(--motion-dur-fast) ease,
+      transform var(--motion-dur-press) var(--motion-ease-out);
+  }
+
+  .nav-link::before {
+    position: absolute;
+    top: 9px;
+    bottom: 9px;
+    left: 0;
+    width: 2px;
+    border-radius: 0 999px 999px 0;
+    background: var(--primary);
+    content: '';
+    opacity: 0;
+    transform: scaleY(0.45);
+    transition:
+      opacity var(--motion-dur-fast) ease,
+      transform var(--motion-dur-base) var(--motion-ease-out);
+  }
+
+  .nav-link--active::before {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+
+  .nav-link:active,
+  .n-button:not(.n-button--disabled):active {
+    transform: scale(0.98);
+  }
+
+  /* RouteTransition 的专用舞台。转场不再碰布局根本身，固定底栏和侧栏就不会在过场中
+     改变定位参照；min-width: 0 与外层 main 的收缩约定保持一致。 */
+  .route-stage {
+    position: relative;
+    min-width: 0;
+    min-height: 100%;
+    isolation: isolate;
+  }
+
+  /* 工业终端式的页面接入：一个斜切面从右侧展开，不做普通网页式的上下漂浮。 */
+  .route-enter-active {
+    transition:
+      clip-path var(--motion-dur-route-enter) var(--motion-ease-out),
+      opacity var(--motion-dur-route-enter) var(--motion-ease-out),
+      transform var(--motion-dur-route-enter) var(--motion-ease-out);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  }
+
+  .route-enter-from {
+    opacity: 0;
+    transform: translate3d(var(--motion-route-enter-x), 0, 0);
+    clip-path: polygon(0 0, var(--motion-route-cut) 0, 0 100%, 0 100%);
+  }
+
+  .route-leave-active {
+    transition:
+      clip-path var(--motion-dur-route-leave) var(--motion-ease-out),
+      opacity var(--motion-dur-route-leave) var(--motion-ease-out),
+      transform var(--motion-dur-route-leave) var(--motion-ease-out);
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  }
+
+  .route-leave-to {
+    opacity: 0;
+    transform: translate3d(var(--motion-route-leave-x), 0, 0);
+    clip-path: polygon(calc(100% - var(--motion-route-cut)) 0, 100% 0, 100% 100%, 100% 100%);
+  }
+
+  /* 扫描层与 HUD 都属于 route-stage，绝不使用 fixed 定位，防止跨布局过场时盖住导航。 */
+  .route-stage::before {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      transparent 38%,
+      var(--accent-tint) 45%,
+      var(--primary) 49.2%,
+      var(--secondary) 50.8%,
+      var(--accent-tint) 56%,
+      transparent 63%,
+      transparent 100%
+    );
+    content: '';
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* 扫描条走 linear：位移是"匀速扫过"，不是"入场"。挂 --motion-ease-out 的话，
+   * 时长一旦拉长就变成起步猛冲、后半程爬行，反而更像卡顿。 */
+  .route-enter-active::before {
+    animation: route-sweep-forward var(--motion-dur-route-sweep) linear both;
+  }
+
+  .route-leave-active::before {
+    animation: route-sweep-reverse var(--motion-dur-route-leave) linear both;
+  }
+
+  .route-stage__hud {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    z-index: 11;
+    display: grid;
+    grid-template-columns: auto auto;
+    column-gap: 10px;
+    align-items: baseline;
+    border-top: 1px solid var(--accent-tint-border);
+    padding-top: 5px;
+    color: var(--primary);
+    font-family: var(--stack-mono);
+    pointer-events: none;
+    opacity: 0;
+  }
+
+  .route-stage__hud-kicker {
+    grid-column: 1 / -1;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+  }
+
+  .route-stage__hud-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .route-stage__hud-index {
+    color: var(--secondary);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
+
+  .route-enter-active .route-stage__hud {
+    animation: route-hud-pass var(--motion-dur-route-enter) var(--motion-ease-out) both;
   }
 
   /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理 */
@@ -122,6 +289,27 @@
     background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px),
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
     background-size: 32px 32px;
+  }
+
+  /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
+  .login-shell {
+    background-image:
+      linear-gradient(var(--border-subtle) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px),
+      radial-gradient(circle at 72% 42%, var(--accent-tint-soft), transparent 24rem);
+    background-size: 42px 42px, 42px 42px, auto;
+  }
+
+  .login-card::after {
+    position: absolute;
+    top: 0;
+    right: 22px;
+    left: 22px;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    content: '';
+    opacity: 0.85;
   }
 
   /* 一组内容同时出现（看板的指标卡）时逐项入场：40ms 步进，第 8 项之后不再累加 ——
@@ -156,18 +344,68 @@
   }
 }
 
-/* 只写 from：to 就是元素本来的样式，动画结束后不留残余的 transform
- * （留了会给 fixed 子元素造出新的包含块）。 */
+/* 只写 from：to 就是元素本来的样式，动画结束后不留残余的 transform。 */
 @keyframes motion-enter {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateX(10px);
   }
 }
 
 @keyframes motion-enter-fade {
   from {
     opacity: 0;
+  }
+}
+
+/* 扫描层是一次性的页面接入提示，沿固定路径走完后完全透明；HUD 则在中段短暂显示，
+ * 让过场有明确的「系统正在切换」信息，而不是无意义的装饰。
+ *
+ * 亮度必须**中段保持**、只在尾段收。之前写成「14% 冲到峰值、其余全程衰减」，
+ * 形状上就是个眨眼，扫描条再快一点就只剩"闪一下"的观感，看不出在扫。 */
+@keyframes route-sweep-forward {
+  from {
+    opacity: 0;
+    transform: translate3d(-100%, 0, 0);
+  }
+  10%,
+  72% {
+    opacity: 0.88;
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+@keyframes route-sweep-reverse {
+  from {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+  12%,
+  70% {
+    opacity: 0.68;
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(-100%, 0, 0);
+  }
+}
+
+@keyframes route-hud-pass {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0);
+  }
+  24%,
+  68% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(-6px, 0, 0);
   }
 }
 
@@ -188,5 +426,23 @@
   .motion-stagger > * {
     animation: motion-enter-fade var(--motion-dur-fast) var(--motion-ease-out) backwards !important;
     animation-delay: 0ms !important;
+  }
+
+  .route-enter-active,
+  .route-leave-active {
+    transition:
+      opacity var(--motion-dur-fast) ease;
+  }
+
+  .route-enter-from,
+  .route-leave-to {
+    transform: none;
+    clip-path: none;
+  }
+
+  .route-enter-active::before,
+  .route-leave-active::before,
+  .route-stage__hud {
+    display: none;
   }
 }

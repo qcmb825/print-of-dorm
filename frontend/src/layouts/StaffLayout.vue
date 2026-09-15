@@ -59,7 +59,8 @@ onMounted(() => {
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline transition-colors"
+          class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+          :class="currentPath === item.to && 'nav-link--active'"
           :style="
             currentPath === item.to
               ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
@@ -96,7 +97,8 @@ onMounted(() => {
                 v-for="item in navItems"
                 :key="item.to"
                 :to="item.to"
-                class="flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+                class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+                :class="currentPath === item.to && 'nav-link--active'"
                 :style="
                   currentPath === item.to
                     ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
@@ -134,7 +136,7 @@ onMounted(() => {
 
       <main class="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
         <RouterView v-slot="{ Component }">
-          <RouteTransition>
+          <RouteTransition :transition-key="currentPath">
             <component :is="Component" />
           </RouteTransition>
         </RouterView>

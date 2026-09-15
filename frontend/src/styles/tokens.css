@@ -106,6 +106,8 @@
 
   --glow-primary: 0 0 20px 0 rgb(212 160 23 / 0.35);
   --glow-secondary: 0 0 20px 0 rgb(0 143 166 / 0.3);
+  --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.03), 0 12px 32px rgb(17 17 17 / 0.035);
+  --shadow-raised: 0 2px 5px rgb(17 17 17 / 0.05), 0 18px 40px rgb(17 17 17 / 0.07);
 
   --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', ui-sans-serif, system-ui,
     'Microsoft YaHei', 'PingFang SC', sans-serif;
@@ -196,6 +198,8 @@
 
   --glow-primary: 0 0 24px 0 rgb(255 208 0 / 0.35);
   --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28), 0 14px 38px rgb(0 0 0 / 0.2);
+  --shadow-raised: 0 3px 8px rgb(0 0 0 / 0.38), 0 22px 48px rgb(0 0 0 / 0.32);
 }
 
 /* ============ 动效（与主题无关，深浅共用一套） ============
@@ -212,11 +216,21 @@
   --motion-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
-  /* 时长：交互反馈 < 200ms，内容切换 180~240ms。UI 动效一律不超过 300ms —— 再长就"钝"了。 */
+  /* 时长：交互反馈 < 200ms，内容切换 180~240ms —— 再长就"钝"了。
+   *
+   * route-* 三条是这条规矩的**唯一例外**：它管的是整页换场，不是控件反馈。
+   * 页面切换要让人看清"系统完成了一次接入"，280ms 扫过全宽等于 9000px/s，
+   * 观感是闪一下而不是扫一遍，所以按"看得清"而不是"察觉不到"来定。 */
   --motion-dur-press: 120ms;
   --motion-dur-fast: 150ms;
   --motion-dur-base: 180ms;
   --motion-dur-slow: 240ms;
+  --motion-dur-route-enter: 560ms;
+  --motion-dur-route-leave: 340ms;
+  --motion-dur-route-sweep: 560ms;
+  --motion-route-cut: 12%;
+  --motion-route-enter-x: 20px;
+  --motion-route-leave-x: -12px;
 }
 
 /* ============ 映射到 Tailwind 工具类 ============ */

@@ -91,7 +91,7 @@ watch(() => props.ticketId, load)
           tag="ul"
           class="flex list-none flex-col gap-3 p-0"
           enter-active-class="transition duration-[200ms] ease-out"
-          enter-from-class="opacity-0 translate-y-1"
+          enter-from-class="opacity-0 translate-x-1"
           move-class="transition duration-[200ms] ease-out"
         >
           <li

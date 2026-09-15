@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, dateZhCN, zhCN } from 'naive-ui'
-import { RouterView } from 'vue-router'
+import { computed } from 'vue'
+import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import { useThemeStore } from '@/stores/theme'
 
 const theme = useThemeStore()
+const route = useRoute()
+
+/** 外壳只在登录、学生、管理三种结构互换时切一次，子页面由各自布局处理。 */
+const shellTransitionKey = computed(() => {
+  if (route.path === '/login') return 'guest'
+  return route.path.startsWith('/staff') ? 'staff' : 'student'
+})
 </script>
 
 <template>
@@ -21,7 +29,7 @@ const theme = useThemeStore()
         <NLoadingBarProvider>
           <AppBridge />
           <RouterView v-slot="{ Component }">
-            <RouteTransition>
+            <RouteTransition :transition-key="shellTransitionKey">
               <component :is="Component" />
             </RouteTransition>
           </RouterView>

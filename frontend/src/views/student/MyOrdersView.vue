@@ -67,17 +67,17 @@ onMounted(async () => {
     </header>
 
     <div v-if="orders.length" class="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
-      <div class="panel px-3 py-2.5">
+      <div class="panel panel-raised px-3 py-2.5">
         <div class="tech-label text-ink-4">进行中</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.active }}</div>
       </div>
-      <div class="panel border-primary/40 px-3 py-2.5">
+      <div class="panel panel-raised border-primary/40 px-3 py-2.5">
         <div class="tech-label text-ink-4">可取了</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--primary)">
           {{ summary.ready }}
         </div>
       </div>
-      <div class="panel px-3 py-2.5">
+      <div class="panel panel-raised px-3 py-2.5">
         <div class="tech-label text-ink-4">已取件</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.done }}</div>
       </div>
@@ -95,14 +95,14 @@ onMounted(async () => {
 
     <!-- 列表用 TransitionGroup 而不是 Transition：接口每 20 秒轮询一次，数组是整体替换的，
          按 key 打补丁时只有「真正新进来」的订单会跑入场动画 —— 每次轮询都重放一遍的话
-         就是一屏东西在定时乱动。订单按 id 倒序，新单出在最上面，所以从上方 4px 落下。
+         就是一屏东西在定时乱动。新订单从右侧切入，后面的项目只做让位移动。
          move-class 管的是「新单插进来、后面的项往下让位」这一段位移（FLIP）。 -->
     <TransitionGroup
       v-else
       tag="ul"
       class="flex list-none flex-col gap-3 p-0"
       enter-active-class="transition duration-[200ms] ease-out"
-      enter-from-class="opacity-0 -translate-y-1"
+      enter-from-class="opacity-0 translate-x-1"
       move-class="transition duration-[200ms] ease-out"
     >
       <li v-for="order in orders" :key="order.id" class="panel p-3.5 sm:p-4">

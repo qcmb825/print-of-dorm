@@ -146,7 +146,7 @@ onMounted(async () => {
           tag="ul"
           class="flex max-h-[62vh] list-none flex-col overflow-y-auto p-0"
           enter-active-class="transition duration-[200ms] ease-out"
-          enter-from-class="opacity-0 -translate-y-1"
+          enter-from-class="opacity-0 translate-x-1"
           move-class="transition duration-[200ms] ease-out"
         >
           <li v-for="ticket in tickets" :key="ticket.id">

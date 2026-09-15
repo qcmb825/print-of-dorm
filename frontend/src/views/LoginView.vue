@@ -198,8 +198,29 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="grid min-h-full place-items-center px-4 py-8">
-    <div class="w-full max-w-[440px]">
+  <div class="login-shell grid min-h-full place-items-center overflow-hidden px-4 py-8 sm:px-6">
+    <div class="relative grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
+      <!-- 宽屏保留一块安静的品牌区：登录不是普通表单，先让用户确认自己到了对的服务。 -->
+      <section class="hidden lg:block">
+        <div class="mb-6 inline-flex items-center gap-2 rounded-full border px-3 py-1.5" style="border-color: var(--accent-tint-border); background-color: var(--accent-tint)">
+          <span class="size-1.5 rounded-full" style="background-color: var(--secondary); box-shadow: var(--glow-secondary)" />
+          <span class="tech-label text-ink-2">Campus print service</span>
+        </div>
+        <h1 class="max-w-md font-heading text-[44px] leading-[1.08] font-bold tracking-[-0.04em]">
+          从文件到取件，<br />
+          <span style="color: var(--primary)">一张单</span>就够了。
+        </h1>
+        <p class="mt-5 max-w-sm text-[15px] leading-7 text-ink-3">
+          上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
+        </p>
+        <div class="mt-8 grid max-w-md grid-cols-3 gap-3">
+          <div v-for="item in ['在线提交', '进度可查', '凭码取件']" :key="item" class="border-t pt-3" style="border-color: var(--border)">
+            <span class="tech-label text-ink-2">{{ item }}</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="w-full">
       <div class="mb-5 flex items-center justify-between">
         <span class="flex items-center gap-2.5">
           <span
@@ -221,7 +242,7 @@ onMounted(async () => {
         <ThemeToggle />
       </div>
 
-      <div class="panel p-5 sm:p-6">
+      <div class="panel login-card p-5 sm:p-6">
         <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来 -->
         <div class="mb-4 flex items-center gap-2">
           <span
@@ -377,6 +398,7 @@ onMounted(async () => {
       <p class="mt-4 text-center text-[11px] text-ink-4">
         管理员账号由超管在后台开通，注册一律为普通用户。
       </p>
+      </div>
     </div>
   </div>
 </template>

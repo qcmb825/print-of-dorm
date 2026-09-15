@@ -45,7 +45,8 @@ onMounted(() => {
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-semibold no-underline transition-colors"
+            class="nav-link flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-semibold no-underline"
+            :class="currentPath === item.to && 'nav-link--active'"
             :style="
               currentPath === item.to
                 ? { backgroundColor: 'var(--muted)', color: 'var(--foreground)' }
@@ -69,7 +70,7 @@ onMounted(() => {
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
     <main class="mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
       <RouterView v-slot="{ Component }">
-        <RouteTransition>
+        <RouteTransition :transition-key="currentPath">
           <component :is="Component" />
         </RouteTransition>
       </RouterView>
