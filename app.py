@@ -6,7 +6,8 @@ import time
 import socket
 import secrets
 from datetime import timedelta
-from flask import Flask, g, jsonify, render_template, request, session
+from pathlib import Path
+from flask import Flask, abort, g, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 from waitress import serve
 
@@ -209,10 +210,66 @@ def csrf_protect():
 
 
 
+# 前端产物目录。Vite 的 outDir 直接指向这里（见 frontend/vite.config.ts），
+# 所以后端不需要 Node，也不需要在部署机上构建。
+SPA_DIR = Path(app.static_folder or '') / 'app'
+SPA_INDEX = SPA_DIR / 'index.html'
+
+
+def _spa_missing_response():
+    """产物不存在时给一句能直接照做的话，而不是丢一个 500 或白屏。"""
+    logger.error('前端产物缺失：%s 不存在。请在 frontend/ 目录下执行：'
+                 'npm install && npm run build', SPA_INDEX)
+    return (
+        '<!doctype html><meta charset="utf-8"><title>前端产物缺失</title>'
+        '<body style="font-family:system-ui;padding:40px;line-height:1.7">'
+        '<h1 style="font-size:20px">前端产物缺失</h1>'
+        '<p>没有找到 <code>static/app/index.html</code>，页面无法渲染。</p>'
+        '<p>构建一次即可：</p>'
+        '<pre style="background:#f4f4f4;padding:12px;border-radius:8px">'
+        'cd frontend\nnpm install\nnpm run build</pre>'
+        '<p>后端接口不受影响，可以先访问 <code>/hello</code> 自检。</p>'
+        '</body>'
+    ), 503
+
+
+def _serve_spa():
+    """下发 SPA 外壳：确保会话里有 CSRF 令牌，并禁止缓存入口 HTML。
+
+    带 hash 的静态资源可以长缓存，但入口 HTML 绝不能缓存，
+    否则发新版本后用户会一直拿着旧的 index.html 去请求已经不存在的资源。
+    """
+    ensure_csrf_token()  # 前端启动时还会通过 /api/me 再领一张，这里先垫一张
+    if not SPA_INDEX.is_file():
+        return _spa_missing_response()
+    resp = send_from_directory(SPA_DIR, 'index.html')
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    return resp
+
+
 @app.route('/')
 def index():
-    ensure_csrf_token()  # 页面一打开就下发 CSRF 令牌，写进会话 Cookie
-    return render_template('index.html')
+    """页面入口：把前端单页应用的外壳发出去。
+
+    登录页、学生端、管理端都在这个 SPA 里，由前端按登录账号的角色切换界面，
+    所以这里不需要按角色分支，也不用给模板传任何上下文。
+    """
+    return _serve_spa()
+
+
+@app.route('/<path:path>')
+def spa_fallback(path):
+    """前端路由兜底 —— 少一个这个，刷新页面就会挂。
+
+    SPA 用的是 history 模式：/upload、/my-orders、/staff/dashboard 这些路径只存在于前端路由表里。
+    用户刷新页面、点书签、或者从别的站跳进来时，浏览器是真的拿这个路径来请求后端的；
+    没有这条兜底就会返回一个 JSON 404，用户看到的是"接口不存在"而不是页面。
+
+    带 /api 前缀的路径不在此列 —— 那些是真接口，认不出来就该老实返回 JSON 404。
+    """
+    if path == 'api' or path.startswith('api/') or path == 'favicon.ico':
+        abort(404)
+    return _serve_spa()
 
 
 

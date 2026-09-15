@@ -1,0 +1,807 @@
+/* 极简 base —— 只做必要的事，不引 tailwind preflight，免得和 Naive UI 打架 */
+@import './tokens.css';
+
+/* 这条刻意留在 @layer 外面，而且用 :root body 而不是 body。
+ *
+ * Naive UI 会在运行时往 <head> 插一条无层级的 body{font-family:v-sans…;font-size:14px}：
+ *   - 无层级样式一律赢过分层样式，所以这条要是放进 @layer base，字体和字号永远拿不到 ——
+ *     字号被压回 14px、字体被压回 v-sans，刚装上的 DM Sans 等于白装；
+ *   - 它眼下是插在我们样式表 <link> 之前的，同特异度下顺序对我们有利，但那是它的实现细节，
+ *     哪天改成 append 就反过来了，所以顺手把特异度提到 0,1,1，让结果与插入顺序无关。
+ * 改回 `body` 或挪进 @layer 都不会报错，只是静默失效 —— 界面上看不出「字变了」。 */
+:root body {
+  margin: 0;
+  background-color: var(--background);
+  background-image: var(--ambient);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--stack-body);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+@layer base {
+  /* 这几行必须自己写：我们刻意没引 tailwind 的 preflight（免得 reset 掉 Naive UI 的组件样式），
+     但 preflight 里的 box-sizing 不能一起丢 —— 浏览器默认是 content-box，
+     于是 "w-full + 内边距" 的元素会比容器正好宽出一个内边距，窄屏下整页横向溢出。 */
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--stack-heading);
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  /* 数字、编号、取件码、时间戳一律走等宽，这是参考站最出效果的一处细节 */
+  .tnum,
+  code,
+  kbd {
+    font-family: var(--stack-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 细窄滚动条，别把桌面端的表格撑出默认的宽条 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-quaternary);
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+@layer utilities {
+  /* 磨砂面板：参考站的 glass-panel，用细边框而非阴影来分层 */
+  .panel {
+    position: relative;
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-panel);
+  }
+
+  /* 磨砂只留给登录首屏这种低频、面积可控的场景；订单表和图表不应在滚动时
+     为每个面板持续重算背景。 */
+  .login-card {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  /* 让需要承载数字或主要操作的卡片有一层克制的抬升感；普通容器不跟着动，
+     避免表格和大块内容在滚动时显得浮躁。 */
+  .panel-raised {
+    box-shadow: var(--shadow-raised);
+    transition:
+      transform var(--motion-dur-base) var(--motion-ease-out),
+      border-color var(--motion-dur-fast) ease,
+      box-shadow var(--motion-dur-base) var(--motion-ease-out);
+  }
+
+  @media (hover: hover) {
+    .panel-raised:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent-tint-border);
+    }
+  }
+
+  .nav-link {
+    position: relative;
+    transition:
+      color var(--motion-dur-fast) ease,
+      background-color var(--motion-dur-fast) ease,
+      transform var(--motion-dur-press) var(--motion-ease-out);
+  }
+
+  .nav-link::before {
+    position: absolute;
+    top: 9px;
+    bottom: 9px;
+    left: 0;
+    width: 2px;
+    border-radius: 0 999px 999px 0;
+    background: var(--primary);
+    content: '';
+    opacity: 0;
+    transform: scaleY(0.45);
+    transition:
+      opacity var(--motion-dur-fast) ease,
+      transform var(--motion-dur-base) var(--motion-ease-out);
+  }
+
+  .nav-link--active::before {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+
+  .nav-link:active,
+  .n-button:not(.n-button--disabled):active {
+    transform: scale(0.98);
+  }
+
+  /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理 */
+  .tech-label {
+    font-family: var(--stack-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+  }
+
+  .grid-lines {
+    background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
+  .login-shell {
+    background-image:
+      linear-gradient(var(--border-subtle) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px),
+      radial-gradient(circle at 72% 42%, var(--accent-tint-soft), transparent 24rem);
+    background-size: 42px 42px, 42px 42px, auto;
+  }
+
+  .login-card::after {
+    position: absolute;
+    top: 0;
+    right: 22px;
+    left: 22px;
+    height: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    content: '';
+    opacity: 0.85;
+  }
+
+  /* 一组内容同时出现（看板的指标卡）时逐项入场：40ms 步进，第 8 项之后不再累加 ——
+   * 8 项已经是 280ms，再往后末尾要等半秒才出现，反而显得慢。
+   * backwards 填充不能省：排在后面的项要在延迟期间保持透明，否则会先整组闪一下再逐个动。 */
+  .motion-stagger > * {
+    animation: motion-enter var(--motion-dur-slow) var(--motion-ease-out) backwards;
+  }
+  .motion-stagger > :nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .motion-stagger > :nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .motion-stagger > :nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .motion-stagger > :nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .motion-stagger > :nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .motion-stagger > :nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .motion-stagger > :nth-child(7) {
+    animation-delay: 240ms;
+  }
+  .motion-stagger > :nth-child(n + 8) {
+    animation-delay: 280ms;
+  }
+
+  /* ================================================================
+   * 换场：内容层（.route-stage）
+   *
+   * 铁律：**外壳档的 .route-stage 只允许动 opacity**。
+   * 外壳那层 stage（App.vue 传 profile="shell"）肚子里装着整个布局，
+   * StudentLayout 的 position:fixed 底部标签栏、StudentLayout / StaffLayout 的三条
+   * sticky 头/侧栏都在它里面。给一个祖先加 transform / filter / backdrop-filter /
+   * perspective / will-change:transform / contain 都会把这些固定件的包含块从视口换成它，
+   * 而 leave-to 在整个离场时长里持续生效 —— 导航会跟着整体横移一次，离开后还不归位。
+   * 这是本项目最贵的一个坑，改动前先读这段。
+   *
+   * 子页档（profile="inline"）可以横移：那层只包 <main> 里的页面组件，站点里唯一的
+   * fixed 与三处 sticky 全在 main 之外（已核对 src 全目录，views/ 与 components/ 下
+   * 一个都没有）。横向接入也是站点既有的语汇（@keyframes motion-enter 的 translateX(10px)、
+   * 各列表入场的 translate-x-1），这里只是把它放大到整页。
+   *
+   * 时长与曲线全部取自 tokens.css 的 --motion-*，本文件里不出现裸毫秒也不要裸 cubic-bezier。
+   * ================================================================ */
+
+  /* RouteTransition 的专用舞台。转场只包住内容，不碰布局根本身，固定底栏和侧栏就不会
+     在过场中改变定位参照；min-width: 0 与外层 main 的收缩约定保持一致。
+
+     这三条属性删不得：
+     - min-width: 0 —— main 是 flex 子项，默认 min-width:auto 会被内部 min-content 顶宽，
+       窄屏下表现为整页多出 24px 横向滚动；
+     - min-height: 100% —— 网格底纹与任何 inset:0 的装饰层在空列表这种短页面上要铺满；
+     - isolation: isolate —— 把 stage 内部所有 z-index 关在自己的层叠上下文里，
+       任何装饰层都越不过 sticky 头和 Naive 弹层。 */
+  .route-stage {
+    position: relative;
+    min-width: 0;
+    min-height: 100%;
+    isolation: isolate;
+    background-image:
+      linear-gradient(var(--border-subtle) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: center;
+  }
+
+  /* 入场：等 --veil-hold 那么久（那一段正是幕布闭死的休止符，也是 DOM 换手发生的时刻），
+     再和幕布退开同刻起步、同时长收尾。
+     这个 transition-delay 是整个方案里唯一一处「内容与幕布对齐」的机关 ——
+     Vue 的 getTransitionInfo/getTimeout 算的是 max(duration + delay)，
+     delay 会被计入，所以 @after-enter 恰好落在幕布退到屏外的那一帧，
+     状态机可以放心用它收尾，不需要任何 JS 计时器去猜时长。 */
+  .route-enter-active {
+    transition: opacity var(--veil-part) var(--motion-ease-out) var(--veil-hold);
+  }
+
+  .route-enter-from {
+    opacity: 0;
+  }
+
+  /* 离场：用 --motion-ease-in-out。这不是机械动作（机器动作是幕布，它走 ease-out），
+     而是幕布压上来之前内容自己先淡掉的那一段，慢起慢收正好。 */
+  .route-leave-active {
+    transition: opacity var(--veil-leave) var(--motion-ease-in-out);
+  }
+
+  .route-leave-to {
+    opacity: 0;
+  }
+
+  /* 子页档：接回站点既有的横向接入语汇。--motion-route-enter-x / -leave-x 这两条令牌
+     本来就是为它预留的。 */
+  .route-stage[data-profile='inline'].route-enter-active {
+    transition:
+      opacity var(--veil-part) var(--motion-ease-out) var(--veil-hold),
+      transform var(--veil-part) var(--motion-ease-out) var(--veil-hold);
+  }
+
+  .route-stage[data-profile='inline'].route-leave-active {
+    transition:
+      opacity var(--veil-leave) var(--motion-ease-in-out),
+      transform var(--veil-leave) var(--motion-ease-in-out);
+  }
+
+  .route-stage[data-profile='inline'].route-enter-from {
+    transform: translateX(var(--motion-route-enter-x));
+  }
+
+  .route-stage[data-profile='inline'].route-leave-to {
+    transform: translateX(var(--motion-route-leave-x));
+  }
+
+  /* 外壳档的显式护栏：万一哪天有人给 .route-enter-from 补了一句位移，
+     这一层必须还是干净的。加在这里的是「否定」，不是效果 —— 删掉它不会报错，
+     只会在整壳切换时让固定底栏和 sticky 侧栏横跳一次。 */
+  .route-stage[data-profile='shell'].route-enter-from,
+  .route-stage[data-profile='shell'].route-leave-to {
+    transform: none;
+  }
+
+  /* ================================================================
+   * 换场：覆盖层（RouteVeil.vue）
+   *
+   * 挂载点、z-index 的取舍见 RouteVeil.vue 顶部的注释。这里只记三条 CSS 侧的约束：
+   *
+   * 1. 每一层都用 position:absolute，只有根元素是 fixed。根挂在 body 下本来就没有会
+   *    改变包含块的祖先，保持这条纪律是为了防止日后有人图省事把 <RouteVeil /> 挪回
+   *    #app 里 —— 那一刻它会开始受 .route-stage 的层叠与 Naive provider 的影响。
+   * 2. 两扇幕布的闭合位置必须与内容层的 leave 时长严格同刻（见 tokens.css 里的恒等式）。
+   * 3. 整层 pointer-events: none，从不吃点击。改成 auto 就等于换场时锁死整个界面，
+   *    任何一条异常路径回不到 idle 都会让整屏点不动。
+   * ================================================================ */
+  .route-veil {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    /* 用 dvh 明确定高，而不是靠 inset:0 —— inset:0 跟的是 layout viewport，
+       移动端地址栏收放时整层中线会偏离视觉中心，而套准线正落在中线上。
+       写了 height 之后 bottom:0 成为过约束被忽略，这正是要的结果。 */
+    height: 100dvh;
+    z-index: 100; /* (布局 chrome 的 20, Naive 弹层最低的 2000) */
+    pointer-events: none;
+    /* 静默期不绘制。不能用 display:none —— 那会让幕布的过渡彻底不跑
+       （元素根本没被渲染，过渡无从开始）；visibility 是离散属性，
+       隐藏的元素仍然参与过渡，只是不画。 */
+    visibility: hidden;
+    overflow: hidden;
+  }
+
+  .route-veil[data-phase='out'],
+  .route-veil[data-phase='in'] {
+    visibility: visible;
+  }
+
+  .route-veil__mat {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* 两扇各占一半减掉缝宽的一半，合拢之后正中间正好留出 --veil-slit 那道口子。
+       用 50% 而不是 50vh：根元素的高度已经是 100dvh，百分比自动跟随。 */
+    height: calc(50% - var(--veil-slit) / 2);
+    background-color: var(--veil-mat);
+    /* 与 .route-stage 同尺度、同起点的 48px 网格：幕布收拢时网格是「跟着幕布一起合」
+       而不是被抹平成一块纯色，材质才连得上。**不要**换成 .grid-lines —— 那是 32px，
+       两套尺度同时出现能看出网格打架。 */
+    background-image:
+      linear-gradient(var(--veil-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+    background-position: center top;
+    /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
+       前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
+       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
+    transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
+    /* 退到屏外要退多远。**不能只按自身高度算（-100%）**：唇（::before）挂在幕布内缘、
+       还要再往外伸 --veil-slit/2 + 1px，只按高度退干净的话，开幕结束那一刻唇会留在
+       屏幕边缘露出 slit/2 + 1px 的一条暗带（外壳档 slit 上限 62px 时正好残留 32px）。
+       末尾那 14px 是给分数缩放（Windows 常见的 125% / 150%）留的余量 —— 原来只留 12px，
+       1% 自高的余量只剩半个像素，边缘会露亮线。 */
+    --veil-mat-exit: calc(100% + var(--veil-slit) / 2 + 14px);
+  }
+
+  /* 缝唇那排半调网点：收拢时把缝两唇做成「刚过完纸、还带着墨点的出纸口」。
+     它挂在幕布上而不是挂在缝上 —— 挂在缝上的话幕布一退开，网点会留在原地悬在新页面上方。
+     只有网点加一层向幕布内侧渐隐的遮罩，没有模糊、没有 SVG 滤镜：
+     这个仓库所有边缘都是 1px 直角细线，撕纸纤维那类有机边缘一出现，
+     界面语言就从工业件滑向特效演示。 */
+  .route-veil__mat::after {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: var(--motion-route-dot-lip);
+    content: '';
+    /* background-image 里先写的画在上面：第一层是把网点往幕布内侧吃掉的渐隐遮罩，
+       第二层才是网点本身。 */
+    background-image:
+      linear-gradient(to top, transparent, var(--veil-mat)),
+      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
+    background-size: 100% 100%, var(--motion-route-dot) var(--motion-route-dot);
+    opacity: 0;
+    transition: opacity var(--motion-dur-route-sweep) var(--motion-ease-out);
+  }
+
+  .route-veil__mat--top {
+    top: 0;
+    /* 退场位移见 .route-veil__mat 里的 --veil-mat-exit（必须把唇的长度算进去）。 */
+    transform: translate3d(0, calc(-1 * var(--veil-mat-exit)), 0);
+  }
+
+  .route-veil__mat--bottom {
+    bottom: 0;
+    background-position: center bottom;
+    transform: translate3d(0, var(--veil-mat-exit), 0);
+  }
+
+  .route-veil__mat--top::after {
+    bottom: 0;
+  }
+
+  .route-veil__mat--bottom::after {
+    top: 0;
+    /* 下唇的渐隐方向要翻过来，否则网点是在靠外那一侧最浓、贴着缝的地方反而没了。 */
+    background-image:
+      linear-gradient(to bottom, transparent, var(--veil-mat)),
+      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
+  }
+
+  /* 离场：两扇咬合到中线两侧，网点同时显影。 */
+  .route-veil[data-phase='out'] .route-veil__mat--top,
+  .route-veil[data-phase='out'] .route-veil__mat--bottom {
+    transform: translate3d(0, 0, 0);
+  }
+
+  .route-veil[data-phase='out'] .route-veil__mat::after {
+    opacity: 1;
+  }
+
+  /* 重入：上一次换场还没走完就又点了一次导航，幕布多半已经在半开位置了，
+     再等 --veil-latch 那一段空拍就是一次肉眼看得见的卡顿。
+     空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
+     闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__mat {
+    transition-delay: 0ms;
+  }
+
+  /* 入场：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
+     新建一条带新 delay 的过渡，于是「先停在闭合位等 --veil-hold，再以 --veil-part 退开」
+     完全由 CSS 排出来，不依赖任何 JS 计时器。
+     停在闭合位的这一段就是休止符，也是 DOM 换手真正发生的地方。 */
+  /* 入场这一侧**不重复写落点**：--veil-mat-exit 那两个值已经在 .route-veil__mat--top /
+     --bottom 的基类里了。
+     之所以能生效，是因为 [data-phase='out'] 那两条（特异度 0,2,0）在 in 相位下不再匹配，
+     于是落回基类（0,1,0）。同一份值写两处只会给以后留一个"改了这处忘了那处"的坑
+     —— 这个文件已经被同类问题咬过一次（见 tokens.css 里 --veil-* 两个档位的注释）。 */
+
+  .route-veil[data-phase='in'] .route-veil__mat {
+    transition-duration: var(--veil-part);
+    transition-delay: var(--veil-hold);
+  }
+
+  .route-veil[data-phase='in'] .route-veil__mat::after {
+    transition-duration: var(--motion-dur-route-sweep);
+    transition-delay: var(--veil-hold);
+  }
+
+  /* 出纸口的上下唇：每扇幕布从自己的内缘再往外长半道缝，两唇合拢正好填满中间那道口子。
+   *
+   * 这里刻意**不做成一个独立的「缝」元素** —— 那样它就必须靠时间对齐去追幕布，而两边
+   * 都追不上：合拢时幕布是从上下两端爬进来的，独立元素在它到位之前就已经画在屏幕正中
+   * （浅色主题下就是「页面中间突然蹦出一条黑条」，深色下 --veil-mat 与页面底色几乎相同
+   * 所以看不见）；开幕时幕布从中线往两边退，独立元素又留在原地压着新页面，直到整场结束
+   * 才随 visibility 一起消失。做成幕布自己的内缘之后，这两个问题从结构上就不存在：
+   * 合拢时它被幕布带进来，拉开时它跟着幕布退走，**零时序对齐**。
+   *
+   * 填充必须是**实色**而不是半透明的 --card（#ffffffcc / #ffffff05）：后者会透出底下的
+   * 页面，幕布就不「实」了，换手那一帧直接露馅。
+   *
+   * 两唇与幕布本体的交界处各压一条 1px 发丝线，合拢后相距正好 --veil-slit ——
+   * 那是闭合状态下唯一看得出结构的东西，也是「出纸口」这个读法的来源。
+   *
+   * 尺寸比半道缝各多 1px、并且互相越过中线 1px：两唇在正中重叠 2px，避免分数缩放
+   * （Windows 常见的 125% / 150%）下正中漏出一条亚像素亮缝。同色重叠，看不出接痕。 */
+  .route-veil__mat::before {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: calc(var(--veil-slit) / 2 + 1px);
+    background-color: var(--veil-mat);
+    content: '';
+  }
+
+  .route-veil__mat--top::before {
+    /* 负的 bottom = 从幕布下缘继续往中线长。 */
+    bottom: calc(-0.5 * var(--veil-slit) - 1px);
+    border-top: 1px solid var(--veil-hairline);
+  }
+
+  .route-veil__mat--bottom::before {
+    top: calc(-0.5 * var(--veil-slit) - 1px);
+    border-bottom: 1px solid var(--veil-hairline);
+  }
+
+  /* 套准线：全程唯一一次「快」，也是唯一一处发光。
+     配方直接抄 .login-card::after —— transparent → --primary → --secondary → transparent，
+     那是站点自己的冷暖双色语汇，不新造霓虹色。
+     它只做一次 scaleX 展开：不做位移，峰值那一帧屏幕上就这一件事在动。 */
+  .route-veil__rule {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 2px;
+    margin-top: -1px;
+    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    /* 不用 --glow-secondary：那一对令牌是按 24px 半径的主按钮光晕调的（tokens.css 里
+       已经在 LoginView / UploadView 的主按钮上用着），铺到一条横贯全宽的 2px 线上，
+       面积大了十几倍，会从「高光」变成「漏光」。12px 的 --accent-tint-border 是同一个
+       色相、更小的半径，和站内的发光档位对得上。 */
+    box-shadow: 0 0 12px 0 var(--accent-tint-border);
+    opacity: 0;
+    transform: scaleX(var(--motion-route-cut));
+    transform-origin: center;
+  }
+
+  .route-veil[data-phase='in'] .route-veil__rule {
+    animation: veil-rule-strike var(--motion-dur-route-rule) var(--motion-ease-out) both;
+  }
+
+  /* 场记读数：等宽大写的目标页名，换场里唯一的文字。
+     排版直接用既有的 .tech-label + .tnum，不新增字体样式。
+     它是信息不是装饰，所以整场只有这一处文字，也没有第二块浮出的面板。 */
+  .route-veil__hud {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - var(--veil-slit) / 2);
+    height: var(--veil-slit);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 0 24px;
+    overflow: hidden;
+    white-space: nowrap;
+    color: var(--primary);
+    opacity: 0;
+  }
+
+  /* 两个 span 都带 .tech-label，那是 11px + 字距 .09em 的通用小标签规格。
+     缝里这批字是整场唯一的文字、也是用户唯一要读的东西，按通用规格走偏小；
+     中文页名再叠上 .09em 也太挤。这里覆盖成"场记板"的读法：中文 15px + .18em。 */
+  .route-veil__hud-title {
+    font-size: 15px;
+    letter-spacing: 0.18em;
+    /* 字距会在最后一个字后面留出一份空白，居中时整行看着偏左；补一个等量负边距拉回中线。 */
+    margin-right: -0.18em;
+  }
+
+  .route-veil__hud-code {
+    /* 走 --veil-ink-code 而不是 --secondary：幕布在两个主题下都是暗底，
+       浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。
+       这里**不补**负边距：它不是整行的最后一个元素（后面还跟着分隔线），
+       字距挂在它尾部只是把它和分隔线的间距撑开一点，不影响整行居中。 */
+    color: var(--veil-ink-code);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+  }
+
+  .route-veil__hud-sep {
+    flex: none;
+    width: 1px;
+    height: 16px;
+    background: var(--accent-tint-border);
+  }
+
+  .route-veil[data-phase='in'] .route-veil__hud {
+    /* 时长就是**停留**这一段，不含开幕 —— 读数活在「幕布闭死」的窗口里，
+       关键帧在 100% 处收到 opacity: 0，所以开幕一动它已经退干净了；
+       否则那几个字会浮在被揭开的新页面上方，成了压在内容上的浮层。
+       这条 calc 必须写在**使用处**：自定义属性里的 var() 是在声明它的那个元素上完成
+       代换的，写成 :root 上的 --veil-hud 令牌就会被算一次再继承，外壳档会拿到子页档
+       的时长 —— 不报错，只是两种档位的时间轴静默对不上。 */
+    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
+  }
+
+  /* 窄屏：缝更窄、只有一行 11px 等宽字放得下，所以砍掉代号只留中文页名。
+     两段读数挤在一道缝里读不出来，那就是「用装饰冒充信息」。 */
+  @media (max-width: 640px) {
+    .route-veil__hud {
+      padding: 0 16px;
+    }
+    /* 窄屏只留中文页名，字号跟着缝一起收一档（缝的下限是 32px，13px 行高放得下）。
+       不能再小了 —— 它是这道缝存在的理由。 */
+    .route-veil__hud-title {
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      margin-right: -0.14em;
+    }
+    .route-veil__hud-code,
+    .route-veil__hud-sep {
+      display: none;
+    }
+  }
+
+  /* 触屏：发光半径收一档。390px 宽的屏上 12px 的柔和光晕会糊成一片，
+     8px 才看得出「是一条线在发光」而不是「屏幕上有一团黄」。 */
+  @media (hover: none) {
+    .route-veil__rule {
+      box-shadow: 0 0 8px 0 var(--accent-tint-border);
+    }
+  }
+}
+
+/* 只写 from：to 就是元素本来的样式，动画结束后不留残余的 transform。 */
+@keyframes motion-enter {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+@keyframes motion-enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 套准线那一闪：35ms 内铺满全宽，亮着停约 50ms，再用 75ms 收掉。
+   ease-out 的整段缓动 + 这条百分比切分，观感是「闪」而不是「扫」——
+   扫是 73e18de 那版的做法（560ms 扫全宽 = 9000px/s），快慢感受完全两样。 */
+@keyframes veil-rule-strike {
+  0% {
+    opacity: 0;
+    transform: scaleX(var(--motion-route-cut));
+  }
+  22% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  55% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleX(1);
+  }
+}
+
+/* 场记读数：整场唯一的文字，只在「幕布闭死」那一段里浮出、停住、退干净。
+ * 动画时长 = --veil-hold，所以这里的百分比是**停留这一段内部**的切分，与开幕时长无关
+ * —— 百分比表对两档自动都成立，改 tokens 里的两档停留时长不需要回来动这里。
+ *
+ * 满不透明窗口 = 11% → 80%，占整段停留的 69%：
+ *   外壳（停留 600ms）约 66ms 淡入，之后 414ms 全亮，最后 120ms 退掉；
+ *   子页（停留 480ms）约 53ms 淡入，之后 331ms 全亮。
+ * 400ms 上下是「四到六个汉字扫一眼能读出来」的底线，比这更短就会出现用户说的
+ * 「来不及看清」。上一版这里是 30%→55% 退场、且时长按 停留:开幕 比例摊开，
+ * 满亮窗口只有约 170ms。
+ *
+ * 收尾必须落在 100% 而不是更早：100% 正好是开幕起步那一帧，读数与幕布同时让位，
+ * 中间不留一段"只剩字浮在黑场上"的空转。 */
+@keyframes veil-hud-pass {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  11% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  80% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* 减少动效不等于零动效：位移、缩放这种会让眼睛跟着跑的动作去掉，但"内容出现了"这个
+   * 信号要留下。必须显式覆盖 animation-delay —— 上面那条全局规则只压 duration，
+   * 延迟原样保留的话，错峰入场的项会在延迟里一直透明、最后一起闪出来，比不做还糟。 */
+  .motion-stagger > * {
+    animation: motion-enter-fade var(--motion-dur-fast) var(--motion-ease-out) backwards !important;
+    animation-delay: 0ms !important;
+  }
+
+  .n-skeleton::after {
+    display: none;
+  }
+}
+
+/* ============ Naive UI 骨架屏：换成可合成的微光 ============
+ *
+ * Naive 自带的骨架屏动画动的是 `background`（naive-ui/es/skeleton 的 cssr），
+ * 那是纯 paint 属性、不走合成器，而且是 `infinite` 没有次数上限 —— 刷新后每个页面
+ * 在等接口的那段时间里，主线程会一直一帧一帧地重绘骨架块（看板页一次 8 块 ×104px 全宽）。
+ * 改成伪元素 + transform 的微光之后，整个动画落在合成器上，主线程不再参与。
+ *
+ * 这一段必须留在 @layer 外面并加 !important：Naive 的样式是运行时插进 <head> 的
+ * **无层级** 规则，无层级一律赢过分层样式、与特异度无关 —— 和第 4 行那条注释是同一个坑。
+ * 颜色沿用 Naive 自己挂在元素上的 --n-color-*，深浅主题都不用另外适配。 */
+.n-skeleton {
+  position: relative;
+  overflow: hidden;
+  animation: none !important;
+}
+
+.n-skeleton::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--n-color-end, var(--muted)), transparent);
+  content: '';
+  transform: translate3d(-100%, 0, 0);
+  animation: skeleton-sheen 1.4s linear infinite;
+}
+
+@keyframes skeleton-sheen {
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
+/* ============ 换场动效的减少动效降级 ============
+ *
+ * 这一段**必须**留在 @layer 之外、加 !important、并且用类选择器（不能只写元素）。
+ * 上面那条全局兜底是 `* { transition-duration: 0.001ms !important }`，特异度 0,0,0；
+ * .route-veil / .route-enter-active 是 0,1,0，同样无层级、同样 !important ——
+ * 特异性更高的赢，所以能把时长抢回来。两层都无层级的 !important 之间只比特异性。
+ * （写进 @layer 里也成立，但那条路要另算一遍层序：**!important 的层序是反的**，
+ *   层内 !important 反而会赢过层外 !important，比这里更容易被后人改错。）
+ *
+ * 降级目标：不是硬切，是「把位移全部去掉、只留一次缓慢的明暗」。
+ * 内容仍然交叉淡入淡出，场记读数仍然报出目标页名 —— 只是屏幕上没有东西在移动。
+ * 光靠上面那条全局兜底会得到最糟的结果：幕布从「合上」瞬间跳到「打开」，
+ * 等于两帧全屏闪，比不做动画还难看。
+ */
+@media (prefers-reduced-motion: reduce) {
+  /* 位移与扫掠类动作整层撤掉。display:none 在这里是安全的 ——
+     这些层本来就不该动，而且覆盖层里唯一需要保留的信息（读数）挂在 .route-veil__hud 上。 */
+  .route-veil__mat,
+  .route-veil__rule {
+    display: none !important;
+  }
+
+  /* 明暗由根元素自己顶上：--motion-dur-route-still 的整屏压暗 → 中段换手 → 同时长退开。
+     全程只有一个属性在动，没有平移、没有缩放、没有模糊。 */
+  .route-veil {
+    background-color: var(--veil-mat);
+    opacity: 0;
+    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out) !important;
+  }
+
+  .route-veil[data-phase='out'] {
+    opacity: 1 !important;
+  }
+
+  .route-veil[data-phase='in'] {
+    opacity: 0 !important;
+  }
+
+  /* 读数不参与扫掠：它只是跟着整层的明暗一起出现和消失。 */
+  .route-veil[data-phase='out'] .route-veil__hud,
+  .route-veil[data-phase='in'] .route-veil__hud {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  /* 内容层：位移去掉，时长换成一档慢的，并且**显式把 delay 归零** ——
+     全局兜底只压 duration，transition-delay 原样保留的话，
+     新页会先隐形 --veil-hold 那么久，再和幕布一起闪出来，比不做还糟
+     （.motion-stagger 那段已经踩过同一个坑）。 */
+  .route-enter-active,
+  .route-leave-active {
+    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out) !important;
+    transition-delay: 0ms !important;
+  }
+
+  .route-enter-from,
+  .route-leave-to {
+    transform: none !important;
+  }
+}

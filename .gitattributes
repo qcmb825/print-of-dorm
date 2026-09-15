@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# 前端构建产物按二进制处理，不做行尾规范化。
+# 两个原因：
+#   1) 这些文件的字节应该和构建器产出的一模一样（文件名里还带着内容 hash）；
+#   2) git 判断二进制只看开头 8000 字节里有没有 NUL，将来某个体积很小的二进制资源
+#      （例如纯色 PNG）可能被误判成文本，一规范化就把文件搞坏了。
+static/app/** -text
