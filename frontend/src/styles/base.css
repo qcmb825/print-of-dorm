@@ -445,4 +445,39 @@
   .route-stage__hud {
     display: none;
   }
+
+  .n-skeleton::after {
+    display: none;
+  }
+}
+
+/* ============ Naive UI 骨架屏：换成可合成的微光 ============
+ *
+ * Naive 自带的骨架屏动画动的是 `background`（naive-ui/es/skeleton 的 cssr），
+ * 那是纯 paint 属性、不走合成器，而且是 `infinite` 没有次数上限 —— 刷新后每个页面
+ * 在等接口的那段时间里，主线程会一直一帧一帧地重绘骨架块（看板页一次 8 块 ×104px 全宽）。
+ * 改成伪元素 + transform 的微光之后，整个动画落在合成器上，主线程不再参与。
+ *
+ * 这一段必须留在 @layer 外面并加 !important：Naive 的样式是运行时插进 <head> 的
+ * **无层级** 规则，无层级一律赢过分层样式、与特异度无关 —— 和第 4 行那条注释是同一个坑。
+ * 颜色沿用 Naive 自己挂在元素上的 --n-color-*，深浅主题都不用另外适配。 */
+.n-skeleton {
+  position: relative;
+  overflow: hidden;
+  animation: none !important;
+}
+
+.n-skeleton::after {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--n-color-end, var(--muted)), transparent);
+  content: '';
+  transform: translate3d(-100%, 0, 0);
+  animation: skeleton-sheen 1.4s linear infinite;
+}
+
+@keyframes skeleton-sheen {
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
 }

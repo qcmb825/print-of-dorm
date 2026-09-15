@@ -26,6 +26,12 @@ export function baseOption(palette: ChartPalette) {
   return {
     backgroundColor: 'transparent',
     textStyle: { color: palette.text, fontFamily: 'inherit' },
+    // 入场动画从默认的约 1000ms 压到 300ms：看板一次要初始化 4 张图，
+    // 这段绘制正好和页面过场、骨架屏收尾抢同一个窗口。
+    // 不整个关掉，是因为 ChartBox 用的是响应式 :option —— 切主题时也会重放一遍动画，
+    // 全关掉会让主题切换显得"跳"。
+    animationDuration: 300,
+    animationEasing: 'cubicOut' as const,
     grid: { left: 8, right: 12, top: 28, bottom: 4, containLabel: true },
     tooltip: {
       trigger: 'axis' as const,
