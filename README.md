@@ -521,7 +521,7 @@ print-of-dorm/
 ├── .venv/                 # 虚拟环境
 ├── logs/                  # 日志文件
 ├── *.db                   # SQLite 数据库（默认落在项目根目录）
-└── *.md (除 README)       # 本地文档
+└── memoryandtest/         # 本地工作目录：文档、笔记与测试脚本
 ```
 
 上传的原件默认**不在**项目目录里 —— `UPLOAD_FOLDER` 的默认值是 `C:/print/print_files/`，是个写死了盘符的绝对路径。

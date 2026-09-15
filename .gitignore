@@ -1,5 +1,12 @@
 # AI 工具的本地目录
 .claude
+
+# 生产环境配置目录：真实 .env 只放本机，整个目录不进仓库
+生产环境env/
+
+# 本地工作目录：待办、报告、部署笔记和测试脚本，属于个人资料，整个目录不进仓库
+memoryandtest/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
