@@ -135,8 +135,10 @@ onMounted(() => {
       <AnnouncementBar />
 
       <main class="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+        <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
+             窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
         <RouterView v-slot="{ Component }">
-          <RouteTransition :transition-key="currentPath">
+          <RouteTransition :transition-key="currentPath" profile="inline">
             <component :is="Component" />
           </RouteTransition>
         </RouterView>

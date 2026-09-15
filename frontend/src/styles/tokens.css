@@ -115,6 +115,31 @@
     'PingFang SC', sans-serif;
   --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Consolas,
     'Courier New', monospace;
+
+  /* 换场扫描/网点专用的青色。
+   * 这条令牌原先只在 .dark 里定义过 —— 浅色下引用它会静默变成无效值（图层凭空消失或
+   * 回落到继承色，且不报错）。这里用 --status-printing 补齐浅色值：它本来就是这套暖黄 + 青
+   * 双色里的青，深色下是 #22d3ee 那一族，不需要再引入第三种色相。
+   * 引用处仍写 var(--scan-line, var(--secondary)) 兜底。 */
+  --scan-line: var(--status-printing);
+
+  /* 换场幕布（RouteVeil）。
+   *
+   * 两个主题都用「暗幕」而不是各自的 --background：浅色的 --background 是 #f9f9f9，
+   * 闭合那一刻就是一次全屏白闪 —— 整场最亮的事件反而落在峰值上，跟「闭黑换手」的意图正好
+   * 相反，站点里唯一的近黑表面先例是 --surface-tooltip。深色那边直接取 --deep-void。
+   *
+   * 配套的网格线与内缘发丝线因此也固定是「暗底上的浅线」，**不能复用 --border-subtle**：
+   * 它在浅色主题是黑的，铺在暗幕布上什么都看不见。 */
+  --veil-mat: color-mix(in srgb, var(--foreground) 90%, var(--background));
+  --veil-grid: rgb(255 255 255 / 0.06);
+  --veil-hairline: rgb(255 255 255 / 0.14);
+
+  /* 场记读数里的青色代号。**不能直接用 --secondary**：幕布在两个主题下都是暗底，
+     而浅色的 --secondary 是 #008fa6，铺在 #262627 上只有约 3.85:1 —— 11px 小字不达
+     WCAG AA（要 4.5:1）。深色那一支本来就是 #00f0ff，在同一个底上有 10:1，所以
+     只有浅色需要单独给值，直接取深色主题用的那支 cyan-300 即可，不引入新色相。 */
+  --veil-ink-code: #67e8f9;
 }
 
 /* ============ 深色 ============ */
@@ -203,6 +228,12 @@
 
   /* 路由转场扫描线专用颜色（深色下降低饱和度，避免霓虹色过于刺眼） */
   --scan-line: #67e8f9;
+
+  /* 深色下就是一次全黑保持。 */
+  --veil-mat: var(--deep-void);
+
+  /* 深色的 --secondary 就是霓虹青，在 #050505 上有 10:1，不需要另给值。 */
+  --veil-ink-code: var(--secondary);
 }
 
 /* ============ 动效（与主题无关，深浅共用一套） ============
@@ -221,19 +252,112 @@
 
   /* 时长：交互反馈 < 200ms，内容切换 180~240ms —— 再长就"钝"了。
    *
-   * route-* 三条是这条规矩的**唯一例外**：它管的是整页换场，不是控件反馈。
+   * route-* 一族是这条规矩的**唯一例外**：它管的是整页换场，不是控件反馈。
    * 页面切换要让人看清"系统完成了一次接入"，280ms 扫过全宽等于 9000px/s，
    * 观感是闪一下而不是扫一遍，所以按"看得清"而不是"察觉不到"来定。 */
   --motion-dur-press: 120ms;
   --motion-dur-fast: 150ms;
   --motion-dur-base: 180ms;
   --motion-dur-slow: 240ms;
-  --motion-dur-route-enter: 560ms;
-  --motion-dur-route-leave: 340ms;
-  --motion-dur-route-sweep: 560ms;
-  --motion-route-cut: 12%;
-  --motion-route-enter-x: 20px;
+
+  /* 子页档：布局内子页之间换场（StudentLayout 的 3 页 / StaffLayout 的 5 页）
+   * 外壳档：登录 / 学生端 / 管理端之间的整壳切换，整场 1950ms。
+   *
+   * 两档的时长在 2026-09-15 整体放慢过一轮（外壳 1440→1950、子页 1100→1500）。
+   * 起因是「过场太快、缝里的字来不及看清」：总时长只占一半责任，另一半是场记读数
+   * 当时只有约 170ms 的满不透明窗口（veil-hud-pass 把 停留:开幕 的比例写死在
+   * 关键帧百分比里，停留一短读数就跟着短）。现在读数单独挂在 --veil-hold 上，
+   * 窗口与停留等长，见 base.css 的 veil-hud-pass。 */
+  --motion-dur-route-enter: 600ms;
+  --motion-dur-route-leave: 420ms;
+  --motion-dur-route-sweep: 620ms;
+
+  --motion-dur-route-shell-leave: 600ms;
+  --motion-dur-route-shell-enter: 750ms;
+
+  /* 换场三拍：合闸空拍 → 咬合 → 闭死停留。
+   * 两档都必须满足「空拍 + 咬合 = 对应的 leave 时长」这个恒等式 ——
+   * 幕布必须恰好在 @after-leave 那一刻闭死，早一帧少一点遮挡、晚一帧就露馅。
+   *   外壳：150 + 450 = 600 = --motion-dur-route-shell-leave
+   *   子页： 90 + 330 = 420 = --motion-dur-route-leave
+   * 改了其中一个忘了另一个，换手就会从半开的缝里透出来。 */
+  --motion-dur-route-latch: 150ms;
+  --motion-dur-route-gate: 450ms;
+  --motion-dur-route-hold: 600ms;
+  --motion-dur-route-latch-inline: 90ms;
+  --motion-dur-route-gate-inline: 330ms;
+  --motion-dur-route-hold-inline: 480ms;
+
+  /* 套准线那一闪：全程唯一一次"快"，必须短到能落在任何一档的停留里（最短 200ms）。 */
+  --motion-dur-route-rule: 160ms;
+
+  /* 出纸缝没有自己的时长令牌：它现在是两扇幕布各自的内缘（.route-veil__mat::before），
+   * 跟着幕布一起动，不需要任何时序对齐。曾经这里有一条 --motion-dur-route-seam 是给
+   * 独立的「缝」元素补时间差用的，那个结构已经删掉了。 */
+
+  /* 减少动效下唯一保留的那一次明暗过渡（压暗一次、提亮一次，总时长是它的两倍）。
+     跟着上面那轮放慢一起加长，否则开着减少动效会比正常档快一截，两档的"性格"就分家了。 */
+  --motion-dur-route-still: 520ms;
+
+  /* 换场几何 */
+  --motion-route-cut: 12%; /* 套准线起手时铺开的比例 */
+  --motion-route-enter-x: 20px; /* 子页档内容横移（站点既有的横向接入语汇） */
   --motion-route-leave-x: -12px;
+  /* 出纸缝。用 clamp 的下限兜底：横屏手机（约 400px 高）按 vh 算只有十几像素，
+     撑不住一行读数，而那道缝正是整个转场的信息落点。
+     vh 系数与上下限在 2026-09-15 整体调大一档（30/4.4vh/48 → 40/5.6vh/62），
+     配合场记读数字号加大 —— 原来 11px 的字塞在 30px 的缝里，用户反馈"有点小"。 */
+  --motion-route-slit: clamp(40px, 5.6vh, 62px);
+  --motion-route-slit-inline: clamp(32px, 4.4vh, 50px);
+  /* 缝唇那排半调网点 */
+  --motion-route-dot: 7px;
+  --motion-route-dot-lip: 84px;
+}
+
+/* ============ 换场覆盖层的两个档位 ============
+ *
+ * 同名变量在 RouteVeil 与 .route-stage 上读，所以切换档位只要在这两处各挂一个
+ * data-profile 属性即可，不需要为两种档位写两份规则。
+ *
+ * **两档都必须显式写全，且只写在这里。** 曾经只有 :root 一份子页值 + 一个 shell 覆盖，
+ * 那是个隐蔽的坑：子页档的 .route-stage 在 DOM 上是外壳档 .route-stage 的**后代**
+ * （App 外壳 → 布局 → <main> → 子页 stage），而自定义属性是继承属性 ——
+ * 子页 stage 自己不匹配 [data-profile='shell']，也就没有自己的声明，于是它读到的不是
+ * :root 那份子页值，而是从外壳 stage 继承下来的外壳值（leave 600 / hold 600 / part 750）。
+ * 症状不是报错，是上面那条恒等式在子页导航里静默失效：幕布按子页档 420ms 闭死，
+ * 内容层却按外壳档 600ms 才离场完，开幕结束后新页还在淡入。
+ * 幕布本身不受影响（它 Teleport 到 body，不是外壳 stage 的后代），所以症状恰好是
+ * 「幕布和内容各跑一套时钟」。元素自身的声明恒胜继承值，因此下面这样两档各自写全即可。
+ *
+ * 注意：**不要**把 `calc(var(--veil-hold) + var(--veil-part))` 这类派生值声明成令牌。
+ * 自定义属性里的 var() 是在**声明它的那个元素**上完成代换的（继承下来的是算好的值），
+ * 于是外壳档会拿到子页档的结果。这种错位同样不报错，只会让两档时间轴静默对不上。
+ * 派生值一律写在**使用处**（见 base.css 的 .route-veil__hud）。
+ */
+[data-profile='inline'] {
+  --veil-slit: var(--motion-route-slit-inline);
+  --veil-latch: var(--motion-dur-route-latch-inline);
+  --veil-gate: var(--motion-dur-route-gate-inline);
+  --veil-hold: var(--motion-dur-route-hold-inline);
+  --veil-part: var(--motion-dur-route-enter);
+  --veil-leave: var(--motion-dur-route-leave);
+}
+
+[data-profile='shell'] {
+  --veil-slit: var(--motion-route-slit);
+  --veil-latch: var(--motion-dur-route-latch);
+  --veil-gate: var(--motion-dur-route-gate);
+  --veil-hold: var(--motion-dur-route-hold);
+  --veil-part: var(--motion-dur-route-shell-enter);
+  --veil-leave: var(--motion-dur-route-shell-leave);
+}
+
+/* 窄屏把网点收细：7px 在 390px 宽的屏上会显出摩尔纹，看着像脏点而不是半调。 */
+@media (max-width: 640px) {
+  :root {
+    --motion-route-dot: 6px;
+    --motion-route-dot-lip: 64px;
+  }
 }
 
 /* ============ 映射到 Tailwind 工具类 ============ */
