@@ -4,7 +4,8 @@ import sqlite3
 import secrets
 from flask import Blueprint, g, jsonify, request, session
 
-from config import ROLE_LABELS, ROLE_USER, logger
+from config import (ROLE_LABELS, ROLE_SUPER, ROLE_USER, STATUS_ACTIVE, STATUS_CLOSED,
+                    logger, public_role, public_role_label)
 from db import get_db
 from security import (
     actor_label,
@@ -31,6 +32,27 @@ def hello():
 
 
 
+@bp.route('/healthz')
+def healthz():
+    """探活：给反向代理、进程守护和监控用的。
+
+    和 /hello 的区别是它会真的访问一下数据库。只检查进程还活着是不够的：
+    数据库文件被别的进程占着、数据目录被挪走这类情况下，进程看着好好的，
+    接口却全在报错 —— 探活报「正常」而业务全挂，比直接探活失败难查得多。
+    """
+    try:
+        conn = get_db()
+        try:
+            conn.execute('SELECT 1').fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        logger.error('健康检查失败：数据库不可用（%s）', exc)
+        return jsonify({'code': 503, 'msg': 'database unavailable'}), 503
+    return jsonify({'code': 0, 'msg': 'ok'})
+
+
+
 # 账户接口
 
 @bp.route('/api/me')
@@ -40,7 +62,15 @@ def api_me():
     if g.get('user') is None:
         return jsonify({'code': 401, 'msg': '未登录', 'csrf': token, 'user': None}), 401
     user = dict(g.user)
-    user['role_label'] = ROLE_LABELS.get(user['role'], user['role'])
+    # 角色出库前统一过一遍对外口径，前端只会拿到 user / admin 两种值。
+    # 好处是界面按角色分支的地方能少一处是一处，两套界面要各自维护的量也跟着少。
+    real_role = user['role']
+    user['role'] = public_role(real_role)
+    user['role_label'] = public_role_label(real_role)
+    # advanced 不是角色名，只是告诉前端「这个账号要不要多一份高级视图的入口」。
+    # 叫这个名字是有意的：它描述的是界面，不是身份；光看响应体，
+    # 能看出的只是「这个账号的界面多一个开关」。
+    user['advanced'] = (real_role == ROLE_SUPER)
     return jsonify({'code': 0, 'csrf': token, 'user': user})
 
 
@@ -62,9 +92,14 @@ def api_register():
     password_hash, password_enc = make_password_records(payload['password'])
     conn = get_db()
     try:
+        # 判重必须带上「还没注销」这个条件，跟数据库里那三个部分唯一索引口径一致。
+        # 少了它就会出现很气人的情况：注销的账号明明把昵称让出来了，
+        # 注册却还是被这句 SELECT 拦住 —— 数据库说能用、代码说不能用。
+        # 同一件事在两个地方各判一遍，这种不一致迟早会撞上，所以两边都把条件写全。
         for column, label in (('nickname', '昵称'), ('real_name', '姓名'), ('student_id', '学号')):
             exists = conn.execute(
-                f'SELECT 1 FROM users WHERE {column} = ? LIMIT 1', (payload[column],)
+                f'SELECT 1 FROM users WHERE {column} = ? AND status != ? LIMIT 1',
+                (payload[column], STATUS_CLOSED),
             ).fetchone()
             if exists:
                 record_login_failure(key)
@@ -78,7 +113,7 @@ def api_register():
         ''', (
             payload['nickname'], payload['real_name'], payload['student_id'], payload['dorm'],
             payload['contact_type'], payload['contact'],
-            password_hash, password_enc, ROLE_USER,  # 注册一律是普通用户，管理员只能由超管升级
+            password_hash, password_enc, ROLE_USER,  # 注册一律是普通用户，管理员只能由管理端升级
         ))
         conn.commit()
         uid = cursor.lastrowid
@@ -101,6 +136,9 @@ def api_register():
         'student_id': payload['student_id'], 'dorm': payload['dorm'],
         'contact_type': payload['contact_type'], 'contact': payload['contact'],
         'role': ROLE_USER, 'role_label': ROLE_LABELS[ROLE_USER],
+        # 新注册的账号一律走普通视图。字段固定写上而不是省掉 ——
+        # 前端两个登录入口拿到的 user 长得一样，少一个字段就得再多一层兜底。
+        'advanced': False,
     }})
 
 
@@ -121,19 +159,35 @@ def api_login():
 
     conn = get_db()
     fail_reason = ''
+    row = None
     try:
-        row = conn.execute(
-            'SELECT * FROM users WHERE nickname = ? COLLATE NOCASE OR real_name = ? LIMIT 1',
+        # 登录框里填的是「姓名或昵称」，而这两个字段之间没有任何约束，
+        # 完全可能出现「甲的昵称恰好等于乙的姓名」。所以这里把两边命中的行都取回来，
+        # 再用密码去认人 —— 密码才是真正能区分身份的东西。
+        #
+        # 早先这里写的是 `nickname = ? OR real_name = ? LIMIT 1`，
+        # 两处都命中时返回哪一行取决于扫描顺序，而扫描顺序不是我们能指望的东西：
+        # 一旦拿到的是别人的那一行，密码自然永远对不上，提示还偏偏是「密码错误」——
+        # 用户只能一遍遍怀疑自己打错了。这种 bug 只在撞名时发病，最难查。
+        rows = conn.execute(
+            'SELECT * FROM users WHERE nickname = ? COLLATE NOCASE OR real_name = ? COLLATE NOCASE',
             (identifier, identifier),
-        ).fetchone()
+        ).fetchall()
         # 返回给用户的永远是同一句话，避免泄露账号是否存在；
         # 但日志里要记清真实原因，不然后面排查完全抓瞎。这两者必须分开。
-        if row is None:
+        if not rows:
             fail_reason = '账号不存在'
-        elif not verify_password(row['password_hash'], password):
-            fail_reason = '密码错误'
-        elif row['status'] != 'active':
-            fail_reason = '账号已被禁用'
+        else:
+            for candidate in rows:
+                if verify_password(candidate['password_hash'], password):
+                    row = candidate
+                    break
+            if row is None:
+                fail_reason = '密码错误'
+            elif row['status'] != STATUS_ACTIVE:
+                # 对外永远只吐「账号或密码错误」这一句，但日志里必须分清是哪一种，
+                # 不然后面有人来问「我密码没打错啊」的时候，完全看不出是账号本身停了。
+                fail_reason = '账号已注销' if row['status'] == STATUS_CLOSED else '账号已被禁用'
         if fail_reason:
             record_login_failure(key)
             security_event('login_failed', 'identifier=%s 真实原因=%s' % (identifier[:40], fail_reason))
@@ -153,7 +207,11 @@ def api_login():
         'id': row['id'], 'nickname': row['nickname'], 'real_name': row['real_name'],
         'student_id': row['student_id'], 'dorm': row['dorm'],
         'contact_type': row['contact_type'], 'contact': row['contact'],
-        'role': row['role'], 'role_label': ROLE_LABELS.get(row['role'], row['role']),
+        # 同样走对外口径：登录接口和 /api/me 返回的角色写法完全一致，
+        # 前端不用管自己是从哪个入口登进来的。
+        'role': public_role(row['role']), 'role_label': public_role_label(row['role']),
+        # 和 /api/me 保持同一个口径：这个字段决定侧边栏那个入口要不要绑上。
+        'advanced': (row['role'] == ROLE_SUPER),
     }})
 
 

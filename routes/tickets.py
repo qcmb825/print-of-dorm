@@ -10,9 +10,11 @@ from config import (
     TICKET_STATUSES,
     TICKET_SUBJECT_MAX,
     logger,
+    public_role,
 )
 from db import get_db
 from security import actor_label, client_ip, security_event
+from utils import display_name
 
 bp = Blueprint('tickets', __name__)
 
@@ -20,7 +22,7 @@ bp = Blueprint('tickets', __name__)
 @bp.route('/api/tickets')
 @login_required
 def api_tickets():
-    """工单列表：普通用户只看自己的，管理员 / 超管看全部，可按状态筛选。
+    """工单列表：普通用户只看自己的，管理端看全部，可按状态筛选。
 
     未读数是算出来的，不是存出来的：
       用户侧未读 = 对方（管理员）发的、且晚于我上次已读时刻的消息数；
@@ -39,7 +41,7 @@ def api_tickets():
                 SELECT t.id, t.subject, t.status, t.user_id,
                        datetime(t.create_time, 'localtime') AS create_time,
                        datetime(t.update_time, 'localtime') AS update_time,
-                       owner.nickname AS owner_nickname,
+                       owner.nickname AS owner_nickname, owner.status AS owner_status,
                        (SELECT COUNT(*) FROM ticket_messages m
                          WHERE m.ticket_id = t.id AND m.sender_role = 'user'
                            AND (t.admin_read_time IS NULL OR m.create_time > t.admin_read_time)) AS unread,
@@ -70,6 +72,11 @@ def api_tickets():
         conn.close()
 
     tickets = [dict(r) for r in rows]
+    # 管理端的列表里才有 owner_nickname（用户看的是自己的工单，没必要显示是谁的）。
+    # 顺手把「已注销」标到名字上，理由见 utils.display_name。
+    for t in tickets:
+        if 'owner_nickname' in t:
+            t['owner_nickname'] = display_name(t['owner_nickname'], t.pop('owner_status', None))
     return jsonify({
         'code': 0,
         'staff': staff,
@@ -145,16 +152,27 @@ def api_ticket_detail(tid):
         messages = conn.execute('''
             SELECT m.id, m.sender_id, m.sender_role, m.body,
                    datetime(m.create_time, 'localtime') AS create_time,
-                   u.nickname AS sender_nickname
+                   u.nickname AS sender_nickname, u.status AS sender_status
             FROM ticket_messages m
             LEFT JOIN users u ON u.id = m.sender_id
             WHERE m.ticket_id = ?
             ORDER BY m.id
         ''', (tid,)).fetchall()
-        owner = conn.execute('SELECT nickname FROM users WHERE id = ?',
+        owner = conn.execute('SELECT nickname, status FROM users WHERE id = ?',
                              (ticket['user_id'],)).fetchone()
     finally:
         conn.close()
+
+    # 每条消息都带上发送者的角色，前端靠它区分「用户」和「客服」两方气泡。
+    # sender_role 同样要过一遍对外口径，和别处保持一致：
+    # 同一个角色，在哪个接口里都该是同一个写法。
+    # 前端只判断「是不是 user」，所以收敛成 admin 不影响显示效果。
+    msg_list = []
+    for m in messages:
+        item = dict(m)
+        item['sender_role'] = public_role(item['sender_role'])
+        item['sender_nickname'] = display_name(item['sender_nickname'], item.pop('sender_status', None))
+        msg_list.append(item)
 
     return jsonify({
         'code': 0,
@@ -163,9 +181,11 @@ def api_ticket_detail(tid):
             'subject': ticket['subject'],
             'status': ticket['status'],
             'is_mine': ticket['user_id'] == g.user['id'],
-            'owner_nickname': owner['nickname'] if owner else '（账号已注销）',
+            # 同理：owner 查不到不等于「已注销」，注销的账号行还在、状态是 closed，
+            # 那种情况 nickname 有值，由 display_name 加后缀。空只说明这一行没人可指。
+            'owner_nickname': display_name(owner['nickname'], owner['status']) if owner else '（无归属）',
         },
-        'messages': [dict(m) for m in messages],
+        'messages': msg_list,
     })
 
 
@@ -173,7 +193,7 @@ def api_ticket_detail(tid):
 @bp.route('/api/tickets/<int:tid>/messages', methods=['POST'])
 @login_required
 def api_ticket_reply(tid):
-    """回复工单，工单归属人和管理员 / 超管都能回。"""
+    """回复工单，工单归属人和管理端都能回。"""
     staff = _is_staff(g.user)
     data = request.get_json(silent=True) or {}
     body = (data.get('body') or '').strip()
@@ -217,7 +237,7 @@ def api_ticket_reply(tid):
 @bp.route('/api/tickets/<int:tid>/status', methods=['PUT'])
 @login_required
 def api_ticket_status(tid):
-    """关闭 / 重新打开工单，工单归属人和管理员 / 超管都能操作。"""
+    """关闭 / 重新打开工单，工单归属人和管理端都能操作。"""
     staff = _is_staff(g.user)
     data = request.get_json(silent=True) or {}
     new_status = (data.get('status') or '').strip()

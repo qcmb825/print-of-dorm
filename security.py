@@ -15,7 +15,7 @@ def client_ip():
     前面挂了 Nginx 之类的反代时，真实 IP 在 X-Forwarded-For 里，得把 .env 的 TRUST_PROXY
     设成 true 才会采用它。但这个头客户端可以随便伪造，只有自己完全掌控代理时才该开，
     否则攻击者能伪造 IP，日志就失去意义了。
-    没有 HTTP 请求时（比如启动时建超管、以后的定时任务）返回 '-'，那种场合本来就没有客户端。
+    没有 HTTP 请求时（比如启动时初始化内置账号、以后的定时任务）返回 '-'，那种场合本来就没有客户端。
     """
     if not has_request_context():
         return '-'
@@ -57,7 +57,11 @@ def security_event(event, detail=''):
 
 
 def audit_action(action, detail=''):
-    """敏感管理动作留痕：改角色、禁用/删除账号、查看明文密码。"""
+    """敏感管理动作留痕：改角色、禁用/注销账号、查看明文密码。
+
+    注销也记账，而且记的是「注销」而不是「删除」——
+    数据一条没少，说成删除会让后来翻日志的人以为得去备份里找。
+    """
     try:
         security_logger.info('audit=%s ip=%s user=%s %s', action, client_ip(), actor_label(), detail)
     except Exception:
@@ -73,7 +77,7 @@ def make_password_records(password):
     """返回 (哈希, 可逆密文)。
 
     哈希走 pbkdf2，用来登录校验，不可逆，是真正的安全防线；
-    密文走 Fernet，只有超管能在后台查看，密钥在 .env 的 PASSWORD_ENC_KEY。
+    密文走 Fernet，供管理端查看，密钥在 .env 的 PASSWORD_ENC_KEY。
     """
     password_hash = generate_password_hash(password, method='pbkdf2:sha256', salt_length=16)
     password_enc = None
@@ -99,7 +103,7 @@ def verify_password(password_hash, password):
 
 
 def decrypt_password(password_enc):
-    """解密密码给超管查看，密钥缺失或密文损坏就返回 None。"""
+    """解密密码供管理端查看，密钥缺失或密文损坏就返回 None。"""
     if not password_enc or FERNET is None:
         return None
     try:
@@ -120,8 +124,13 @@ def ensure_csrf_token():
 
 
 def login_key(identifier):
-    """登录失败计数的键：IP + 账号，避免一个 IP 拖垮所有人，也避免只针对某账号爆破。"""
-    return f"{request.remote_addr or '-'}:{(identifier or '').strip().lower()}"
+    """登录失败计数的键：IP + 账号，避免一个 IP 拖垮所有人，也避免只针对某账号爆破。
+
+    取 IP 统一走 client_ip()：开了 TRUST_PROXY 之后，如果这里还直接用 remote_addr，
+    计数用的是代理地址、日志里记的却是真实地址，两边对不上；更难受的是反代场景下
+    所有人都共用同一个代理 IP，别人试错会把你一起锁在门外。
+    """
+    return '%s:%s' % (client_ip(), (identifier or '').strip().lower())
 
 
 
@@ -153,3 +162,25 @@ def record_login_failure(key):
 
 def clear_login_failures(key):
     _login_failures.pop(key, None)
+
+
+
+_hits = {}
+
+
+
+def hit_limit(key, limit, window_seconds):
+    """通用限流：在 window_seconds 秒内第 limit 次之外再来的就返回 True。
+
+    和登录失败计数一样放在内存里。本服务是单进程的 waitress，这点完全够用；
+    重启就清空也无所谓 —— 它挡的是手抖连点和刷量，不是需要长期准确的账。
+    """
+    now = time.monotonic()
+    recent = [ts for ts in _hits.get(key, ()) if now - ts < window_seconds]
+    recent.append(now)
+    _hits[key] = recent
+    if len(_hits) > 5000:  # 键太多了就顺带扫一遍，把窗口早已过期的清掉
+        for k, stamps in list(_hits.items()):
+            if all(now - ts >= window_seconds for ts in stamps):
+                _hits.pop(k, None)
+    return len(recent) > limit

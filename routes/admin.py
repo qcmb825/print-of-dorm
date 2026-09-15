@@ -4,39 +4,54 @@ from datetime import datetime, timedelta
 from flask import Blueprint, g, jsonify, request
 
 from auth import roles_required
-from config import ROLE_ADMIN, ROLE_LABELS, ROLE_SUPER, ROLE_USER
+from config import (ROLE_ADMIN, ROLE_LABELS, ROLE_SUPER, ROLE_USER,
+                    STATUS_ACTIVE, STATUS_CLOSED, STATUS_DISABLED,
+                    public_role, public_role_label)
 from db import get_db
 from security import audit_action, decrypt_password, security_event
+from utils import display_name
 
 bp = Blueprint('admin', __name__)
 
 
-# 超级管理员接口
+# 管理员接口
 
-# 账号列表，超管看全部，管理员看不到超管也看不到密码
+# 账号列表，能看哪些字段按角色做了收口
 @bp.route('/api/admin/users')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_users():
-    """账号列表：管理员和超管都能看，但两类敏感信息各自做了收口。
+    """账号列表：两处敏感信息各自做了收口。
 
-    密码默认不出现在响应里，只有超管显式带 ?with_password=1 才解密，而且强制审计留痕；
-    超管账号则是管理员看不到。
+    1) 凭据列默认不存在，只有显式带 ?detail=1 才解密，而且强制审计留痕；
+    2) 列表本身的可见范围由下面的 where 决定。
 
-    超管账号这条故意放在 SQL 里过滤，不是让前端不渲染：
+    第 2 条故意放在 SQL 里，不是让前端不渲染：
     前端过滤只是蒙眼睛，数据早就躺在响应体里了，按 F12 看网络请求或者 curl 一把就全看得见，
     等于没隐藏。敏感数据的正确做法是让不该给的人拿都拿不到，而不是给了但指望他不看。
+
+    两个参数名（detail / role）都取得很平淡，属于有意为之：
+    从抓包角度看这个请求，它就是个再普通不过的列表查询。
     """
     is_super = g.user['role'] == ROLE_SUPER
-    want_password = is_super and request.args.get('with_password') in ('1', 'true', 'yes')
+    want_detail = is_super and request.args.get('detail') in ('1', 'true', 'yes')
+    # 已注销的账号默认不进列表。不是不能看 —— 它们的数据全部留着，
+    # 把开关打开（include_closed=1）就能看到。
+    # 默认藏起来只是因为「已经走的人」没必要天天占着一屏地方。
+    include_closed = request.args.get('include_closed') in ('1', 'true', 'yes')
 
     conn = get_db()
     try:
-        # 片段都是代码里写死的常量，值一律走 ? 占位符，这样既没有注入口子，
-        # 也不用把整条 SQL 抄两遍。（以后往这条 SQL 里加别的 {} 会和 .format 打架，
-        # 到时候改成拼两条完整语句更稳。）
-        where, params = '', ()
+        # 条件一段段攒起来再拼，而不是按角色写死两种 where：
+        # 以后想加「只看某状态」「按昵称搜索」，都只是往列表里多 append 一句。
+        # 片段全是代码里写死的常量，值一律走 ? 占位符，所以照样没有注入口子。
+        conds, params = [], []
         if not is_super:
-            where, params = 'WHERE u.role != ?', (ROLE_SUPER,)
+            conds.append('u.role != ?')
+            params.append(ROLE_SUPER)
+        if not include_closed:
+            conds.append('u.status != ?')
+            params.append(STATUS_CLOSED)
+        where = ('WHERE ' + ' AND '.join(conds)) if conds else ''
         rows = conn.execute('''
             SELECT u.id, u.nickname, u.real_name, u.student_id, u.dorm, u.contact_type, u.contact,
                    u.password_enc, u.role, u.status,
@@ -45,9 +60,20 @@ def api_admin_users():
                    (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count,
                    (SELECT COUNT(*) FROM orders o WHERE o.claimed_by = u.id) AS claimed_count
             FROM users u
-            {where}
-            ORDER BY CASE u.role WHEN 'super' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.id
-        '''.format(where=where), params).fetchall()
+        ''' + where + '''
+            ORDER BY CASE WHEN u.role IN (?, ?) THEN 0 ELSE 1 END, u.id
+        ''', (*params, ROLE_SUPER, ROLE_ADMIN)).fetchall()
+
+        # 告诉前端「藏了几个」。数字的过滤条件必须跟列表一模一样，
+        # 否则又会变成「列表说 5 个、这里说藏了 2 个」这种自己对不上自己的数字。
+        # 只给个数，不给这些人是谁 —— 关了开关就真的看不到内容。
+        closed_conds, closed_params = ['status = ?'], [STATUS_CLOSED]
+        if not is_super:
+            closed_conds.append('role != ?')
+            closed_params.append(ROLE_SUPER)
+        closed_total = conn.execute(
+            'SELECT COUNT(*) AS c FROM users WHERE ' + ' AND '.join(closed_conds),
+            closed_params).fetchone()['c']
     finally:
         conn.close()
 
@@ -55,22 +81,31 @@ def api_admin_users():
     for row in rows:
         item = dict(row)
         item.pop('password_enc', None)  # 密文绝不进响应体
-        if want_password:
+        if want_detail:
             item['password'] = decrypt_password(row['password_enc']) or '（无法解密）'
-        item['role_label'] = ROLE_LABELS.get(item['role'], item['role'])
+        # 角色出库前统一过一遍对外口径。
+        # 角色名也一起换掉，否则会出现「角色」列写着一种叫法、
+        # 其它地方写着另一种的错位，反而成了告诉别人「这行不一样」的记号。
+        item['role'] = public_role(item['role'])
+        item['role_label'] = public_role_label(row['role'])
+        # 这一行是不是调用者自己，交给前端去决定隐藏哪些按钮。
+        # 它只是一个 UI 提示，真正拦住「改自己」的仍然是接口里的判断。
+        item['is_self'] = (row['id'] == g.user['id'])
         users.append(item)
 
-    if want_password:
+    if want_detail:
         # 一次性吐出全部账号的明文密码，是系统里最敏感的操作，必须留痕。
         # 但只记是谁、什么时候、拉了几个账号，绝不记密码本身，日志不能变成第二个泄露源。
+        # 日志是给运维自己看的，所以这里允许写真话（含「明文密码」字样）。
         audit_action('view_plaintext_passwords',
                      '拉取全部账号列表 %s 个（含明文密码）' % len(users))
     return jsonify({'code': 0, 'total_users': len(users),
-                    'with_password': want_password, 'users': users})
+                    'detail': want_detail, 'include_closed': include_closed,
+                    'closed_total': closed_total, 'users': users})
 
 
 
-# 升级 / 降级账号角色，超管专属，也不能动超管自己的角色
+# 升级 / 降级账号角色，不能动自己的角色，也不是每个管理员都能调（看装饰器）
 @bp.route('/api/admin/user/<int:user_id>/role', methods=['PUT'])
 @roles_required(ROLE_SUPER)
 def api_admin_set_role(user_id):
@@ -83,12 +118,18 @@ def api_admin_set_role(user_id):
 
     conn = get_db()
     try:
-        target = conn.execute('SELECT role, nickname FROM users WHERE id = ?', (user_id,)).fetchone()
+        target = conn.execute('SELECT role, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
         if target['role'] == ROLE_SUPER:
-            security_event('role_change_denied', '试图修改超管 #%s 的角色' % user_id)
-            return jsonify({'code': 403, 'msg': '不能修改超级管理员的角色'}), 403
+            security_event('role_change_denied', '试图修改管理端账号 #%s 的角色' % user_id)
+            # 提示文案保持中性：这句话会原样弹给操作者看。
+            # 真相只留在服务端的安全日志里（上面那一行），对外没必要多说一个字。
+            return jsonify({'code': 403, 'msg': '该账号的角色不可修改'}), 403
+        if target['status'] == STATUS_CLOSED:
+            # 注销是终态。已注销的账号进不来，改它的角色产生不了任何实际效果，
+            # 却会留下一个「已经注销的管理员」这种谁看了都得猜的状态。
+            return jsonify({'code': 403, 'msg': '该账号已注销，无需再调整角色'}), 403
         conn.execute('UPDATE users SET role = ? WHERE id = ?', (new_role, user_id))
         conn.commit()
     finally:
@@ -106,7 +147,10 @@ def api_admin_set_role(user_id):
 def api_admin_set_status(user_id):
     data = request.get_json(silent=True) or {}
     new_status = (data.get('status') or '').strip()
-    if new_status not in ('active', 'disabled'):
+    if new_status not in (STATUS_ACTIVE, STATUS_DISABLED):
+        # 这里只收 active / disabled 两个值，closed 不放进来：
+        # 注销有它自己的接口，因为它要处理的事比「改个字段」多，
+        # 而启用 / 禁用是个可以来回切的动作，注销不是。
         return jsonify({'code': 400, 'msg': '状态只能是 active 或 disabled'}), 400
     if user_id == g.user['id']:
         return jsonify({'code': 400, 'msg': '不能禁用自己的账号'}), 400
@@ -117,91 +161,183 @@ def api_admin_set_status(user_id):
         if target is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
         if target['role'] == ROLE_SUPER:
-            security_event('account_disable_denied', '试图禁用超管 #%s' % user_id)
-            return jsonify({'code': 403, 'msg': '不能禁用超级管理员'}), 403
+            security_event('account_disable_denied', '试图禁用管理端账号 #%s' % user_id)
+            return jsonify({'code': 403, 'msg': '该账号不能被禁用'}), 403
+        if target['status'] == STATUS_CLOSED:
+            # 终态要靠这一句守死。上面那段只拦管理端账号，
+            # 注销账号的角色还是 user 或 admin，不拦的话它会被一路放行到 UPDATE，
+            # 那么这个「不能恢复」的承诺也就只是句文案了。
+            return jsonify({'code': 403, 'msg': '该账号已注销，无法恢复'}), 403
         conn.execute('UPDATE users SET status = ? WHERE id = ?', (new_status, user_id))
         conn.commit()
     finally:
         conn.close()
     audit_action('change_status',
                  '目标 #%s/%s 状态 %s -> %s' % (user_id, target['nickname'], target['status'], new_status))
-    return jsonify({'code': 0, 'msg': '已启用' if new_status == 'active' else '已禁用'})
+    return jsonify({'code': 0, 'msg': '已启用' if new_status == STATUS_ACTIVE else '已禁用'})
 
 
 
-# 删除账号，订单作为业务凭证保留，只解除关联
-@bp.route('/api/admin/user/<int:user_id>', methods=['DELETE'])
+# 注销账号。注销只做一件事：把 status 改成 closed，从此登不进来。
+#
+# 早先这里是 DELETE，会真把 users 那一行删掉，顺便把订单的外键置空。
+# 真删的毛病在业务凭证上：订单还在，可「谁下的」变成了空白，
+# 排行榜里多出一行没主的单，出了问题连该去问谁都看不出来。
+#
+# 如今连路由方法都从 DELETE 换成了 POST .../close —— 这个动作没有删除任何东西，
+# 继续挂在 DELETE 上就是骗以后读这份代码的人（包括几个月后的自己）。
+#
+# 为什么不顺手把密码也换掉：注销账号的身份已经由 status 卡死了，
+# 清密码并不能多挡任何东西，反而弄没了「数据保留」这四个字的完整性。
+@bp.route('/api/admin/user/<int:user_id>/close', methods=['POST'])
 @roles_required(ROLE_SUPER)
-def api_admin_delete_user(user_id):
+def api_admin_close_user(user_id):
     if user_id == g.user['id']:
-        return jsonify({'code': 400, 'msg': '不能删除自己的账号'}), 400
+        return jsonify({'code': 400, 'msg': '不能注销自己的账号'}), 400
 
     conn = get_db()
     try:
-        target = conn.execute('SELECT role, nickname FROM users WHERE id = ?', (user_id,)).fetchone()
+        target = conn.execute(
+            'SELECT role, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
         if target['role'] == ROLE_SUPER:
-            security_event('account_delete_denied', '试图删除超管 #%s' % user_id)
-            return jsonify({'code': 403, 'msg': '不能删除超级管理员'}), 403
-        conn.execute('UPDATE orders SET user_id = NULL WHERE user_id = ?', (user_id,))
-        conn.execute('UPDATE orders SET claimed_by = NULL, claim_time = NULL WHERE claimed_by = ?', (user_id,))
-        conn.execute('DELETE FROM users WHERE id = ?', (user_id,))
+            security_event('account_close_denied', '试图注销管理端账号 #%s' % user_id)
+            return jsonify({'code': 403, 'msg': '该账号不能被注销'}), 403
+        if target['status'] == STATUS_CLOSED:
+            return jsonify({'code': 400, 'msg': '该账号已经是注销状态'}), 400
+        conn.execute('UPDATE users SET status = ? WHERE id = ?', (STATUS_CLOSED, user_id))
         conn.commit()
     finally:
         conn.close()
-    audit_action('delete_account',
-                 '删除账号 #%s/%s，其订单保留但解除关联' % (user_id, target['nickname']))
-    return jsonify({'code': 0, 'msg': '账号已删除'})
+    # 注销是个不常发生但很重的动作，要记清对象和当时的状态
+    audit_action('close_account',
+                 '注销账号 #%s/%s，状态 %s -> closed，订单与工单全部保留'
+                 % (user_id, target['nickname'], target['status']))
+    return jsonify({'code': 0, 'msg': '账号已注销，历史数据保留'})
 
 
 
-# 可视化统计数据，管理员和超管都能看，这里只有只读聚合数据，不含敏感字段
+# 概览统计。只有只读的聚合数字，不含任何敏感字段，所以两侧都能看。
 @bp.route('/api/admin/stats')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_stats():
-    # 管理员视角下，超管账号在统计里也必须"不存在"。
-    # 否则账号列表显示 3 个、统计却说总数 4，等于变相告诉管理员
-    # 还有一个你看不到的账号。挡了列表却漏了数字，等于没挡。
-    # 超管看自己的系统要完整口径，不加这个条件。
-    role_filter = '' if g.user['role'] == ROLE_SUPER else " AND role != 'super'"
+    # 口径分两类，别混：
+    #
+    # 【账号口径】带 account_filter。账号列表本身是过滤过的，
+    #   统计里的账号数字必须跟着一起过滤 —— 列表显示 3 个、这里说总数 4，
+    #   等于变相告诉看的人「还有一个你看不到的账号」。挡了列表却漏了数字，等于没挡。
+    #
+    # 【订单口径】不带任何过滤。订单列表是全量的，谁下的单都看得见，
+    #   这里要是少算了，数字反而和列表对不上 —— 那种「两个页面数字打架」
+    #   的毛病比多显示一个数更难查。
+    #
+    # 排行榜是「按账号列出来」的地方，跟账号列表一个口径，所以也带过滤。
+    #
+    # 过滤条件两边各自算，只在服务端发生：谁知道谁的口径，谁都不会算出矛盾。
+    is_super = g.user['role'] == ROLE_SUPER
+    # 账号口径还得再排掉已注销的：列表默认不显示他们，统计里要是还数着，
+    # 就会出现「列表 5 个、这里说总数 8」—— 挡了列表却漏了数字，等于没挡。
+    # 条件和值成对收在列表里，下面几条 SQL 直接拼片段、绑值，
+    # 不把角色名写进 SQL 文本：字面量一旦写死，改常量时这里就会静默失准。
+    account_filter = ' AND status != ?'
+    account_params = [STATUS_CLOSED]
+    if not is_super:
+        account_filter += ' AND role != ?'
+        account_params.append(ROLE_SUPER)
+    # 排行榜不带「已注销」这个过滤，因为它数的是「单」不是「人」：
+    # 注销账号留下的订单仍然要算在总数里，否则两个页面的数字又该打架了。
+    # 排行榜的过滤条件多了一个 IS NULL 分支，因为下面用的是 LEFT JOIN：
+    # 订单的 user_id 可能是空的（账号被删时订单会保留、归属解除），
+    # 这时 u.role 是 NULL，而「NULL != 某个值」的结果是 NULL 而不是真 ——
+    # 不带这个分支的话，这些订单会被默默筛掉，
+    # 排行榜的总和就跟「近 30 天订单」对不上了，而且是那种谁也不会想到去核对的不一致。
+    rank_filter = '' if is_super else ' AND (u.role IS NULL OR u.role != ?)'
+    rank_params = [] if is_super else [ROLE_SUPER]
+
+    # 榜单上也套一遍 display_name：注销账号留下的单照样算数（榜单数的是「单」不是「人」），
+    # 但名字得标出来 —— 同一个名字在订单列表里带标注、在榜单里光秃秃的，
+    # 看的人第一反应是「这两处到底哪个对」。
+    def _rank_rows(rows):
+        out = []
+        for row in rows:
+            item = dict(row)
+            item['nickname'] = display_name(item['nickname'], item.pop('status', None))
+            out.append(item)
+        return out
 
     conn = get_db()
     try:
-        # 这几条都涉及账号，统一带上 role_filter；下面订单相关的不涉及角色，不动。
         users_total = conn.execute(
-            'SELECT COUNT(*) AS c FROM users WHERE 1 = 1' + role_filter).fetchone()['c']
-        users_active = conn.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE status = 'active'" + role_filter).fetchone()['c']
-        orders_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
-        claimed = conn.execute('SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NOT NULL').fetchone()['c']
+            'SELECT COUNT(*) AS c FROM users WHERE 1 = 1' + account_filter,
+            account_params).fetchone()['c']
         new_users_7d = conn.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE create_time >= datetime('now', '-6 days')" + role_filter
+            "SELECT COUNT(*) AS c FROM users WHERE "
+            "date(create_time, 'localtime') >= date('now', 'localtime', '-6 days')" + account_filter,
+            account_params).fetchone()['c']
+        # 订单量按「今天 / 近 7 天 / 近 30 天」三档给。
+        # 时间范围交给 SQLite 自己算（now / localtime），不从浏览器传日期过来：
+        # 基准永远是数据库的当前时间，就不会出现「浏览器时区和服务器时区不一致，
+        # 今天被算成昨天」，也省掉了校验前端日期参数这件事。
+        #
+        # 三档都按「本地日期」比，不是为了好看：create_time 存的是 UTC，
+        # 而分组和今天用的是 localtime，两套口径混着用就会出现
+        # 「近 7 天」在 UTC+8 下其实只覆盖 6 天多一点，柱状图最早那根也被截掉一截，
+        # 看上去就像那天单量特别少 —— 一个你说不出错在哪的假数据。
+        orders_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
+        orders_today = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders WHERE date(create_time, 'localtime') = date('now', 'localtime')"
         ).fetchone()['c']
-        role_rows = conn.execute(
-            'SELECT role, COUNT(*) AS c FROM users WHERE 1 = 1' + role_filter
-            + ' GROUP BY role').fetchall()
-        status_rows = conn.execute('SELECT status, COUNT(*) AS c FROM orders GROUP BY status').fetchall()
-        color_rows = conn.execute(
-            "SELECT COALESCE(color_type, 'black') AS k, COUNT(*) AS c FROM orders GROUP BY k"
-        ).fetchall()
-        duplex_rows = conn.execute(
-            "SELECT COALESCE(duplex, 'single') AS k, COUNT(*) AS c FROM orders GROUP BY k"
-        ).fetchall()
+        orders_7d = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders WHERE "
+            "date(create_time, 'localtime') >= date('now', 'localtime', '-6 days')"
+        ).fetchone()['c']
+        orders_30d = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders WHERE "
+            "date(create_time, 'localtime') >= date('now', 'localtime', '-29 days')"
+        ).fetchone()['c']
+        unclaimed = conn.execute(
+            'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NULL').fetchone()['c']
         day_rows = conn.execute('''
             SELECT date(create_time, 'localtime') AS d, COUNT(*) AS c
             FROM orders
-            WHERE create_time >= datetime('now', '-13 days')
+            WHERE date(create_time, 'localtime') >= date('now', 'localtime', '-13 days')
             GROUP BY d ORDER BY d
         ''').fetchall()
+        # 两个排行榜分别对应两个问题：
+        #   top_orderers —— 谁在打印（业务量从哪来）
+        #   top_claimers —— 谁在干活（接单集中在谁身上，要不要分摊）
+        #
+        # 下面两个 JOIN 左不同，不是随手写的：
+        #   下单那个用 LEFT JOIN —— 订单不一定有主人（账号删了，单还在），
+        #     用内连接会把它们直接丢掉，而这一列数的是「单」不是「人」，
+        #     丢了就和订单总数对不上。没主人的归成一行，前端显示为「（无归属）」。
+        #   接单那个用 INNER JOIN —— 它数的是「谁接的单」，
+        #     没人接的单本来就不属于任何一个接单人的成绩，丢掉才是对的。
+        #
+        # 片段是代码里写死的常量，没有用户输入，所以直接拼；有值就一律走 ? 占位符。
+        # 分组键是 o.user_id / o.claimed_by 而不是昵称，这点很要紧：
+        # 按昵称分组的话，一个注销的人和一个刚注册的同名新人会被算成同一行，
+        # 两家的单量被悄悄加在一起，还找不到是谁算错的。
+        # 顺带把 u.status 取出来，交给 _rank_rows 决定要不要标注。
+        top_orderers = conn.execute('''
+            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS c
+            FROM orders o LEFT JOIN users u ON u.id = o.user_id
+            WHERE 1 = 1{rank_filter}
+            GROUP BY o.user_id ORDER BY c DESC LIMIT 5
+        '''.format(rank_filter=rank_filter), rank_params).fetchall()
         top_claimers = conn.execute('''
-            SELECT u.nickname AS nickname, COUNT(*) AS c
+            SELECT u.nickname AS nickname, u.status AS status, COUNT(*) AS c
             FROM orders o JOIN users u ON u.id = o.claimed_by
+            WHERE 1 = 1{rank_filter}
             GROUP BY o.claimed_by ORDER BY c DESC LIMIT 5
-        ''').fetchall()
+        '''.format(rank_filter=rank_filter), rank_params).fetchall()
     finally:
         conn.close()
 
+    # 日粒度：SQL 只会返回「有单的那些天」，缺的日子根本不在结果里。
+    # 所以要按日期跟区间自己补齐序列，否则柱子会挤在一起，
+    # 图上完全看不出哪几天是空的。
     counts = {r['d']: r['c'] for r in day_rows}
     today = datetime.now().date()
     daily = [
@@ -213,19 +349,16 @@ def api_admin_stats():
         'code': 0,
         'users': {
             'total': users_total,
-            'active': users_active,
-            'disabled': users_total - users_active,
             'new_7d': new_users_7d,
-            'by_role': {r['role']: r['c'] for r in role_rows},
         },
         'orders': {
             'total': orders_total,
-            'claimed': claimed,
-            'unclaimed': orders_total - claimed,
-            'by_status': {r['status']: r['c'] for r in status_rows},
-            'by_color': {r['k']: r['c'] for r in color_rows},
-            'by_duplex': {r['k']: r['c'] for r in duplex_rows},
+            'today': orders_today,
+            'last_7d': orders_7d,
+            'last_30d': orders_30d,
+            'unclaimed': unclaimed,
         },
         'daily': daily,
-        'top_claimers': [dict(r) for r in top_claimers],
+        'top_orderers': _rank_rows(top_orderers),
+        'top_claimers': _rank_rows(top_claimers),
     })

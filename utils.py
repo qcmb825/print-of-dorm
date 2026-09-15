@@ -12,6 +12,7 @@ from config import (
     NICKNAME_RE,
     QQ_RE,
     REALNAME_RE,
+    STATUS_CLOSED,
     STUDENT_ID_RE,
     WECHAT_RE,
 )
@@ -22,6 +23,26 @@ from config import (
 def allowed_file(filename):
     """按白名单校验扩展名，避免上传可执行文件。"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+
+def display_name(nickname, status):
+    """给列表展示用的昵称：账号已注销的，在名字后面标一下。
+
+    为什么非标不可 —— 注销的账号会把昵称 / 姓名 / 学号让出去，别人可以顶着
+    一模一样的昵称重新注册。订单和工单都是按 user_id 关联的，关联本身没问题，
+    可页面是给人看的：一个已经走掉的人和一个刚来的新人可能同名，
+    只显示昵称的话，历史记录会被读成「这是新来那位做的」。
+    这个标注不是装饰，是防止把历史读错。
+
+    nickname 为 None 表示这条记录没有关联到任何账号（LEFT JOIN 没匹配上），
+    原样返回 None，交给前端显示成「（无归属）」这类文案。
+    """
+    if nickname is None:
+        return None
+    if status == STATUS_CLOSED:
+        return nickname + '（已注销）'
+    return nickname
 
 
 

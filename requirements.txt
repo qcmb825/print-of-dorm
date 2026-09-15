@@ -1,4 +1,4 @@
-# 宿舍打印服务：运行依赖
+# 打印服务：运行依赖
 # Python 3.9 以上就能跑（我开发、部署用的都是 3.11）
 # 安装：pip install -r requirements.txt
 #
@@ -13,8 +13,8 @@ Flask-Cors==6.0.5
 waitress==3.0.2
 
 # 密码可逆加密（Fernet 对称加密）。
-# 起因是要支持超管查看各账号的密码，但光靠哈希没法还原出明文，
-# 所以密码存了两份：password_hash 只用来登录校验，不可逆；
-# password_enc 用 Fernet 加密，可逆，只有超管接口解密后返回。
+# 起因是账号管理页要能查看凭据，而哈希没办法还原出明文，
+# 所以密码存了两份：password_hash 只用于登录校验，不可逆；
+# password_enc 用 Fernet 加密，可逆，只在专设的接口里解密后返回。
 cryptography==46.0.3
 

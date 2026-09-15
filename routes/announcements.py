@@ -74,10 +74,37 @@ def api_announcement():
 
 
 
+@bp.route('/api/announcements')
+@login_required
+def api_announcements():
+    """公告历史，所有登录用户都能看。
+
+    和管理端的 /api/admin/announcements 是两个接口，这里刻意分开：
+    一个是「给所有人看的往期公告」，一个是「带编辑/停用/删除的管理台账」。
+    混成一个接口、再按角色裁剪字段，很容易改着改着就把管理用的字段漏给普通用户，
+    分开写成两条查询虽然啰嗦一点，但多看几眼就能确认各给各的。
+    """
+    conn = get_db()
+    try:
+        rows = conn.execute('''
+            SELECT a.id, a.content, a.font_family, a.font_size, a.font_color, a.is_active,
+                   datetime(a.update_time, 'localtime') AS update_time,
+                   u.nickname AS author
+            FROM announcements a
+            LEFT JOIN users u ON u.id = a.created_by
+            ORDER BY a.id DESC
+            LIMIT 50
+        ''').fetchall()
+    finally:
+        conn.close()
+    return jsonify({'code': 0, 'announcements': [dict(r) for r in rows]})
+
+
+
 @bp.route('/api/admin/announcements')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_announcements():
-    """公告列表，管理员 / 超管可看，含已停用的历史公告，方便编辑和重新启用。"""
+    """公告列表，管理端可看，含已停用的历史公告，方便编辑和重新启用。"""
     conn = get_db()
     try:
         rows = conn.execute('''

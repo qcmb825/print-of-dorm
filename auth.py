@@ -40,5 +40,5 @@ def roles_required(*roles):
 # 工单（站内信）接口
 
 def _is_staff(user):
-    """管理员和超管统称工单的另一方。"""
+    """工单里的「另一方」：有管理权限的账号都算，不管具体是哪一类。"""
     return user['role'] in (ROLE_ADMIN, ROLE_SUPER)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>宿舍打印服务</title>
+    <title>打印服务</title>
     <style>
         *, *::before, *::after { box-sizing: border-box; }
 
@@ -11,42 +11,72 @@
            颜色、间距、圆角、字号一律走变量，组件里不再出现硬编码值。
            间距 4px 基准 6 档，圆角 3 档，字号 5 档（另有 1 个只给 KPI 大数字的展示号）。 */
         :root {
-            /* 表面 */
-            --bg: #f4f6f9;
-            --surface: #ffffff;
-            --surface-sunken: #f7f8fa;   /* 卡片里的凹陷区：表头、模态正文 */
-            --surface-soft: #eef2f8;     /* 淡底：次级按钮、未选中标签 */
-            --surface-hover: #f7f9fc;
+            /* ============ 品牌色：粉 → 紫 融合 ============
+               粉取自参考页「二次元风格表单页」（#F6947D → #F37F96），
+               紫取自参考页「左右滑动风格表单页-2」（#775CE5）。
+               渐变分三档用途，别互相顶替：
+                 · --brand-grad       装饰用亮色渐变（插图蒙层、色块、细装饰条），不承载文字
+                 · --brand-grad-text  标题渐变文字，每一档都验过对白底 ≥3:1（大字 AA）
+                 · --btn-grad         按钮底色渐变，每一档都验过白字 ≥4.5:1（小字 AA）
+               参考页那种「亮粉底 + 白字」实测只有 2.2:1，直接用是不合格的。 */
+            --brand-pink: #f6947d;
+            --brand-magenta: #f37f96;
+            --brand-purple: #775ce5;
+            --brand-grad: linear-gradient(120deg, #f6947d 0%, #f37f96 45%, #a97bea 100%);
+            --brand-grad-text: linear-gradient(100deg, #c9542f 0%, #c93f6b 50%, #6b46d8 100%);
+            /* 按钮渐变单独一条：紫 → 洋红，不带橙。
+               不带橙不是审美问题，是对比度问题：亮橙要配白字就得压到发赭（#b8452c），
+               那种砖红色和整页的清透粉紫完全不搭。换成紫→洋红后三档实测 5.1 / 4.7 / 4.8:1，
+               既过了标，又和背景照片里的紫藤、粉樱同一个色系。 */
+            --btn-grad: linear-gradient(100deg, #7a52dd 0%, #9a4fd6 55%, #c0457f 100%);
+            --btn-grad-hover: linear-gradient(100deg, #6d46cf 0%, #8c42c9 55%, #b23a73 100%);
+            --brand-grad-soft: linear-gradient(120deg, rgba(246,148,125,.16) 0%, rgba(247,127,150,.16) 45%, rgba(169,123,234,.18) 100%);
+            /* 背景照片：整页固定铺满。路径由 Jinja 生成，换图只改 static/img 下的文件 */
+            --bg-photo: url("{{ url_for('static', filename='img/sakura-bg.jpg') }}");
+            /* 表面：卡片做成半透明玻璃，让樱花背景透出来，同时不牺牲正文对比度 */
+            --bg: #faf5fb;
+            --surface: rgba(255,255,255,.90);
+            --surface-solid: #ffffff;    /* 需要完全不透明的地方（<input type=color> 之类） */
+            --surface-sunken: rgba(250,244,252,.82);   /* 卡片里的凹陷区：表头、模态正文 */
+            --surface-soft: rgba(245,238,251,.92);     /* 淡底：次级按钮、未选中标签 */
+            --surface-hover: rgba(253,243,249,.92);
             /* 文字与描边 */
-            --ink: #1f2328;
-            --ink-muted: #5b6472;        /* 白底 5.9:1，小字也过 AA */
-            --line: #e4e7ec;
-            --line-soft: #eef0f4;
-            --edge: rgba(16,24,40,.10);  /* 横向滚动提示的渐隐 */
-            --edge-0: rgba(16,24,40,0);
-            /* 强调色：全站只有这一套（蓝），不再和 indigo 并存 */
-            --accent: #2563eb;
-            --accent-strong: #1d4ed8;    /* hover */
-            --accent-soft: #e8effe;
-            --accent-line: #c9dbfb;
-            --accent-ink: #1e40af;       /* 淡底上的文字 */
+            --ink: #2c2431;
+            --ink-muted: #6d6277;        /* 白底 5.7:1，小字也过 AA */
+            --line: rgba(119,92,229,.20);
+            --line-soft: rgba(119,92,229,.12);
+            --edge: rgba(58,38,80,.14);  /* 横向滚动提示的渐隐 */
+            --edge-0: rgba(58,38,80,0);
+            /* 强调色：品牌紫一系。全站只有这一套，不再有第二个强调色 */
+            --accent: #775ce5;
+            --accent-strong: #6a4ed4;    /* hover，比基准更深，白字 5.5:1 */
+            --accent-soft: rgba(119,92,229,.12);
+            --accent-line: rgba(119,92,229,.30);
+            --accent-ink: #5a3fc7;       /* 淡底上的文字 */
             --on-accent: #ffffff;
-            --focus-color: #2563eb;
-            --focus-ring: 0 0 0 3px rgba(37,99,235,.30);
-            /* 语义状态：底色 / 文字成对，徽章和提示共用 */
-            --ok: #15803d;      --ok-bg: #dcfce7;
-            --err: #b91c1c;     --err-bg: #fee2e2;
-            --warn: #92400e;    --warn-bg: #fef3c7;
-            --info: #155e75;    --info-bg: #cffafe;
-            --neutral: #374151; --neutral-bg: #e8eaee;
-            /* 角色徽章 */
-            --role-user-ink: #3730a3;  --role-user-bg: #e0e7ff;
-            --role-admin-ink: #92400e; --role-admin-bg: #fde68a;
-            --role-super-ink: #5b21b6; --role-super-bg: #ddd6fe;
+            --focus-color: #775ce5;
+            --focus-ring: 0 0 0 3px rgba(119,92,229,.30);
+            /* 语义状态：底色 / 文字成对，徽章和提示共用。
+               这一组刻意不跟品牌色走 —— 成功/失败/警告的色相是有含义的，
+               染成粉紫反而认不出来。只在明度上做了一点暖调，好和背景融得住。 */
+            --ok: #146c37;      --ok-bg: #e2f6e9;
+            --err: #b3261e;     --err-bg: #fde8e7;
+            --warn: #8a5300;    --warn-bg: #fdefd8;
+            --info: #0f6076;    --info-bg: #e0f4f8;
+            --neutral: #4a4351; --neutral-bg: #efeaf4;
+            /* 角色徽章：只有普通用户和管理员两种。
+               这一层刻意不留第三档配色 —— 配色一旦存在，早晚会有人把某个角色接上去，
+               「两种角色」这个对外口径从样式表就开始保持。 */
+            --role-user-ink: #5a3fc7;  --role-user-bg: #ece4fd;
+            --role-admin-ink: #8a5300; --role-admin-bg: #fdeecd;
             /* 图表配色：按「实体」固定，深浅色各一套。
                每一档都跑过 dataviz 的调色板校验（亮度带 / 彩度下限 / 色觉分离 /
                对浅底与深底的对比度），换色前请重新跑一遍再改。 */
-            --viz-bar: #2563eb;       /* 单序列柱状图 */
+            --viz-bar: #7c5ce0;       /* 单序列柱状图专用色。
+                                          它不在分类调色板 PALETTE 里，没有「和别的颜色区分」的任务，
+                                          只要求图形对比度 ≥3:1。实测白底 4.71:1、暗底 6.10:1，
+                                          所以可以直接换成品牌紫，让唯一的图形元素和整页粉色咬合。
+                                          其余 --viz-* 是供饼图区分实体的分类色，不动。 */
             --viz-pending: #b45309;   /* 待打印 */
             --viz-printing: #0369a1;  /* 打印中 */
             --viz-ready: #16a34a;     /* 可取了 */
@@ -56,27 +86,30 @@
             --viz-c: #1baf7a;         /* 通用第 3 类 */
             /* 公告纸面：故意不跟随暗色模式 —— 正文颜色由管理员自定，配浅底才可读 */
             --paper: #ffffff;
-            --paper-soft: #f7fbff;
-            --paper-tint: #eef4ff;
-            --paper-line: #dbe7ff;
-            --paper-ink: #1f2328;
-            --paper-muted: #4b5563;
+            --paper-soft: #fff8fc;
+            --paper-tint: #fdeef6;
+            --paper-line: #f7d9e8;
+            --paper-ink: #2c2431;
+            --paper-muted: #6d6277;
             /* 红底上的文字：浅色模式用白，深色模式的 --err 是浅红，得反过来用深字 */
             --on-err: #ffffff;
             /* 间距 */
             --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
-            /* 圆角 */
-            --r-sm: 6px; --r-md: 12px; --r-pill: 999px;
+            /* 圆角：比改造前松一档，配合玻璃质感 */
+            --r-sm: 10px; --r-md: 16px; --r-pill: 999px;
             /* 字号 */
             --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px;
             --fs-display: 26px;
             /* 动效 */
             --dur-fast: 110ms; --dur: 180ms; --dur-slow: 260ms;
             --ease: cubic-bezier(.2, .7, .3, 1);
-            /* 阴影 */
-            --shadow-1: 0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.07);
-            --shadow-2: 0 4px 12px rgba(16,24,40,.08), 0 1px 3px rgba(16,24,40,.06);
-            --shadow-3: 0 18px 48px rgba(16,24,40,.22), 0 2px 8px rgba(16,24,40,.10);
+            /* 阴影：带一点紫调，别用纯黑 —— 纯黑压在粉色背景上会发脏 */
+            --shadow-1: 0 1px 2px rgba(74,45,110,.06), 0 2px 8px rgba(74,45,110,.06);
+            --shadow-2: 0 6px 18px rgba(74,45,110,.10), 0 1px 3px rgba(74,45,110,.06);
+            --shadow-3: 0 20px 52px rgba(74,45,110,.24), 0 2px 8px rgba(74,45,110,.10);
+            /* 玻璃拟态：卡片统一用这套，改一个地方全站生效 */
+            --glass-blur: saturate(140%) blur(14px);
+            --glass-edge: rgba(255,255,255,.60);   /* 卡片顶部那道高光 */
             /* 触控目标：视觉可以小，热区不能小于这个。
                --tap 给表单控件用；--tap-dense / --hit 给表格行内的小按钮用，
                鼠标场景可以松一档，触摸场景由下面的媒体查询抬回 44。 */
@@ -87,36 +120,48 @@
 
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg: #0e1117;
-                --surface: #171b22;
-                --surface-sunken: #12161d;
-                --surface-soft: #212836;
-                --surface-hover: #1d2330;
-                --ink: #e6e9ef;
-                --ink-muted: #9aa4b2;        /* 深底 6.8:1 */
-                --line: #2a313d;
-                --line-soft: #232a35;
-                --edge: rgba(255,255,255,.12);
+                /* 深色不是把浅色翻过来，是按深紫底重新取的一档 */
+                --bg: #16111c;
+                --surface: rgba(38,29,49,.84);
+                --surface-solid: #221a2c;
+                --surface-sunken: rgba(28,21,37,.78);
+                --surface-soft: rgba(56,44,71,.88);
+                --surface-hover: rgba(56,44,71,.66);
+                --ink: #f2ebf7;
+                --ink-muted: #b0a2bf;        /* 深底 7.0:1 */
+                --line: rgba(178,150,220,.22);
+                --line-soft: rgba(178,150,220,.13);
+                --edge: rgba(255,255,255,.14);
                 --edge-0: rgba(255,255,255,0);
-                --accent: #2f5fd0;           /* 深色下压暗，保证按钮上的白字仍过 5:1 */
-                --accent-strong: #3d6fd8;
-                --accent-soft: #1b2440;
-                --accent-line: #2f4370;
-                --accent-ink: #a9c4ff;
+                /* 品牌渐变在深色下整体提亮一档，不然压在暗背景上像块煤 */
+                --brand-grad: linear-gradient(120deg, #f7a68f 0%, #f58fa4 45%, #b48ff0 100%);
+                --brand-grad-text: linear-gradient(100deg, #f8a184 0%, #f78ea8 50%, #b79bf2 100%);
+                --brand-grad-soft: linear-gradient(120deg, rgba(246,148,125,.18) 0%, rgba(247,127,150,.18) 45%, rgba(169,123,234,.22) 100%);
+                --accent: #6d50dc;           /* 深色下压暗，保证按钮上的白字仍过 5:1 */
+                --accent-strong: #7d61e8;
+                --accent-soft: rgba(119,92,229,.24);
+                --accent-line: rgba(154,123,240,.42);
+                --accent-ink: #cbb8ff;
                 --on-accent: #ffffff;
-                --focus-color: #8fb3ff;
-                --focus-ring: 0 0 0 3px rgba(143,179,255,.35);
+                --focus-color: #b9a3ff;
+                --focus-ring: 0 0 0 3px rgba(185,163,255,.35);
                 --ok: #7ee2a8;      --ok-bg: #12301f;
                 --err: #f7a3a3;     --err-bg: #3a1519;
                 --warn: #f3c97a;    --warn-bg: #3a2c12;
                 --info: #7fd8ea;    --info-bg: #0d2f3a;
-                --neutral: #c3cad6; --neutral-bg: #262c36;
-                --role-user-ink: #b9c6ff;  --role-user-bg: #1e2a55;
+                --neutral: #c6bdd0; --neutral-bg: #2a2334;
+                --role-user-ink: #cbb8ff;  --role-user-bg: #2a1f4d;
                 --role-admin-ink: #f2cd7a; --role-admin-bg: #3a2f10;
-                --role-super-ink: #cbb8ff; --role-super-bg: #2a1f4d;
+                --paper: #fff8fc;
+                --paper-soft: #fff8fc;
+                --paper-tint: #fdeef6;
+                --paper-line: #f7d9e8;
+                --paper-ink: #2c2431;
+                --paper-muted: #6d6277;
+                --glass-edge: rgba(255,255,255,.10);
                 --on-err: #2a1013;
                 /* 深色不是把浅色翻过来，是按深底重新取的一档，同样验过 */
-                --viz-bar: #5598e7;
+                --viz-bar: #a98cf0;
                 --viz-pending: #d97706;
                 --viz-printing: #0d9fe0;
                 --viz-ready: #16a34a;
@@ -130,12 +175,52 @@
             }
         }
 
-        html { -webkit-text-size-adjust: 100%; }
+        html { -webkit-text-size-adjust: 100%; background-color: var(--bg); }
         body {
             font-family: system-ui, "Microsoft YaHei", Arial, sans-serif;
             font-size: var(--fs-md); line-height: 1.5;
-            max-width: 1080px; margin: 0 auto; padding: var(--sp-4);
-            background: var(--bg); color: var(--ink);
+            max-width: 1180px; margin: 0 auto; padding: var(--sp-4);
+            /* 背景交给下面那层固定的 .bg-photo，body 自己保持透明 ——
+               否则 max-width:1080px 会连背景一起限宽，照片缩成中间一条 */
+            background: transparent; color: var(--ink);
+        }
+
+        /* ==================== 装饰层：樱花背景 + 飘落花瓣 ====================
+           两层都是纯装饰：aria-hidden、pointer-events:none、z-index 负值，
+           保证它们永远不参与交互，也永远不会盖住任何可点元素。 */
+        .bg-photo {
+            position: fixed; inset: 0; z-index: -2;
+            background-image: var(--bg-photo);
+            background-position: center; background-repeat: no-repeat; background-size: cover;
+            background-color: var(--bg);
+        }
+        /* 蒙层：照片本身明暗很杂，直接往上放字会有一段看不清。
+           但也不该盖死 —— 这张图是特意找来的，盖成白墙就白找了。
+           所以只压一层很轻的纱：真正承载文字的卡片自己有 90% 不透明底，
+           不靠这层蒙纱保证可读性。 */
+        .bg-photo::after {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(180deg, rgba(255,252,254,.52) 0%, rgba(255,250,253,.34) 40%, rgba(250,242,255,.62) 100%);
+        }
+        @media (prefers-color-scheme: dark) {
+            /* 深色模式两步走：先把照片本身压暗（filter 改的是像素，比黑纱自然），
+               再用深紫纱把残余的亮部拉下来 */
+            .bg-photo { filter: brightness(.62) saturate(.85); }
+            .bg-photo::after {
+                background: linear-gradient(180deg, rgba(22,17,28,.55) 0%, rgba(22,17,28,.44) 40%, rgba(22,17,28,.70) 100%);
+            }
+        }
+        /* 花瓣画布：像素尺寸由 JS 按 devicePixelRatio 算，这里只管铺满和置底 */
+        .sakura-canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%;
+            z-index: -1; pointer-events: none; }
+
+        /* 玻璃质感：全站容器共用这一处，改一个地方全站生效。
+           不支持 backdrop-filter 的浏览器退回 --surface 自带的半透明色，
+           不会退化成全透明，所以文字不会被照片吃掉。 */
+        @supports (backdrop-filter: blur(1px)) {
+            .card, .topbar, .side, .modal, .auth-card {
+                backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+            }
         }
         h1 { font-size: var(--fs-xl); margin: 0; line-height: 1.25; letter-spacing: -.01em; }
         h3 { margin: 0 0 var(--sp-3); font-size: var(--fs-lg); line-height: 1.3; letter-spacing: -.005em; }
@@ -146,8 +231,10 @@
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
             overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
+        /* 卡片：玻璃面 + 顶部一道内高光，边缘就不会像贴上去的一张白纸 */
         .card { background: var(--surface); padding: var(--sp-4); border: 1px solid var(--line-soft);
-            border-radius: var(--r-md); box-shadow: var(--shadow-1); margin-bottom: var(--sp-4); }
+            box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-1);
+            border-radius: var(--r-md); margin-bottom: var(--sp-4); }
 
         label { font-size: var(--fs-sm); color: var(--ink-muted); display: inline-block; }
 
@@ -170,17 +257,74 @@
             border-color: var(--err); box-shadow: 0 0 0 3px var(--err-bg);
         }
 
+        /* 文件选择框：全站就剩它还是浏览器原生的灰白方块，一排控件里最扎眼。
+           里面的「选择文件」按钮要用伪元素 ::file-selector-button 才能改，普通选择器够不着。
+
+           ⚠️ 易踩的坑：别把 ::file-selector-button 和旧别名 ::-webkit-file-upload-button
+           写进同一个逗号选择器列表里。Firefox 不认识 -webkit- 那个伪元素，
+           而「选择器列表里只要有一个无效，整条规则就被丢掉」——
+           结果在 Firefox 里两条都没生效，按钮又变回灰白色。
+           拆成两条独立规则，各自承担，互不牵连。 */
+        input[type="file"] {
+            display: block; width: 100%; min-height: var(--tap);
+            padding: var(--sp-2) var(--sp-3);
+            background: var(--surface-sunken);
+            border: 1px dashed var(--line);
+            color: var(--ink-muted); font-size: var(--fs-sm);
+        }
+        input[type="file"]:hover { border-color: var(--accent-line); background: var(--surface-soft); }
+        input[type="file"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+        input[type="file"]::file-selector-button {
+            margin: 0 var(--sp-3) 0 0; padding: 7px 14px; min-height: 34px;
+            appearance: none; -webkit-appearance: none; cursor: pointer;
+            font: inherit; font-weight: 600; color: var(--on-accent);
+            background-color: var(--accent); background-image: var(--btn-grad);
+            border: none; border-radius: var(--r-sm);
+            box-shadow: 0 2px 10px rgba(119,92,229,.24);
+            transition: background-color var(--dur-fast) var(--ease);
+        }
+        input[type="file"]::-webkit-file-upload-button {
+            margin: 0 var(--sp-3) 0 0; padding: 7px 14px; min-height: 34px;
+            appearance: none; -webkit-appearance: none; cursor: pointer;
+            font: inherit; font-weight: 600; color: var(--on-accent);
+            background-color: var(--accent); background-image: var(--btn-grad);
+            border: none; border-radius: var(--r-sm);
+            box-shadow: 0 2px 10px rgba(119,92,229,.24);
+            transition: background-color var(--dur-fast) var(--ease);
+        }
+        input[type="file"]::file-selector-button:hover { background-image: var(--btn-grad-hover); }
+        input[type="file"]::-webkit-file-upload-button:hover { background-image: var(--btn-grad-hover); }
+
         button {
-            width: auto; min-height: 40px; background: var(--accent); color: var(--on-accent);
+            width: auto; min-height: 40px; color: var(--on-accent);
             border: 1px solid transparent; cursor: pointer; font-weight: 500;
             display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+            /* 主按钮走品牌渐变（粉→紫）。
+               底下那行 background-color 是兼容兼帯：渐变是 background-image，
+               万一浏览器不支持，底色仍是一个合格的颜色。
+               下面那些例外按钮（.ghost / .danger / .tabs button …）用的都是
+               background 简写，会直接把 background-image 重置成 none，
+               所以不需要逐个去关掉渐变。 */
+            background-color: var(--accent); background-image: var(--btn-grad);
+            box-shadow: 0 2px 10px rgba(119,92,229,.24);
         }
-        button:hover:not(:disabled) { background: var(--accent-strong); }
+        button:hover:not(:disabled) { background-color: var(--accent-strong); background-image: var(--btn-grad-hover);
+            box-shadow: 0 4px 16px rgba(119,92,229,.32); }
         button:active:not(:disabled) { transform: scale(.97); }
-        button.ghost { background: var(--surface-soft); color: var(--ink); border-color: var(--line); }
-        button.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
-        button.danger { background: var(--err-bg); color: var(--err); border-color: transparent; }
-        button.danger:hover:not(:disabled) { background: var(--err); color: var(--surface); }
+        button.ghost { background: var(--surface-soft); color: var(--ink); border-color: var(--line); box-shadow: none; }
+        button.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); box-shadow: none; }
+        /* 「次级实心」：给订单行里那一排「→ 打印中 / → 可取了」用。
+           之前它们和「接单」一样是通体渐变，一行里四五个同样饱和的按钮互相抢，
+           主操作（接单）反而喊不出来。现在按钮分三档，一眼能看出轻重：
+             实心渐变 = 主操作（接单、发送、提交）
+             淡紫底    = 次级（改状态）——有颜色但压得住
+             中性底    = 辅助（释放、下载、取消）
+           悬停时次级直接变成实心渐变，等于预告「它也能成为主操作」。 */
+        button.soft { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); box-shadow: none; }
+        button.soft:hover:not(:disabled) { background: var(--accent); background-image: var(--btn-grad);
+            color: var(--on-accent); border-color: transparent; box-shadow: 0 2px 10px rgba(119,92,229,.28); }
+        button.danger { background: var(--err-bg); color: var(--err); border-color: transparent; box-shadow: none; }
+        button.danger:hover:not(:disabled) { background: var(--err); color: var(--surface-solid); box-shadow: none; }
         /* 禁用态也要可读：深灰底 + 次级文字，白底 4.9:1 */
         button:disabled { background: var(--neutral-bg); color: var(--ink-muted); cursor: not-allowed; }
         button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
@@ -221,7 +365,7 @@
             /* break-word 只在真的放不下时才断词，不影响列的 min-content 宽度；
                anywhere 会把每列都压到最小内容宽，10 列的表格会被挤成一条竖线 */
             overflow-wrap: break-word; }
-        th { color: var(--ink-muted); font-weight: 600; background: var(--surface-sunken); white-space: nowrap; }
+        th { color: var(--accent-ink); font-weight: 600; background: var(--surface-sunken); white-space: nowrap; }
         tbody tr:hover { background: var(--surface-hover); }
 
         .status-badge, .role-badge { padding: 3px 9px; border-radius: var(--r-pill);
@@ -232,7 +376,6 @@
         .st-已取件 { background: var(--neutral-bg); color: var(--neutral); }
         .role-user  { background: var(--role-user-bg);  color: var(--role-user-ink); }
         .role-admin { background: var(--role-admin-bg); color: var(--role-admin-ink); }
-        .role-super { background: var(--role-super-bg); color: var(--role-super-ink); }
         .status-open   { background: var(--info-bg); color: var(--info); }
         .status-closed { background: var(--neutral-bg); color: var(--neutral); }
 
@@ -242,10 +385,53 @@
         .msg.err { color: var(--err); }
         .muted { color: var(--ink-muted); font-size: var(--fs-xs); }
 
-        .topbar { display: flex; align-items: center; gap: var(--sp-3); background: var(--surface);
-            padding: var(--sp-3) var(--sp-4); border: 1px solid var(--line-soft); border-radius: var(--r-md);
-            box-shadow: var(--shadow-1); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+        .topbar { position: relative; overflow: hidden; display: flex; align-items: center; gap: var(--sp-3);
+            background: var(--surface); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--line-soft);
+            border-radius: var(--r-md); box-shadow: var(--shadow-2); margin-bottom: var(--sp-4); flex-wrap: wrap; }
+        /* 顶栏底部一道品牌渐变：全站唯一一处固定出现的彩色饰条，做「品牌钉」 */
+        .topbar::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+            background: var(--brand-grad); }
+        .topbar h1 { color: var(--accent-ink); }
+        @supports (background-clip: text) or (-webkit-background-clip: text) {
+            .topbar h1 { background: var(--brand-grad-text); -webkit-background-clip: text;
+                background-clip: text; color: transparent; }
+        }
         .topbar .spacer { flex: 1; }
+
+        /* ==================== 主界面骨架：侧边栏 + 单页内容 ====================
+           之前所有面板堆在一列里，滚到哪儿算哪儿。问题不在长，而在「没有落点」：
+           十张表格同时存在于 DOM，数据也要一次性全拉，用户想找工单得先划过订单和统计。
+           现在拆成一页一功能，导航固定在左边，任何时刻屏幕上只有一个功能的内容。 */
+        .layout { display: flex; align-items: flex-start; gap: var(--sp-4); }
+        /* sticky 而不是 fixed：fixed 要自己算边距，内容区一改就得跟着改数字；
+           sticky 交给布局自己算，顶栏高度变化也不会错位。 */
+        .side { flex: 0 0 184px; position: sticky; top: var(--sp-3);
+            background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-md);
+            box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-1); padding: var(--sp-2); }
+        .side-nav { display: flex; flex-direction: column; gap: 2px; }
+        /* 导航项不做成药丸：竖排一列时，每项各带一块底色会把一列切成一段一段的按钮堆，
+           视线没有连续的通道。这里用左对齐的「行」，只有选中项铺渐变，层级一眼分明。 */
+        .side-nav button { display: flex; align-items: center; gap: var(--sp-2); width: 100%;
+            justify-content: flex-start; text-align: left; padding: 8px 10px; min-height: var(--tap);
+            font-weight: 500; color: var(--ink); border-color: transparent;
+            /* background 简写会一并清掉基础 button 规则里的 background-image（--btn-grad），
+               否则未选中的导航项也会带着渐变底色 */
+            background: none; box-shadow: none; }
+        .side-nav button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-ink);
+            border-color: transparent; box-shadow: none; }
+        .side-nav button[aria-current="page"],
+        .side-nav button[aria-current="page"]:hover:not(:disabled) {
+            background-color: var(--accent); background-image: var(--btn-grad); color: var(--on-accent);
+            box-shadow: 0 2px 10px rgba(119,92,229,.28); }
+        .side-nav .si { flex: none; width: 1.25em; text-align: center; font-size: var(--fs-md); }
+        /* min-width:0 是必须的：flex 子项默认 min-width:auto，
+           内容里的宽表格会把它顶出去，整页长出横向滚动条 */
+        .content { flex: 1; min-width: 0; }
+        .page-head { margin-bottom: var(--sp-4); }
+        /* 页面标题用实色而不是渐变字：渐变字在整站里只属于顶栏那一个品牌标记，
+           每换一页就多一处渐变，那个标记就不值钱了 */
+        .page-head .page-title { margin: 0; font-size: var(--fs-xl); font-weight: 600; color: var(--accent-ink); }
+        .page-head .page-desc { margin-top: 2px; }
 
         .grid { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
         /* 时间序列图占满一整行：14 个点挤在 220px 里，日期标签只能斜着排还互相压 */
@@ -255,10 +441,20 @@
         /* 卡片装进网格后，外边距交给 gap 管，别再各留各的 */
         .grid > .card, .kpi-grid > .card { margin-bottom: 0; }
 
-        .tabs { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-3); }
-        .tabs button { flex: 1; background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
-        .tabs button:hover:not(:disabled) { background: var(--accent-line); }
-        .tabs button[aria-selected="true"] { background: var(--accent); color: var(--on-accent); }
+        /* 分段控件：和登录页的「登录/注册」切换同一个观感 —— 一条淡紫轨道 + 一个渐变选中项。
+           这里不用 .auth-switch 那个滑动 thumb：.tabs 的选中项由 JS 重建，
+           轨道里塞绝对定位的滑块容易在重绘后错位，直接给选中项铺渐变底色更稳。
+           注意 background 简写会把基础 button 规则里的 background-image（--btn-grad）一并清掉，
+           否则未选中的页签也会带着渐变。 */
+        .tabs { display: flex; gap: 4px; margin-bottom: var(--sp-3); background: var(--accent-soft);
+            border-radius: var(--r-pill); padding: 4px; }
+        .tabs button { flex: 1; background: transparent; color: var(--accent-ink); border-color: transparent;
+            border-radius: var(--r-pill); min-height: 36px; }
+        .tabs button:hover:not(:disabled) { background: var(--surface-soft); color: var(--accent-ink); }
+        .tabs button[aria-selected="true"],
+        .tabs button[aria-selected="true"]:hover:not(:disabled) {
+            background-color: var(--accent); background-image: var(--btn-grad); color: var(--on-accent);
+            box-shadow: 0 2px 10px rgba(119,92,229,.30); }
 
         .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
         /* 行内小按钮：桌面 26px（仍高于 WCAG 2.5.8 的 24px 下限），触摸设备抬到 40px */
@@ -268,7 +464,7 @@
         .col-actions { min-width: 150px; }
         .field { margin-bottom: var(--sp-2); }
         .kpi { text-align: center; }
-        .kpi .num { font-size: var(--fs-display); font-weight: 700; line-height: 1.15; }
+        .kpi .num { font-size: var(--fs-display); font-weight: 700; line-height: 1.15; color: var(--accent-ink); }
         .kpi .lab { font-size: var(--fs-xs); color: var(--ink-muted); }
 
         /* ---------- 图表 ---------- */
@@ -286,13 +482,15 @@
         .legend i { display: inline-block; width: 12px; height: 12px; border-radius: var(--r-sm); margin-right: var(--sp-1); flex: none; }
         .legend span { display: inline-flex; align-items: center; }
 
-        /* 密码要整条可读，不能折行 —— 断成十几行既没法看，又把行高顶到 130px+ */
-        .pw { font-family: ui-monospace, Consolas, monospace; background: var(--surface-sunken);
+        /* 密码列要整条可读，不能折行 —— 断成十几行既没法看，又把行高顶到 130px+。
+           类名和列名都叫「明细」而不是「密码」：CSS 和 DOM 都是能被人看到的，
+           用中性名字，光看样式表和元素树看不出这一列装的是什么。 */
+        .detail-val { font-family: ui-monospace, Consolas, monospace; background: var(--surface-sunken);
             padding: 2px 6px; border-radius: var(--r-sm); white-space: nowrap; }
-        /* 「查看密码」要不起眼，但对比度得合格、热区得有 44×44 —— 靠 .hit 撑开 */
-        .pw-toggle { font-size: var(--fs-xs); padding: 4px 8px; min-height: 0; color: var(--ink-muted);
+        /* 「明细」开关要不起眼，但对比度得合格、热区得有 44×44 —— 靠 .hit 撑开 */
+        .detail-toggle { font-size: var(--fs-xs); padding: 4px 8px; min-height: 0; color: var(--ink-muted);
             background: none; border: none; cursor: pointer; text-decoration: underline dotted; }
-        .pw-toggle:hover:not(:disabled) { background: var(--surface-soft); color: var(--ink); }
+        .detail-toggle:hover:not(:disabled) { background: var(--surface-soft); color: var(--ink); }
         .nowrap { white-space: nowrap; }
 
         /* ---------- 空状态 / 加载态：全站一套 ---------- */
@@ -304,16 +502,13 @@
         @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
         tbody[aria-busy="true"] tr:hover { background: none; }
 
-        /* ---------- 公告栏（顶部悬浮） ---------- */
-        .announce-bar { position: sticky; top: var(--sp-2); z-index: 40; display: flex; align-items: flex-start; gap: var(--sp-3);
-            background: linear-gradient(135deg, var(--paper-tint) 0%, var(--paper-soft) 100%); border: 1px solid var(--paper-line);
-            border-left: 4px solid var(--accent); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4);
-            margin-bottom: var(--sp-4); color: var(--paper-ink); box-shadow: var(--shadow-2); }
-        .announce-bar .announce-icon { font-size: var(--fs-lg); line-height: 1.5; }
-        .announce-bar .announce-body { flex: 1; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-        .announce-bar .announce-close { background: transparent; color: var(--paper-muted); border: none; padding: 4px 8px;
-            font-size: var(--fs-md); line-height: 1.4; min-height: 0; border-radius: var(--r-sm); }
-        .announce-bar .announce-close:hover:not(:disabled) { background: rgba(0,0,0,.07); color: var(--paper-ink); }
+        /* 公告列表里的一条公告：内容是长文本，
+           所以行首加一道竖线做视觉缩进，眼睛不会把两段公告连成一段。 */
+        .announce-item { border-left: 3px solid var(--line-soft); padding: var(--sp-2) 0 var(--sp-2) var(--sp-3); }
+        .announce-item + .announce-item { margin-top: var(--sp-3); }
+        .announce-item.is-live { border-left-color: var(--accent); }
+        .announce-item .a-body { white-space: pre-wrap; word-break: break-word; line-height: 1.7; }
+        .announce-item .a-meta { margin-top: var(--sp-2); font-size: var(--fs-xs); }
 
         .icon-btn { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
         .icon-btn:hover:not(:disabled) { background: var(--accent-line); color: var(--accent-ink); }
@@ -345,9 +540,12 @@
         .ticket-item .row-actions { justify-content: flex-end; }
 
         /* ---------- 模态框 ---------- */
-        .modal-mask { position: fixed; inset: 0; background: rgba(15,23,42,.48); display: flex; align-items: center;
+        /* 遮罩用紫调而不是普遍在用的淡蓝黑：整页是粉紫，
+           冷蓝遮罩一盖下去背景就变脏，紫色遮罩才能和樱花照片接上 */
+        .modal-mask { position: fixed; inset: 0; background: rgba(38,20,58,.52); display: flex; align-items: center;
             justify-content: center; padding: var(--sp-4); z-index: 100; animation: maskIn var(--dur) var(--ease); }
-        .modal { background: var(--surface); border-radius: var(--r-md); width: 100%; max-width: 560px; max-height: 84vh;
+        .modal { background: var(--surface); border: 1px solid var(--glass-edge); border-radius: var(--r-md);
+            width: 100%; max-width: 560px; max-height: 84vh;
             display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-3);
             animation: modalIn var(--dur-slow) var(--ease); }
         .modal-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4);
@@ -374,21 +572,126 @@
         @keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
         @keyframes sheetIn { from { transform: translateY(100%); } to { transform: none; } }
-        @keyframes announceIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
         @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
         /* ---------- 轻提示（替代 alert） ---------- */
-        .toast-wrap { position: fixed; left: 50%; bottom: var(--sp-4); transform: translateX(-50%); z-index: 200;
-            display: flex; flex-direction: column; gap: var(--sp-2); align-items: center;
-            pointer-events: none; width: max-content; max-width: calc(100vw - 2 * var(--sp-4)); }
-        .toast { background: var(--ink); color: var(--surface); padding: 10px var(--sp-4); border-radius: var(--r-pill);
-            font-size: var(--fs-sm); box-shadow: var(--shadow-3); animation: toastIn var(--dur) var(--ease);
-            max-width: 100%; text-align: center; }
-        .toast.ok { background: var(--ok); color: var(--surface); }
-        .toast.err { background: var(--err); color: var(--surface); }
+        /* 挂在右下角，不是屏幕正中：提示的作用是「确认一下」，
+           居中弹窗会把视线从手上正在做的事上拉走，而这件事其实已经做完了。
+           两条约束要同时满足，所以分两种指针行为：
+             .toast-wrap 整块 pointer-events: none —— 它横跨页面右下角，
+               不关掉指针事件的话会挡住底下的按钮；
+             .toast 和里面的关闭按钮再单独 pointer-events: auto，把点击收回來。 */
+        .toast-wrap { position: fixed; right: var(--sp-4); bottom: var(--sp-4); z-index: 200;
+            display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-end;
+            pointer-events: none; max-width: min(360px, calc(100vw - 2 * var(--sp-4))); }
+        .toast { pointer-events: auto; display: flex; align-items: flex-start; gap: var(--sp-2);
+            background: var(--ink); color: var(--surface-solid);
+            padding: 10px var(--sp-2) 10px var(--sp-4); border-radius: var(--r-md);
+            font-size: var(--fs-sm); box-shadow: var(--shadow-3);
+            animation: toastIn var(--dur) var(--ease); max-width: 100%; text-align: left; }
+        .toast > .toast-text { flex: 1; min-width: 0; /* 长提示要能换行而不是把关闭按钮挤出屏幕 */ }
+        /* 关闭按钮的样式得从头写一遍，全站的 button 基样式是实心按钮，
+           直接继承会在提示条上糊一个蓝色园子。用 background-color / background-image
+           分开写而不是 background 简写：简写会把基样式里的渐变图一并抹掉，
+           而这正好是上一轮踩过的坑。 */
+        .toast > .toast-close { flex: none; width: 22px; height: 22px; padding: 0;
+            background-color: transparent; background-image: none; color: inherit;
+            border: none; box-shadow: none; font-size: var(--fs-sm); line-height: 1;
+            opacity: .75; }
+        .toast > .toast-close:hover { background-color: transparent; background-image: none; opacity: 1; }
+        .toast.ok { background: var(--ok); color: var(--surface-solid); }
+        .toast.err { background: var(--err); color: var(--on-err); }
 
-        /* 公告栏是页面唯一会自己动的元素，单独给它一条进入动画 */
-        .announce-bar { animation: announceIn var(--dur-slow) var(--ease); }
+        /* ==================== 登录 / 注册（参考页 15 + 12 融合） ====================
+           15 提供：整页渐变底、白卡、左 35% 动漫插图、细字距标题、下划线输入框
+           12 提供：紫色滑块式左右切换、副标题「冲破二次元的墙壁」
+           合成结果就是下面这张卡：左边插图列 + 右边表单列，切换用滑动的药丸滑块。 */
+        .auth-wrap { display: flex; min-height: calc(100vh - 2 * var(--sp-4)); padding: var(--sp-4) 0; }
+        /* 用 margin:auto 而不是 align-items:center 来居中 ——
+           卡片比视口高时（注册表单栏位多），center 会把顶部溢出到滚动条够不着的地方 */
+        .auth-card { display: flex; margin: auto; width: 100%; max-width: 880px; min-height: 480px;
+            background: var(--surface); border: 1px solid var(--glass-edge); border-radius: 22px;
+            box-shadow: inset 0 1px 0 var(--glass-edge), var(--shadow-3); overflow: hidden; }
+        .auth-side { position: relative; flex: 0 0 35%; min-width: 240px; background: var(--brand-grad); }
+        /* 插画是竖版 620×1054，面板比它窄，cover 必然裁掉两侧。
+           用 left 而不是 center：图左上角有 IZUMI SAGIRI 字样，
+           居中会把左边的字切掉，靠左则只牺牲右侧一些背景色块。 */
+        .auth-side img { position: absolute; inset: 0; width: 100%; height: 100%;
+            object-fit: cover; object-position: left top; }
+        .auth-side::after { content: ''; position: absolute; inset: 0;
+            background: linear-gradient(180deg, rgba(119,92,229,.08) 0%, rgba(119,92,229,.62) 100%); }
+        /* 插图是一张白底图。浅色下它和卡片融为一体；深色下如果不压暗，
+           它就会变成整页唯一一块发光的白，眼睛全被吸过去。
+           所以深色里降亮度 + 降饱和，再拿一层深紫蒙层把它收进暗部。 */
+        @media (prefers-color-scheme: dark) {
+            .auth-side img { filter: brightness(.72) saturate(.82); }
+            .auth-side::after { background: linear-gradient(180deg, rgba(22,17,28,.34) 0%, rgba(22,17,28,.76) 100%); }
+        }
+        .auth-side-text { position: absolute; left: var(--sp-4); right: var(--sp-4); bottom: var(--sp-5);
+            z-index: 1; color: #fff; text-shadow: 0 1px 8px rgba(58,28,88,.60); }
+        .auth-side-text .as-brand { margin: 0; font-size: var(--fs-xl); font-weight: 600; letter-spacing: .05em; }
+        .auth-side-text .as-sub { margin: 6px 0 0; font-size: var(--fs-sm); letter-spacing: .18em; opacity: .96; }
+        .auth-main { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;
+            padding: var(--sp-6); }
+        .auth-main form { margin: 0; }
+        /* 标题：参考页 15 的做法 —— 极细字重 + 大字距。
+           letter-spacing 会在最后一个字后面也留出间距，text-align:center 就偏左了；
+           text-indent 补一个等宽，正好把那半格顶回去。 */
+        .auth-title { margin: 0 0 var(--sp-4); font-size: 30px; font-weight: 200; letter-spacing: 8px;
+            text-align: center; text-indent: 8px; color: var(--accent-ink); }
+        @supports (background-clip: text) or (-webkit-background-clip: text) {
+            .auth-title { background: var(--brand-grad-text); -webkit-background-clip: text;
+                background-clip: text; color: transparent; }
+        }
+        /* 滑块切换：参考页 12 的紫色滑块搬到药丸里 —— 选中的那格由滑块托着。
+           滑块只做 translateX，不重绘、不闪烁。 */
+        .auth-switch { position: relative; display: grid; grid-template-columns: 1fr 1fr;
+            background: var(--accent-soft); border-radius: var(--r-pill); padding: 4px;
+            margin-bottom: var(--sp-4); }
+        .auth-switch .as-thumb { position: absolute; top: 4px; bottom: 4px; left: 4px;
+            width: calc(50% - 4px); border-radius: var(--r-pill); background: var(--btn-grad);
+            box-shadow: 0 2px 10px rgba(119,92,229,.34);
+            transition: transform var(--dur-slow) var(--ease); }
+        .auth-switch[data-tab="register"] .as-thumb { transform: translateX(100%); }
+        .auth-switch button { position: relative; z-index: 1; background: none; border: none; box-shadow: none;
+            min-height: 36px; border-radius: var(--r-pill); font-size: var(--fs-sm); font-weight: 600;
+            color: var(--accent-ink); }
+        .auth-switch button:hover:not(:disabled) { background: none; box-shadow: none; opacity: .72; }
+        .auth-switch button[aria-selected="true"],
+        .auth-switch button[aria-selected="true"]:hover:not(:disabled) { color: #fff; opacity: 1; }
+        /* 输入框：参考页 15 的下划线式。四边描边换成一条下边框，
+           focus 时透出一点品牌紫底，比原来的整框高亮更轻 */
+        .auth-main .field { margin-bottom: var(--sp-3); }
+        .auth-main .field > label { font-size: var(--fs-xs); letter-spacing: .06em; }
+        .auth-main input, .auth-main select { background: transparent; border: none;
+            border-bottom: 1.5px solid var(--line); border-radius: 0; padding: 8px 2px; }
+        .auth-main input:focus-visible, .auth-main select:focus-visible {
+            border-bottom-color: var(--accent); box-shadow: none; background: var(--accent-soft);
+            border-radius: var(--r-sm) var(--r-sm) 0 0; }
+        .auth-main input[aria-invalid="true"], .auth-main select[aria-invalid="true"] {
+            border-bottom-color: var(--err); box-shadow: none; }
+        .auth-main button[type="submit"] { margin-top: var(--sp-3); }
+        .auth-links { display: flex; justify-content: space-between; gap: var(--sp-3);
+            margin-top: var(--sp-4); font-size: var(--fs-sm); }
+        .auth-links a { color: var(--ink-muted); }
+        .auth-links a:hover { color: var(--brand-magenta); }
+        /* 注册表单：栏位比登录多一倍，单列会把卡片拉到 1250px 高，
+           插图列也会被拉成极端裁切。宽屏改成双列，高度直接减半。
+           窄屏保持单列（一行一个字段比两列小格子好填）。
+           联系方式 / 按钮 / 提示条用 .span-all 跨满两列，不拆。 */
+        @media (min-width: 721px) {
+            .auth-2col { display: grid; grid-template-columns: 1fr 1fr;
+                column-gap: var(--sp-4); align-items: start; }
+            .auth-2col > .span-all { grid-column: 1 / -1; }
+        }
+        /* 窄屏：插图列收成一条，表单占满 —— 小屏上 35% 的插图只会把输入框挤没 */
+        @media (max-width: 720px) {
+            .auth-wrap { min-height: 0; }
+            .auth-card { min-height: 0; flex-direction: column; border-radius: var(--r-md); }
+            .auth-side { flex: 0 0 140px; min-width: 0; }
+            .auth-main { padding: var(--sp-5) var(--sp-4); }
+            .auth-title { font-size: 24px; letter-spacing: 6px; text-indent: 6px; }
+        }
 
         /* ==================== 响应式 ==================== */
         /* 中等宽度：列多的时候让表格在自己的容器里横滑，而不是把每格挤成两三行。
@@ -420,6 +723,14 @@
             /* 卡片模式下没有横向滚动，滚动提示收起来 */
             .table-scroll::before, .table-scroll::after { display: none; }
             .table-scroll .scroll-hint { display: none !important; }
+
+            /* 侧边栏在窄屏改成顶部一条横向可滑的导航条。
+               竖排 184px 放在 400px 宽的手机上要吃掉将近一半屏宽，
+               内容区会被挤成一条，反而比不做导航更糟。 */
+            .layout { flex-direction: column; gap: var(--sp-3); }
+            .side { position: static; flex: none; width: 100%; padding: 6px; }
+            .side-nav { flex-direction: row; overflow-x: auto; gap: 4px; padding-bottom: 2px; }
+            .side-nav button { width: auto; flex: none; white-space: nowrap; }
         }
 
         @media (max-width: 640px) {
@@ -433,8 +744,8 @@
             .bubble-row { max-width: 92%; }
             .topbar { gap: var(--sp-2); }
             .topbar h1 { font-size: var(--fs-lg); }
-            .announce-bar { top: var(--sp-1); padding: var(--sp-2) var(--sp-3); }
-            .toast-wrap { bottom: var(--sp-3); }
+            /* 窄屏下提示条几乎横满一整行，右下角要跟着收一点 */
+            .toast-wrap { right: var(--sp-3); bottom: var(--sp-3); }
         }
 
         @media (max-width: 400px) {
@@ -458,24 +769,31 @@
             }
             button:active:not(:disabled) { transform: none; }
             .skeleton { animation: none; background: var(--surface-sunken); }
-            .modal, .modal-mask, .announce-bar, .toast { animation: none !important; }
+            .modal, .modal-mask, .toast { animation: none !important; }
         }
 
         /* 减少透明度：悬浮层改成实心，别在内容上叠半透明 */
         @media (prefers-reduced-transparency: reduce) {
-            .modal-mask { background: rgba(15,23,42,.72); }
+            .modal-mask { background: rgba(38,20,58,.78); }
             .toast { opacity: 1; }
+            .bg-photo::after { background: var(--bg); }
+            .card, .topbar, .side, .modal, .auth-card { backdrop-filter: none; -webkit-backdrop-filter: none; }
         }
 
         /* 提高对比度：描边加深，淡底改成实色边 */
         @media (prefers-contrast: more) {
-            :root { --line: #9aa1ab; --ink-muted: #3f4753; }
-            .card, .topbar, .table-wrap tbody tr { border-color: var(--line); }
+            :root { --line: #8b8296; --ink-muted: #3b3344; }
+            .card, .topbar, .side, .table-wrap tbody tr { border-color: var(--line); }
             .msg.ok, .msg.err { font-weight: 600; }
         }
     </style>
 </head>
 <body>
+    <!-- 装饰层：背景照片 + 花瓣画布。两层都是纯装饰：
+         aria-hidden 不进无障碍树，pointer-events:none 不抢事件，
+         z-index 为负，永远压在 .card / .topbar 等所有内容之下。 -->
+    <div class="bg-photo" aria-hidden="true"></div>
+    <canvas class="sakura-canvas" id="sakuraCanvas" aria-hidden="true"></canvas>
     <div id="app">加载中…</div>
 
 
@@ -484,12 +802,19 @@
 
         // ==== 全局状态与常量 ====
         const STATUSES = ['待打印', '打印中', '可取了', '已取件'];
-        const ROLE_LABELS = { user: '普通用户', admin: '管理员', super: '超级管理员' };
-        const ROLE_ORDER = ['super', 'admin', 'user'];
+        const ROLE_LABELS = { user: '普通用户', admin: '管理员' };
+        // 一条公告最多自动弹几次。超过之后只留在「公告」页的历史列表里。
+        // 为什么要有上限：公告是「告知」，不是「弹窗广告」。同一条内容反复打断同一个用户，
+        // 到第三次之后他不再会读，只会条件反射地点关闭 —— 那时弹窗就已经失效了。
+        const NOTICE_MAX_SHOWS = 3;
         // 图表配色的兜底顺序。值与 :root 里的 --viz-* 令牌一一对应，
         // 引用变量而不是写死色值，深色模式下自动跟着走（见 ENTITY_COLORS）。
         const PALETTE = ['var(--viz-a)', 'var(--viz-b)', 'var(--viz-c)', 'var(--viz-done)'];
         const AUTO_REFRESH_MS = 10000;
+        // 订单列表每页多少条。分页不是装饰：订单表没有上限，
+        // 一次性拉回来只会越用越卡，而且按 100 条拉的时候，「共 N 条」里
+        // 多出来的那些单在界面上根本没有入口能翻到。
+        const ORDER_PAGE_SIZE = 20;
 
         // 公告字体：键要和后端 ANNOUNCE_FONTS 对齐，前端负责把键翻译成 CSS
         const ANNOUNCE_FONTS = {
@@ -526,12 +851,33 @@
         // 前端回填数据库里的颜色前要先判断一下，不合法的就退回默认色，避免把脏值塞进 <input type=color>
         const ANNOUNCE_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
+        // 静态资源路径交给 Jinja 拼。不在 JS 里手写 /static/xxx 的原因：
+        // 万一以后静态文件挂到子路径或 CDN，只改模板里的 url_for 就够了。
+        const SAKURA_PETAL_URL = "{{ url_for('static', filename='img/petal.png') }}";
+        const SAKURA_ILLUSTRATION_URL = "{{ url_for('static', filename='img/illustration.jpg') }}";
+
         // csrf 令牌只放在内存里，页面刷新后由 /api/me 重新下发
-        // showPasswords：是否把账号列表切成带密码的版本。只有超管能打开，
-        //   而且每次都要向服务器重新申请（前端不缓存任何密码）
-        const state = { user: null, csrf: '', tab: 'login', orderScope: 'all', orderStatus: '', timer: null,
-            showPasswords: false, announcement: null, announcementHidden: false, tickets: [], ticketFilter: '',
-            editingAnnouncementId: null, announceFlash: null,
+        //
+        // section：当前显示的是哪一页（页面清单见 PAGES）。一个页面只放一种功能。
+        // advanced：藏起来的那套视图有没有被打开 —— 决定「操作」列和「明细」开关要不要出现。
+        //   两个条件同时成立才成立：账号本身带这个入口（user.advanced），
+        //   而且这一趟确实打开了（就是本字段）。判断统一走 advancedUI()，别在这里直接读。
+        //   只活在内存里，刷新或退出就失效。它是「这一次操作」的临时状态，不是账号属性，
+        //   所以本地不存、服务端也不存。
+        // showDetails：是否把账号列表切成带凭据的版本。每次打开都向服务器重新申请，
+        //   前端不缓存任何凭据。
+        // noticeSeen / noticeMutedIds：公告弹过几次、「哪几条选了不再提示」。
+        //   按用户 ID 存在 localStorage 里。静默是「按条」而不是「全局」的 ——
+        //   一个布尔值管所有公告看着省事，但用户点的是「不再提示这条」，
+        //   悄悄扩大成「以后所有公告都别弹」，下次发新公告时他不会收到、也不知道为什么。
+        // noticeLegacyMuted：只为兼容老版本存下的全局 muted 标记，见 loadNoticePrefs。
+        // showClosed：账号列表要不要把已注销的账号一并显示。默认不显示，
+        //   它是「临时看一眼」而不是需要记住的配置，所以不落盘、刷新即回到默认。
+        const state = { user: null, csrf: '', tab: 'login', orderScope: 'all', orderStatus: '', orderPage: 1, timer: null,
+            section: null, advanced: false, showDetails: false, showClosed: false,
+            notices: [], noticeSeen: {}, noticeMutedIds: {}, noticeLegacyMuted: false, noticeShown: null,
+            tickets: [], ticketFilter: '', editingAnnouncementId: null,
+            announcements: [],
             // 记住上一次渲染的是哪个视图：换了视图才把焦点送到首屏，
             // 只是重绘（比如公告改完）就还原原来的焦点和滚动位置。
             renderedView: null };
@@ -586,7 +932,11 @@
             node.setAttribute('aria-live', 'polite');
         }
 
-        function roleLabel(role) { return ROLE_LABELS[role] || role; }
+        // 前端版的 roleLabel，和服务端 config.public_role 是同一件事的两端：
+        // 对外只承认「普通用户」和「管理员」两种。认不出来的值按普通用户处理 ——
+        // 这里出现意外值的时候，宁可界面少给一点，也不能因为认不出就往上抬一档。
+        function publicRole(role) { return ROLE_LABELS[role] ? role : 'user'; }
+        function roleLabel(role) { return ROLE_LABELS[publicRole(role)]; }
         function colorLabel(v) { return v === 'color' ? '彩色' : '黑白'; }
         function duplexLabel(v) { return v === 'double' ? '双面' : '单面'; }
 
@@ -707,15 +1057,53 @@
         }
 
         // ==== 轻提示：替掉 alert()，也用于没有 .msg 可写的场合 ====
+        // 右下角浮一条，几秒后自己消失，也能点 ✕ 手动关掉。
+        // 手动关闭这件事看着多余，其实很值得做：自动消失的秒数是猜出来的，
+        // 用户可能正好在看别的地方错过了，而他已经执行过的操作不会再来一次，
+        // 于是只能靠「再点一遍」把提示复现出来 —— 那个体验比多看一条更糟。
+        const TOAST_MAX = 4;   // 同屏最多堆几条。写操作连点四下以上就该溢出了，免得糊住半个屏幕
         function toast(text, type, ms) {
             let wrap = $('toastWrap');
             if (!wrap) {
                 wrap = el('div', { class: 'toast-wrap', id: 'toastWrap', role: 'status', 'aria-live': 'polite' });
                 document.body.appendChild(wrap);
             }
-            const node = el('div', { class: 'toast' + (type ? ' ' + type : ''), text: text });
+            const node = el('div', { class: 'toast' + (type ? ' ' + type : '') }, [
+                el('span', { class: 'toast-text', text: text }),
+                el('button', {
+                    class: 'toast-close', type: 'button', 'aria-label': '关闭提示', text: '✕',
+                    onclick: () => node.remove(),
+                }),
+            ]);
             wrap.appendChild(node);
-            window.setTimeout(() => node.remove(), ms || 3200);
+            // 超出上限就把最老的那条挤掉。按 DOM 顺序取第一个即可 ——
+            // 这里永远是 append 到末尾，第一条自然就是最早出现的
+            while (wrap.children.length > TOAST_MAX) wrap.firstElementChild.remove();
+            const timer = window.setTimeout(() => node.remove(), ms || 4000);
+            // 点过就取消定时器。删两次其实不会报错（对已经摘掉的节点再 remove 是空操作），
+            // 但让「已经关掉的东西还有事在排队」留着，早晚会在别的场景里咬人
+            node.addEventListener('click', () => window.clearTimeout(timer), { once: true });
+        }
+
+        // ==== 写操作的统一收尾 ====
+        // 一次写操作完成后要做两件事，看着重复，其实分工不同：
+        //   .msg 是「落在页面里」的记录：会一直留在那里，读屏软件靠它念结果；
+        //   toast 是「顺手告诉你一声」：几秒就走，不阻断手上的事，
+        //     也不要求人把视线移到页面另一头去找那行小结。
+        //
+        // 文案只取后端给的 msg，不在前端另编一句话。
+        // 两边各写一套，早晚会出现「提示说成功、小结里写的是另一个结果」，
+        // 而那时你根本不知道哪一句是真的。
+        //
+        // 返回值直接当「成没成」用，所以调用方写成 if (!reportResult(...)) return; 就够了 ——
+        // 不用在每个调用点再手算一次 data.code === 0。
+        function reportResult(msgId, data) {
+            const ok = data.code === 0;
+            const text = data.msg || (ok ? '操作完成' : '操作失败');
+            const mark = ok ? '✅ ' : '❌ ';
+            if (msgId) setMsg(msgId, mark + text, ok ? 'ok' : 'err');
+            toast(mark + text, ok ? 'ok' : 'err');
+            return ok;
         }
 
         // ==== 焦点管理 ====
@@ -805,6 +1193,7 @@
             if (data && data.csrf) state.csrf = data.csrf;   // 后端每次响应都会下发新令牌
             if (res.status === 401 && data.code === 401 && state.user) {
                 state.user = null;
+                state.renderedView = null;
                 renderAuth();
             }
             return data;
@@ -815,6 +1204,8 @@
             const data = await api('/api/me');
             if (data.code === 0 && data.user) {
                 state.user = data.user;
+                // 公告弹窗的计数是按用户 ID 存的，所以得等身份确定之后再读
+                loadNoticePrefs();
                 await refreshAll();
             } else {
                 state.user = null;
@@ -823,43 +1214,50 @@
         }
 
         async function refreshAll() {
-            // 公告要在首次渲染前拿到，否则首屏会先没公告栏，再突然跳出来
-            if (state.user) await fetchAnnouncement();
+            // 公告要在首次渲染前拿到：它是全局数据（弹窗也要用），
+            // 放到渲染之后补，就会出现「页面已经稳定了又突然弹一层浮层」。
+            if (state.user) await fetchNotices();
             await redraw();
+            // 弹窗放在最后。它是挂在 body 上的浮层，不参与 #app 的重绘，
+            // 等界面稳定下来再弹，不会打断正在进行的布局。
+            maybeShowNotice();
         }
 
-        // 整页重绘 + 重新拉所有面板数据。
+        // 整页重绘 + 重新拉当前这一页的数据。
         // renderApp() 会清空整个 DOM，重绘之后必须把数据重新填回去，
         // 否则表格会变空白，凡是必须重绘的场合都走这里。
-        // （公告栏的显示/隐藏特意不走这条路，见 setAnnouncementHidden）
         async function redraw() {
-            // 重绘前先把滚动位置和焦点记下来；换视图时不需要（人本来就该从页首看起）
-            const viewKey = state.user ? 'app:' + state.user.id + ':' + state.user.role : 'auth:' + state.tab;
+            const page = currentPage();
+            // 视图标识里必须带上 section。不带的话，从「我的订单」切到「工单」
+            // 会被判成同一次重绘，于是滚动位置和焦点会被还原到上一页的位置 ——
+            // 人就站在新页面上，却停在上一个页面滚过的地方，像没切换成功一样。
+            const viewKey = state.user
+                ? 'app:' + state.user.id + ':' + state.user.role + ':' + page.key
+                : 'auth:' + state.tab;
             const sameView = state.renderedView === viewKey;
             const vs = sameView ? captureViewState() : null;
             const app = $('app');
             app.setAttribute('aria-busy', 'true');
             renderApp();
             if (!state.user) { app.removeAttribute('aria-busy'); return; }
-            // 工单条目的渲染依赖 renderApp 建好的 #ticketList，所以放在渲染之后
-            await loadTickets();
-            if (state.user.role === 'user') {
-                await loadMyOrders();
-            } else {
-                // 管理员和超管看的是同一套面板，差异只有有没有密码列、能不能操作，
-                // 由 usersCard 内部按角色自行裁剪
-                await Promise.all([loadOrders(), loadStats(), loadUsers(), loadAnnouncementsAdmin()]);
-                setupAutoRefresh();
-            }
+            // 只拉当前这一页要用的数据。以前是一次性把订单、统计、账号、公告全拉回来，
+            // 因为所有面板都堆在同一页。现在切到哪页拉哪页：请求变少，而且不会再出现
+            // 「人在工单页，却因为账号接口出问题而整页报错」这种莫名其妙的连带故障。
+            if (page.load) await page.load();
+            setupAutoRefresh();
             app.removeAttribute('aria-busy');
             if (sameView) {
                 restoreViewState(vs);
             } else {
                 state.renderedView = viewKey;
-                // 换了视图：焦点送到首屏第一个可交互元素，
-                // 键盘用户不用一路 Tab 过去，读屏软件也立刻知道换页了
+                // 换了视图：先回到页首
                 window.scrollTo(0, 0);
-                const first = app.querySelector('[data-fk]');
+                // 再把焦点送到新页面的第一个可交互元素，
+                // 键盘用户不用一路 Tab 过去，读屏软件也立刻知道换页了。
+                // 优先在「内容区」里找 —— 整页第一个 data-fk 是侧边栏的第一个导航项，
+                // 焦点落在那里等于原地不动：按 Tab 还得再穿一遍导航，才回到刚点开的那一页。
+                const content = app.querySelector('.content');
+                const first = (content && content.querySelector('[data-fk]')) || app.querySelector('[data-fk]');
                 if (first) first.focus();
             }
         }
@@ -867,37 +1265,104 @@
         async function logout() {
             try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 忽略 */ }
             state.user = null;
-            state.showPasswords = false;   // 退出时把查看密码关掉，别留给下一个人
+            // 退出时把这一趟留下的临时状态全清掉，别留给下一个人：
+            // 高级模式、明细列、当前页、以及「本次会话已经弹过公告」的标记。
+            // 公告的已读次数和「不再提示」不清 —— 它们是这个账号自己的记录，
+            // 下次登录还要接着算。
+            state.advanced = false;
+            state.showDetails = false;
+            // 已注销开关也要回到默认的「不显示」：它是「我就看一眼」的动作，
+            // 看的人已经走了，下一个人不该接手他的临时选择。
+            state.showClosed = false;
+            // 订单筛选同理。留着上一个人的「我接的订单 / 已取件」，
+            // 下一个人进来看到的是「共 0 条订单」，看着像库里没数据，
+            // 实际只是被一层看不见的筛选挡住了。
+            state.orderScope = 'all';
+            state.orderStatus = '';
+            state.orderPage = 1;
+            state.section = null;
+            state.noticeShown = null;
+            state.notices = [];
+            // 视图标识也要清：不清的话，退出再登同一个账号，
+            // viewKey 会和退出前一模一样，于是被当成「同一次重绘」，
+            // 而 captureViewState 刚刚读的是登录页 —— 焦点和滚动位置会从登录页搬到主界面上
+            state.renderedView = null;
             stopAutoRefresh();
             renderAuth();
             await api('/api/me');   // 重新获取一个有效的 CSRF 令牌
         }
 
         // ==== 登录 / 注册：所有角色共用一个入口 ====
+        // 版式是两张参考图融合的结果：
+        //   左插图列（参考页 15 的 35% 插图位）+ 右表单列（参考页 15 的下划线输入框、细字距大标题）
+        //   + 滑动药丸切换（参考页 12 的紫色滑块）
         function renderAuth() {
             stopAutoRefresh();
             const app = $('app');
             app.textContent = '';
-            const card = el('div', { class: 'card', style: 'max-width:470px;margin:32px auto;' });
-            card.appendChild(el('h1', { text: '🖨️ 宿舍打印服务', style: 'text-align:center;' }));
-            card.appendChild(el('p', {
-                class: 'muted',
-                text: '实名注册 · 统一入口登录 · 按账号类别显示不同功能',
-                style: 'text-align:center;margin:6px 0 14px;',
+
+            const card = el('div', { class: 'auth-card' });
+
+            // 插图列整个 aria-hidden：图片 alt 留空也是同一个意思 ——
+            // 装饰图对读屏用户没有信息量，念出来只会多一次打断。
+            // 真正的品牌信息在右边标题和顶栏里都有。
+            const side = el('aside', { class: 'auth-side', 'aria-hidden': 'true' });
+            side.appendChild(el('img', { src: SAKURA_ILLUSTRATION_URL, alt: '' }));
+            side.appendChild(el('div', { class: 'auth-side-text' }, [
+                el('p', { class: 'as-brand', text: '打印服务' }),
+                el('p', { class: 'as-sub', text: '冲破二次元的墙壁' }),
+            ]));
+            card.appendChild(side);
+
+            const main = el('section', { class: 'auth-main' });
+            main.appendChild(el('h1', {
+                class: 'auth-title',
+                text: state.tab === 'register' ? 'REGISTER' : 'LOGIN',
             }));
 
-            const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': '登录或注册' });
+            // 切换滑块：滑块停在哪边由 data-tab 决定，位移交给 CSS transition。
+            // 没沿用原来 .tabs 的做法，是想把「当前在哪一格」做成一个会动的块，
+            // 而不是靠改背景色 —— 代价是 aria-selected 必须准确跟着 state.tab 走，
+            // 否则读屏念的选中格和视觉上的滑块会对不上。
+            const sw = el('div', {
+                class: 'auth-switch', role: 'tablist', 'aria-label': '登录或注册',
+                'data-tab': state.tab === 'register' ? 'register' : 'login',
+            });
+            sw.appendChild(el('span', { class: 'as-thumb', 'aria-hidden': 'true' }));
             const mkTab = (key, label) => el('button', {
                 type: 'button', text: label, role: 'tab', 'data-fk': 'tab-' + key,
                 'aria-selected': state.tab === key ? 'true' : 'false',
                 onclick: () => { state.tab = key; renderAuth(); },
             });
-            tabs.appendChild(mkTab('login', '登录'));
-            tabs.appendChild(mkTab('register', '注册'));
-            card.appendChild(tabs);
+            sw.appendChild(mkTab('login', '登录'));
+            sw.appendChild(mkTab('register', '注册'));
+            main.appendChild(sw);
+
             const form = state.tab === 'register' ? registerForm() : loginForm();
-            card.appendChild(form);
-            app.appendChild(card);
+            main.appendChild(form);
+
+            // 参考页 15 底部那一行链接位。这里不接真实路由，只做两个动作：
+            // 切 tab，或者提示去工单申请重置（后端本来就没有自助重置密码的接口）。
+            const links = el('div', { class: 'auth-links' });
+            const toTab = (key) => (e) => { e.preventDefault(); state.tab = key; renderAuth(); };
+            if (state.tab === 'register') {
+                links.appendChild(el('span', { class: 'muted', text: '注册后才能提交订单' }));
+                links.appendChild(el('a', { href: '#', text: '已有账号？去登录', onclick: toTab('login') }));
+            } else {
+                links.appendChild(el('a', {
+                    href: '#', text: '忘记密码？',
+                    onclick: (e) => {
+                        e.preventDefault();
+                        toast('密码需要管理员重置，请到工单里提交申请', '', 4200);
+                    },
+                }));
+                links.appendChild(el('a', { href: '#', text: '还没有账号？去注册', onclick: toTab('register') }));
+            }
+            main.appendChild(links);
+
+            card.appendChild(main);
+            // 外面这层 .auth-wrap 负责垂直居中（用 margin:auto，见 CSS 里的说明）
+            app.appendChild(el('div', { class: 'auth-wrap' }, [card]));
             state.renderedView = 'auth:' + state.tab;
             // 打开页面或切换标签后自动聚焦第一个输入框，省掉一次鼠标点击
             const first = form.querySelector('input, select');
@@ -943,6 +1408,7 @@
                 if (data.code === 0) {
                     state.user = data.user;
                     msg.textContent = '';
+                    loadNoticePrefs();   // 换了账号，公告弹窗的计数也跟着换人
                     await refreshAll();
                 } else {
                     msg.className = 'msg err';
@@ -957,7 +1423,7 @@
         }
 
         function registerForm() {
-            const form = el('form');
+            const form = el('form', { class: 'auth-2col' });
             // hintText 是可选的：填写后会在输入框下方补一行灰色小字说明
             const addField = (labelText, attrs, hintText, fk) => {
                 const input = el('input', attrs);
@@ -990,7 +1456,7 @@
             contactType.setAttribute('data-fk', 'reg-contacttype');
             contact.setAttribute('data-fk', 'reg-contact');
             contact.setAttribute('aria-describedby', 'regContactHint');
-            form.appendChild(el('div', { class: 'field' }, [
+            form.appendChild(el('div', { class: 'field span-all' }, [
                 el('label', { for: contactType.id, text: '联系方式' }),
                 el('div', { style: 'display:grid;grid-template-columns:118px 1fr;gap:8px;' }, [contactType, contact]),
                 contactHint,
@@ -1016,8 +1482,8 @@
                 { type: 'password', autocomplete: 'new-password', maxlength: 64, required: true },
                 '8-64 位，需同时包含字母和数字。', 'reg-password');
             const confirm = addField('再次输入密码', { type: 'password', autocomplete: 'new-password', maxlength: 64, required: true }, null, 'reg-confirm');
-            const msg = el('div', { class: 'msg', id: 'registerMsg' });
-            const btn = el('button', { type: 'submit', text: '注册并登录', style: 'width:100%;margin-top:10px;' });
+            const msg = el('div', { class: 'msg span-all', id: 'registerMsg' });
+            const btn = el('button', { type: 'submit', class: 'span-all', text: '注册并登录', style: 'width:100%;margin-top:10px;' });
             form.appendChild(btn);
             form.appendChild(msg);
 
@@ -1083,6 +1549,7 @@
                 if (data.code === 0) {
                     state.user = data.user;
                     msg.textContent = '';
+                    loadNoticePrefs();
                     await refreshAll();
                 } else {
                     msg.className = 'msg err';
@@ -1093,49 +1560,254 @@
             return form;
         }
 
-        // ==== 主界面：按账号类别渲染不同内容 ====
+        // ==== 主界面：侧边栏 + 单页内容 ====
+        // 页面清单写成一张表，而不是一串 if：
+        //   「谁能看到哪些页」一眼能看完，加一页只改这一处；
+        //   导航栏和内容区读的是同一份数据，也就不可能出现
+        //   「导航里有一项、点进去却是空白」这种最让人恼火的不一致。
+        const PAGES = {
+            user: [
+                { key: 'upload', icon: '📤', label: '上传下单',
+                  desc: '选文件、挑颜色和单双面，提交后等取件通知。',
+                  render: uploadCard },
+                { key: 'myorders', icon: '📋', label: '我的订单',
+                  desc: '自己提交过的订单和取件码。',
+                  render: myOrdersCard, load: loadMyOrders },
+                { key: 'mystats', icon: '📊', label: '我的数据',
+                  desc: '自己一共打了多少、取件进度，还有全站的累计数字。',
+                  render: myStatsCard, load: loadMyStats },
+                { key: 'tickets', icon: '💬', label: '工单',
+                  desc: '文件有问题、取件找不到，在这里和客服沟通。',
+                  render: () => ticketsCard(false), load: loadTickets },
+                { key: 'notice', icon: '📢', label: '公告',
+                  desc: '全部公告，最新的在最上面。弹窗提醒最多 3 次，之后只在这里更新。',
+                  render: noticeFeedCard, load: loadNoticeFeed },
+            ],
+            staff: [
+                // 概览排第一位，不是随手放的：currentPage() 找不到 section 时会退回第一页，
+                // 所以列表里的顺序 = 登录后先看到什么。而「先看数字、再决定做什么」
+                // 本来就是管理这边更自然的顺序 —— 一眼扫到待接单还积着几单，
+                // 才会想到去订单页；直接把人丢进订单表，他要先自己从表里数。
+                { key: 'overview', icon: '📊', label: '数据概览',
+                  desc: '近两周的下单走势、账号增长和两个排行榜。',
+                  render: overviewPage, load: loadOverview },
+                { key: 'orders', icon: '🖨️', label: '订单管理',
+                  desc: '接单、改状态、下载文件。',
+                  render: ordersPage, load: loadOrdersPage },
+                { key: 'users', icon: '👥', label: '账号管理',
+                  desc: '全部注册账号，以及他们各自的下单和接单情况。',
+                  render: usersCard, load: loadUsers },
+                { key: 'tickets', icon: '💬', label: '工单',
+                  desc: '用户发来的工单，在这里回复和关闭。',
+                  render: () => ticketsCard(true), load: loadTickets },
+                { key: 'notice', icon: '📢', label: '公告管理',
+                  desc: '发布、修改、停用公告。',
+                  render: announcementAdminCard, load: loadAnnouncementsAdmin },
+            ],
+        };
+
+        function pagesFor() {
+            // 用「不等于 user」判断，而不是「等于 admin」：
+            // 万一以后真加了第三种角色，默认落到管理侧只是多一页，
+            // 而默认落到用户侧意味着普通用户可能看到不该看的。
+            // 默认值往保守的方向偏，是权限相关代码的通用习惯。
+            return state.user && state.user.role !== 'user' ? PAGES.staff : PAGES.user;
+        }
+
+        // 当前该显示哪一页。section 为空、或对不上任何一页（换了角色、页面被删掉）时
+        // 退回第一页，保证「当前页」永远有一个有效落点，不会渲染出空白主区。
+        function currentPage() {
+            const pages = pagesFor();
+            return pages.find(p => p.key === state.section) || pages[0];
+        }
+
+        function switchSection(key) {
+            if (state.section === key) return;   // 点当前页不重绘，避免白闪一下
+            state.section = key;
+            redraw();
+        }
+
+        function sidebar() {
+            const page = currentPage();
+            const nav = el('nav', { class: 'side', 'aria-label': '主导航' });
+            const list = el('div', { class: 'side-nav' });
+            pagesFor().forEach(p => {
+                list.appendChild(el('button', {
+                    type: 'button', class: 'hit', 'data-fk': 'nav-' + p.key,
+                    // aria-current="page" 是「当前页」的标准说法：读屏软件会念「当前页」，
+                    // 视觉上我们也拿它当选中的钩子。同一个属性同时驱动「看」和「听」，
+                    // 就不会出现「看着是选中、读出来不是」的错位 —— 这也是不另设
+                    // .is-active 类的原因，两种真相迟早会打架。
+                    'aria-current': p.key === page.key ? 'page' : false,
+                    onclick: () => switchSection(p.key),
+                }, [
+                    el('span', { class: 'si', 'aria-hidden': 'true', text: p.icon }),
+                    el('span', { text: p.label }),
+                ]));
+            });
+            nav.appendChild(list);
+            // 版本号。id 只发给带高级视图的账号 —— 没有 id，绑定的代码就找不到挂点。
+            //
+            // 用「干脆不设这个 id」而不是在事件里判一下再 return：
+            // 事件判早退的话，那一串 pointerdown / pointerup / dblclick 监听照样挂在元素上，
+            // 「按了没用」和「根本没接上」在行为上一样，但后者不需要再想
+            // 「有没有哪种输入方式绕过某个分支」。能靠结构解决的事，就别交给分支。
+            //
+            // 挑这个位置的原因没变：在导航最底部、字号全站最小、内容最没有信息量。
+            // 正常使用谁都不会去碰它，但真要用的时候又不至于藏到自己都找不到。
+            nav.appendChild(el('p', {
+                id: canUseAdvanced() ? 'sideFoot' : null,
+                class: 'muted',
+                style: 'margin:var(--sp-2) 0 0; padding:2px 10px; font-size:var(--fs-xs);' +
+                       'cursor:default; user-select:none; -webkit-user-select:none;',
+                text: 'v1.0',
+            }));
+            return nav;
+        }
+
+        // 订单管理页 = 只有订单表格。
+        // 统计原来挂在这一页下面，现在挪去独立的「数据概览」：
+        // 两件事的节奏不一样。看订单是「处理某一单」，动作密集、页面在不停重建；
+        // 看统计是「扫一眼整体情况」，安静、不需要点任何东西。
+        // 挤在一页里，每接一单都要把整块图表重算重画一遍，白费力气还闪。
+        function ordersPage() {
+            return orderAdminCard();
+        }
+
+        async function loadOrdersPage() {
+            await loadOrders();
+        }
+
+        // 写完一条数据之后，把「当前这一页」重新拉一遍。
+        // 以前这里是挨个点名要刷新的几个接口：
+        // 页面一挪位置，就得把所有调用点翻出来改一遍，漏一个就是「改完没反应」。
+        // 统一走 currentPage().load 之后，加页减页都不用再碰这些函数。
+        // （load 是可选的：纯静态页没有它，所以要先判一下。）
+        async function reloadCurrent() {
+            const page = currentPage();
+            if (page && page.load) await page.load();
+        }
+
         function renderApp() {
             const app = $('app');
             app.textContent = '';
             const u = state.user;
 
-            // 公告区：按悬浮公告 > 关闭后的重开入口 > 管理员编辑 的优先级，
-            // 同一时刻最多出现一个，避免界面臃肿
-            if (state.announcement && !state.announcementHidden) app.appendChild(announcementBar());
+            // 顺手把不符合条件的高级视图状态清掉。
+            // 为什么放在这里：state.advanced 只活在内存里，而 state.user 会变
+            // （退出再登另一个账号、换账号刷新）。要是上一个人留下了 true，
+            // 下一个人虽然拿不到入口，却会直接把高级视图的成果渲染出来 ——
+            // 入口藏了、东西还在，等于白藏。
+            // 放在 renderApp 开头，是因为下面 page.render() 马上就要读它。
+            if (!canUseAdvanced()) {
+                state.advanced = false;
+                state.showDetails = false;
+            }
 
             const bar = el('div', { class: 'topbar' });
-            bar.appendChild(el('h1', { text: '🖨️ 宿舍打印服务' }));
-            bar.appendChild(el('span', { class: 'role-badge role-' + u.role, text: roleLabel(u.role) }));
-            // 姓名 / 宿舍都允许留空（内置超管就是空的），空的部分直接不显示，
+            bar.appendChild(el('h1', { text: '🖨️ 打印服务' }));
+            // 徽章的角色值走 publicRole()：服务端的 /api/me 只回 user / admin 两种，
+            // 这里再兜一层底 —— 万一以后哪个接口漏出了意外的角色值，
+            // 界面也只会显示「管理员」，而不是老老实实把那个词印在屏幕上。
+            bar.appendChild(el('span', {
+                class: 'role-badge role-' + publicRole(u.role), text: roleLabel(u.role),
+            }));
+            // 姓名 / 宿舍都允许留空（内置账号就是空的），空的部分直接不显示，
             // 否则会渲染成 qcmb（）· 这种悬空括号加悬空分隔符
             const info = (u.real_name ? '（' + u.real_name + '）' : '') + (u.dorm ? ' · ' + u.dorm : '');
             bar.appendChild(el('span', { class: 'muted', text: u.nickname + info }));
             bar.appendChild(el('div', { class: 'spacer' }));
-            // 📢 公告按钮平时隐藏，只在公告被关闭后才显形，所以不占位置。
-            // 它和公告栏的显示/隐藏都是局部 DOM 操作，不触发整页重绘，
-            // 这样点一下不会把已经加载好的表格、图表全清空。
-            if (state.announcement) {
-                bar.appendChild(el('button', {
-                    id: 'announceToggle', class: 'ghost icon-btn hit', text: '📢 公告',
-                    style: state.announcementHidden ? '' : 'display:none;',
-                    onclick: () => setAnnouncementHidden(false),
-                }));
-            }
             bar.appendChild(el('button', { class: 'ghost', text: '退出登录', onclick: logout }));
             app.appendChild(bar);
 
-            if (u.role === 'user') {
-                app.appendChild(uploadCard());
-                app.appendChild(myOrdersCard());
-                app.appendChild(ticketsCard(false));
-                return;
-            }
-            app.appendChild(orderAdminCard());
-            // 图表 + 账号列表：管理员与超管都能看（密码列只有超管能打开）
-            app.appendChild(el('div', { id: 'statsBox' }));
-            app.appendChild(usersCard());
-            app.appendChild(ticketsCard(true));
-            app.appendChild(announcementAdminCard());
+            const layout = el('div', { class: 'layout' });
+            layout.appendChild(sidebar());
+
+            const content = el('div', { class: 'content' });
+            const page = currentPage();
+            const head = el('div', { class: 'page-head' });
+            // 页面标题用 h2：顶栏的品牌名是 h1，一页里只应该有一个 h1。
+            // 有了这行标题，切页之后「我现在在哪」不需要靠侧边栏的高亮去猜。
+            head.appendChild(el('h2', { class: 'page-title', text: page.icon + ' ' + page.label }));
+            if (page.desc) head.appendChild(el('p', { class: 'muted page-desc', text: page.desc }));
+            content.appendChild(head);
+            content.appendChild(page.render());
+            layout.appendChild(content);
+            app.appendChild(layout);
+
+            bindHiddenEntry();
+        }
+
+        // ==== 高级视图的入口 =====
+        // 判断依据是 user.advanced 这个布尔值 —— 它描述的是「这个账号的界面
+        // 多不多一个开关」，不是「这个人有多大权限」。
+        //
+        // 为什么不换成角色判断：前端从头到尾只认识 user / admin 两种角色，
+        // 一旦按角色分叉，两套界面之间的差异就得一直手动对齐；
+        // 而高级视图本来就只是同一套界面多两列数据。
+        //
+        // 另外，这个入口是「少给一个按钮」，不是「安全措施」。代码跟着页面一起发到浏览器，
+        // 按 F12 都能读到。真正拦住人的是服务端的 @roles_required：
+        // 账号没有这个入口却硬把界面调出来，点下去也只会收到 403。
+        // 把「看不见」和「做不了」当成两件事，才不会哪天误以为藏起来就等于安全了。
+        function canUseAdvanced() {
+            return !!(state.user && state.user.advanced);
+        }
+
+        // 「现在到底要不要显示高级视图」的唯一判断点：账号本身带这个入口，而且这一趟已经打开了。
+        // 集中成一个函数，是为了避免以后有人在别处直接读 state.advanced ——
+        // 那样就会漏掉前半个条件，让没有入口的账号也被渲染出高级视图。
+        function advancedUI() {
+            return canUseAdvanced() && state.advanced;
+        }
+
+        // ==== 高级视图的开关：绑在侧边栏底部那行版本号上（具体按法见下面的监听器）====
+        // 打开之后，账号管理页才会多出操作列和明细开关。
+        //
+        // 为什么选长按而不是快捷键：Windows 上连按 Shift 五次会触发粘滞键，
+        // Alt+Shift 会切输入法，Ctrl+Alt 等于 AltGr —— 键盘组合几乎都被人占了。
+        // 长按不跟任何人抢，而且必须停在一段毫不起眼的文字上不动一秒半，
+        // 正常操作不可能误触。
+        const HIDDEN_HOLD_MS = 1500;
+        let hiddenHoldTimer = null;
+
+        function bindHiddenEntry() {
+            const foot = $('sideFoot');
+            // 没有这个 id 的账号走到这里就结束了：入口等于不存在，一个监听器也不用挂。
+            // 这是整个「不设 id」方案的关键一步 —— 判断只发生在要不要生成元素的时候，
+            // 之后的事件代码完全不知道有这回事，也就不需要处处防守
+            if (!foot) return;
+            const cancel = () => { clearTimeout(hiddenHoldTimer); hiddenHoldTimer = null; };
+            const arm = () => {
+                cancel();
+                // 计时器而不是 pointerdown 立刻触发：必须「按住不动」，
+                // 拖着鼠标划过这段文字不会把它碰开
+                hiddenHoldTimer = window.setTimeout(() => { hiddenHoldTimer = null; toggleAdvanced(); }, HIDDEN_HOLD_MS);
+            };
+            foot.addEventListener('pointerdown', arm);
+            foot.addEventListener('pointerup', cancel);
+            foot.addEventListener('pointerleave', cancel);
+            foot.addEventListener('pointercancel', cancel);
+            // 触屏长按和右键都会顺带弹系统菜单，先按住，不然会盖在页面上
+            foot.addEventListener('contextmenu', e => e.preventDefault());
+            // 再加上双击：比长按好按，两者都是「刻意做才会发生」的动作。
+            // 留两条路是因为这个入口没有任何提示，万一某台设备的长按被系统吃掉，
+            // 你至少还有另一种按法能进去。
+            foot.addEventListener('dblclick', toggleAdvanced);
+        }
+
+        function toggleAdvanced() {
+            // 守卫放在函数里面，而不是只靠「没绑事件就没人调」。
+            // 绑定是可以绕过的（控制台里直接敲一遍 toggleAdvanced() 就行），
+            // 判断放在这里，「按了也没用」就是唯一可能的行为，
+            // 不需要再去数有几种绕过去的姿势。
+            if (!canUseAdvanced()) return;
+            state.advanced = !state.advanced;
+            // 关掉高级模式时顺手把明细列也收起来。
+            // 不然「明细」开关会随着人一起消失，可那一列的数据还留在屏幕上。
+            if (!state.advanced) state.showDetails = false;
+            toast(state.advanced ? '已切换到高级视图' : '已退出高级视图', 'ok');
+            redraw();
         }
 
         // ==== 普通用户：上传下单 ====
@@ -1177,11 +1849,18 @@
                 setMsg('uploadMsg', '⏳ 正在上传…', '');
                 const data = await api('/api/upload', { method: 'POST', body: new FormData(form) });
                 if (data.code === 0) {
-                    setMsg('uploadMsg', '✅ 下单成功！订单号 ' + data.order_id + '，取件码 ' + data.pickup_code, 'ok');
+                    const okText = '下单成功！订单号 ' + data.order_id + '，取件码 ' + data.pickup_code;
+                    setMsg('uploadMsg', '✅ ' + okText, 'ok');
+                    // 取件码只在这里完整出现一次，往后得回「我的订单」里翻。
+                    // 所以这一条给得久一点（8 秒），而不是默认的 4 秒。
+                    // 默认时长是给「改了个状态」这种一眼就看完的消息的，
+                    // 一单一个取件码不一样，多停几秒很值。
+                    toast('✅ ' + okText, 'ok', 8000);
                     form.reset();
                     await loadMyOrders();
                 } else {
                     setMsg('uploadMsg', '❌ ' + (data.msg || '上传失败'), 'err');
+                    toast('❌ ' + (data.msg || '上传失败'), 'err');
                     markInvalid(file, 'uploadMsg');
                 }
                 btn.disabled = false;
@@ -1199,7 +1878,7 @@
 
             const table = el('table', { style: 'margin-top:12px;' });
             table.appendChild(el('thead', {}, [el('tr', {}, [
-                '订单号', '文件名', '打印参数', '备注', '状态', '取件码', '接单情况', '下单时间',
+                '订单号', '文件名', '打印参数', '备注', '状态', '取件码', '接单情况', '下单时间', '操作',
             ].map(t => el('th', { text: t })))]));
             table.appendChild(el('tbody', { id: 'myOrderBody' }));
             const scroller = tableScroller('我的订单');
@@ -1213,16 +1892,16 @@
             const tbody = $('myOrderBody');
             if (!tbody) return;
             tbody.setAttribute('aria-busy', 'true');
-            showLoading(tbody, () => tableLoadingRow(8, '订单加载中'));
+            showLoading(tbody, () => tableLoadingRow(9, '订单加载中'));
             const data = await api('/api/my-orders');
             tbody.textContent = '';
             tbody.removeAttribute('aria-busy');
             if (data.code !== 0) {
                 setMsg('myOrderMsg', '❌ ' + (data.msg || '加载失败'), 'err');
-                tbody.appendChild(tableEmptyRow(8, '加载失败', '⚠️'));
+                tbody.appendChild(tableEmptyRow(9, '加载失败', '⚠️'));
             } else if (!data.orders.length) {
                 setMsg('myOrderMsg', '还没有订单，上传一个文件试试吧', '');
-                tbody.appendChild(tableEmptyRow(8, '还没有订单，上传一个文件试试吧', '📭'));
+                tbody.appendChild(tableEmptyRow(9, '还没有订单，上传一个文件试试吧', '📭'));
             } else {
                 setMsg('myOrderMsg', '共 ' + data.orders.length + ' 个订单', '');
                 data.orders.forEach(o => {
@@ -1235,6 +1914,16 @@
                     tr.appendChild(td(o.pickup_code || '-'));
                     tr.appendChild(td(o.claimer_nickname ? '已由 ' + o.claimer_nickname + ' 接单' : '等待接单'));
                     tr.appendChild(td(o.create_time || ''));
+                    // 只有「还没被接单」的单才摆撤单按钮：一旦有人接了，
+                    // 这单就在别人的工作里了，抽掉会让人白打一份纸（服务端也会拒）。
+                    const actions = el('div', { class: 'row-actions' });
+                    if (o.claimed_by == null && o.status !== '已取件') {
+                        actions.appendChild(el('button', { class: 'ghost hit', text: '↩ 撤回',
+                            'aria-label': '撤回订单 ' + o.id, onclick: () => withdrawOrder(o.id) }));
+                    } else {
+                        actions.appendChild(el('span', { class: 'muted', text: '—' }));
+                    }
+                    tr.appendChild(el('td', { class: 'col-actions' }, [actions]));
                     tbody.appendChild(tr);
                 });
             }
@@ -1242,17 +1931,17 @@
             syncTableScrollers();
         }
 
-        // ==== 管理员 / 超管：订单管理 ====
+        // ==== 订单管理（管理员页） ====
         function orderAdminCard() {
             const card = el('div', { class: 'card' });
             card.appendChild(el('h3', { text: '📋 订单管理' }));
 
-            const scope = el('select', { onchange: () => { state.orderScope = scope.value; loadOrders(); } }, [
+            const scope = el('select', { onchange: () => { state.orderScope = scope.value; state.orderPage = 1; loadOrders(); } }, [
                 el('option', { value: 'all', text: '全部订单' }),
                 el('option', { value: 'pool', text: '待接单池（无人接）' }),
                 el('option', { value: 'mine', text: '我接的订单' }),
             ]);
-            const status = el('select', { onchange: () => { state.orderStatus = status.value; loadOrders(); } },
+            const status = el('select', { onchange: () => { state.orderStatus = status.value; state.orderPage = 1; loadOrders(); } },
                 [el('option', { value: '', text: '全部状态' })].concat(STATUSES.map(s => el('option', { value: s, text: s }))));
             scope.value = state.orderScope;
             status.value = state.orderStatus;
@@ -1284,13 +1973,19 @@
             scroller.querySelector('.table-wrap').appendChild(table);
             card.appendChild(scroller);
             card.appendChild(el('div', { class: 'msg', id: 'orderMsg' }));
+            card.appendChild(el('div', { id: 'orderPager',
+                style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;' }));
             return card;
         }
 
         function orderRow(o) {
             const tr = el('tr');
             tr.appendChild(td(o.id));
-            tr.appendChild(td(o.owner_nickname || '（账号已注销）'));
+            // 归属为空和「已注销」是两回事，别写成同一句话：
+            // 注销的账号名字还在（后端会加后缀），这里为空只意味着这条订单
+            // 找不到对应的账号行（历史数据里 user_id 指向的账号已经没了）。
+            // 写成「账号已注销」会把数据缺失说成一次正常操作，查起来就被带偏了。
+            tr.appendChild(td(o.owner_nickname || '（无归属）'));
             tr.appendChild(td(o.owner_dorm || '-'));
             tr.appendChild(td(o.filename));
             tr.appendChild(td(colorLabel(o.color_type) + ' / ' + duplexLabel(o.duplex)));
@@ -1305,14 +2000,20 @@
             if (o.claimed_by == null) {
                 actions.appendChild(el('button', { class: 'hit', text: '✋ 接单', 'aria-label': '接单，订单 ' + o.id,
                     onclick: () => claimOrder(o.id) }));
-            } else if (o.is_mine || state.user.role === 'super') {
+            } else if (o.status !== '已取件' && (o.is_mine || advancedUI())) {
+                // 别人的单能不能释放，前端不靠角色判断，靠的是「当前是不是高级视图」。
+                // 账号没带这个入口、或者硬把界面调出来，点下去也只会拿到服务端的 403 ——
+                // 界面上多不多一个按钮，和这一步能不能做成，是两件事。
+                //
+                // 已取件是终态，不摆释放按钮：这单已经打完也被取走了，
+                // 再退回待接单池就成了「已完成的单又等人来接」。服务端也拦着。
                 actions.appendChild(el('button', { class: 'ghost hit', text: '释放', 'aria-label': '释放订单 ' + o.id,
                     onclick: () => releaseOrder(o.id) }));
             }
             if (o.can_manage) {
                 STATUSES.forEach(s => {
                     if (s === o.status) return;
-                    actions.appendChild(el('button', { class: 'hit', text: '→ ' + s,
+                    actions.appendChild(el('button', { class: 'soft hit', text: '→ ' + s,
                         'aria-label': '把订单 ' + o.id + ' 改为' + s, onclick: () => updateStatus(o.id, s) }));
                 });
                 actions.appendChild(el('button', { class: 'ghost hit', text: '⬇ 下载',
@@ -1324,13 +2025,35 @@
             return tr;
         }
 
+        // 翻页控件。只有一页的时候整个不出现：一页装得下还给两个按不动的按钮，
+        // 只会让人多疑心一下「是不是还有下一页」。
+        function renderOrderPager(total, size) {
+            const box = $('orderPager');
+            if (!box) return;
+            const sig = total + '/' + size + '/' + state.orderPage;
+            // 数字没变就不重建：列表每 10 秒自动刷一次，每次都把按钮换成新的，
+            // 手指刚好落上去就会点空。
+            if (box.dataset.sig === sig) return;
+            box.dataset.sig = sig;
+            box.textContent = '';
+            if (!total || !size || total <= size) return;
+            const pages = Math.ceil(total / size);
+            box.appendChild(el('button', { class: 'ghost', text: '← 上一页', disabled: state.orderPage <= 1,
+                onclick: () => { state.orderPage -= 1; loadOrders(); } }));
+            box.appendChild(el('span', { class: 'muted', text: '第 ' + state.orderPage + ' / ' + pages + ' 页' }));
+            box.appendChild(el('button', { class: 'ghost', text: '下一页 →', disabled: state.orderPage >= pages,
+                onclick: () => { state.orderPage += 1; loadOrders(); } }));
+        }
+
         async function loadOrders() {
             const tbody = $('orderBody');
             if (!tbody) return;
             tbody.setAttribute('aria-busy', 'true');
             // 只在第一次（或筛选后列表变空）时摆加载提示；10 秒一次的自动刷新不再闪
             showLoading(tbody, () => tableLoadingRow(10, '订单加载中'));
-            const params = new URLSearchParams({ size: '100', scope: state.orderScope });
+            const params = new URLSearchParams({
+                size: String(ORDER_PAGE_SIZE), page: String(state.orderPage), scope: state.orderScope,
+            });
             if (state.orderStatus) params.set('status', state.orderStatus);
             const data = await api('/api/orders?' + params.toString());
             tbody.textContent = '';
@@ -1338,47 +2061,57 @@
             if (data.code !== 0) {
                 setMsg('orderMsg', '❌ ' + (data.msg || '加载失败'), 'err');
                 tbody.appendChild(tableEmptyRow(10, '加载失败', '⚠️'));
+            } else if (data.total > 0 && !data.orders.length && state.orderPage > 1) {
+                // 当前页被刷空了。数据变少不会自动把页码改小，state.orderPage 还停在旧值上，
+                // 界面就会顶着「共 8 条订单」显示一张空表。退回最后一页再拉一次。
+                state.orderPage = Math.max(1, Math.ceil(data.total / data.size));
+                return loadOrders();
             } else {
+                const pages = Math.max(1, Math.ceil(data.total / data.size));
                 // 「共 N 条」是中性状态，不是成功消息，别用绿色
-                setMsg('orderMsg', '共 ' + data.total + ' 条订单', '');
+                setMsg('orderMsg', data.total > data.size
+                    ? '共 ' + data.total + ' 条订单·第 ' + data.page + '/' + pages + ' 页'
+                    : '共 ' + data.total + ' 条订单', '');
                 if (!data.orders.length) {
                     tbody.appendChild(tableEmptyRow(10, '没有符合条件的订单', '📭'));
                 } else {
                     data.orders.forEach(o => tbody.appendChild(orderRow(o)));
                 }
             }
+            renderOrderPager(data.total, data.size);
             annotateTable(tbody.closest('table'));
             syncTableScrollers();
         }
 
         async function claimOrder(id) {
             const data = await api('/api/order/' + id + '/claim', { method: 'POST' });
-            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) {
-                await loadOrders();
-                if (state.user.role === 'super') await loadStats();
-            }
+            if (!reportResult('orderMsg', data)) return;
+            await reloadCurrent();
         }
 
         async function releaseOrder(id) {
             if (!window.confirm('确定释放订单 #' + id + ' 吗？释放后其他管理员可以接单。')) return;
             const data = await api('/api/order/' + id + '/release', { method: 'POST' });
-            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) {
-                await loadOrders();
-                if (state.user.role === 'super') await loadStats();
-            }
+            if (!reportResult('orderMsg', data)) return;
+            await reloadCurrent();
+        }
+
+        // 撤单：撤掉的是自己下的、还没人接的单。
+        // 服务端还会再查一次「是不是本人的单、是不是没人接」——
+        // 和别处一样，界面上有没有这个按钮，和这一步能不能做成，是两件事。
+        async function withdrawOrder(id) {
+            if (!window.confirm('确定撤回订单 #' + id + ' 吗？\n订单和已上传的文件会一起删除，不能恢复。')) return;
+            const data = await api('/api/order/' + id + '/withdraw', { method: 'POST' });
+            if (!reportResult('myOrderMsg', data)) return;
+            await reloadCurrent();
         }
 
         async function updateStatus(id, status) {
             const data = await api('/api/order/' + id + '/status', {
                 method: 'PUT', body: JSON.stringify({ status: status }),
             });
-            setMsg('orderMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) {
-                await loadOrders();
-                if (state.user.role === 'super') await loadStats();
-            }
+            if (!reportResult('orderMsg', data)) return;
+            await reloadCurrent();
         }
 
         function filenameFromDisposition(cd) {
@@ -1415,6 +2148,10 @@
             setMsg('orderMsg', '✅ 已开始下载：' + name, 'ok');
         }
 
+        // 自动刷新只在订单管理页生效：它每 10 秒重拉一次订单表，
+        // 而表格重建会让正在点的按钮跑掉，所以在别的页面上必须停掉。
+        // 判断依据就是 #autoRefresh 在不在 —— 它只存在于订单卡片里，
+        // 比单独记一个「现在在哪一页」的变量更可靠，不会两边状态跑偏。
         function setupAutoRefresh() {
             stopAutoRefresh();
             const toggle = $('autoRefresh');
@@ -1437,6 +2174,12 @@
         //      缩放的代价是轴标签跟着一起缩，手机上会缩到 3px 根本看不见。
         //   2) 颜色按「实体」固定（见 ENTITY_COLORS），不按过滤后的下标取色 ——
         //      否则筛掉一类，剩下的颜色会集体挪位，同一个状态换个颜色。
+        //
+        // 现有零件：柱状图（barChart / barCard）、环形图（donutChart / donutCard）。
+        // 页面上目前只用到柱状图，环形图那套先留着 —— 它们是自成一体的纯函数，
+        // 不奉连别的地方，哪天想画「我的黑白 / 彩色比例」之类直接能接上。
+        // 但也就留这么一次：一直没有地方用它，就该删掉，
+        // 别让它变成那种「看着像在用、其实早就死了」的代码。
 
         // 图表配色取自 dataviz 校验通过的调色板（亮度带 / 彩度下限 / 色觉分离 /
         // 对浅底与深底的对比度全部通过）。写成 CSS 变量，深浅色各一套，
@@ -1447,8 +2190,9 @@
             '打印中': 'var(--viz-printing)',
             '可取了': 'var(--viz-ready)',
             '已取件': 'var(--viz-done)',
-            // 角色：超管 / 管理员 / 普通用户
-            'super': 'var(--viz-a)',
+            // 角色：只有两种对外角色。这里故意不给第三档配色 ——
+            // 配色一旦存在，早晚会有人把某个角色接上去，图表上就会长出一块
+            // 「别人没见过、也说不清是什么」的饼
             'admin': 'var(--viz-b)',
             'user': 'var(--viz-c)',
             // 其它二元维度
@@ -1661,75 +2405,209 @@
             return card;
         }
 
-        // ==== 管理员 / 超管：数据可视化 ====
-        async function loadStats() {
-            const box = $('statsBox');
+        // ==== 排行榜卡片（概览和我的数据都用得到）====
+        // 名次、昵称、数量分三列，而不是拼成「1. 张三 —— 12 单」一行字：
+        // 一行字里数字长短不一，眼睛没法竖着对齐，五个人的差距得逐个读才知道。
+        // 名次用等宽数字固定宽度，昵称占剩余空间并对齐到左边，数量固定在最右。
+        function rankCard(title, rows, emptyIcon) {
+            const card = el('div', { class: 'card' });
+            card.appendChild(el('h3', { text: title }));
+            const list = rows || [];
+            if (!list.length) {
+                card.appendChild(emptyState('还没有记录', emptyIcon || '🏅'));
+                return card;
+            }
+            list.forEach((r, i) => {
+                const line = el('div', {
+                    style: 'display:flex;align-items:center;gap:var(--sp-3);padding:7px 0;'
+                           + (i ? 'border-top:1px solid var(--line-soft,rgba(127,127,127,.18));' : ''),
+                });
+                line.appendChild(el('span', {
+                    class: 'muted',
+                    style: 'flex:none;width:1.5em;text-align:right;font-variant-numeric:tabular-nums;',
+                    text: String(i + 1),
+                }));
+                // 昵称可能很长，也可能为 NULL：订单的归属账号被删除时
+                // 订单会保留下来、只是不再属于谁（服务端用 LEFT JOIN 把它们也数进来，
+                // 否则排行榜的总和会比「近 30 天订单」少，而那种不一致很难自己发现）。
+                // 截断而不是换行：换行会让五行的高度各不相同，排行榜就不成行了。
+                line.appendChild(el('span', {
+                    style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
+                    text: r.nickname || '（无归属）',
+                }));
+                line.appendChild(el('span', {
+                    style: 'flex:none;font-variant-numeric:tabular-nums;',
+                    text: r.c + ' 单',
+                }));
+                card.appendChild(line);
+            });
+            return card;
+        }
+
+        // ==== 数据概览（管理端，登录后的默认页）====
+        // 这里刻意只有六个数、一张图、两个排行榜，不为了「看起来丰富」而堆图表。
+        // 原来那四张饼图（角色分布 / 订单状态分布 / 打印类别 / 单双面）全部去掉了：
+        // 它们各自只有一个可能的样子。角色不是用户就是管理员，类别不是黑白就是彩色，
+        // 单双面不是单就是双 —— 饼画出来永远是那两块，看一百遍也不会变。
+        // 占着首页最显眼的位置，却不提供任何「今天和上周有什么不同」的信息。
+        // 换成随时间会动的数字（今天的量、近 7 天、近 30 天、新增账号、待接单）
+        // 和会换人的排行榜，这些才是打开首页值得看一眼的东西。
+        function overviewPage() {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;' });
+            head.appendChild(el('h3', { text: '📊 数据概览', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadOverview }));
+            card.appendChild(head);
+            // 先建空盒子再拉数据，否则 loadOverview() 找不到挂点会直接 return
+            card.appendChild(el('div', { id: 'overviewBox', style: 'margin-top:12px;' }));
+            card.appendChild(el('div', { class: 'msg', id: 'overviewMsg' }));
+            return card;
+        }
+
+        async function loadOverview() {
+            const box = $('overviewBox');
             if (!box) return;
-            showLoading(box, () => el('div', { class: 'card' }, [emptyState('统计数据加载中…', '⏳')]));
+            showLoading(box, () => emptyState('数据加载中…', '⏳'));
             const data = await api('/api/admin/stats');
             box.textContent = '';
             if (data.code !== 0) {
-                box.appendChild(el('div', { class: 'card' }, [emptyState('统计数据加载失败', '⚠️')]));
+                setMsg('overviewMsg', '❌ ' + (data.msg || '数据加载失败'), 'err');
+                box.appendChild(emptyState('数据加载失败', '⚠️'));
                 return;
             }
+            const u = data.users || {};
+            const o = data.orders || {};
+            // 报出「什么时候拉的」而不是「每 N 秒自动刷新」：
+            // 这一页没有自动刷新（那个开关在订单页上），写错等于骗人
+            setMsg('overviewMsg', '统计时间 ' + new Date().toLocaleTimeString(), '');
+
             const kpis = el('div', { class: 'kpi-grid', style: 'margin-bottom:var(--sp-4);' });
-            kpis.appendChild(kpiCard(data.users.total, '注册账号总数'));
-            kpis.appendChild(kpiCard(data.users.active, '启用账号'));
-            kpis.appendChild(kpiCard(data.users.disabled, '已禁用账号'));
-            kpis.appendChild(kpiCard(data.users.new_7d, '近 7 天新增账号'));
-            kpis.appendChild(kpiCard(data.orders.total, '订单总数'));
-            kpis.appendChild(kpiCard(data.orders.claimed, '已被接单'));
-            kpis.appendChild(kpiCard(data.orders.unclaimed, '待接单'));
+            kpis.appendChild(kpiCard(o.today, '今天下单'));
+            kpis.appendChild(kpiCard(o.last_7d, '近 7 天订单'));
+            kpis.appendChild(kpiCard(o.last_30d, '近 30 天订单'));
+            kpis.appendChild(kpiCard(u.new_7d, '近 7 天新增账号'));
+            kpis.appendChild(kpiCard(u.total, '账号总数'));
+            // 「待接单」是这一页里唯一一个能直接变成动作的数字：
+            // 看着不是 0，就知道该去订单页点「待接单池」了
+            kpis.appendChild(kpiCard(o.unclaimed, '待接单'));
             box.appendChild(kpis);
 
             const charts = el('div', { class: 'grid' });
-            charts.appendChild(barCard('每日下单量（近 14 天）', (data.daily || []).map(d => ({ label: d.date, value: d.count }))));
-            // 颜色按角色实体给，不按数组下标 —— 顺序变了颜色也不会跟着挪
-            charts.appendChild(donutCard('账号角色分布', ROLE_ORDER.map(r => ({
-                label: roleLabel(r), value: (data.users.by_role || {})[r] || 0, color: entityColor(r, 0),
-            }))));
-            charts.appendChild(donutCard('订单状态分布', STATUSES.map(s => ({
-                label: s, value: (data.orders.by_status || {})[s] || 0, color: entityColor(s, 0),
-            }))));
-            charts.appendChild(donutCard('打印类别分布', [
-                { label: '黑白', value: (data.orders.by_color || {}).black || 0 },
-                { label: '彩色', value: (data.orders.by_color || {}).color || 0 },
-            ]));
-            charts.appendChild(donutCard('单 / 双面分布', [
-                { label: '单面', value: (data.orders.by_duplex || {}).single || 0 },
-                { label: '双面', value: (data.orders.by_duplex || {}).double || 0 },
-            ]));
+            // barCard 自己就带 card-wide（横跨整行），不用再补一次类名
+            charts.appendChild(barCard('每日下单量（近 14 天）',
+                                       (data.daily || []).map(d => ({ label: d.date, value: d.count }))));
+            // 两个排行榜回答的是两个不同的问题，所以不是一张表里列两列数字：
+            //   谁下的单多 —— 业务量从哪来，要不要提醒某位用户
+            //   谁接的单多 —— 活集中在谁身上，要不要找人分摊
+            charts.appendChild(rankCard('下单数量排行 Top 5', data.top_orderers, '📋'));
+            charts.appendChild(rankCard('接单数量排行 Top 5', data.top_claimers, '🏅'));
             box.appendChild(charts);
-
-            const top = el('div', { class: 'card' });
-            top.appendChild(el('h3', { text: '接单排行 Top 5' }));
-            const list = data.top_claimers || [];
-            if (!list.length) {
-                top.appendChild(emptyState('暂无接单记录', '🏅'));
-            } else {
-                list.forEach((t, i) => top.appendChild(el('div', { style: 'padding:4px 0;',
-                    text: (i + 1) + '. ' + t.nickname + ' —— ' + t.c + ' 单' })));
-            }
-            box.appendChild(top);
         }
 
-        // ==== 管理员 / 超管：账号管理 ====
-        // 两种角色共用同一张表，列由 userColumns() 按角色现算：
-        //   密码列默认不存在，只有超管点开查看密码才出现；
-        //   操作列只有超管有（改角色 / 禁用 / 删除都是超管专属）。
+        // ==== 我的数据（普通用户）====
+        // 用户侧也开一页，是同一件事的另一半：把「和自己有关、又不用自己数」的数字摆出来。
+        // 数据全部来自 /api/my-stats，那个接口只认当前登录的人 ——
+        // 前端连 user_id 都传不了，「查别人」在接口层面就不存在，
+        // 而不是靠前端「记得别传错参数」。这两者的差别，决定了它是不是一个安全边界。
+        function myStatsCard() {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;' });
+            head.appendChild(el('h3', { text: '📊 我的打印数据', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadMyStats }));
+            card.appendChild(head);
+            card.appendChild(el('div', { id: 'myStatsBox', style: 'margin-top:12px;' }));
+            card.appendChild(el('div', { class: 'msg', id: 'myStatsMsg' }));
+            return card;
+        }
+
+        async function loadMyStats() {
+            const box = $('myStatsBox');
+            if (!box) return;
+            showLoading(box, () => emptyState('数据加载中…', '⏳'));
+            const data = await api('/api/my-stats');
+            box.textContent = '';
+            if (data.code !== 0) {
+                setMsg('myStatsMsg', '❌ ' + (data.msg || '数据加载失败'), 'err');
+                box.appendChild(emptyState('数据加载失败', '⚠️'));
+                return;
+            }
+            const m = data.mine || {};
+            setMsg('myStatsMsg', '只统计你自己提交的订单', '');
+
+            const kpis = el('div', { class: 'kpi-grid', style: 'margin-bottom:var(--sp-4);' });
+            kpis.appendChild(kpiCard(m.total, '我的订单总数'));
+            kpis.appendChild(kpiCard(m.in_progress, '还没拿到'));
+            kpis.appendChild(kpiCard(m.ready, '可以取件'));
+            kpis.appendChild(kpiCard(m.done, '已取件'));
+            box.appendChild(kpis);
+
+            const charts = el('div', { class: 'grid' });
+            charts.appendChild(barCard('我的每日下单量（近 14 天）',
+                                       (data.daily || []).map(d => ({ label: d.date, value: d.count }))));
+
+            // 「趣味」这一块是有意做的：一个纯功能的工具，用户没有理由再打开第二次。
+            // 全站累计单量是最合适公开的一个数 —— 它说明「这个服务本身有多忙」，
+            // 不涉及谁是谁、谁打了什么，所以给所有登录用户看也不越界。
+            const siteTotal = (data.site || {}).orders_total || 0;
+            const mineTotal = Number(m.total) || 0;
+            const share = siteTotal > 0 ? (mineTotal / siteTotal * 100) : 0;
+            const doneRate = mineTotal > 0 ? (Number(m.done) / mineTotal * 100) : 0;
+            const fun = el('div', { class: 'card' });
+            fun.appendChild(el('h3', { text: '✨ 顺便一提' }));
+            const lines = [
+                ['全站累计订单', siteTotal + ' 单'],
+                ['你贡献了', share.toFixed(1) + '%'],
+                ['你的取件完成率', doneRate.toFixed(0) + '%'],
+            ];
+            lines.forEach((pair, i) => {
+                fun.appendChild(el('div', {
+                    style: 'display:flex;gap:var(--sp-3);padding:7px 0;'
+                           + (i ? 'border-top:1px solid var(--line-soft,rgba(127,127,127,.18));' : ''),
+                }, [
+                    el('span', { class: 'muted', style: 'flex:1;', text: pair[0] }),
+                    el('span', { style: 'flex:none;font-variant-numeric:tabular-nums;', text: pair[1] }),
+                ]));
+            });
+            charts.appendChild(fun);
+            box.appendChild(charts);
+        }
+
+        // ==== 管理员：账号管理 ====
+        // 列由 userColumns() 现算，不写死：
+        //   明细列默认不存在，打开高级视图再按开关多出这一列；
+        //   操作列同理（改角色 / 禁用 / 删除都只在高级视图下才出现）。
+        // 这里判的是 advancedUI()（本趟会话的临时开关 × 账号带不带入口），
+        // 不是任何角色值 —— 前端从头到尾不知道也不需要知道「我是谁」。
         function userColumns() {
             const cols = ['ID', '昵称', '姓名', '学号', '宿舍', '联系方式'];
-            if (state.showPasswords) cols.push('密码');
+            if (advancedUI() && state.showDetails) cols.push('明细');
             cols.push('角色', '状态', '下单数', '接单数', '注册时间', '最后登录');
-            if (state.user && state.user.role === 'super') cols.push('操作');
+            if (advancedUI()) cols.push('操作');
             return cols;
         }
+
+        // 账号状态 -> 界面文案。写成查表而不是三元表达式，是因为三元表达式每加一个状态
+        // 都要回头改一遍：原来是「active 否则已禁用」，多了个已注销之后，
+        // 它会被算成「已禁用」—— 管理员看到的说明就是错的，而且要等点了才知道。
+        // 查表还留了条退路：以后服务端新增状态忘记在这里登记，页面上会原样露出英文值，
+        // 一眼就知道少了一行，而不是静默地显示成别的意思。
+        const STATUS_TEXT = { active: '启用', disabled: '已禁用', closed: '已注销' };
 
         function usersCard() {
             const card = el('div', { class: 'card' });
             const head = el('div', { style: 'display:flex;align-items:center;gap:10px;' });
             head.appendChild(el('h3', { text: '👥 账号管理', style: 'margin:0;' }));
             head.appendChild(el('div', { style: 'flex:1;' }));
+            // 已注销的账号默认不列出来，但数据都留着，想看时点这个开关。
+            // 用它而不是复选框：复选框的样子像是在设一个配置，
+            // 而这件事只是「我就看一眼」，刷新回去自动恢复成不显示，正好合意。
+            head.appendChild(el('button', {
+                id: 'closedToggle', class: 'ghost hit',
+                text: state.showClosed ? '🙈 隐藏已注销' : '🙉 显示已注销',
+                onclick: toggleClosed,
+            }));
             head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadUsers }));
             card.appendChild(head);
 
@@ -1741,15 +2619,19 @@
             card.appendChild(scroller);
             card.appendChild(el('div', { class: 'msg', id: 'userMsg' }));
 
-            // 查看密码故意做得很不起眼，塞在右下角，默认没人会注意到，
-            // 需要时超管自己点一下，列表才切成带密码的版本。
-            if (state.user && state.user.role === 'super') {
+            // 「明细」开关只在高级视图下才被造出来。
+            // 不在 DOM 里，就没法被鼠标摸到、也没法被 CSS 选中 ——
+            // 隐藏一个按钮最彻底的做法是根本不创建它，而不是给它 display:none，
+            // 后者在元素树里一搜就能看到。
+            if (advancedUI()) {
                 const foot = el('div', { style: 'text-align:right;margin-top:var(--sp-1);' });
                 foot.appendChild(el('button', {
-                    id: 'pwToggle', class: 'pw-toggle hit',
-                    text: state.showPasswords ? '🔒 隐藏密码' : '🔑 查看密码',
-                    'data-fk': 'pwToggle',
-                    onclick: togglePasswords,
+                    id: 'detailToggle', class: 'detail-toggle hit',
+                    // 文案刻意平淡：不写「密码」也不写「查看」，
+                    // 「明细」什么都能指，指不到具体是什么东西
+                    text: state.showDetails ? '收起明细' : '展开明细',
+                    'data-fk': 'detailToggle',
+                    onclick: toggleDetails,
                 }));
                 card.appendChild(foot);
             }
@@ -1766,32 +2648,40 @@
             tr.appendChild(td(u.dorm || '-'));
             const cInfo = CONTACT_HINTS[u.contact_type];
             tr.appendChild(td(u.contact ? (cInfo ? cInfo.label + '：' : '') + u.contact : '-'));
-            if (state.showPasswords) {
-                tr.appendChild(el('td', {}, [el('span', { class: 'pw', text: u.password || '（无法解密）' })]));
+            if (advancedUI() && state.showDetails) {
+                tr.appendChild(el('td', {}, [el('span', { class: 'detail-val', text: u.password || '（无法解密）' })]));
             }
             tr.appendChild(el('td', {}, [el('span', { class: 'role-badge role-' + u.role, text: u.role_label })]));
-            tr.appendChild(td(u.status === 'active' ? '启用' : '已禁用'));
+            tr.appendChild(td(STATUS_TEXT[u.status] || u.status));
             tr.appendChild(td(u.order_count));
             tr.appendChild(td(u.claimed_count));
             tr.appendChild(td(u.create_time || ''));
             tr.appendChild(td(u.last_login || '从未登录'));
 
-            // 操作列只有超管有：改角色 / 禁用 / 删除都是超管专属
-            if (!(state.user && state.user.role === 'super')) return tr;
+            // 操作列只在高级视图下出现：改角色 / 禁用 / 删除都属于要谨慎动的那一类
+            if (!advancedUI()) return tr;
 
             const box = el('div', { class: 'row-actions' });
-            const isSelf = state.user && u.id === state.user.id;
-            if (u.role === 'super') {
-                box.appendChild(el('span', { class: 'muted', text: '超级管理员' }));
+            const isSelf = isSelfRow(u);
+            if (isSelf) {
+                // 服务端算好的 is_self 优先：不管这一行在界面上显示成什么角色，
+                // 只要它是当前登录的账号，改角色/禁用/删除三条服务端都会拒，
+                // 那就不该在界面上给按钮 —— 给了就只能点一下、收一个错误提示
+                box.appendChild(el('span', { class: 'muted', text: '当前账号' }));
             } else {
-                if (u.role === 'user') {
-                    box.appendChild(el('button', { class: 'hit', text: '升为管理员',
-                        'aria-label': '把 ' + u.nickname + ' 升为管理员', onclick: () => setRole(u.id, 'admin') }));
+                if (u.status === 'closed') {
+                    // 已注销是终点：改角色、禁用、启用、再注销全都没有意义。
+                    // 服务端会把这些操作全拒掉，那界面上就不摆这些按钮 ——
+                    // 摆出来只能点一下、收一个错误提示，白添一次失败体验。
+                    box.appendChild(el('span', { class: 'muted', text: '已注销' }));
                 } else {
-                    box.appendChild(el('button', { class: 'ghost hit', text: '降为普通用户',
-                        'aria-label': '把 ' + u.nickname + ' 降为普通用户', onclick: () => setRole(u.id, 'user') }));
-                }
-                if (!isSelf) {
+                    if (u.role === 'user') {
+                        box.appendChild(el('button', { class: 'hit', text: '升为管理员',
+                            'aria-label': '把 ' + u.nickname + ' 升为管理员', onclick: () => setRole(u.id, 'admin') }));
+                    } else {
+                        box.appendChild(el('button', { class: 'ghost hit', text: '降为普通用户',
+                            'aria-label': '把 ' + u.nickname + ' 降为普通用户', onclick: () => setRole(u.id, 'user') }));
+                    }
                     if (u.status === 'active') {
                         box.appendChild(el('button', { class: 'danger hit', text: '禁用',
                             'aria-label': '禁用账号 ' + u.nickname, onclick: () => setUserStatus(u.id, 'disabled') }));
@@ -1799,12 +2689,19 @@
                         box.appendChild(el('button', { class: 'hit', text: '启用',
                             'aria-label': '启用账号 ' + u.nickname, onclick: () => setUserStatus(u.id, 'active') }));
                     }
-                    box.appendChild(el('button', { class: 'danger hit', text: '删除',
-                        'aria-label': '删除账号 ' + u.nickname, onclick: () => deleteUser(u) }));
+                    box.appendChild(el('button', { class: 'danger hit', text: '注销',
+                        'aria-label': '注销账号 ' + u.nickname, onclick: () => closeUser(u) }));
                 }
             }
             tr.appendChild(el('td', { class: 'col-actions' }, [box]));
             return tr;
+        }
+
+        // 这一行是不是当前登录的账号。优先用服务端算好的 is_self ——
+        // 它和接口里那句「不能修改自己的账号」是同一份判断结果，
+        // 前端拿 id 自己比一遍只是兼容没有这个字段的旧响应。
+        function isSelfRow(u) {
+            return u.is_self === true || (state.user && u.id === state.user.id);
         }
 
         async function loadUsers() {
@@ -1813,8 +2710,15 @@
             const cols = userColumns().length;
             tbody.setAttribute('aria-busy', 'true');
             showLoading(tbody, () => tableLoadingRow(cols, '账号列表加载中'));
-            // 密码要显式申请；服务器只认超管的这个参数，管理员带了也拿不到
-            const data = await api('/api/admin/users' + (state.showPasswords ? '?with_password=1' : ''));
+            // 明细要显式申请：服务端只对配置了明细视图的账号放行，其他人带了也拿不到。
+            // 参数名用的是 detail 而不是「密码」相关的词：光看请求列表，
+            // 看不出这个接口还有第二种视图。
+            // include_closed 同理：光看名字只知道「要不要把已注销的算进来」，
+            // 看不出这些账号的数据其实一行都没删。
+            const params = [];
+            if (state.showDetails) params.push('detail=1');
+            if (state.showClosed) params.push('include_closed=1');
+            const data = await api('/api/admin/users' + (params.length ? '?' + params.join('&') : ''));
             tbody.textContent = '';
             tbody.removeAttribute('aria-busy');
             if (data.code !== 0) {
@@ -1824,9 +2728,14 @@
                 syncTableScrollers();
                 return;
             }
-            // 以服务器返回为准同步开关，避免前端状态和实际拿到的数据对不上
-            state.showPasswords = !!data.with_password;
-            syncPasswordToggle();
+            // 以服务端返回为准同步开关：前端以为打开了、实际没拿到，
+            // 就会出现「列里有明细表头、格子里却没有内容」的空列
+            state.showDetails = !!data.detail;
+            syncDetailToggle();
+            // 已注销开关同理：按钮上写着「隐藏已注销」、列表里却一个已注销的都没有，
+            // 那就是两个地方的说法对不上了
+            state.showClosed = !!data.include_closed;
+            syncClosedToggle();
 
             // 表头可能因角色 / 密码列变化，先重算再填数据，data-label 才对得上
             const headRow = $('userHeadRow');
@@ -1834,7 +2743,15 @@
                 headRow.textContent = '';
                 userColumns().forEach(t => headRow.appendChild(el('th', { text: t })));
             }
-            setMsg('userMsg', '共 ' + data.total_users + ' 个账号', '');
+            // 藏起来的那几个要报个数，不然管理员只会觉得「他明明注册过，怎么列表里找不到」，
+            // 而不会想到是这里默认不显示。开关的用途得自己说出来，不能等人去发现。
+            let countText = '共 ' + data.total_users + ' 个账号';
+            if (data.closed_total) {
+                countText += state.showClosed
+                    ? '（其中 ' + data.closed_total + ' 个已注销）'
+                    : '，另有 ' + data.closed_total + ' 个已注销账号未显示';
+            }
+            setMsg('userMsg', countText, '');
             if (!data.users.length) {
                 tbody.appendChild(tableEmptyRow(userColumns().length, '暂无账号', '📭'));
             } else {
@@ -1844,14 +2761,25 @@
             syncTableScrollers();
         }
 
-        function syncPasswordToggle() {
-            const btn = $('pwToggle');
-            if (btn) btn.textContent = state.showPasswords ? '🔒 隐藏密码' : '🔑 查看密码';
+        function syncDetailToggle() {
+            const btn = $('detailToggle');
+            if (btn) btn.textContent = state.showDetails ? '收起明细' : '展开明细';
         }
 
-        async function togglePasswords() {
-            state.showPasswords = !state.showPasswords;
-            syncPasswordToggle();
+        function syncClosedToggle() {
+            const btn = $('closedToggle');
+            if (btn) btn.textContent = state.showClosed ? '🙈 隐藏已注销' : '🙉 显示已注销';
+        }
+
+        async function toggleClosed() {
+            state.showClosed = !state.showClosed;
+            syncClosedToggle();
+            await loadUsers();
+        }
+
+        async function toggleDetails() {
+            state.showDetails = !state.showDetails;
+            syncDetailToggle();
             await loadUsers();
         }
 
@@ -1859,78 +2787,246 @@
             const data = await api('/api/admin/user/' + id + '/role', {
                 method: 'PUT', body: JSON.stringify({ role: role }),
             });
-            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) { await loadUsers(); await loadStats(); }
+            if (!reportResult('userMsg', data)) return;
+            // 统一交给 reloadCurrent()：它刷的是「当前这一页」，
+            // 在账号管理页就等于重拉一次用户列表。
+            // 不逐个点名要刷新哪个接口，是因为写操作影响的表以后可能变多，
+            // 而「哪几个视图该跟着更新」这件事要靠人记住，早晚会漏。
+            // 改成「谁在页面上就把谁刷一遍」，漏刷的可能就没了。
+            await reloadCurrent();
         }
 
         async function setUserStatus(id, status) {
             const data = await api('/api/admin/user/' + id + '/status', {
                 method: 'PUT', body: JSON.stringify({ status: status }),
             });
-            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) { await loadUsers(); await loadStats(); }
+            if (!reportResult('userMsg', data)) return;
+            await reloadCurrent();
         }
 
-        async function deleteUser(u) {
+        // 注销账号。这是不可撤销的动作，所以确认框要把「会怎样」和「不会怎样」都说全：
+        // 登不进来、恢复不了、数据全留下、名字释放给别人用。
+        // 少说任何一句，操作者就只能点下去才知道 —— 而这一步是回不了头的。
+        async function closeUser(u) {
             const who = u.nickname + (u.real_name ? '（' + u.real_name + '）' : '');
-            if (!window.confirm('确定删除账号「' + who + '」吗？该账号的订单会保留但解除归属。')) return;
-            const data = await api('/api/admin/user/' + u.id, { method: 'DELETE' });
-            setMsg('userMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) { await loadUsers(); await loadStats(); }
+            if (!window.confirm(
+                '确定注销账号「' + who + '」吗？\n\n'
+                + '· 注销后该账号无法登录，且不能恢复；\n'
+                + '· 它的历史订单、工单等信息全部保留；\n'
+                + '· 它占用的昵称、姓名和学号会被释放，别人可以重新注册。')) return;
+            const data = await api('/api/admin/user/' + u.id + '/close', { method: 'POST' });
+            if (!reportResult('userMsg', data)) return;
+            await reloadCurrent();
         }
 
         // ==== 公告 ====
         // 只负责拉取并写入 state，不动 DOM。
         // 之前把获取 + renderApp 放在一个函数里，曾在 refreshAll 中与 loadTickets 并行执行，
         // 结果 renderApp 把刚填好的工单列表整个重建掉，所以拆开来并显式控制渲染时机。
-        async function fetchAnnouncement() {
-            const data = await api('/api/announcement');
+        async function fetchNotices() {
+            const data = await api('/api/announcements');
             if (data.code !== 0) return;
-            const before = state.announcement ? state.announcement.id : null;
-            state.announcement = data.announcement;
-            // 换了一条新公告就重新弹出来，同一条则尊重用户之前已关闭的选择
-            if (!state.announcement || state.announcement.id !== before) state.announcementHidden = false;
+            state.notices = data.announcements || [];
         }
 
-        function announcementBar() {
-            const a = state.announcement;
-            const font = ANNOUNCE_FONTS[a.font_family] || ANNOUNCE_FONTS.system;
-            // role="status"：公告是页面加载后可能突然出现的，读屏软件要主动播报
-            const barEl = el('div', { class: 'announce-bar', role: 'status' });
-            barEl.appendChild(el('span', { class: 'announce-icon', text: '📢', 'aria-hidden': 'true' }));
-            // 内容只用 textContent：即使管理员写了 HTML 也只会当普通文字展示
-            barEl.appendChild(el('div', {
-                class: 'announce-body',
-                text: a.content,
-                style: 'font-family:' + font.css + ';font-size:' + a.font_size + 'px;color:' + a.font_color + ';',
-            }));
-            barEl.appendChild(el('button', {
-                class: 'announce-close hit', text: '✕', title: '关闭公告',
-                'aria-label': '关闭公告',
-                onclick: () => setAnnouncementHidden(true),
-            }));
-            return barEl;
+        // 当前生效的那一条。后端保证同一时刻最多一条 is_active，
+        // 列表又按 id 倒序，所以第一条生效的就是最新的。
+        function activeNotice() {
+            return state.notices.find(n => n.is_active) || null;
         }
 
-        // 只动公告栏和顶栏按钮这两个节点，不重建整页
-        function setAnnouncementHidden(hidden) {
-            state.announcementHidden = hidden;
-            const app = $('app');
-            const barNode = app.querySelector('.announce-bar');
-            const trigger = document.activeElement;
-            if (hidden) {
-                if (barNode) barNode.remove();
-            } else if (state.announcement && !barNode) {
-                app.insertBefore(announcementBar(), app.firstChild);
+        // ---- 弹窗次数 / 「不再提示」存在哪里 ----
+        // 存在 localStorage：按用户 ID 分开，不用动数据库表结构。
+        // 代价得说清楚：换台电脑、换个浏览器、清了浏览器数据，计数就归零，
+        // 同一条公告会在新设备上重新弹三次。公告不是权限，重复弹一次也不会出错，
+        // 所以用这个便宜的方案就够了。
+        // 哪天想让它跟着账号走，就得在 users 表加两列（或另开一张小表），
+        // 把下面两个函数换成调接口即可，其余逻辑一行都不用改。
+        function noticeKey() { return 'pds.notice.' + (state.user ? state.user.id : 'anon'); }
+
+        function loadNoticePrefs() {
+            state.noticeSeen = {};
+            state.noticeMutedIds = {};
+            state.noticeLegacyMuted = false;
+            try {
+                const raw = window.localStorage.getItem(noticeKey());
+                if (!raw) return;
+                const saved = JSON.parse(raw);
+                // 虽然是自己写进去的数据，但 localStorage 谁都能改，
+                // 读回来仍然当不可信输入逐项检查，不能直接拿去用
+                if (saved && typeof saved === 'object') {
+                    state.noticeSeen = (saved.seen && typeof saved.seen === 'object') ? saved.seen : {};
+                    state.noticeMutedIds = (saved.mutedIds && typeof saved.mutedIds === 'object') ? saved.mutedIds : {};
+                    // 兼容老版本：那时存的是一个 muted: true，意思是「以后所有公告都别弹」。
+                    // 直接丢掉不管是不行的 —— 当时点下这个按钮的人就是不想再被弹，
+                    // 改完代码一转手又把公告弹回他脸上，等于把他的选择无视了。
+                    // 所以先把这个标记记着，等知道「当前生效的是哪条公告」时，
+                    // 把这份静默精确地落到那一条上（见 maybeShowNotice），然后自己消失。
+                    state.noticeLegacyMuted = saved.muted === true;
+                }
+            } catch (e) {
+                // 隐私模式或被禁用时，localStorage 连读都会抛异常。
+                // 这里退化成「每次登录都弹」，而不是让整页挂掉 ——
+                // 公告弹不弹是次要功能，它不该有能力把主界面一起带崩。
+                state.noticeSeen = {};
+                state.noticeMutedIds = {};
+                state.noticeLegacyMuted = false;
             }
-            const toggle = $('announceToggle');
-            if (toggle) toggle.style.display = (state.announcement && hidden) ? '' : 'none';
-            // 公告栏关掉后，触发它关闭的那个按钮也一起没了，焦点得送到接替它的节点上，
-            // 否则焦点会掉回 body，键盘用户从这里开始就迷路了
-            if (hidden && trigger && !document.contains(trigger)) {
-                const next = $('announceToggle') || $('app').querySelector('button');
-                if (next) next.focus();
+        }
+
+        function saveNoticePrefs() {
+            try {
+                // 只写新字段。老版本的 muted 键不再写回去，
+                // 所以下一次保存之后它就自然消失了，不需要额外的清理代码
+                window.localStorage.setItem(noticeKey(), JSON.stringify({
+                    seen: state.noticeSeen, mutedIds: state.noticeMutedIds,
+                }));
+            } catch (e) { /* 存不下就算了，不影响本次使用 */ }
+        }
+
+        // 公告列表里的一条。live 表示这是当前生效的那条，左侧竖线换成品牌色。
+        function noticeItem(n, live) {
+            const box = el('div', { class: 'announce-item' + (live ? ' is-live' : '') });
+            const body = el('div', { class: 'a-body' });
+            // 内容一律走 textContent：管理员写了 HTML 也只会当普通文字展示
+            applyAnnounceStyle(body, n.content, n.font_family, n.font_size, n.font_color);
+            box.appendChild(body);
+            const meta = [n.update_time ? '发布于 ' + n.update_time : '', n.author ? '发布人 ' + n.author : '']
+                .filter(Boolean).join(' · ');
+            box.appendChild(el('div', { class: 'a-meta muted', text: (live ? '📢 当前生效 · ' : '') + meta }));
+            return box;
+        }
+
+        // 公告页：给所有人看的往期公告，没有任何管理动作。
+        // 「查看」和「管理」拆成两个页面，是因为看完之后的下一步完全不同：
+        // 一个看完就想关掉，一个看完可能想改。混在一页里，改的按钮就会一直挤在看的内容旁边。
+        function noticeFeedCard() {
+            const card = el('div', { class: 'card' });
+            const head = el('div', { style: 'display:flex;align-items:center;gap:10px;' });
+            head.appendChild(el('h3', { text: '📢 公告栏', style: 'margin:0;' }));
+            head.appendChild(el('div', { style: 'flex:1;' }));
+            head.appendChild(el('button', { class: 'ghost', text: '🔄 刷新', onclick: loadNoticeFeed }));
+            card.appendChild(head);
+            card.appendChild(el('div', { id: 'noticeFeed', style: 'margin-top:12px;' }));
+            card.appendChild(el('div', { class: 'msg', id: 'noticeFeedMsg' }));
+            return card;
+        }
+
+        async function loadNoticeFeed() {
+            const box = $('noticeFeed');
+            if (!box) return;
+            showLoading(box, () => emptyState('公告加载中…', '⏳'));
+            const data = await api('/api/announcements');
+            box.textContent = '';
+            if (data.code !== 0) {
+                setMsg('noticeFeedMsg', '❌ ' + (data.msg || '公告加载失败'), 'err');
+                box.appendChild(emptyState('公告加载失败', '⚠️'));
+                return;
             }
+            state.notices = data.announcements || [];
+            setMsg('noticeFeedMsg', '共 ' + state.notices.length + ' 条公告', '');
+            if (!state.notices.length) {
+                box.appendChild(emptyState('还没有发布过公告', '📭'));
+                return;
+            }
+            const live = activeNotice();
+            state.notices.forEach(n => box.appendChild(noticeItem(n, !!live && n.id === live.id)));
+        }
+
+        // ---- 登录后的公告弹窗 ----
+        // 规则：同一条公告最多自动弹 NOTICE_MAX_SHOWS 次；某一条被选过「不再提示」它就再不自动弹；
+        // 超出次数或选择静默之后，它只留在公告页的历史里。
+        // 静默是「按条」的：压掉这一条不影响下一条新公告照样弹。
+        function maybeShowNotice() {
+            const n = activeNotice();
+            if (!n) return;
+            // 老版本的全局静默在这里落地：它当年针对的就是「当时生效的那条公告」，
+            // 现在把这份静默转交给具体的某一条，之后就只认新的按条名单
+            if (state.noticeLegacyMuted) {
+                state.noticeLegacyMuted = false;
+                state.noticeMutedIds[n.id] = true;
+                saveNoticePrefs();
+            }
+            if (state.noticeMutedIds[n.id]) return;
+            if (state.noticeShown === n.id) return;    // 本次会话已经弹过，别反复弹
+            if ($('noticeModal')) return;              // 已经有一层浮层开着，不叠第二层
+            const seen = Number(state.noticeSeen[n.id]) || 0;
+            if (seen >= NOTICE_MAX_SHOWS) return;
+            showNoticeModal(n, seen);
+        }
+
+        function showNoticeModal(n, seenBefore) {
+            state.noticeShown = n.id;
+            // 计数在「弹出来」的这一刻加，而不是等关掉的时候加：
+            // 用户可能永远不关（直接关标签页），那一次也算看过了。
+            // 是他自己打开的页面，不该因为没点关闭而白占一次额度。
+            state.noticeSeen[n.id] = seenBefore + 1;
+            saveNoticePrefs();
+
+            const mask = el('div', { class: 'modal-mask', id: 'noticeModal' });
+            const dialog = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true',
+                'aria-labelledby': 'noticeTitle' });
+
+            const head = el('div', { class: 'modal-head' });
+            head.appendChild(el('span', { class: 'status-badge status-open', text: '公告' }));
+            head.appendChild(el('h3', { class: 'm-title', id: 'noticeTitle', text: '有新的公告' }));
+            head.appendChild(el('button', { class: 'announce-close hit', text: '✕', 'aria-label': '关闭公告',
+                onclick: closeNoticeModal }));
+            dialog.appendChild(head);
+
+            const body = el('div', { class: 'modal-body' });
+            const text = el('div', { style: 'white-space:pre-wrap;word-break:break-word;line-height:1.75;' });
+            applyAnnounceStyle(text, n.content, n.font_family, n.font_size, n.font_color);
+            body.appendChild(text);
+            // 把「最多弹几次」明说出来。偷偷限次，用户只会觉得「有时候弹有时候不弹」；
+            // 说明白了他反而知道哪里还能找到它。
+            body.appendChild(el('p', {
+                class: 'muted', style: 'margin-top:var(--sp-3);font-size:var(--fs-xs);',
+                text: '此提示最多自动出现 ' + NOTICE_MAX_SHOWS + ' 次（这是第 ' + state.noticeSeen[n.id] + ' 次），' +
+                      '之后只在「公告」页里保留。「不再提示」只对这条公告生效，以后发新公告还会提醒。'
+                      + (n.author ? '发布人：' + n.author + '。' : '') + (n.update_time || ''),
+            }));
+            dialog.appendChild(body);
+
+            const foot = el('div', { class: 'modal-foot' });
+            foot.appendChild(el('button', { class: 'ghost', text: '不再提示', onclick: () => {
+                // 只掐掉这一条。按钮写的是「不再提示」，用户理解的也是「这条我看到了，别弹了」，
+                // 不是「以后所有公告都别给我看」。自作主张做过头，比不做更让人意外：
+                // 下次发新公告他没收到，只会觉得网站坏了，而不会想到是自己当初点过什么
+                state.noticeMutedIds[n.id] = true;
+                saveNoticePrefs();
+                closeNoticeModal();
+                toast('已设置：这条公告不再自动弹出', 'ok');
+            } }));
+            foot.appendChild(el('div', { style: 'flex:1;' }));
+            // 默认动作放在最右，且是唯一的主操作按钮：
+            // 「不再提示」是永久选择，不能长得比「知道了」更显眼
+            const okBtn = el('button', { text: '知道了', onclick: closeNoticeModal });
+            foot.appendChild(okBtn);
+            dialog.appendChild(foot);
+            mask.appendChild(dialog);
+
+            // 点遮罩只等于关闭，不等于「不再提示」—— 误触不该被当成一个永久选择
+            mask.addEventListener('click', e => { if (e.target === mask) closeNoticeModal(); });
+            document.body.appendChild(mask);
+            const releaseTrap = trapFocus(dialog);
+            const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); closeNoticeModal(); } };
+            document.addEventListener('keydown', onKey);
+            dialog._close = () => {
+                releaseTrap();
+                document.removeEventListener('keydown', onKey);
+            };
+            // 焦点落在主按钮上：这是一层要先看清内容再决定的浮层，
+            // 一出现就把焦点接过来，键盘用户才不会继续在背景里 Tab。
+            setTimeout(() => okBtn.focus(), 30);
+        }
+
+        function closeNoticeModal() {
+            const mask = $('noticeModal');
+            if (!mask) return;
+            const dialog = mask.querySelector('.modal');
+            if (dialog && dialog._close) dialog._close();
+            mask.remove();
         }
 
         function applyAnnounceStyle(node, content, fontKey, size, color) {
@@ -2035,11 +3131,9 @@
                 const data = editing
                     ? await api('/api/admin/announcements/' + state.editingAnnouncementId, { method: 'PUT', body: JSON.stringify(body) })
                     : await api('/api/admin/announcements', { method: 'POST', body: JSON.stringify(body) });
-                setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-                if (data.code === 0) {
-                    state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
+                if (reportResult('announceAdminMsg', data)) {
                     state.editingAnnouncementId = null;
-                    await fetchAnnouncement();
+                    await fetchNotices();
                     await redraw();
                 }
             }
@@ -2049,11 +3143,6 @@
         async function loadAnnouncementsAdmin() {
             const list = $('announceList');
             if (!list) return;
-            // 操作成功后会发生整页重绘、提示条也会被重建，所以用 flash 把结果重新贴回去
-            if (state.announceFlash) {
-                setMsg('announceAdminMsg', state.announceFlash.text, state.announceFlash.type);
-                state.announceFlash = null;
-            }
             showLoading(list, () => emptyState('公告列表加载中…', '⏳'));
             const data = await api('/api/admin/announcements');
             list.textContent = '';
@@ -2098,10 +3187,8 @@
             const data = await api('/api/admin/announcements/' + id + '/active', {
                 method: 'PUT', body: JSON.stringify({ active: active }),
             });
-            setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) {
-                state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
-                await fetchAnnouncement();
+            if (reportResult('announceAdminMsg', data)) {
+                await fetchNotices();
                 await redraw();
             }
         }
@@ -2109,11 +3196,9 @@
         async function deleteAnnouncement(id) {
             if (!window.confirm('确定删除这条公告吗？此操作不可恢复。')) return;
             const data = await api('/api/admin/announcements/' + id, { method: 'DELETE' });
-            setMsg('announceAdminMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
-            if (data.code === 0) {
+            if (reportResult('announceAdminMsg', data)) {
                 if (state.editingAnnouncementId === id) state.editingAnnouncementId = null;
-                state.announceFlash = { text: '✅ ' + (data.msg || ''), type: 'ok' };
-                await fetchAnnouncement();
+                await fetchNotices();
                 await redraw();
             }
         }
@@ -2181,6 +3266,7 @@
                     });
                     setMsg('ticketMsg', (data.code === 0 ? '✅ ' : '❌ ') + (data.msg || ''), data.code === 0 ? 'ok' : 'err');
                     if (data.code === 0) {
+                        toast('✅ ' + (data.msg || '工单已发起'), 'ok');
                         subject.value = ''; body.value = '';
                         await loadTickets();
                         openTicket(data.id);
@@ -2352,6 +3438,9 @@
                     setMsg('ticketModalMsg', '❌ ' + (res.msg || '发送失败'), 'err');
                     return;
                 }
+                // 弹窗会重新打开，里面的提示条一重建就没了；
+                // 下面的 toast 不在弹窗里（#toastWrap 挂在 body 上），所以不会被重建波及。
+                toast('✅ ' + (res.msg || '已回复'), 'ok');
                 replyBox.value = '';
                 close();
                 openTicket(id);
@@ -2365,13 +3454,124 @@
                     setMsg('ticketModalMsg', '❌ ' + (res.msg || '操作失败'), 'err');
                     return;
                 }
+                toast('✅ ' + (res.msg || '工单状态已更新'), 'ok');
                 close();
                 // 重开弹窗，让用户立刻看到状态变化（按钮也会跟着变）
                 openTicket(id);
             }
         }
 
+        // ==== 装饰：全屏飘落花瓣 ====
+        // 开场先说取舍：这是纯装饰，所以没引第三方库，也不读任何业务数据。
+        // 三条硬约束：
+        //   1. prefers-reduced-motion: reduce 时根本不启动（不是变快变慢，是不跑）
+        //   2. 页面切到后台就暂停，不在看不见的地方烧电
+        //   3. 数量按视口面积算，手机和 4K 屏都不会过载
+        function initSakura() {
+            const canvas = $('sakuraCanvas');
+            if (!canvas) return;
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            const img = new Image();
+            img.src = SAKURA_PETAL_URL;
+
+            let W = 0, H = 0, petals = [], raf = 0, last = 0;
+            const rnd = (a, b) => a + Math.random() * (b - a);
+
+            function makePetal() {
+                // s（缩放）同时决定大小和下落速度：小瓣飘得慢，看上去就更远，
+                // 这样一片平面画布也能出一层浅浅的景深。
+                // 下限从 .45 起：再小在浅色背景上几乎看不见，等于白画。
+                const s = rnd(.45, 1.15);
+                return {
+                    x: rnd(-40, W + 40),
+                    y: rnd(-H * .35, H),
+                    s: s,
+                    vy: rnd(16, 44) * (.35 + s),
+                    vx: rnd(-14, 22),
+                    sway: rnd(12, 34),
+                    swaySpeed: rnd(.5, 1.3),
+                    phase: rnd(0, Math.PI * 2),
+                    rot: rnd(0, Math.PI * 2),
+                    spin: rnd(-.9, .9),
+                    alpha: rnd(.55, .95),
+                };
+            }
+
+            function resize() {
+                // devicePixelRatio：画布的实际像素要比 CSS 像素多，
+                // 否则高分屏上花瓣边缘是糊的。上限截到 2，再多只是白烧 GPU。
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                W = window.innerWidth; H = window.innerHeight;
+                canvas.width = Math.floor(W * dpr);
+                canvas.height = Math.floor(H * dpr);
+                // 画布像素放大过了，这里把坐标系缩回 CSS 像素，
+                // 后面所有坐标就能直接按视口尺寸写，不用处处乘 dpr
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                // 数量按面积算，上下都封顶：窄屏不至于一朵都没有，大屏也不至于下雪
+                const count = Math.max(20, Math.min(66, Math.round(W * H / 13000)));
+                petals = Array.from({ length: count }, makePetal);
+            }
+
+            function draw(dt) {
+                ctx.clearRect(0, 0, W, H);
+                const ready = img.complete && img.naturalWidth > 0;
+                for (const p of petals) {
+                    // 匀速直线下落的雪花看起来很假，叠一层正弦横摆才有飘的感觉
+                    p.phase += p.swaySpeed * dt;
+                    p.y += p.vy * dt;
+                    p.x += (p.vx + Math.sin(p.phase) * p.sway) * dt;
+                    p.rot += p.spin * dt;
+                    // 出界回收：从底部飘走的送回顶部，横着飘出去的直接从另一侧接回来。
+                    // 不做横向回收的话，风一直往一边吹，花瓣会全堆在一侧然后消失
+                    if (p.y > H + 40) { Object.assign(p, makePetal()); p.y = rnd(-H * .2, -30); continue; }
+                    if (p.x < -60) p.x = W + 50;
+                    else if (p.x > W + 60) p.x = -50;
+
+                    if (!ready) continue;
+                    // 基准 54px。petal.png 本身是 328×304，缩到 24~62px 刚好，
+                    // 再小的话在浅色照片上看不见，再大就变成贴纸了
+                    const w = 54 * p.s;
+                    // globalAlpha 和变换都在 save/restore 里改，
+                    // 不这么做会把上面设好的 dpr 变换冲掉
+                    ctx.save();
+                    ctx.globalAlpha = p.alpha;
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(p.rot);
+                    ctx.drawImage(img, -w / 2, -w / 2, w, w);
+                    ctx.restore();
+                }
+            }
+
+            function loop(ts) {
+                if (!last) last = ts;
+                // dt 封顶 50ms：切回标签页时时间戳会跳一大截，
+                // 不封顶花瓣会瞬间闪到屏幕外
+                const dt = Math.min((ts - last) / 1000, .05);
+                last = ts;
+                draw(dt);
+                raf = window.requestAnimationFrame(loop);
+            }
+            function start() { if (!raf) { last = 0; raf = window.requestAnimationFrame(loop); } }
+            function stop() { if (raf) { window.cancelAnimationFrame(raf); raf = 0; } }
+
+            document.addEventListener('visibilitychange', () => { document.hidden ? stop() : start(); });
+            // resize 事件触发很密，防抖一下；重设画布尺寸会把内容清空，
+            // 所以必须重建花瓣，不能只改 canvas.width
+            let rt = 0;
+            window.addEventListener('resize', () => {
+                window.clearTimeout(rt);
+                rt = window.setTimeout(resize, 180);
+            });
+            // 图片没加载完也要先建花瓣，不然首次可见会空一小段时间
+            if (!img.complete) img.addEventListener('load', () => { last = 0; });
+            resize();
+            start();
+        }
+
         // ==== 启动 ====
+        initSakura();
         bootstrap();
     </script>
 </body>

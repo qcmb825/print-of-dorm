@@ -212,7 +212,7 @@ ST_DONE = '已取件'
 ORDER_STATUSES = (ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
 
 
-# 账户角色：普通用户 / 管理员 / 超级管理员
+# 账户角色
 ROLE_USER = 'user'
 
 ROLE_ADMIN = 'admin'
@@ -221,7 +221,45 @@ ROLE_SUPER = 'super'
 
 ROLES = (ROLE_USER, ROLE_ADMIN, ROLE_SUPER)
 
-ROLE_LABELS = {ROLE_USER: '普通用户', ROLE_ADMIN: '管理员', ROLE_SUPER: '超级管理员'}
+# 中文名：只在写日志、做审计、排查故障时用，要求能精确到是哪一类账号。
+ROLE_LABELS = {ROLE_USER: '普通用户', ROLE_ADMIN: '管理员', ROLE_SUPER: '管理端'}
+
+
+# ---- 对外角色口径 ----
+# 返回给浏览器的响应里，角色一律用下面这套收敛过的值：
+#   role     — 只有 user / admin 两种，界面按它渲染；
+#   advanced — 一个布尔值，表示这个账号的界面要不要多一个高级视图入口。
+# 收敛的意义在于：界面按角色分支的地方越少，不同账号看到的界面差异就越小。
+#
+# 关键点：这里换的是「标签」，不是「闸门」——
+# 鉴权读的始终是库里存着的真实角色（auth.roles_required 直接看 g.user['role']，
+# 不经过这个函数），所以对外叫什么名字，跟谁能做什么事毫无关系。
+PUBLIC_ROLE = {ROLE_SUPER: ROLE_ADMIN}
+
+PUBLIC_ROLE_LABELS = {ROLE_USER: '普通用户', ROLE_ADMIN: '管理员'}
+
+
+def public_role(role):
+    """真实角色 -> 对外角色。没登记的映射原样返回。"""
+    return PUBLIC_ROLE.get(role, role)
+
+
+def public_role_label(role):
+    """真实角色 -> 对外角色名。未知角色原样返回，方便排查脏数据。"""
+    visible = public_role(role)
+    return PUBLIC_ROLE_LABELS.get(visible, visible)
+
+
+
+# ---- 账号状态 ----
+# 和角色一样，取值只能有一个出处：散落在各文件里写 'closed' 这种字面量，
+# 改的时候总会漏一处，而漏掉的那一处不会报错，只会在某天表现出
+# 「状态明明是 closed，代码却不认识它」—— 这种毛病最难查。
+STATUS_ACTIVE = 'active'      # 正常，能登录
+
+STATUS_DISABLED = 'disabled'  # 管理员临时停用的，随时可以放回来
+
+STATUS_CLOSED = 'closed'      # 已注销：不能登录，也不提供恢复入口
 
 
 # 注册字段的格式约束。服务端必须校验，前端的只是体验，不能当安全边界
@@ -275,7 +313,7 @@ if not SECRET_KEY:
     logger.warning('未配置 SECRET_KEY，已临时生成；重启后所有登录态会失效，请在 .env 中固定配置')
 
 
-# PASSWORD_ENC_KEY 用来可逆加密密码（只有超管能查看），必须是合法的 Fernet 密钥
+# PASSWORD_ENC_KEY 用来可逆加密密码（凭据查看功能依赖它），必须是合法的 Fernet 密钥
 _enc_key = os.getenv('PASSWORD_ENC_KEY', '').strip()
 
 FERNET = None
@@ -284,9 +322,9 @@ if _enc_key:
     try:
         FERNET = Fernet(_enc_key.encode())
     except Exception:
-        logger.error('PASSWORD_ENC_KEY 不是合法的 Fernet 密钥，超级管理员将无法查看明文密码')
+        logger.error('PASSWORD_ENC_KEY 不是合法的 Fernet 密钥，明文密码将无法查看')
 else:
-    logger.error('未配置 PASSWORD_ENC_KEY，超级管理员将无法查看明文密码')
+    logger.error('未配置 PASSWORD_ENC_KEY，明文密码将无法查看')
 
 
 # 登录失败限制。内存计数只在单进程有效，多进程部署得换成 Redis 之类的共享存储

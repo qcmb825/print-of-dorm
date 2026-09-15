@@ -25,6 +25,7 @@ from config import (
     SECRET_KEY,
     START_MAX_ATTEMPTS,
     START_RETRY_SECONDS,
+    STATUS_ACTIVE,
     UPLOAD_FOLDER,
     _BIND_IN_USE_CODES,
     _BIND_NO_ADDRESS_CODES,
@@ -109,6 +110,28 @@ log_startup_summary()
 
 # 鉴权 / 会话
 
+# CSRF 校验必须排在「读取登录用户」之前。顺序在这里有实际后果：
+# 账号被禁用或注销后，浏览器里那份旧 Cookie 再发写请求时，应该先过安全校验，
+# 再到下面那步把无效会话清掉，最后视图给出干净的 401，前端据此回登录页。
+# 反过来写就会出现：会话先被清掉、令牌跟着没了，返回的却是一句
+# 「请求校验失败，请刷新页面后重试」—— 用户完全看不出真正原因是被停用了。
+@app.before_request
+def csrf_protect():
+    """所有写操作都要带上与会话匹配的 X-CSRF-Token，防止跨站伪造请求（CSRF）。"""
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return
+    expected = session.get('csrf')
+    sent = request.headers.get('X-CSRF-Token', '')
+    if not expected or not sent or not secrets.compare_digest(expected, sent):
+        # 令牌对不上一般就两种情况：页面放太久令牌过期，或者有人在跨站伪造请求。
+        # 两种都值得记一笔，后者要是密集出现，就是被攻击的信号。
+        security_event('csrf_failed',
+                       'method=%s path=%s has_session_token=%s has_header_token=%s'
+                       % (request.method, request.path, bool(expected), bool(sent)))
+        return jsonify({'code': 403, 'msg': '请求校验失败，请刷新页面后重试'}), 403
+
+
+
 @app.before_request
 def load_current_user():
     """每个请求开头把当前登录用户放进 g.user，后面的视图直接用。"""
@@ -125,9 +148,9 @@ def load_current_user():
         ''', (uid,)).fetchone()
     finally:
         conn.close()
-    if row is None or row['status'] != 'active':
-        session.clear()  # 账号被删或被禁用后，已登录的 Cookie 立刻失效
-        logger.info('会话已失效：uid=%s 账号不存在或已被禁用 ip=%s', uid, client_ip())
+    if row is None or row['status'] != STATUS_ACTIVE:
+        session.clear()  # 账号被注销、被禁用之后，已登录的 Cookie 立刻失效
+        logger.info('会话已失效：uid=%s 账号不存在、已禁用或已注销 ip=%s', uid, client_ip())
         return
     g.user = dict(row)
 
@@ -189,23 +212,6 @@ def log_request(resp):
     except Exception:
         logger.exception('写访问日志失败')  # 记日志本身不能影响正常响应
     return resp
-
-
-
-@app.before_request
-def csrf_protect():
-    """所有写操作都要带上与会话匹配的 X-CSRF-Token，防止跨站伪造请求（CSRF）。"""
-    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
-        return
-    expected = session.get('csrf')
-    sent = request.headers.get('X-CSRF-Token', '')
-    if not expected or not sent or not secrets.compare_digest(expected, sent):
-        # 令牌对不上一般就两种情况：页面放太久令牌过期，或者有人在跨站伪造请求。
-        # 两种都值得记一笔，后者要是密集出现，就是被攻击的信号。
-        security_event('csrf_failed',
-                       'method=%s path=%s has_session_token=%s has_header_token=%s'
-                       % (request.method, request.path, bool(expected), bool(sent)))
-        return jsonify({'code': 403, 'msg': '请求校验失败，请刷新页面后重试'}), 403
 
 
 
