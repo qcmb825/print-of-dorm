@@ -10,8 +10,10 @@ __pycache__/
 # .md 文档不提交
 *.md
 
-# 例外：README.md 要留着
+# 例外：README / AGENTS / ROADMAP 要留着
 !README.md
+!AGENTS.md
+!ROADMAP.md
 
 # 运行日志里有客户端 IP、账号和操作记录，算隐私数据，不要提交到公开仓库
 logs/
