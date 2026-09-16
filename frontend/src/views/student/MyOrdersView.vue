@@ -3,7 +3,7 @@
  *  自动刷新用 useIntervalFn，并在页面不可见时暂停 —— 后台标签页不该继续发请求。 */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
-import { Clock, Inbox, RefreshCw } from '@lucide/vue'
+import { Clock, Inbox, RefreshCw, Trash2 } from '@lucide/vue'
 import { NButton, NEmpty, NSkeleton } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { orderApi } from '@/api/endpoints'
@@ -17,7 +17,7 @@ import {
   priceLabel,
   shortTime,
 } from '@/utils/format'
-import { notify } from '@/composables/feedback'
+import { confirmAction, notify } from '@/composables/feedback'
 
 const orders = ref<Order[]>([])
 const loading = ref(true)
@@ -68,6 +68,59 @@ onMounted(async () => {
   await load()
   resume()
 })
+
+/* ---------- 撤回 ----------
+ *  传错文件、参数选错，在「还没人接单」之前都是无害的，让本人自己收起
+ *  比找管理员删更省事。一旦有人接了，这单就在别人的工作里了（可能已经下载、
+ *  已经在打印），单子凭空消失最轻的结果也是白打一份纸 —— 那种情况该走「释放」，
+ *  把单退回答待接单池，而不是让整条记录不存在。
+ *  下面这个判定跟后端 `api_withdraw_order` 的两道闸门一一对应。 */
+
+/** 撤回按钮点不动的原因；null 表示可以点。
+ *  两句话分别对应后端的 400「订单已经被接取，无法撤回」和 400「订单已完成，不能撤回」。 */
+function withdrawBlockReason(order: Order): string | null {
+  if (order.status === '已取件') return '这单已经取走了，不能再撤回'
+  if (order.claimed_by !== null) return '已经有管理员接单了，需要撤回请到工单里说一声'
+  return null
+}
+
+/** 正在撤回的订单 id。撤回是删数据、又没有可供对照的进度，
+ *  点了必须立刻有反馈，否则用户会连点，第二次就撞 404 了。 */
+const withdrawingId = ref<number | null>(null)
+
+async function withdraw(order: Order): Promise<void> {
+  // 按钮已经置灰，这里再挡一道：提示直接用上面算好的原因，
+  // 两处文案分叉的话，以后改一处就会对不上。
+  const blocked = withdrawBlockReason(order)
+  if (blocked) {
+    notify.warning(blocked)
+    return
+  }
+  // 二次确认，并且把文件名和单号摆在里面：一屏订单长得都差不多，
+  // 确认框只写「确定要撤回吗」等于没问。文件和记录都会没，先把后果说清楚。
+  const ok = await confirmAction({
+    title: '撤回这份订单？',
+    content: `「${order.filename}」#${order.id} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
+    positiveText: '撤回订单',
+    negativeText: '再想想',
+  })
+  if (!ok) return
+
+  withdrawingId.value = order.id
+  try {
+    await orderApi.withdraw(order.id)
+    notify.success('订单已撤回')
+    // 用静默刷新：列表里少一项，但整页转圈会让人以为跳页了
+    await load(true)
+  } catch (error) {
+    // 409 是这期间刚好被人接走了，照原样把后端那句中文透出来，
+    // 再补一次刷新，界面就回到真实状态了。
+    notify.error(error instanceof ApiError ? error.message : '撤回失败')
+    await load(true)
+  } finally {
+    withdrawingId.value = null
+  }
+}
 </script>
 
 <template>
@@ -183,6 +236,23 @@ onMounted(async () => {
             提交 {{ fullTime(order.create_time) }}
           </span>
           <span v-if="order.claimer_nickname">接单：{{ order.claimer_nickname }}</span>
+          <!-- 已取件的单不显示这个入口：终态没什么可撤回的，摆一个永远灰着的按钮只是噪音。
+               其余情况一律显示，不能点的时候用 title 说明原因 —— 按钮直接消失的话，
+               学生会以为功能没了，而不是「这一单现在不能撤」。 -->
+          <NButton
+            v-if="order.status !== '已取件'"
+            class="ml-auto"
+            size="tiny"
+            quaternary
+            type="error"
+            :disabled="withdrawBlockReason(order) !== null"
+            :loading="withdrawingId === order.id"
+            :title="withdrawBlockReason(order) ?? undefined"
+            @click="withdraw(order)"
+          >
+            <template #icon><Trash2 :size="12" /></template>
+            撤回
+          </NButton>
         </div>
       </li>
     </TransitionGroup>

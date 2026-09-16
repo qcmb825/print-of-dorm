@@ -1,4 +1,11 @@
-import type { ColorType, Duplex, OrderStatus, Role, TicketStatus } from '@/api/types'
+import type {
+  ColorType,
+  Duplex,
+  OrderLogAction,
+  OrderStatus,
+  Role,
+  TicketStatus,
+} from '@/api/types'
 
 /** 后端给的时间已经是 datetime(col,'localtime') 的 'YYYY-MM-DD HH:MM:SS'，不用再转换区。 */
 export function shortTime(value: string | null | undefined): string {
@@ -52,6 +59,34 @@ export const ROLE_BG_VAR: Record<Role, string> = {
 
 export const COLOR_TYPE_LABEL: Record<ColorType, string> = { black: '黑白', color: '彩色' }
 export const DUPLEX_LABEL: Record<Duplex, string> = { single: '单面', double: '双面' }
+
+/** 订单操作留痕的动作 → 令牌色（时间线上的圆点）。
+ *
+ *  配色不是装饰：「谁把单撤了、谁释放了别人的单」这类要一眼看见（err / warn），
+ *  日常推进（接单、改状态）用信息色和中性别，否则一整屏都在喊叫。
+ *
+ *  类型写成 Record<OrderLogAction, string> 而不是松散对象：后端一旦新增动作，
+ *  TS 会在这里报「少了一项」—— 写成 `string` 键的话，新动作只会拿不到颜色，
+ *  而那种错不报异常，只是时间线上那一行光秃秃的。 */
+export const LOG_ACTION_COLOR: Record<OrderLogAction, string> = {
+  create: 'var(--text-tertiary)',
+  claim: 'var(--info)',
+  release: 'var(--warn)',
+  price: 'var(--primary)',
+  reprice: 'var(--warn)',
+  status: 'var(--info)',
+  withdraw: 'var(--err)',
+  download: 'var(--ok)',
+}
+
+/** 文件大小。打印店的场景里没人关心它是 12.3 KB 还是 12.4 KB，
+ *  所以到 KB / MB 就到头了，不做到字节。null 是「文件已经不在了」。 */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
   open: '进行中',

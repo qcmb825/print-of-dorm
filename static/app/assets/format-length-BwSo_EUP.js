@@ -1,0 +1,1 @@
+var e=/^(\d|\.)+$/,t=/(\d|\.)+/;function n(n,{c:r=1,offset:i=0,attachPx:a=!0}={}){if(typeof n==`number`){let e=(n+i)*r;return e===0?`0`:`${e}px`}if(typeof n==`string`){if(e.test(n)){let e=(Number(n)+i)*r;return a?e===0?`0`:`${e}px`:`${e}`}{let e=t.exec(n);return e?n.replace(t,String((Number(e[0])+i)*r)):n}}return n}export{n as t};

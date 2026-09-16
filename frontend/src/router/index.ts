@@ -42,6 +42,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的订单' },
       },
       {
+        path: 'board',
+        name: 'student-board',
+        component: () => import('@/views/student/BoardView.vue'),
+        meta: { title: '服务数据' },
+      },
+      {
         path: 'tickets',
         name: 'student-tickets',
         component: () => import('@/views/student/TicketsView.vue'),
@@ -61,6 +67,15 @@ const routes: RouteRecordRaw[] = [
         name: 'staff-orders',
         component: () => import('@/views/staff/OrdersView.vue'),
         meta: { title: '订单台' },
+      },
+      {
+        // 详情页是订单台的子页面，所以 `staff: true` 从父级继承，这里不用再写一遍。
+        // 单独一条路由而不是弹窗：详情要能被分享、被刷新、被浏览器后退键退出 ——
+        // 弹窗这三样都做不到（刷新一下就回到了列表，链接发给同事也只看到列表）。
+        path: 'orders/:id',
+        name: 'staff-order-detail',
+        component: () => import('@/views/staff/OrderDetailView.vue'),
+        meta: { title: '订单详情' },
       },
       {
         path: 'dashboard',

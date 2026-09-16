@@ -96,6 +96,21 @@ function exitAdvanced(): void {
 
 
 const currentPath = computed(() => route.path)
+
+/** 导航高亮只认「当前在哪一栏」，而不是「当前在哪一个地址」。
+ *
+ *  订单详情页（/staff/orders/12）挂在订单台底下，用整段字符串比对的话，
+ *  点进详情页整栏里一个都不亮 —— 看起来像「这一页不属于任何地方」，
+ *  而且不报错、类型检查也查不出来。
+ *  前缀匹配必须带上斜杠：只比 `startsWith(path)` 的话，
+ *  将来多一个 /staff/orders-archive 就会被顺手点亮。 */
+const activeNav = computed(() => {
+  const path = currentPath.value
+  if (navItems.value.some((item) => item.to === path)) return path
+  const parent = path.slice(0, path.lastIndexOf('/'))
+  return navItems.value.some((item) => item.to === parent) ? parent : path
+})
+
 const currentTitle = computed(() => (route.meta.title as string | undefined) ?? '管理控制台')
 
 onMounted(() => {
@@ -120,9 +135,9 @@ onMounted(() => {
           :key="item.to"
           :to="item.to"
           class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
-          :class="currentPath === item.to && 'nav-link--active'"
+          :class="activeNav === item.to && 'nav-link--active'"
           :style="
-            currentPath === item.to
+            activeNav === item.to
               ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
               : { color: 'var(--text-tertiary)' }
           "
@@ -184,9 +199,9 @@ onMounted(() => {
                 :key="item.to"
                 :to="item.to"
                 class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
-                :class="currentPath === item.to && 'nav-link--active'"
+                :class="activeNav === item.to && 'nav-link--active'"
                 :style="
-                  currentPath === item.to
+                  activeNav === item.to
                     ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
                     : { color: 'var(--text-tertiary)' }
                 "

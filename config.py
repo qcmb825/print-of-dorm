@@ -276,6 +276,47 @@ ORDER_STATUSES = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
 # 那单的钱已经在界面上了，再显示成待计费，用户看到的费用就和状态对不上。
 ORDER_STATUSES_MANUAL = (ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
 
+# ---- 订单操作留痕（order_logs）----
+# 订单详情页要回答的是「这一单被谁动过、动了什么」。光看 orders 表那几个
+# 时间戳列（claim_time / price_time / update_time）只能知道「发生过什么」，
+# 答不出「谁改的、从什么改成什么」—— 状态被连改两次，中间那一步就永远查不到了。
+# 所以每个会改变订单的动作都往 order_logs 里写一条。
+#
+# 动作名收在这里的理由和状态枚举一模一样：前端按 action 取图标和配色，
+# 散着写成字面量的话，哪一处拼错了不会报错，只会让那条记录在时间线上
+# 变成一行没有样式的东西 —— 又是那种只能靠肉眼发现的毛病。
+ORDER_LOG_CREATE = 'create'      # 下单（上传成功、订单落库）
+ORDER_LOG_CLAIM = 'claim'        # 接单
+ORDER_LOG_RELEASE = 'release'    # 释放回待接单池
+ORDER_LOG_PRICE = 'price'        # 首次计费
+ORDER_LOG_REPRICE = 'reprice'    # 改价（计过一次之后再改）
+ORDER_LOG_STATUS = 'status'      # 手动改状态
+ORDER_LOG_WITHDRAW = 'withdraw'  # 下单人自己撤回
+ORDER_LOG_DOWNLOAD = 'download'  # 下载了订单文件
+
+ORDER_LOG_ACTIONS = (
+    ORDER_LOG_CREATE, ORDER_LOG_CLAIM, ORDER_LOG_RELEASE,
+    ORDER_LOG_PRICE, ORDER_LOG_REPRICE, ORDER_LOG_STATUS,
+    ORDER_LOG_WITHDRAW, ORDER_LOG_DOWNLOAD,
+)
+
+# 动作的中文名由**服务端**给（响应里带 action_label），前端只管拿来显示。
+# 这和状态文案不放在前端翻译是同一个道理：两处各存一份映射，改文案时必漏一处，
+# 而漏掉的那一处不会报错，只是界面上写着个没人认识的词。
+ORDER_LOG_LABELS = {
+    ORDER_LOG_CREATE: '提交订单',
+    ORDER_LOG_CLAIM: '接单',
+    ORDER_LOG_RELEASE: '释放订单',
+    ORDER_LOG_PRICE: '计费',
+    ORDER_LOG_REPRICE: '修改金额',
+    ORDER_LOG_STATUS: '修改状态',
+    ORDER_LOG_WITHDRAW: '撤回订单',
+    ORDER_LOG_DOWNLOAD: '下载文件',
+}
+
+# detail 是给人看的一句话，不是给程序解析的字段，所以卡个长度就够了。
+ORDER_LOG_DETAIL_MAX = 200
+
 # 计费金额
 # 上限给得比现实高得多（够打印几千页），目的只是挡住手滑多打几个零和恶意超长数字。
 PRICE_MAX_YUAN = 99999.99

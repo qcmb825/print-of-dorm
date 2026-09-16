@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 学生端布局：手机优先 —— 顶部栏 + 内容区 + 底部标签栏，宽屏时标签栏挪到顶部。 */
 import { computed, onMounted } from 'vue'
-import { ClipboardList, LayoutDashboard, MessageSquare, Upload } from '@lucide/vue'
+import { ClipboardList, LayoutDashboard, MessageSquare, TrendingUp, Upload } from '@lucide/vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
@@ -17,6 +17,8 @@ const announcement = useAnnouncementStore()
 const navItems = computed(() => [
   { to: '/upload', label: '下单打印', icon: Upload },
   { to: '/my-orders', label: '我的订单', icon: ClipboardList },
+  // 「服务数据」排在中间：它是「看看大家的」那一类，跟两头的「我的」和「管理」分开
+  { to: '/board', label: '服务数据', icon: TrendingUp },
   { to: '/tickets', label: '问题反馈', icon: MessageSquare },
   // 管理员也会走到学生端（比如自己下单测试），给他们一条回控制台的入口
   ...(auth.isStaff ? [{ to: '/staff/orders', label: '管理控制台', icon: LayoutDashboard }] : []),
@@ -99,7 +101,11 @@ onMounted(() => {
         :style="currentPath === item.to ? { color: 'var(--primary)' } : { color: 'var(--text-quaternary)' }"
       >
         <component :is="item.icon" :size="19" />
-        <span class="text-[11px] font-semibold">{{ item.label }}</span>
+        <!-- w-full + truncate 是给「管理员看学生端」那种情形兜底的：
+             他的标签栏比别人多一格（6 列），320px 屏上每列只剩 ~52px，
+             「管理控制台」五个字放不下。不加的话是硬溢出，会把整页顶出横向滚动条，
+             而截断只是这几个字变成「管理控…」—— 图标还在，认得出是哪个入口。 -->
+        <span class="w-full truncate text-center text-[11px] font-semibold">{{ item.label }}</span>
       </RouterLink>
     </nav>
   </div>

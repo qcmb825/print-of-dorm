@@ -16,10 +16,12 @@ import type {
   DashboardStats,
   MeResponse,
   MyOrdersResponse,
+  OrderDetailResponse,
   OrderListResponse,
   OrderStatus,
   RestoreResponse,
   Role,
+  ServiceBoard,
   TicketDetailResponse,
   TicketListResponse,
   TicketMessagesResponse,
@@ -53,6 +55,16 @@ export const orderApi = {
     return upload<UploadResponse>('/api/upload', form, onProgress)
   },
   mine: () => get<MyOrdersResponse>('/api/my-orders'),
+  /** 撤回自己下的、还没被接单的订单。服务端会把整条记录和落盘的文件一起删掉，
+   *  「已被接单」（400）和「已取件 / 状态刚变」（400 / 409）都会被挡回来。
+   *  界面上的按钮置灰只管手滑，真正把关的是那几个状态码。 */
+  withdraw: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/withdraw`),
+}
+
+/* 服务数据：全站公开口径的汇总 + 下单榜。登录即可看，响应里没有金额、
+   别人的昵称也已由服务端打码 —— 这两件事都在后端做，前端拿不到原文。 */
+export const boardApi = {
+  load: () => get<ServiceBoard>('/api/board'),
 }
 
 /* 大文件分片上传。分片尺寸由服务端的 CHUNK_SIZE 定，前端跟着它的返回值走，不自己算。 */
@@ -82,6 +94,10 @@ export const chunkApi = {
 export const staffOrderApi = {
   list: (params: { page: number; size: number; status?: string; scope?: string }) =>
     get<OrderListResponse>('/api/orders', params),
+  /** 订单详情：完整字段 + 操作留痕时间线。
+   *  单开一条接口而不是往列表里塞：详情要顺手 stat 一下文件、再取一串留痕，
+   *  塞进列表就变成每页 20 次磁盘调用 + 一次 N+1 查询（见后端 api_order_detail）。 */
+  detail: (id: number) => get<OrderDetailResponse>(`/api/order/${id}/detail`),
   claim: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/claim`),
   release: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/release`),
   setStatus: (id: number, status: OrderStatus) =>

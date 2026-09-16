@@ -50,6 +50,30 @@ def display_name(nickname, status):
 
 
 
+def mask_nickname(nickname):
+    """榜单展示用的打码昵称：首尾各留一个字，中间一律换成 *。
+
+    为什么要打码 —— 榜单是给所有登录用户看的，它把「某人打了多少单」
+    变成了一条可以被同学对号入座的信息。昵称在整个系统里是用户注册时自己填的，
+    除了公告和工单（那两处本来就带名字），别的地方都是本人视角，它并不天然是公开字段，
+    换到公开场合就得先遮一层。
+
+    首尾留字是为了还能认出是张三还是小李：打码要的效果是让人没法一眼看穿，
+    不是把榜单变成一排看不出区别的星号。
+
+    两个字的名字只遮后一个（「小明」→「小*」）。
+    只留首字和留首尾的暴露程度是一样的，而「**」看着像系统出错了。
+    """
+    if not nickname:
+        return nickname
+    if len(nickname) <= 1:
+        return '*'
+    if len(nickname) == 2:
+        return nickname[0] + '*'
+    return nickname[0] + '*' * (len(nickname) - 2) + nickname[-1]
+
+
+
 def generate_pickup_code(conn, length=4):
     """生成不重复的数字取件码。"""
     for _ in range(50):

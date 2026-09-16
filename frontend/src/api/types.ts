@@ -133,6 +133,75 @@ export interface MyOrdersResponse extends ApiEnvelope {
   orders: Order[]
 }
 
+/** 订单操作留痕的动作名，与后端 config.ORDER_LOG_* 一一对应。
+ *
+ *  中文名（action_label）由服务端给，这里只用它取颜色和图标 ——
+ *  两边各存一份中文映射的话，改文案时必漏一处，而漏掉的那一处不报错，
+ *  只是时间线上那一行没有颜色。
+ *
+ *  动作集合一旦增加，这里的联合类型和 format.ts 的 LOG_ACTION_COLOR 都要跟着加：
+ *  TS 会帮忙把所有取色的地方报出来，所以别把它写成 string。 */
+export type OrderLogAction =
+  | 'create'
+  | 'claim'
+  | 'release'
+  | 'price'
+  | 'reprice'
+  | 'status'
+  | 'withdraw'
+  | 'download'
+
+/** 一条订单操作记录。actor_* 是**动作发生当时**的身份 ——
+ *  事后拿 users.role 反推的话，历史记录会跟着账号现状一起变。 */
+export interface OrderLog {
+  id: number
+  action: OrderLogAction
+  action_label: string
+  detail: string | null
+  actor_id: number | null
+  /** 已经过对外口径转换：这里只会是 user / admin，不会出现 super */
+  actor_role: Role | null
+  actor_role_label: string
+  actor_nickname: string | null
+  create_time: string | null
+}
+
+/** 订单详情。比列表多的是「这一单是谁下的、文件还在不在、经历过什么」。
+ *  刻意没有 file_path —— 服务端只回文件大小，绝对路径不出库。 */
+export interface OrderDetail {
+  id: number
+  filename: string
+  color_type: ColorType | null
+  duplex: Duplex | null
+  remark: string | null
+  status: OrderStatus
+  pickup_code: string | null
+  user_id: number | null
+  owner_nickname: string | null
+  owner_real_name: string | null
+  owner_student_id: string | null
+  owner_dorm: string | null
+  claimed_by: number | null
+  claimer_nickname: string | null
+  price: number | null
+  priced_by: number | null
+  pricer_nickname: string | null
+  create_time: string | null
+  update_time: string | null
+  claim_time: string | null
+  price_time: string | null
+  /** 上传时的大小（字节）；文件已被清掉时是 null */
+  file_size: number | null
+  /** 文件还在不在磁盘上。false 时界面上要给个明确提示 ——
+   *  「订单还在、文件没了」是运维要知道的事，不该只是一个失效的下载按钮。 */
+  file_exists: boolean
+}
+
+export interface OrderDetailResponse extends ApiEnvelope {
+  order: OrderDetail
+  logs: OrderLog[]
+}
+
 export interface UploadResponse extends ApiEnvelope {
   order_id: number
   pickup_code: string
@@ -228,6 +297,53 @@ export interface DashboardStats extends ApiEnvelope {
   }
   daily: { date: string; count: number }[]
   top_claimers: { nickname: string; count: number }[]
+}
+
+/** 服务数据（学生端「服务数据」页）。字段名逐个对应 routes/orders.py 的 api_board。
+ *
+ *  别拿 DashboardStats 来复用：这条响应里**刻意没有金额**（revenue 只在管理端那份里），
+ *  复用了类型就等于给前端开了个「顺手也把金额画出来」的口子。
+ *  两边的字段名也确实不一样（比如这边叫 service、那边叫 users）。 */
+export interface ServiceBoard extends ApiEnvelope {
+  service: {
+    orders_total: number
+    orders_today: number
+    orders_7d: number
+    orders_30d: number
+    /** 已注册且未注销的账号数（注销的账号不算「同学」） */
+    users_total: number
+  }
+  queue: {
+    /** 还没人接过的单 */
+    unclaimed: number
+    /** 五档状态各剩多少单。键就是中文状态本身（后端给全 5 档，没单的是 0） */
+    by_status: Record<OrderStatus, number>
+  }
+  daily: { date: string; count: number }[]
+  /** 两个榜（近 30 天 / 累计）一次性都给，切换不再发请求：
+   *  两个查询都小，而切一下就要转圈的样子更像是页面卡住了。 */
+  boards: Board[]
+}
+
+export interface Board {
+  key: 'recent' | 'all'
+  label: string
+  /** 榜上的英文小注，跟别的页面一样当装饰用 */
+  hint: string
+  /** 前 10 名。名次已经排好，`rank` 直接用，前端不要再自己按数组下标算 ——
+   *  后端并列时的排序规则（同单数按最近下单）在这里是看不出来的。 */
+  top: BoardEntry[]
+  /** 我在这张榜上的位置。没下过单时 count 是 0、rank 是 1，不是 null */
+  me: { count: number; rank: number; ranked: number }
+}
+
+export interface BoardEntry {
+  rank: number
+  /** 别人的昵称已由**服务端**打码（张*三），只有 is_me 那行是完整的 ——
+   *  之所以不在前端打码：前端能拿到的东西，网络面板里也拿得到。 */
+  nickname: string
+  count: number
+  is_me: boolean
 }
 
 export type AnnounceFont = 'system' | 'songti' | 'heiti' | 'kaiti' | 'mono'

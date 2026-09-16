@@ -7,7 +7,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from config import DATABASE_PATH, ROLE_SUPER, ST_DONE, ST_UNPRICED, STATUS_CLOSED, logger
+from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ROLE_SUPER, ST_DONE, ST_UNPRICED,
+                    STATUS_CLOSED, logger)
 from security import audit_action, make_password_records
 
 
@@ -27,6 +28,29 @@ def get_db():
 
 
 
+def log_order_event(conn, order_id, actor_id, actor_role, action, detail=''):
+    """往 order_logs 里写一条订单操作留痕。
+
+    这个函数**不 commit**，也不自己开连接 —— 事务归调用方管。
+    原因：留痕必须和它记录的那个动作同生共死。改状态和写留痕分成两个事务的话，
+    中间那一下崩溃就会留下「状态变了、但没人知道是谁改的」，
+    而订单详情页里的操作记录正是拿来回答这个问题的，缺一条它就不成立了。
+
+    操作人按 id + 当时的角色一起存：角色会变（普通管理员后来升成默认管理员），
+    事后拿 users.role 去反推，历史记录就会跟着一起变，
+    变成「三月份的记录显示他是默认管理员」这种谁都解释不清的事。
+    这里存的是**动作发生当时**的身份。
+
+    detail 只是给人看的一句话，不含密码、明文和服务器绝对路径
+    （沿项目惯例：这类内容一律不进日志，也不进留痕）。
+    """
+    conn.execute('''
+        INSERT INTO order_logs (order_id, actor_id, actor_role, action, detail)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (order_id, actor_id, actor_role, action, (detail or '')[:ORDER_LOG_DETAIL_MAX]))
+
+
+
 # 数据库结构版本，用来判断是否要做一次性迁移
 # v2 -> v3：新增了联系方式列、工单表和公告表，全是加东西，老数据一概保留
 # v3 -> v4：users 表那三个列级 UNIQUE 换成「部分唯一索引」，
@@ -37,7 +61,12 @@ def get_db():
 #          只加新表、不动老表，所以没有迁移函数 —— CREATE TABLE IF NOT EXISTS 本身幂等。
 # v6 -> v7：orders 表新增计费三列（price / priced_by / price_time），
 #          同样是纯加列，没有重建表，也就不需要整库备份。
-SCHEMA_VERSION = '7'
+# v7 -> v8：新增订单操作留痕表 order_logs。又是只加新表、不动老表，
+#          所以同样没有迁移函数（老库启动时那条 CREATE TABLE IF NOT EXISTS 直接补上）。
+#          历史订单在这个新表里是空的 —— 那些步骤本来就没被记下来，
+#          不要为了「看起来完整」去用 orders 的列倒推补几条，
+#          倒推出来的时间和操作人只会比空白更容易看错。
+SCHEMA_VERSION = '8'
 
 
 
@@ -396,6 +425,31 @@ def init_database():
                 update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # 订单操作留痕：一条订单发生过什么、谁做的、从什么变成什么。
+        #
+        # 为什么不塞进 tickets —— 工单是**双向对话**（学生和管理员一来一回），
+        # 而留痕是单向的流水，没有「谁在跟谁说话」这回事，也没人会去回它。
+        # 混在一张表里，查工单的地方都要多问一句「这条是不是自动记的」。
+        #
+        # 为什么不复用 security 的日志文件 —— 那是文本日志，按天滚动、
+        # 会被清理，而且靠正则去解析它才能拼出一单的历史，改一行日志格式就全断了。
+        # 订单详情页要的是「稳定可查」，所以它得进库。
+        #
+        # actor_role 存的是动作发生当时的角色，不是外键 —— 见 log_order_event 的说明。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                actor_id INTEGER,
+                actor_role TEXT,
+                action TEXT NOT NULL,
+                detail TEXT,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # 详情页永远是「按订单号取这几条」，所以索引直接建在 order_id 上。
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_order ON order_logs(order_id)')
 
         cursor.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",

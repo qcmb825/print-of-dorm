@@ -11,20 +11,33 @@ from pathlib import Path
 from auth import login_required, roles_required
 from config import (
     ALLOWED_EXTENSIONS,
+    ORDER_LOG_CLAIM,
+    ORDER_LOG_CREATE,
+    ORDER_LOG_DOWNLOAD,
+    ORDER_LOG_LABELS,
+    ORDER_LOG_PRICE,
+    ORDER_LOG_RELEASE,
+    ORDER_LOG_REPRICE,
+    ORDER_LOG_STATUS,
+    ORDER_LOG_WITHDRAW,
     ORDER_STATUSES,
     ORDER_STATUSES_MANUAL,
     ROLE_ADMIN,
     ROLE_SUPER,
+    STATUS_CLOSED,
     ST_DONE,
     ST_PENDING,
     ST_READY,
     ST_UNPRICED,
     UPLOAD_FOLDER,
     logger,
+    public_role,
+    public_role_label,
 )
-from db import get_db
+from db import get_db, log_order_event
 from security import audit_action, client_ip, hit_limit, security_event
-from utils import allowed_file, display_name, generate_pickup_code, parse_price, positive_int
+from utils import (allowed_file, display_name, generate_pickup_code, mask_nickname,
+                   parse_price, positive_int)
 
 bp = Blueprint('orders', __name__)
 
@@ -34,6 +47,31 @@ bp = Blueprint('orders', __name__)
 # 数字给得比较宽松，正常一口气传十几份材料也碰不到它。
 UPLOAD_WINDOW_SECONDS = 60
 UPLOAD_MAX_IN_WINDOW = 20
+
+
+def log_event(order_id, action, detail='', conn=None):
+    """给订单写一条操作留痕。
+
+    传了 conn 就并入调用方的事务 —— 改状态和写留痕必须一起成功或一起失败，
+    否则会留下「状态变了、却查不到是谁改的」，而详情页的操作记录正是
+    拿来回答这个问题的（见 db.log_order_event 里的说明）。
+
+    不传 conn 时自己开一个短连接，给下载这类**只读**操作留痕用：它没有事务可搭，
+    而且留痕失败也不该把用户的下载搞失败 —— 所以这里只记一条 warning。
+    """
+    if conn is not None:
+        log_order_event(conn, order_id, g.user['id'], g.user['role'], action, detail)
+        return
+    short = None
+    try:
+        short = get_db()
+        log_order_event(short, order_id, g.user['id'], g.user['role'], action, detail)
+        short.commit()
+    except sqlite3.Error:
+        logger.warning('订单 #%s 的操作留痕写入失败（动作=%s）', order_id, action)
+    finally:
+        if short is not None:
+            short.close()
 
 
 def create_order_from_saved_file(original_name, save_path, color, duplex, remark):
@@ -73,6 +111,10 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
         else:
             # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
             raise RuntimeError('取件码连续 5 次都与其他订单重复')
+        # 留痕和订单在同一个事务里。订单落了库却没有「谁什么时候传的」这一条，
+        # 详情页的操作记录就得从半路开始讲 —— 而第一条恰恰是最该有的那条。
+        log_event(cursor.lastrowid, ORDER_LOG_CREATE,
+                  '上传文件「%s」并提交打印' % original_name, conn=conn)
         conn.commit()
         return cursor.lastrowid, pickup_code
     except Exception:
@@ -216,6 +258,94 @@ def api_orders():
 
 
 
+# 订单详情：比列表多给一层「这一单经历了什么」。
+#
+# 为什么不趁列表一次给全 —— 详情的开销在两件事上：一是每条订单都要去文件系统
+# stat 一次（列表一页 20 条就是 20 次磁盘调用，纯浪费），二是操作留痕是
+# 「按订单取一串行」，塞进列表就变成 N+1 查询。分成两条接口之后，
+# 列表照旧只查一次库，这份代价只在真的点进去时才付。
+#
+# 只给管理员，不给学生端：这里连下单人的学号、姓名都列了出来，那是后台口径。
+# 学生看自己的单用不上这些（/api/my-orders 已经给了全部展示字段），
+# 顺手把它开给所有人，等于把一份「谁给谁打了什么」的花名册铺开。
+@bp.route('/api/order/<int:order_id>/detail')
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_order_detail(order_id):
+    conn = get_db()
+    try:
+        row = conn.execute('''
+            SELECT o.id, o.filename, o.file_path, o.color_type, o.duplex, o.remark,
+                   o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
+                   datetime(o.create_time, 'localtime') AS create_time,
+                   datetime(o.update_time, 'localtime') AS update_time,
+                   datetime(o.claim_time, 'localtime') AS claim_time,
+                   datetime(o.price_time, 'localtime') AS price_time,
+                   owner.nickname AS owner_nickname, owner.real_name AS owner_real_name,
+                   owner.student_id AS owner_student_id, owner.dorm AS owner_dorm,
+                   owner.status AS owner_status,
+                   claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
+                   pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
+            FROM orders o
+            LEFT JOIN users owner ON owner.id = o.user_id
+            LEFT JOIN users claimer ON claimer.id = o.claimed_by
+            LEFT JOIN users pricer ON pricer.id = o.priced_by
+            WHERE o.id = ?
+        ''', (order_id,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+
+        detail = dict(row)
+        # file_path 只用来回一个「文件还在不在、多大」，拿到结果就地丢掉 ——
+        # 服务器绝对路径没有任何理由进响应体（下载接口那边是同一口径）。
+        path = Path(detail.pop('file_path'))
+        try:
+            detail['file_size'] = path.stat().st_size
+            detail['file_exists'] = True
+        except OSError:
+            # 文件被外部清理过是可能的（运维手动清理、误删）。这里不报错：
+            # 「订单还在、文件没了」本身就是要让人看见的一条信息 ——
+            # 详情页会明确标出来，比对着一个下载按钮点半天强。
+            detail['file_size'] = None
+            detail['file_exists'] = False
+
+        # owner_status / claimer_status / pricer_status 是「拼标记用的原料」，
+        # 拼完就 pop 掉，不让它们混进响应体 —— 前端要的只是展示用的名字。
+        detail['owner_nickname'] = display_name(detail['owner_nickname'], detail.pop('owner_status', None))
+        detail['claimer_nickname'] = display_name(detail['claimer_nickname'], detail.pop('claimer_status', None))
+        detail['pricer_nickname'] = display_name(detail['pricer_nickname'], detail.pop('pricer_status', None))
+
+        log_rows = conn.execute('''
+            SELECT l.id, l.action, l.detail, l.actor_id, l.actor_role,
+                   datetime(l.create_time, 'localtime') AS create_time,
+                   u.nickname AS actor_nickname, u.status AS actor_status
+            FROM order_logs l
+            LEFT JOIN users u ON u.id = l.actor_id
+            WHERE l.order_id = ?
+            ORDER BY l.id DESC
+        ''', (order_id,)).fetchall()
+    finally:
+        conn.close()
+
+    logs = []
+    for item in log_rows:
+        entry = dict(item)
+        # 倒序：翻详情的人第一个想知道的是「这单现在到哪一步了、上一步是谁做的」，
+        # 而不是「三天前是谁传的」。时间线顺着往下读也不难，往上翻旧账才难。
+        entry['action_label'] = ORDER_LOG_LABELS.get(entry['action'], entry['action'])
+        # 角色也一律走对外口径（super 对外就叫管理员），
+        # 不然这个接口会变成前端唯一能拿到 'super' 这个字符串的地方 ——
+        # 那就是「藏了半天的东西从另一个门漏出去」。
+        role = entry['actor_role']
+        entry['actor_role'] = public_role(role) if role else None
+        entry['actor_role_label'] = public_role_label(role) if role else ''
+        entry['actor_nickname'] = display_name(
+            entry.pop('actor_nickname'), entry.pop('actor_status', None))
+        logs.append(entry)
+
+    return jsonify({'code': 0, 'order': detail, 'logs': logs})
+
+
+
 # 计费：管理员**看过文件之后**填写金额。
 #
 # 为什么必须先接单：金额是按文件本身算出来的 —— 几页、黑白还是彩色、单面还是双面，
@@ -274,6 +404,8 @@ def api_price_order(order_id):
                 conn.rollback()
                 return jsonify({'code': 409, 'msg': '这单刚被别人计过费了，刷新看看'}), 409
             action, reply = 'price_order', f'已计费 {amount:.2f} 元，可以开始打印了'
+            log_action = ORDER_LOG_PRICE
+            log_detail = f'核定金额 {amount:.2f} 元，订单进入「{ST_PENDING}」'
         else:
             conn.execute('''
                 UPDATE orders
@@ -282,6 +414,12 @@ def api_price_order(order_id):
                 WHERE id = ?
             ''', (amount, g.user['id'], order_id))
             action, reply = 'reprice_order', f'金额已改为 {amount:.2f} 元'
+            log_action = ORDER_LOG_REPRICE
+            # 把「从多少改成多少」写进留痕：改价次数多了以后，只有最终金额
+            # 根本看不出中间被改过几回，而标错一位数是常事（30 打成 300）。
+            log_detail = ('金额 %.2f 元 → %.2f 元' % (row['price'], amount)
+                          if row['price'] is not None else f'核定金额 {amount:.2f} 元')
+        log_event(order_id, log_action, log_detail, conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -331,6 +469,7 @@ def api_claim_order(order_id):
             logger.info('接单竞争失败：订单 #%s 已被「%s」接取，操作人=%s',
                         order_id, name, g.user['nickname'])
             return jsonify({'code': 409, 'msg': f'手慢了，该订单已被「{name}」接取'}), 409
+        log_event(order_id, ORDER_LOG_CLAIM, '从待接单池接取', conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -366,6 +505,16 @@ def api_release_order(order_id):
             UPDATE orders SET claimed_by = NULL, claim_time = NULL, update_time = CURRENT_TIMESTAMP
             WHERE id = ?
         ''', (order_id,))
+        # 默认管理员可以释放别人接的单，这件事必须留痕 ——
+        # 「我接的单怎么又回到池子里了」只有这条记录答得上来。
+        if row['claimed_by'] == g.user['id']:
+            detail = '释放自己接的单，退回待接单池'
+        else:
+            other = conn.execute('SELECT nickname, status FROM users WHERE id = ?',
+                                 (row['claimed_by'],)).fetchone()
+            name = display_name(other['nickname'], other['status']) if other else '（账号已注销）'
+            detail = '释放了「%s」接的单，退回待接单池' % name
+        log_event(order_id, ORDER_LOG_RELEASE, detail, conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -411,6 +560,11 @@ def api_withdraw_order(order_id):
         if cursor.rowcount == 0:
             conn.rollback()
             return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败，刷新看看'}), 409
+        # 订单行随即被删掉，这条留痕就成了一份「悬空记录」（order_id 已经指不到订单了）。
+        # 故意留着：它不参与任何查询（详情页是按订单号查的），
+        # 但事后要知道「那天那份文件是被本人自己撤掉的，不是丢了」时，只有它答得上来。
+        log_event(order_id, ORDER_LOG_WITHDRAW,
+                  '本人撤回订单，文件「%s」已一并删除' % row['filename'], conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -470,6 +624,10 @@ def api_update_status(order_id):
         conn.execute('''
             UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?
         ''', (new_status, order_id))
+        # 「从什么改成什么」必须记下来：状态被连着改两次（可取了 → 打印中 → 可取了）之后，
+        # 光看最终状态和一个 update_time，谁也说不清中间那一步是谁做的。
+        log_event(order_id, ORDER_LOG_STATUS,
+                  '「%s」→「%s」' % (row['status'], new_status), conn=conn)
         conn.commit()
     finally:
         conn.close()
@@ -595,6 +753,164 @@ def api_my_stats():
 
 
 
+# 服务数据：给所有登录用户看的公开汇总 + 下单榜
+@bp.route('/api/board')
+@login_required
+def api_board():
+    """学生端「服务数据」页的数据源。
+
+    和上面的 /api/my-stats（只查我自己）刻意分成两条，理由跟管理端那两条一样：
+    一个函数里靠变量决定要不要加 user_id 过滤，那个变量写反就是「把别人的数据发给你」，
+    而这种错上线之后几乎没人看得出来。两条 SQL 各自一眼看得出在查谁，多写一份值。
+
+    放行的界线是「所有人拿到的都是同一份」：
+      · 服务规模与排队情况 —— 不涉及具体是谁，学生真正想知道的是「我前面还堆着多少单」；
+      · 下单榜 —— 榜上每个人都可能上去，是平等的公开信息，不是把某个人单拎出来看。
+    不放行的只有一样：**金额**。它是经营数据，学生看了没用，还等于把营业额摊开，
+    所以下面连 price 这一列都不出现在 SELECT 里 —— 不是前端不显示，是根本没查。
+    数据不出库，比指望界面上不画它可靠得多。
+
+    榜上别人的昵称一律打码（utils.mask_nickname），自己那一行原样显示：
+    要挡的是「同学之间对号入座」，不是挡本人看自己。
+    """
+    uid = g.user['id']
+
+    # 两个榜的口径只差一个时间条件，所以把差异当片段传进来，而不是把整条 SQL 抄两遍：
+    # 抄两遍的话，哪天改排序规则漏掉一处，就变成「近 30 天榜和累计榜的并列顺序不一样」，
+    # 而这种不一致不会有人去核对。
+    #
+    # 时间一律用 SQLite 的 localtime，和 /api/my-stats、管理端看板同一套口径。
+    # create_time 存的是 UTC，拿 UTC 日期比会让 UTC+8 早上 8 点前的「今天」算成昨天。
+    RECENT = " AND date(o.create_time, 'localtime') >= date('now', 'localtime', '-29 days')"
+
+    conn = get_db()
+    try:
+        def rank_top(extra, limit=10):
+            """取榜首。JOIN 而不是 LEFT JOIN —— 这一列数的是「人」，
+            没有归属的订单（账号被删、单还留着）不属于任何一个人，不该占榜上一个位置。
+
+            这和 /api/admin/stats 的榜单口径**故意不同**：那边必须带上无归属的单，
+            因为它要和订单列表的总数对得上；这边叫「下单榜」，口径本来就是个「人」字，
+            带上一个没有名字的「（无归属）」反而没人看得懂那行是什么。
+            """
+            # 并列时按「谁最近下的单」排（MAX(o.id)）：不加这一条的话，
+            # 同单数的几个人谁在前是 SQLite 自己决定的，刷新一次换个位置，看着像在闪。
+            return conn.execute('''
+                SELECT o.user_id AS user_id, u.nickname AS nickname, COUNT(*) AS count
+                FROM orders o JOIN users u ON u.id = o.user_id
+                WHERE 1 = 1{extra}
+                GROUP BY o.user_id
+                ORDER BY count DESC, MAX(o.id) DESC
+                LIMIT {limit}
+            '''.format(extra=extra, limit=limit)).fetchall()
+
+        def my_standing(extra, mine):
+            """我的名次 = 单数比我多的人数 + 1（单数相同即同名次）。
+
+            一条 SQL 同时出 ahead 和 ranked，省掉「并列怎么数」的第二种算法：
+            换个写法（比如按 ROW_NUMBER 排）就得再定义一遍并列规则，
+            两处定义迟早会对不上，而名次对不上是没有日志能提示的那种错。
+            SUM 在没有匹配行时返回 NULL，所以 COALESCE 到 0 —— 一个单都没下过的时候，
+            ahead 是 0 而不是 NULL，前端算出来的就是「第 1 名」。
+            """
+            row = conn.execute('''
+                SELECT COALESCE(SUM(CASE WHEN n > ? THEN 1 ELSE 0 END), 0) AS ahead,
+                       COUNT(*) AS ranked
+                FROM (
+                    SELECT o.user_id AS uid, COUNT(*) AS n
+                    FROM orders o JOIN users u ON u.id = o.user_id
+                    WHERE 1 = 1{extra}
+                    GROUP BY o.user_id
+                )
+            '''.format(extra=extra), (mine,)).fetchone()
+            return {'count': mine, 'rank': row['ahead'] + 1, 'ranked': row['ranked']}
+
+        orders_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
+        orders_today = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders"
+            " WHERE date(create_time, 'localtime') = date('now', 'localtime')"
+        ).fetchone()['c']
+        orders_7d = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders WHERE "
+            "date(create_time, 'localtime') >= date('now', 'localtime', '-6 days')"
+        ).fetchone()['c']
+        orders_30d = conn.execute(
+            "SELECT COUNT(*) AS c FROM orders WHERE "
+            "date(create_time, 'localtime') >= date('now', 'localtime', '-29 days')"
+        ).fetchone()['c']
+        # 注销的账号不算「同学」：人已经走了，还挂在服务规模里只会让数字虚高。
+        # 判据用 != 'closed' 而不是 = 'active'：临时被禁用的账号当然还算数，
+        # 和 users 表上那几条部分唯一索引的口径一致。
+        users_total = conn.execute(
+            'SELECT COUNT(*) AS c FROM users WHERE status != ?',
+            (STATUS_CLOSED,)).fetchone()['c']
+        unclaimed = conn.execute(
+            'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NULL').fetchone()['c']
+        # 五档全从 0 起、只认 config 里的状态。直接把 GROUP BY 的结果塞给前端的话，
+        # 库里万一留着一个历史脏状态，界面就冒出一格没人认识的分类，而且不报错。
+        by_status = {status: 0 for status in ORDER_STATUSES}
+        for item in conn.execute(
+                'SELECT status AS k, COUNT(*) AS c FROM orders GROUP BY k').fetchall():
+            if item['k'] in by_status:
+                by_status[item['k']] = item['c']
+        day_rows = conn.execute('''
+            SELECT date(create_time, 'localtime') AS d, COUNT(*) AS c
+            FROM orders
+            WHERE date(create_time, 'localtime') >= date('now', 'localtime', '-13 days')
+            GROUP BY d ORDER BY d
+        ''').fetchall()
+        top_recent = rank_top(RECENT)
+        top_all = rank_top('')
+        me_recent = my_standing(RECENT, conn.execute(
+            'SELECT COUNT(*) AS c FROM orders o WHERE o.user_id = ?' + RECENT,
+            (uid,)).fetchone()['c'])
+        me_all = my_standing('', conn.execute(
+            'SELECT COUNT(*) AS c FROM orders WHERE user_id = ?', (uid,)).fetchone()['c'])
+    finally:
+        conn.close()
+
+    def board_row(index, row):
+        is_me = row['user_id'] == uid
+        return {
+            'rank': index,
+            'nickname': row['nickname'] if is_me else mask_nickname(row['nickname']),
+            'count': row['count'],
+            'is_me': is_me,
+        }
+
+    # 缺的日子要补零：SQL 只返回「有单的那几天」，直接画会把柱子挤在一起，
+    # 看上去像那段时间天天爆单。算法跟 /api/my-stats 一样，从今天往前数 14 天。
+    counts = {row['d']: row['c'] for row in day_rows}
+    today = datetime.now().date()
+    daily = [
+        {'date': (today - timedelta(days=offset)).isoformat(),
+         'count': counts.get((today - timedelta(days=offset)).isoformat(), 0)}
+        for offset in range(13, -1, -1)
+    ]
+
+    return jsonify({
+        'code': 0,
+        'service': {
+            'orders_total': orders_total,
+            'orders_today': orders_today,
+            'orders_7d': orders_7d,
+            'orders_30d': orders_30d,
+            'users_total': users_total,
+        },
+        'queue': {'unclaimed': unclaimed, 'by_status': by_status},
+        'daily': daily,
+        'boards': [
+            {'key': 'recent', 'label': '近 30 天', 'hint': 'Recent 30 days',
+             'top': [board_row(i, row) for i, row in enumerate(top_recent, 1)],
+             'me': me_recent},
+            {'key': 'all', 'label': '累计', 'hint': 'All time',
+             'top': [board_row(i, row) for i, row in enumerate(top_all, 1)],
+             'me': me_all},
+        ],
+    })
+
+
+
 # 下载订单文件，只有接单人和管理端可以下
 @bp.route('/api/order/<int:order_id>/download')
 @login_required
@@ -629,4 +945,8 @@ def api_download(order_id):
 
     logger.info('订单 #%s 的文件「%s」被 %s(%s) 下载 ip=%s',
                 order_id, row['filename'], g.user['nickname'], g.user['role'], client_ip())
+    # 下载也留痕：文件离开服务器这件事，事后要能回答「谁什么时候拿走的」。
+    # 这条走独立短连接（见 log_event）—— 只读操作没有事务可搭，
+    # 而且留痕失败不该把用户的下载搞失败。
+    log_event(order_id, ORDER_LOG_DOWNLOAD, '下载文件「%s」' % row['filename'])
     return send_file(file_path, as_attachment=True, download_name=row['filename'])

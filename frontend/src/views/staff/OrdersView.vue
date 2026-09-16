@@ -2,8 +2,18 @@
 /** 订单台：待接单池 / 我接的单 / 全部，支持状态筛选、分页、接单释放改状态、计费、下载文件。
  *  窄屏切换成卡片列表 —— 表格在手机上没法用，但管理员确实会拿手机接单。 */
 import { computed, h, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import { useDocumentVisibility, useIntervalFn, useMediaQuery } from '@vueuse/core'
-import { CircleDollarSign, Download, Inbox, Lock, Package, RefreshCw, Unlock } from '@lucide/vue'
+import {
+  CircleDollarSign,
+  Download,
+  Info,
+  Inbox,
+  Lock,
+  Package,
+  RefreshCw,
+  Unlock,
+} from '@lucide/vue'
 import {
   NAlert,
   NButton,
@@ -45,6 +55,14 @@ const DONE: OrderStatus = '已取件'
 
 const auth = useAuthStore()
 const message = useMessage()
+const router = useRouter()
+
+/** 进详情页。用 router.push 而不是把按钮包进 RouterLink：
+ *  这只是「换个页面」，没有中键新开标签的需求，而 a 标签包按钮
+ *  在窄屏上会带来一整套焦点和嵌套交互元素的麻烦。 */
+function openDetail(order: Order): void {
+  void router.push(`/staff/orders/${order.id}`)
+}
 
 /** 权限判定依据当前登录账号，直接从 store 取，避免布局再往下传一层 props。
  *
@@ -307,7 +325,17 @@ const columns = computed<DataTableColumns<Order>>(() => [
     width: 168,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
-        h('div', { class: 'truncate text-[13px] font-semibold', title: row.filename }, row.filename),
+        // 文件名同时是详情入口：它本来就是这一列里最大的一块可点区域，
+        // 比旁边再加一颗小按钮好按得多（手机上尤其明显）。
+        h(
+          RouterLink,
+          {
+            to: `/staff/orders/${row.id}`,
+            class: 'block truncate text-[13px] font-semibold hover:underline',
+            title: `${row.filename} — 点开看详情`,
+          },
+          { default: () => row.filename },
+        ),
         h('div', { class: 'tnum text-[11px] opacity-60' }, `#${row.id} · ${shortTime(row.create_time)}`),
       ]),
   },
@@ -333,6 +361,18 @@ const columns = computed<DataTableColumns<Order>>(() => [
           row.duplex ? DUPLEX_LABEL[row.duplex] : '单面'
         }`,
       ),
+  },
+  {
+    title: '备注',
+    key: 'remark',
+    width: 150,
+    // 备注是学生写的要求（「只打第 3 页」「A4 双面」）。之前这一列压根不存在，
+    // 于是管理员只能挨个点开文件才发现要求写在了备注里。
+    // 空备注显示一个淡淡的「—」而不是空白：空白会让人怀疑是没渲染出来。
+    render: (row) =>
+      row.remark
+        ? h('span', { class: 'block truncate text-[12px] opacity-80', title: row.remark }, row.remark)
+        : h('span', { class: 'text-[12px] opacity-40' }, '—'),
   },
   {
     title: '状态',
@@ -376,7 +416,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 296,
+    width: 264,
     render: (row) =>
       h('div', { class: 'flex flex-wrap items-center gap-1' }, [
         row.claimed_by === null
@@ -433,6 +473,26 @@ const columns = computed<DataTableColumns<Order>>(() => [
             )
           : null,
       ]),
+  },
+  {
+    // 详情入口。单独一列而不是塞进「操作」里：操作列那几个按钮是**改**这一单的，
+    // 而详情是「看」。混在一起，管理员容易在急着点「接单」时点进详情页。
+    // 文件名本身也是入口（见上面那一列），这里只是把它写明白，别指望所有人都会去点标题。
+    title: '',
+    key: 'detail',
+    width: 34,
+    render: (row) =>
+      h(
+        NButton,
+        {
+          size: 'tiny',
+          quaternary: true,
+          circle: true,
+          title: '查看详情与操作记录',
+          onClick: () => openDetail(row),
+        },
+        { icon: () => h(Info, { size: 13 }) },
+      ),
   },
 ])
 
@@ -575,7 +635,13 @@ onMounted(async () => {
         >
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
-              <p class="truncate text-[13px] font-bold">{{ order.filename }}</p>
+              <RouterLink
+                :to="`/staff/orders/${order.id}`"
+                class="block truncate text-[13px] font-bold hover:underline"
+                :title="`${order.filename} — 点开看详情`"
+              >
+                {{ order.filename }}
+              </RouterLink>
               <p class="tnum mt-0.5 text-[11px] text-ink-4">
                 #{{ order.id }} · {{ shortTime(order.create_time) }}
               </p>
@@ -588,6 +654,14 @@ onMounted(async () => {
             <span class="tnum">取件码 {{ pickupCodeLabel(order.pickup_code) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
+
+          <!-- 备注：学生的打印要求（「只打第 3 页」这类）。宽屏在表格里有单独一列，
+               窄屏之前哪都没有 —— 管理员拿手机接单时完全看不到。
+               没有备注就不占位：一排卡片每张都多一行「无备注」，扫视时全是噪声。 -->
+          <p v-if="order.remark" class="mt-2 text-[12px] leading-5">
+            <span class="text-ink-4">备注</span>
+            <span class="ml-1.5 text-ink-3">{{ order.remark }}</span>
+          </p>
 
           <!-- 金额单独一行：它是这一屏上唯一跟钱有关的数字，跟规格、取件码挤在一行会被略过 -->
           <p class="mt-2 flex flex-wrap items-center gap-x-3 text-[12px]">
