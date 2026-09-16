@@ -218,8 +218,11 @@ frontend/.vite/
 # 产物跟着仓库走就不用为了发个版本去装 Node。改完前端记得
 # npm run build 并把 static/app/ 一并提交，否则线上还是旧界面。
 
-# 团队共享的 agent 说明文件；*.md 整体忽略，这里给它开个口子
-!AGENTS.md
+# 这里曾有一行 `!AGENTS.md`，给 AI 助手的说明文件开白名单。
+# 现已取消：AGENTS.md 属于个人本地工具配置（里面写了本机端口占用、
+# 历史 bug 现场这类只对当前开发机有意义的内容），不该进公开仓库。
+# 所以它重新落回上面的 `*.md` 规则里，文件仍留在磁盘上，只是不再被跟踪。
+# 若哪天确认要团队共享，把 `!AGENTS.md` 加回本行位置即可。
 
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
