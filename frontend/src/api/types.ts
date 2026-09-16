@@ -95,6 +95,36 @@ export interface UploadResponse extends ApiEnvelope {
   pickup_code: string
 }
 
+/** 上传时选的打印选项，直传与分片两条路共用。 */
+export interface UploadOptions {
+  color: string
+  duplex: string
+  remark: string
+}
+
+/** 分片上传会话 —— 服务端只回必要信息，不含磁盘路径。 */
+export interface ChunkSession extends ApiEnvelope {
+  upload_id: string
+  filename: string
+  size: number
+  chunk_size: number
+  total_chunks: number
+  /** 服务端已经收到的分片序号，续传时拿它跳过已传部分 */
+  received: number[]
+  received_count: number
+  /** 距离这个会话被自动清理还剩多少秒 */
+  expires_in: number
+  /** init 时命中同一份未完成的会话（断点续传的入口） */
+  resumed?: boolean
+  /** 这一片之前已经收到过，本次被跳过 */
+  skipped?: boolean
+}
+
+export interface ChunkPendingResponse extends ApiEnvelope {
+  sessions: ChunkSession[]
+  max_pending: number
+}
+
 export interface AdminUser extends User {
   status: AccountStatus
   order_count: number
@@ -197,4 +227,16 @@ export interface TicketDetailResponse extends ApiEnvelope {
     owner_nickname: string
   }
   messages: TicketMessage[]
+  /** 增量轮询的起始游标：最后一条消息的 id，没有消息时为 0。 */
+  last_id: number
+}
+
+/** 增量拉取新消息的响应（轮询专用）。
+ *  服务端在**没有新消息时不会写库**，所以这个接口可以放心高频调用，
+ *  不会把「有没有人看」这件事搞乱。
+ */
+export interface TicketMessagesResponse extends ApiEnvelope {
+  status: TicketStatus
+  messages: TicketMessage[]
+  last_id: number
 }

@@ -13,10 +13,39 @@ from config import (
     public_role,
 )
 from db import get_db
-from security import actor_label, client_ip, security_event
-from utils import display_name
+from security import actor_label, client_ip, hit_limit, security_event
+from utils import display_name, positive_int
 
 bp = Blueprint('tickets', __name__)
+
+# 查消息的统一 SQL 片段。详情接口和增量接口都从这一段出发，
+# 字段名就不会两边各写一套 —— 改字段时漏掉一处，症状是前端静默不渲染。
+# 末尾不带 WHERE/ORDER BY，由调用方按需要拼。
+_MESSAGE_SELECT = '''
+    SELECT m.id, m.sender_id, m.sender_role, m.body,
+           datetime(m.create_time, 'localtime') AS create_time,
+           u.nickname AS sender_nickname, u.status AS sender_status
+    FROM ticket_messages m
+    LEFT JOIN users u ON u.id = m.sender_id
+'''
+
+
+def _serialize_messages(rows):
+    """把 ticket_messages 的行整理成响应体里的样子。
+
+    两件事必须在出库前做完：
+      1. sender_role 过一遍对外口径 —— 库里仍存 'super' 原值，出库统一收敛成 admin，
+         前端只判断「是不是 user」，收敛不影响显示，但能不出现 ''super'' 这个词；
+      2. 昵称过 display_name —— 发送者账号注销后名字会被释放给别人顶用，不标就分不清。
+    """
+    items = []
+    for row in rows:
+        item = dict(row)
+        item['sender_role'] = public_role(item['sender_role'])
+        item['sender_nickname'] = display_name(
+            item['sender_nickname'], item.pop('sender_status', None))
+        items.append(item)
+    return items
 
 
 @bp.route('/api/tickets')
@@ -149,30 +178,16 @@ def api_ticket_detail(tid):
             conn.execute('UPDATE tickets SET user_read_time = CURRENT_TIMESTAMP WHERE id = ?', (tid,))
         conn.commit()
 
-        messages = conn.execute('''
-            SELECT m.id, m.sender_id, m.sender_role, m.body,
-                   datetime(m.create_time, 'localtime') AS create_time,
-                   u.nickname AS sender_nickname, u.status AS sender_status
-            FROM ticket_messages m
-            LEFT JOIN users u ON u.id = m.sender_id
-            WHERE m.ticket_id = ?
-            ORDER BY m.id
-        ''', (tid,)).fetchall()
+        messages = conn.execute(
+            _MESSAGE_SELECT + ' WHERE m.ticket_id = ? ORDER BY m.id', (tid,)).fetchall()
         owner = conn.execute('SELECT nickname, status FROM users WHERE id = ?',
                              (ticket['user_id'],)).fetchone()
     finally:
         conn.close()
 
     # 每条消息都带上发送者的角色，前端靠它区分「用户」和「客服」两方气泡。
-    # sender_role 同样要过一遍对外口径，和别处保持一致：
-    # 同一个角色，在哪个接口里都该是同一个写法。
-    # 前端只判断「是不是 user」，所以收敛成 admin 不影响显示效果。
-    msg_list = []
-    for m in messages:
-        item = dict(m)
-        item['sender_role'] = public_role(item['sender_role'])
-        item['sender_nickname'] = display_name(item['sender_nickname'], item.pop('sender_status', None))
-        msg_list.append(item)
+    # 角色口径和昵称标注都在 _serialize_messages 里统一处理。
+    msg_list = _serialize_messages(messages)
 
     return jsonify({
         'code': 0,
@@ -186,6 +201,10 @@ def api_ticket_detail(tid):
             'owner_nickname': display_name(owner['nickname'], owner['status']) if owner else '（无归属）',
         },
         'messages': msg_list,
+        # 轮询游标：前端拿它当 since_id 开始增量拉取，省掉「自己去数最后一条 id」。
+        # 工单创建时必定写了第一条消息，所以这里不会是「空列表取不到」的情况；
+        # 真要是空（历史脏数据），给 0 也能让增量接口从头拉一遍，不会漏消息。
+        'last_id': msg_list[-1]['id'] if msg_list else 0,
     })
 
 
@@ -262,3 +281,76 @@ def api_ticket_status(tid):
                 tid, ticket['status'], new_status, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0,
                     'msg': '工单已关闭' if new_status == TICKET_CLOSED else '工单已重新打开'})
+
+
+
+# 轮询频控：详情页开着的时候，前端按自适应间隔来取新消息，正常情况下每秒不到一次。
+# 给到 4 次/秒是特意留的余量 —— 多开几个标签页、网络抖动触发的立即重试，都会叠加，
+# 阈值卡太紧会把正常用户挡在外面；这一条只为拦住脚本级别的狂刷。
+POLL_MAX_IN_WINDOW = 240
+POLL_WINDOW_SECONDS = 60
+
+
+@bp.route('/api/tickets/<int:tid>/messages')
+@login_required
+def api_ticket_messages_since(tid):
+    """增量拉取工单消息 —— 供详情页做「实时」刷新。
+
+    ★ 为什么不直接轮询 /api/tickets/<id>：
+    那个接口每次进来都要把已读时间推进到现在（UPDATE ... = CURRENT_TIMESTAMP）。
+    拿它当轮询接口，等于每几秒往库里写一次；SQLite 写操作要拿排他锁，
+    而本服务压根没有连接池，这些写纯属自己给自己制造竞争。
+    这里定了条规矩：**没读到新消息就一个字节都不改**，有新的才顺手推进已读。
+
+    为什么是「轮询」而不是 SSE / WebSocket：
+    生产用的是 waitress，8 个线程干所有活，而一条长连接会独占一个线程直到断开 ——
+    8 个开着页面的用户就能把服务器堵死，第 9 个人连登录都进不来。
+    短轮询每个请求几十毫秒就归还线程，代价只有一点点流量，这才是这个架构下能用的实时。
+
+    since_id = 客户端手里最大的消息 id，返回 id 比它大的那批。
+    """
+    if hit_limit('ticketpoll:%s' % g.user['id'], POLL_MAX_IN_WINDOW, POLL_WINDOW_SECONDS):
+        # 前端对这个 429 是静默忽略的（下个周期接着来），所以这里留痕比返回它更重要：
+        # 正常界面碰不到这条线，一旦刷出来就是有人在写脚本。
+        security_event('ticket_poll_rate_limited',
+                       '账号 %s 在 %s 秒内轮询工单消息超过 %s 次'
+                       % (g.user['nickname'], POLL_WINDOW_SECONDS, POLL_MAX_IN_WINDOW))
+        return jsonify({'code': 429, 'msg': '请求过于频繁，请稍后再试'}), 429
+
+    since_id = positive_int(request.args.get('since_id'), 0)
+    staff = _is_staff(g.user)
+
+    conn = get_db()
+    try:
+        ticket = conn.execute(
+            'SELECT id, user_id, status FROM tickets WHERE id = ?', (tid,)).fetchone()
+        if ticket is None:
+            return jsonify({'code': 404, 'msg': '工单不存在'}), 404
+        if not staff and ticket['user_id'] != g.user['id']:
+            security_event('ticket_access_denied',
+                           '工单 #%s 属于 uid=%s，轮询者=%s'
+                           % (tid, ticket['user_id'], actor_label()))
+            return jsonify({'code': 403, 'msg': '无权查看该工单'}), 403
+
+        rows = conn.execute(
+            _MESSAGE_SELECT + ' WHERE m.ticket_id = ? AND m.id > ? ORDER BY m.id',
+            (tid, since_id)).fetchall()
+        if rows:
+            # 人正开着详情页看，这条已读时间推得有道理；没新消息就不动它。
+            column = 'admin_read_time' if staff else 'user_read_time'
+            conn.execute(
+                'UPDATE tickets SET %s = CURRENT_TIMESTAMP WHERE id = ?' % column, (tid,))
+            conn.commit()
+    finally:
+        conn.close()
+
+    messages = _serialize_messages(rows)
+    return jsonify({
+        'code': 0,
+        # 状态也带上：对方在你眼皮底下关掉/重开工单，界面得跟着变，
+        # 不然用户会对着一个已关闭的输入框打半天字。
+        'status': ticket['status'],
+        'messages': messages,
+        # 没有新消息时原样回传 since_id，前端不用做分支判断，直接刷新游标即可。
+        'last_id': messages[-1]['id'] if messages else since_id,
+    })

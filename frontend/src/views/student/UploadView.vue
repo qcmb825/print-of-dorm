@@ -1,11 +1,16 @@
 <script setup lang="ts">
-/** 学生下单：选文件 + 打印选项，上传成功后把取件码放大展示 —— 那是学生真正要记住的东西。 */
-import { computed, ref } from 'vue'
-import { CircleCheck, FileText, Hash, Rocket, Upload, X } from '@lucide/vue'
+/** 学生下单：选文件 + 打印选项，上传成功后把取件码放大展示 —— 那是学生真正要记住的东西。
+ *
+ *  上传分两条路，由 `uploadFile()` 按文件大小自动选：
+ *  小文件走单请求直传；大文件切 8MB 分片。原因见 utils/chunkedUpload.ts 顶部的注释。
+ */
+import { computed, onMounted, ref } from 'vue'
+import { CircleCheck, FileText, Hash, History, Rocket, Upload, X } from '@lucide/vue'
 import {
   NButton,
   NFormItem,
   NInput,
+  NProgress,
   NRadioButton,
   NRadioGroup,
   NUpload,
@@ -14,7 +19,8 @@ import {
   type UploadFileInfo,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { orderApi } from '@/api/endpoints'
+import type { ChunkSession } from '@/api/types'
+import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
 
 const message = useMessage()
@@ -29,16 +35,29 @@ const duplex = ref<'single' | 'double'>('single')
 const remark = ref('')
 const submitting = ref(false)
 const progress = ref(0)
+const uploadedBytes = ref(0)
+const totalBytes = ref(0)
+/** 服务端还留着的未完成上传，进页面时提醒一句 */
+const pending = ref<ChunkSession[]>([])
 /** 下单成功后的回执 */
 const receipt = ref<{ orderId: number; code: string; filename: string } | null>(null)
 
 const selected = computed(() => fileList.value[0] ?? null)
 const selectedFile = computed(() => selected.value?.file ?? null)
 
-function prettySize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+/** 只有大文件才会走分片，提前告诉用户「会分几片」，免得他以为卡住了。 */
+const chunkCount = computed(() => {
+  const size = selectedFile.value?.size ?? 0
+  return size > 8 * 1024 * 1024 ? Math.ceil(size / (8 * 1024 * 1024)) : 0
+})
+
+const progressHint = computed(() => {
+  if (progress.value >= 99) return '正在生成订单，请不要关闭页面'
+  return '正在上传，请不要关闭页面或断网'
+})
+
+async function refreshPending(): Promise<void> {
+  pending.value = await pendingUploads()
 }
 
 function reset(): void {
@@ -47,6 +66,8 @@ function reset(): void {
   color.value = 'black'
   duplex.value = 'single'
   progress.value = 0
+  uploadedBytes.value = 0
+  totalBytes.value = 0
 }
 
 async function submit(): Promise<void> {
@@ -57,12 +78,15 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   progress.value = 0
+  uploadedBytes.value = 0
+  totalBytes.value = file.size
   try {
-    const data = await orderApi.upload(
+    const data = await uploadFile(
       file,
       { color: color.value, duplex: duplex.value, remark: remark.value.trim() },
-      (percent) => {
-        progress.value = percent
+      (state) => {
+        progress.value = state.percent
+        uploadedBytes.value = state.uploaded
       },
     )
     receipt.value = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
@@ -72,8 +96,13 @@ async function submit(): Promise<void> {
     message.error(error instanceof ApiError ? error.message : '上传失败，请稍后重试')
   } finally {
     submitting.value = false
+    // 不管成没成，服务端那边的会话状态都变了（成功则清掉，失败则留下一份半成品），
+    // 这条提醒要跟着实际情况走。
+    void refreshPending()
   }
 }
+
+onMounted(refreshPending)
 </script>
 
 <template>
@@ -126,6 +155,33 @@ async function submit(): Promise<void> {
         </div>
       </section>
     </Transition>
+
+    <!-- 未完成的大文件上传：浏览器不给 JS 读本地文件内容，所以没办法自动接着传，
+         只能告诉用户「重新选同一个文件就行」。服务端按文件名 + 大小认得出是哪一份，
+         已经收到的分片不会白传。 -->
+    <section
+      v-if="pending.length"
+      class="panel mb-4 flex items-start gap-3 p-3.5"
+      role="status"
+    >
+      <span
+        class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg"
+        style="background-color: var(--accent-tint); color: var(--secondary)"
+        aria-hidden="true"
+      >
+        <History :size="15" />
+      </span>
+      <div class="min-w-0 flex-1">
+        <p class="truncate text-[13px] font-semibold">
+          《{{ pending[0].filename }}》上次没传完
+        </p>
+        <p class="mt-0.5 text-[12px] text-ink-3">
+          已收到 {{ pending[0].received_count }}/
+          {{ pending[0].total_chunks }} 片，重新选中同一个文件即可接着传，
+          传过的部分不用重来。
+        </p>
+      </div>
+    </section>
 
     <div class="panel p-4 sm:p-5">
       <h1 class="font-heading text-lg font-bold sm:text-xl">下单打印</h1>
@@ -217,6 +273,25 @@ async function submit(): Promise<void> {
         />
       </NFormItem>
 
+      <!-- 上传进度。进度条只在真正上传时出现（而不是一直占着位置显示 0%），
+           它存在本身就意味着「有事在发生」。 -->
+      <div v-if="submitting" class="mt-4">
+        <div class="mb-1.5 flex items-center justify-between gap-3 text-[12px]">
+          <span class="text-ink-3">{{ progressHint }}</span>
+          <span class="tnum shrink-0 text-ink-4">
+            {{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}
+          </span>
+        </div>
+        <NProgress
+          type="line"
+          :percentage="progress"
+          :height="6"
+          :border-radius="3"
+          :show-indicator="false"
+          :status="progress >= 100 ? 'success' : 'default'"
+        />
+      </div>
+
       <div class="mt-4 flex items-center gap-3">
         <NButton
           type="primary"
@@ -227,11 +302,12 @@ async function submit(): Promise<void> {
           @click="submit"
         >
           <template #icon><Rocket :size="16" /></template>
-          {{ submitting ? `上传中 ${progress}%` : '提交订单' }}
+          {{ submitting ? '上传中…' : '提交订单' }}
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-4">
           <Hash :size="12" />
-          上传完成后立即生成取件码
+          <template v-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>
+          <template v-else>上传完成后立即生成取件码</template>
         </span>
       </div>
     </div>

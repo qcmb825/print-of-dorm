@@ -192,6 +192,14 @@ UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'C:/print/print_files/')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
+# 单文件大小上限。Flask 的 MAX_CONTENT_LENGTH 和分片上传那一侧的服务端校验
+# 都从这里取值 —— 同一个数只写一遍，才不会出现「框架按 50MB 拦，
+# 业务代码按 100MB 放行」这种口径打架的情况。
+MAX_UPLOAD_MB = max(1, env_int('MAX_UPLOAD_MB', 50))
+
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
 # 允许上传的扩展名白名单，不在名单里的一律拒绝
 ALLOWED_EXTENSIONS = {
     ext.strip().lower().lstrip('.')

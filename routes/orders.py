@@ -34,6 +34,55 @@ UPLOAD_WINDOW_SECONDS = 60
 UPLOAD_MAX_IN_WINDOW = 20
 
 
+def create_order_from_saved_file(original_name, save_path, color, duplex, remark):
+    """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code)。
+
+    单片直传（/api/upload）和分片上传合并完成之后都走这里，
+    取件码重摇、写库失败回滚的动作就只有一份。复制成两份的话，
+    哪天改了其中一处，症状会是「直传的订单正常，分片传的订单缺字段」，
+    而这种差异光看页面很难发现。
+
+    调用方负责：扩展名已过白名单、文件已完整落盘、三个参数已清洗。
+    写库失败时本函数会把 save_path 一起删掉再抛异常 —— 订单没建成，
+    那份文件就是垃圾，留着只会占磁盘、让运维以为它属于某个订单。
+    """
+    conn = None
+    try:
+        conn = get_db()
+        # 取件码是 4 位随机数字，重码的概率很小但不是零。generate_pickup_code
+        # 的做法是「先查有没有人用、没有就用」，两个人同时下单就可能都查到「没人用」。
+        # 库里那个部分唯一索引会把后来者挡住，所以撞了就重摇一个。
+        for attempt in range(5):
+            pickup_code = generate_pickup_code(conn)
+            try:
+                cursor = conn.execute('''
+                    INSERT INTO orders (user_id, filename, file_path, color_type, duplex, remark, status, pickup_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (g.user['id'], original_name, save_path, color, duplex, remark, ST_PENDING, pickup_code))
+                break
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                logger.warning('取件码「%s」已被占用（第 %s 次），重摇一个',
+                               pickup_code, attempt + 1)
+        else:
+            # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
+            raise RuntimeError('取件码连续 5 次都与其他订单重复')
+        conn.commit()
+        return cursor.lastrowid, pickup_code
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        if os.path.exists(save_path):
+            try:
+                os.remove(save_path)
+            except OSError:
+                logger.warning('清理孤儿文件失败: %s', save_path)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 @bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
@@ -64,14 +113,12 @@ def api_upload():
             'code': 1,
             'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
         }), 400
-    
+
     # 先落盘再写库，哪一步失败都不留下孤儿文件
     ext = original_name.rsplit('.', 1)[1].lower()
     new_filename = f"{uuid.uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_filename)
 
-    conn = None
-    file_size = 0
     try:
         file.save(save_path)
         file_size = os.path.getsize(save_path)
@@ -80,41 +127,12 @@ def api_upload():
             # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
             os.remove(save_path)
             return jsonify({'code': 1, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
-        conn = get_db()
-        # 取件码是 4 位随机数字，重码的概率很小但不是零。generate_pickup_code
-        # 的做法是「先查有没有人用、没有就用」，两个人同时下单就可能都查到「没人用」。
-        # 库里那个部分唯一索引会把后来者挡住，所以撞了就重摇一个。
-        for attempt in range(5):
-            pickup_code = generate_pickup_code(conn)
-            try:
-                cursor = conn.execute('''
-                    INSERT INTO orders (user_id, filename, file_path, color_type, duplex, remark, status, pickup_code)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (g.user['id'], original_name, save_path, color, duplex, remark, ST_PENDING, pickup_code))
-                break
-            except sqlite3.IntegrityError:
-                conn.rollback()
-                logger.warning('取件码「%s」已被占用（第 %s 次），重摇一个',
-                               pickup_code, attempt + 1)
-        else:
-            # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
-            raise RuntimeError('取件码连续 5 次都与其他订单重复')
-        conn.commit()
-        order_id = cursor.lastrowid
+        order_id, pickup_code = create_order_from_saved_file(
+            original_name, save_path, color, duplex, remark)
     except Exception:
-        if conn is not None:
-            conn.rollback()
-        if os.path.exists(save_path):  # 写库失败就把已保存的文件删掉
-            try:
-                os.remove(save_path)
-            except OSError:
-                logger.warning('清理孤儿文件失败: %s', save_path)
         logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 1, 'msg': '上传失败，请稍后重试'}), 500
-    finally:
-        if conn is not None:
-            conn.close()
 
     logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,

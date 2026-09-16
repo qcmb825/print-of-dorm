@@ -24,6 +24,8 @@ from config import (
     LOG_LEVEL_NAME,
     LOG_MAX_BYTES,
     LOG_TO_CONSOLE,
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_MB,
     SECRET_KEY,
     START_MAX_ATTEMPTS,
     START_RETRY_SECONDS,
@@ -46,7 +48,7 @@ from routes import register_blueprints
 # 创建应用
 app = Flask(__name__)
 
-app.config['MAX_CONTENT_LENGTH'] = env_int('MAX_UPLOAD_MB', 50) * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES
 
 
 # 会话安全：HttpOnly 让 JS 读不到 Cookie，SameSite 挡跨站携带，Secure 只在 HTTPS 下开
@@ -372,9 +374,8 @@ def handle_404(err):
 @app.errorhandler(413)
 def handle_413(err):
     """请求体超过 MAX_CONTENT_LENGTH 上限，多半是有人传了大文件。"""
-    limit_mb = app.config['MAX_CONTENT_LENGTH'] // (1024 * 1024)
-    security_event('upload_too_large', '请求体超过 %s MB 上限' % limit_mb)
-    return jsonify({'code': 413, 'msg': '文件太大，单个文件不能超过 %s MB' % limit_mb}), 413
+    security_event('upload_too_large', '请求体超过 %s MB 上限' % MAX_UPLOAD_MB)
+    return jsonify({'code': 413, 'msg': '文件太大，单个文件不能超过 %s MB' % MAX_UPLOAD_MB}), 413
 
 
 

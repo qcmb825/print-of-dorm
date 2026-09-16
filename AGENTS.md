@@ -187,6 +187,11 @@ config.py     ← 叶子模块，只依赖标准库 + cryptography，不 import 
 
 ## 动手前先读
 
+- `memoryandtest/memory/`：**AI 助手的跨会话记忆快照**，存着用户偏好、历史决策和踩坑记录。
+  → 但项目级记忆在 VS Code 里是**按打开方式分开存**的（文件夹一份、`.code-workspace` 一份，
+  互不可见），所以这个目录是唯一的汇总处。先读它的 `README.md`。
+  > 该目录整块被 `.gitignore` 忽略，**克隆仓库后并不存在** —— 读之前先判断存在性，不存在就跳过。
+  > 它存在的唯一理由是「换机器 / 换个方式打开项目时记忆不会断」，所以别把它加进白名单提交上去。
 - `README.md`：安全设计、配置项、日志系统、前端开发流程（第 6 节）、目录结构。
 - `.gitattributes`：`static/app/** -text`（产物不做行尾规范化）+ `frontend/index.html`、
   `frontend/public/**` 锁 `eol=lf`（否则 `core.autocrlf=true` 的机器上产物行尾变 CRLF，

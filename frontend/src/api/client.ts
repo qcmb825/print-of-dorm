@@ -137,6 +137,27 @@ export async function upload<T>(
   return response.data
 }
 
+/** 直接发一段原始二进制（分片走的就是它，不是 multipart —— 少一层包装就少一份开销）。
+ *
+ *  `timeout: 0` 是必须的：8MB 一片在跨洋链路上可能要一分钟以上，
+ *  默认的 30 秒超时会把上传了九成的分片白白掐断。
+ */
+export async function putRaw<T>(
+  url: string,
+  blob: Blob,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  const response = await http.put<T>(url, blob, {
+    timeout: 0,
+    headers: { 'Content-Type': 'application/octet-stream' },
+    onUploadProgress: (event) => {
+      if (!onProgress || !event.total) return
+      onProgress(Math.round((event.loaded / event.total) * 100))
+    },
+  })
+  return response.data
+}
+
 /** 以 blob 取回文件再触发浏览器下载 —— 走 axios 才有统一的错误处理。 */
 export async function download(url: string, filename: string): Promise<void> {
   const response = await http.get<Blob>(url, { responseType: 'blob' })
