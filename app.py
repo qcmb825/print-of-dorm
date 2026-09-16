@@ -13,7 +13,10 @@ from flask_cors import CORS
 from waitress import serve
 
 from config import (
+    ALERT_MAIL_TO,
     ALLOWED_EXTENSIONS,
+    CLAIM_ALERT_ENABLED,
+    CLAIM_ALERT_MINUTES,
     DATABASE_PATH,
     DEBUG_MODE,
     LOGIN_LOCK_SECONDS,
@@ -24,9 +27,13 @@ from config import (
     LOG_LEVEL_NAME,
     LOG_MAX_BYTES,
     LOG_TO_CONSOLE,
+    MAIL_FROM,
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_MB,
     SECRET_KEY,
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_SECURITY,
     START_MAX_ATTEMPTS,
     START_RETRY_SECONDS,
     STATUS_ACTIVE,
@@ -41,6 +48,8 @@ from config import (
     logger,
 )
 from db import ensure_database_directory, get_db, init_database, seed_super_admin
+from mail import mask_address
+from notifier import start_claim_watcher
 from security import actor_label, client_ip, ensure_csrf_token, security_event
 
 from routes import register_blueprints
@@ -97,6 +106,18 @@ def log_startup_summary():
     # 那时 UI_VUE 还没赋值（它在下面「界面选择」那一段），引它会直接 NameError
     # —— 而且是把整个服务起不来的那种崩。界面版本真要改，两处一起改。
     logger.info('  界面版本 : %s（界面切换已关闭，?ui= 参数不再生效）', 'vue')
+    # 这一行只报「配了什么」。「到底开没开」由 notifier.start_claim_watcher()
+    # 在真正拉线程那一刻再打一条 —— 横幅是模块加载时执行的，那时线程还没起来。
+    # 发件人地址打码，和 mail/recipients.py 里「日志中的邮箱一律打码」保持同一口径。
+    if not CLAIM_ALERT_ENABLED:
+        logger.info('  邮件提醒 : 已关闭（CLAIM_ALERT_ENABLED=false）')
+    elif SMTP_HOST:
+        logger.info('  邮件提醒 : SMTP=%s:%s(%s) 发件人=%s 门槛=%s 分钟 固定收件人=%s 个',
+                    SMTP_HOST, SMTP_PORT, SMTP_SECURITY,
+                    mask_address(MAIL_FROM) if MAIL_FROM else '(未配置)',
+                    CLAIM_ALERT_MINUTES, len(ALERT_MAIL_TO))
+    else:
+        logger.info('  邮件提醒 : 未配置 SMTP_HOST，未接单提醒不会启用')
     logger.info('  调试模式 : %s', DEBUG_MODE)
     if DEBUG_MODE:
         logger.warning('调试模式已开启！该模式会暴露源码并允许执行任意代码，仅供本地开发，'
@@ -578,4 +599,10 @@ def start_server(host, port):
 
 
 if __name__ == '__main__':
+    # 未接单提醒的守护线程在这里拉起，**不放模块级**：
+    # 放模块级的话，任何一次 import app 都会顺带把它点着，
+    # 而测试脚本、排查工具都会 import 它，里面的练习订单完全可能真的触发发信。
+    # 放在这里，就只有「真的被当服务跑起来」时才会有提醒 ——
+    # 这也正是这个项目实际的部署方式（python app.py）。
+    start_claim_watcher()
     start_server(os.getenv('HOST', '0.0.0.0'), env_int('PORT', 8080))

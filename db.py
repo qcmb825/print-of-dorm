@@ -136,7 +136,14 @@ def find_paper_type(conn, paper_type_id):
 #          不要给它们补一个默认份数或默认纸张：那时候打的就是一份，
 #          但记录里没有这件事，编一个「1 份」出来只会让人分不清
 #          哪一单是学生真的选了一份、哪一单是我们替他猜的。
-SCHEMA_VERSION = '9'
+# v9 -> v10：orders 新增 claim_alert_time（「未接单邮件提醒」的发信凭证列）。
+#          又是一个纯加列，不需要重建表。
+#          它的语义是 **NULL = 这笔单还没提醒过**，据此刻意不对老订单做任何回填：
+#          回填一个时间戳，等于把「没提醒过」说成「提醒过了」，
+#          这些单以后就再也不会被提醒了 —— 而且从数据上看不出发生过什么。
+#          留空则会走正常流程，但受 CLAIM_ALERT_MAX_AGE_HOURS 限制，
+#          老单本来也不会被翻出来补发。
+SCHEMA_VERSION = '10'
 
 
 
@@ -339,7 +346,8 @@ def init_database():
                 copies INTEGER,
                 paper_type_id INTEGER,
                 paper_name TEXT,
-                paper_remark TEXT
+                paper_remark TEXT,
+                claim_alert_time TIMESTAMP
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -416,6 +424,15 @@ def init_database():
             cursor.execute('ALTER TABLE orders ADD COLUMN paper_name TEXT')
         if 'paper_remark' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN paper_remark TEXT')
+
+        # 未接单提醒的发信凭证。只有一个状态位的作用：
+        # NULL = 还没提醒过，非 NULL = 已经在那个时刻提醒过了（谁先改成功谁负责发）。
+        # 它不参与任何业务判断，纯粹是给 notifier 用的「抢占锁」——
+        # 之所以放进数据库而不是记在内存里，是因为这台机器上同时跑着两个实例
+        # 是这个项目的历史常态，而内存里的标记第二个进程根本看不见，
+        # 结果就是同一笔单被提醒两遍。详见 notifier.py 的模块注释。
+        if 'claim_alert_time' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN claim_alert_time TIMESTAMP')
 
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。

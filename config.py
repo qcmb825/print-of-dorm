@@ -490,6 +490,88 @@ ANNOUNCE_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
 ANNOUNCE_CONTENT_MAX = 500
 
 
+# ---- 未接单提醒（邮件）----
+# 新单落库时是「待计费 + 没人接」，得有人在管理端把它接走才算开始。
+# 半夜、上课时段没人看页面，单子就一直在池子里躺着，直到学生来问才被发现。
+# 所以超过 CLAIM_ALERT_MINUTES 分钟还没人碰过的单，主动发一封邮件出去。
+#
+# 为什么不改成「下单就发」：刚下完单的几秒内没人接是完全正常的，
+# 每次下单都发一封会把邮箱变成下单流水，收信人两天之内就会把这个规则屏蔽掉 ——
+# 提醒一旦被当成噪音，真正该看的那封也就一起被忽略了。
+#
+# 为什么门槛不用「price 为空」之类的字段表达：那和状态枚举是同一个道理，
+# 用字段拼语义时，每个查询都得记得多写一个条件，漏写的那一处不报错，
+# 只会表现成「明明没提醒，日志里却写着提醒过了」。
+CLAIM_ALERT_ENABLED = env_bool('CLAIM_ALERT_ENABLED', True)
+
+CLAIM_ALERT_MINUTES = max(1, env_int('CLAIM_ALERT_MINUTES', 3))
+
+# 扫描间隔。60 秒对「3 分钟」这个门槛来说是够细的粒度，
+# 再密就只是拿数据库 I/O 换几秒的及时性，没什么意义。
+CLAIM_ALERT_INTERVAL = max(10, env_int('CLAIM_ALERT_INTERVAL', 60))
+
+# 只提醒「最近这段时间内」下的单。
+# 这一条是给重启场景兜底的：服务停了三天再起来，库里的老单全都满足
+# 「没人接 + 超过 3 分钟」，不加这道闸就会一口气炸出几十封早就没人关心的邮件。
+# 超过这个岁数的单不再提醒 —— 它们该靠人去看订单台，不是靠邮件。
+CLAIM_ALERT_MAX_AGE_HOURS = max(1, env_int('CLAIM_ALERT_MAX_AGE_HOURS', 24))
+
+# 发信失败后的退避秒数。SMTP 挂掉时（密码错、网络不通、服务商封了海外 IP）
+# 每 60 秒重试一次只会把日志刷满、顺便让对方把我们限流，
+# 所以失败后歇一会儿再来。
+CLAIM_ALERT_RETRY_BACKOFF = max(30, env_int('CLAIM_ALERT_RETRY_BACKOFF', 300))
+
+# 邮件正文里最多列几单，多的折成一句「另有 N 单」。
+# 不给上限的话，积压一天的队列会做出一封长得没法读的邮件，
+# 而那样一封邮件的实际效果等于没发。
+CLAIM_ALERT_MAX_ITEMS = max(1, env_int('CLAIM_ALERT_MAX_ITEMS', 20))
+
+
+# ---- SMTP（发信）----
+# 不配 SMTP_HOST 就不启用未接单提醒，启动时记一条 info —— 这个功能的开关
+# 实际上就是「有没有配发信服务器」，再多一个开关只会多一种配错的方式。
+#
+# 密码只从环境变量读，不落任何文件、不进日志：QQ / 163 用的是「授权码」，
+# 它等价于密码，写进日志的后果和把密码写进日志一样。
+SMTP_HOST = os.getenv('SMTP_HOST', '').strip()
+
+# QQ / 163 是 465，Gmail 是 587
+SMTP_PORT = env_int('SMTP_PORT', 465)
+
+SMTP_USER = os.getenv('SMTP_USER', '').strip()
+
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '').strip()
+
+# 加密方式：ssl（465，连上就是 TLS）/ starttls（587，先说hello再升级）/ none（只在本地调试用）。
+# 和 UI_MODE 一个套路：拼错的值不报错、只静默按默认走，很难发现，所以这里主动记一条 error。
+SMTP_SECURITY = os.getenv('SMTP_SECURITY', 'ssl').strip().lower()
+
+if SMTP_SECURITY not in ('ssl', 'starttls', 'none'):
+    logger.error('SMTP_SECURITY=%s 不是有效值，只认 ssl / starttls / none，已按 ssl 处理', SMTP_SECURITY)
+    SMTP_SECURITY = 'ssl'
+
+# 发件人地址。留空就用 SMTP_USER —— 绝大多数服务商要求这两者一致，
+# 但「转发到别的域名」这类配置确实存在，所以留一个能单独指定的口子。
+MAIL_FROM = os.getenv('MAIL_FROM', '').strip() or SMTP_USER
+
+# 收件人显示名，出现在对方邮箱的发件人那一栏
+MAIL_FROM_NAME = os.getenv('MAIL_FROM_NAME', '小猫娘打印服务').strip() or '小猫娘打印服务'
+
+# 额外收件人，逗号分隔。自动收集只能覆盖「联系方式填的是 QQ 或邮箱」的账号，
+# 而内置管理账号压根没有联系方式 —— 它的收件地址只能从这里来。
+ALERT_MAIL_TO = tuple(
+    address.strip() for address in os.getenv('ALERT_MAIL_TO', '').split(',') if address.strip()
+)
+
+# QQ 号推邮箱：管理员注册时联系方式三选一，选 QQ 的话库里存的是号不是邮箱，
+# 但 QQ 号本身就能拼出 QQ 邮箱，不必为此再加一列、再让每个人去补填一次。
+QQ_MAIL_SUFFIX = '@qq.com'
+
+# 发信超时（秒）。外网 SMTP 握手慢的时候不少，给短了会把能成功的信掐掉；
+# 给长了又会把守护线程卡住 —— 卡住的是它自己，不影响请求处理，但仍然别太久。
+SMTP_TIMEOUT = max(3, env_int('SMTP_TIMEOUT', 15))
+
+
 # 密钥
 # SECRET_KEY 用来给会话 Cookie 签名。泄露出去别人就能伪造登录态，务必自己配好、别外传
 SECRET_KEY = os.getenv('SECRET_KEY', '').strip()
