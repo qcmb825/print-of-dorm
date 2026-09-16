@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from config import DATABASE_PATH, ROLE_SUPER, ST_DONE, STATUS_CLOSED, logger
+from config import DATABASE_PATH, ROLE_SUPER, ST_DONE, ST_UNPRICED, STATUS_CLOSED, logger
 from security import audit_action, make_password_records
 
 
@@ -31,7 +31,13 @@ def get_db():
 # v2 -> v3：新增了联系方式列、工单表和公告表，全是加东西，老数据一概保留
 # v3 -> v4：users 表那三个列级 UNIQUE 换成「部分唯一索引」，
 #          注销的账号不再占用昵称 / 姓名 / 学号（见 _migrate_release_unique_names）
-SCHEMA_VERSION = '4'
+# v4 -> v5：姓名不再要求唯一（接入全校名单后重名是常态），
+#          改为普通索引，见 _migrate_relax_real_name_unique
+# v5 -> v6：新增身份审核申请表 audit_requests（学号不在名单上时的人工通道）。
+#          只加新表、不动老表，所以没有迁移函数 —— CREATE TABLE IF NOT EXISTS 本身幂等。
+# v6 -> v7：orders 表新增计费三列（price / priced_by / price_time），
+#          同样是纯加列，没有重建表，也就不需要整库备份。
+SCHEMA_VERSION = '7'
 
 
 
@@ -135,6 +141,35 @@ def _migrate_release_unique_names(cursor, current_version):
 
 
 
+def _migrate_relax_real_name_unique(cursor, current_version):
+    """v4 -> v5：姓名不再要求唯一，只留普通索引加速查询。
+
+    为什么放开 ——
+    原设计假设的是「一栋宿舍楼几十个人，重名不现实」，所以姓名和昵称、学号一样
+    被部分唯一索引卡着。接入全校名单后这个假设不成立了：四万多人里同名同姓
+    （学号不同）是常态，唯一索引会把第二个「张伟」直接挡在注册之外 ——
+    而他们确实是两个不同的人。身份的唯一标识交给学号，姓名只是称呼。
+
+    为什么必须显式 DROP ——
+    索引名没变，而下面的 CREATE INDEX IF NOT EXISTS 碰到同名索引会直接跳过，
+    于是老库会一直留着原来那把 UNIQUE 的锁：代码改了、行为却一模一样，
+    这种「改了没生效」最耗时。所以这里主动把旧索引拆掉。
+    拆索引不动表数据，不需要像重建表那样先备份整库。
+    """
+    if _migration_version(current_version) >= 5:
+        return
+    row = cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_users_real_name_live'"
+    ).fetchone()
+    # 只有旧索引确实带 UNIQUE 才拆。这一句同时保证幂等：
+    # 拆完重建的是非唯一索引，下次再进来会直接从这里返回。
+    if row is None or 'UNIQUE' not in (row[0] or '').upper():
+        return
+    cursor.execute('DROP INDEX idx_users_real_name_live')
+    logger.info('迁移：姓名索引去掉唯一约束，重名不再被拒绝注册')
+
+
+
 def init_database():
     """建立 / 升级数据表。
 
@@ -196,12 +231,22 @@ def init_database():
                 claimed_by INTEGER,
                 claim_time TIMESTAMP,
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                update_time TIMESTAMP
+                update_time TIMESTAMP,
+                price REAL,
+                priced_by INTEGER,
+                price_time TIMESTAMP
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_claimed ON orders(claimed_by)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)')
+        # 「还没计费的单」是每次开台都要查一遍的队列，单独建个索引。
+        # 写成部分索引：只盖住待计费的那些行，表里堆到几万条订单以后它依然很小。
+        # 值取自 ST_UNPRICED 而不是手打的字符串，改常量时这里跟着一起变。
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_orders_unpriced ON orders(status) '
+            "WHERE status = '%s'" % ST_UNPRICED
+        )
         # 取件码得唯一：两个人拿到同一个码，打印员就会把件取错。
         # 只对「还没取件」的单子判重，历史单子不参与 —— 老数据里万一已经存在重复值，
         # 也不该因为建不上索引就让整个服务起不来，所以这里建失败只记一条 error。
@@ -229,15 +274,32 @@ def init_database():
         if 'contact' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN contact TEXT')
 
+        # 计费三列，同一个套路：全新库靠上面的 CREATE TABLE 就带上了，
+        # 老库这里补。price 存的是「元」，最多两位小数，可空 ——
+        # 可空是有意义的：历史订单（这列还不存在的时候下的单）永远补不出一个合理金额，
+        # 与其编一个 0，不如让「没计过费」这件事在数据里能看出来。
+        order_columns = {row[1] for row in cursor.execute('PRAGMA table_info(orders)').fetchall()}
+        if 'price' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN price REAL')
+        if 'priced_by' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN priced_by INTEGER')
+        if 'price_time' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN price_time TIMESTAMP')
+
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。
         _migrate_release_unique_names(cursor, current_version)
 
-        # 判重只对「还没注销」的账号生效，注销的把那三个名字让出来。
+        # 姓名索引的去唯一化必须排在下面建索引之前。
+        # 反过来的话会先建出（或跳过）索引、再把它 DROP 掉，
+        # 结果是这一次启动没索引，下次重启才补回来。
+        _migrate_relax_real_name_unique(cursor, current_version)
+
+        # 判重只对「还没注销」的账号生效，注销的把那几个名字让出来。
         # 条件写成 status <> 'closed' 而不是 status = 'active'：
         # 被临时禁用的账号名字当然也算数（人还在，只是暂时进不来）。
         #
-        # 顺带一个值得记下来的副作用：这三个索引把「注销之后不能恢复」这件事
+        # 顺带一个值得记下来的副作用：昵称和学号这两个索引把「注销之后不能恢复」
         # 在数据库这一层也守住了。因为名字已经让给别人用了，谁要是绕过接口
         # 直接 UPDATE 把某个注销账号改回 active，就会撞上唯一索引而失败。
         # 代码里的判断是给人看的，索引是给「代码忘了判断」兜底的。
@@ -245,8 +307,11 @@ def init_database():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname_live
                 ON users(nickname) WHERE status <> 'closed'
         ''')
+        # 姓名刻意不建唯一索引。接入全校名单后，「同名的两个人」是常态而不是异常，
+        # 唯一索引会把第二个同名的人直接挡在注册之外。
+        # 仍然建普通部分索引：判重和查列表都会按姓名过一遍，走索引比全表扫描便宜。
         cursor.execute('''
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_real_name_live
+            CREATE INDEX IF NOT EXISTS idx_users_real_name_live
                 ON users(real_name) WHERE status <> 'closed'
         ''')
         cursor.execute('''
@@ -284,6 +349,39 @@ def init_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ticket_msgs ON ticket_messages(ticket_id)')
 
+        # 身份审核申请：学号不在名单上时的人工通道。
+        #
+        # 为什么不复用 tickets —— 工单是「已经登录进来的人和管理员对话」，
+        # 而申请恰恰是**还没有账号的人**提的，user_id 这一列根本填不出来。
+        # 硬塞进 tickets 就得把 NOT NULL 去掉，之后每个查工单的地方
+        # 都要多问一句「这条有没有主人」，把两个不相干的场景缠在一起。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS audit_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL,
+                real_name TEXT NOT NULL,
+                contact_type TEXT NOT NULL,
+                contact TEXT NOT NULL,
+                note TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                review_note TEXT,
+                reviewed_by INTEGER,
+                review_time TIMESTAMP,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        # 一个学号只留一条申请。约束写在数据库这一层而不是只靠接口里查一遍：
+        # 「同一个学号反复提交」在索引这一层就不可能发生，接口哪次忘了判断也捅不穿。
+        # 副作用是驳回后不能重申 —— 这是有意的，想让同一个人再申请，
+        # 管理员直接把那条改成「已通过」即可，不需要真的重新走一遍流程。
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_student_id
+                ON audit_requests(student_id)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_audit_status ON audit_requests(status)
+        ''')
+
         # 公告：同一时间只有一条 is_active=1，历史公告留着方便编辑或回滚。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS announcements (
@@ -309,6 +407,36 @@ def init_database():
 
 
 
+def _backfill_admin_student_id(conn, row, configured_student_id):
+    """给老部署的内置管理账号补上学号 —— 登录方式改了，老账号得跟着走。
+
+    为什么要在启动时自动补：升级前内置账号的学号允许留空，而空学号的账号
+    在新的登录方式（学号 + 密码）下永远登不进去。管理账号又恰恰是唯一
+    能把人救出来的那个入口，不能让它停在「代码升级完了、人却进不去」的状态里。
+
+    配置里有就补上；没有就只记一条 error，不抛异常 —— 抛了会让生产环境起不来，
+    而这里只是「有个字段没填」，为它停掉整个服务不划算。
+    """
+    if (row['student_id'] or '').strip():
+        return  # 已经有学号，不用管
+    if not configured_student_id:
+        logger.error('内置管理账号 #%s 没有学号，而登录方式是「学号 + 密码」，它会登不进去。'
+                     '请在 .env 里补上 SUPER_ADMIN_STUDENT_ID', row['id'])
+        return
+    try:
+        conn.execute('UPDATE users SET student_id = ? WHERE id = ?',
+                     (configured_student_id, row['id']))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # 这个学号已经被某个真人注册占掉了。该给谁用是人的决定，不能让程序猜。
+        logger.error('内置管理账号 #%s 补学号失败：学号「%s」已被别的账号占用，'
+                     '请换一个 SUPER_ADMIN_STUDENT_ID', row['id'], configured_student_id)
+        return
+    logger.info('内置管理账号 #%s 已补齐学号 %s（登录改用学号后必须得有）',
+                row['id'], configured_student_id)
+
+
+
 def seed_super_admin():
     """按配置创建内置管理账号，同昵称已存在就跳过，可以放心重复执行。
 
@@ -318,8 +446,9 @@ def seed_super_admin():
     重复启动也不会重复创建（幂等）。
     """
     # 昵称是登录名，必须非空；姓名/学号/宿舍可以留空（数据库里存空字符串）。
-    # real_name 和 student_id 都是 UNIQUE 字段，空字符串也算一个值，
-    # 所以多个内置账号不能同时留空，第二个会撞唯一约束，日志里会提示。
+    # student_id 上有部分唯一索引，空字符串也算一个值，
+    # 所以多个内置账号不能同时留空学号，第二个会撞唯一约束，日志里会提示。
+    # 姓名已经放开唯一（重名太常见），留空不会互相冲突。
     nickname = os.getenv('SUPER_ADMIN_NICKNAME', 'superadmin').strip() or 'superadmin'
     real_name = os.getenv('SUPER_ADMIN_REALNAME', '').strip()
     student_id = os.getenv('SUPER_ADMIN_STUDENT_ID', '').strip()
@@ -331,9 +460,21 @@ def seed_super_admin():
         # 账号已经在了就直接返回。这一步必须排在检查密码之前：
         # 密码只在「第一次建这个账号」时用得上，老部署重启时不该因为
         # 后来把 SUPER_ADMIN_PASSWORD 删了、或者改短了而起不来。
-        if conn.execute('SELECT 1 FROM users WHERE nickname = ? COLLATE NOCASE',
-                        (nickname,)).fetchone():
+        existing = conn.execute(
+            'SELECT id, student_id FROM users WHERE nickname = ? COLLATE NOCASE',
+            (nickname,)).fetchone()
+        if existing is not None:
+            _backfill_admin_student_id(conn, existing, student_id)
             return
+        if not student_id:
+            # 登录改成「学号 + 密码」之后，没有学号的账号等于进不去，
+            # 而这是系统里唯一的初始管理入口 —— 登不进去就没人能再进来补救了。
+            # 后果和「超管密码没配」一样是把自己锁在门外，所以同样在启动时中止。
+            raise SystemExit(
+                '\n[启动中止] 内置管理账号「%s」还不存在，而且没有配置 SUPER_ADMIN_STUDENT_ID。\n'
+                '  登录方式是「学号 + 密码」，没有学号的账号无法登录，因此拒绝启动。\n'
+                '  请在 .env 里补上：SUPER_ADMIN_STUDENT_ID=<这个账号的登录学号>\n'
+                '  （任意 4-20 位数字即可，它只是这个管理账号的登录名。）\n' % nickname)
         if len(password) < 8:
             # 以前这里是配置缺失时随机生成一个，再把明文写进日志。
             # 那等于把一个能用的管理员口令存进了日志文件，而日志恰恰是
@@ -360,8 +501,8 @@ def seed_super_admin():
                         cursor.lastrowid, nickname, real_name or '(空)', student_id or '(空)')
             audit_action('create_builtin_admin', '系统初始化时创建内置管理账号 #%s/%s' % (cursor.lastrowid, nickname))
         except sqlite3.IntegrityError:
-            logger.error('内置管理账号创建失败：昵称「%s」/ 姓名「%s」/ 学号「%s」已被占用，'
-                         '请修改 .env 中的 SUPER_ADMIN_* 配置（姓名和学号都是唯一字段，'
-                         '多个账号不能同时留空）', nickname, real_name, student_id)
+            logger.error('内置管理账号创建失败：昵称「%s」/ 学号「%s」已被占用，'
+                         '请修改 .env 中的 SUPER_ADMIN_* 配置（昵称和学号都是唯一字段，'
+                         '多个账号不能同时留空学号）', nickname, student_id)
     finally:
         conn.close()

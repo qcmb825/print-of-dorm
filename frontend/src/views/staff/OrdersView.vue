@@ -1,14 +1,17 @@
 <script setup lang="ts">
-/** 订单台：待接单池 / 我接的单 / 全部，支持状态筛选、分页、接单释放改状态、下载文件。
+/** 订单台：待接单池 / 我接的单 / 全部，支持状态筛选、分页、接单释放改状态、计费、下载文件。
  *  窄屏切换成卡片列表 —— 表格在手机上没法用，但管理员确实会拿手机接单。 */
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn, useMediaQuery } from '@vueuse/core'
-import { Download, Inbox, Lock, Package, RefreshCw, Unlock } from '@lucide/vue'
+import { CircleDollarSign, Download, Inbox, Lock, Package, RefreshCw, Unlock } from '@lucide/vue'
 import {
+  NAlert,
   NButton,
   NDataTable,
   NDropdown,
   NEmpty,
+  NInput,
+  NModal,
   NPagination,
   NSelect,
   NSkeleton,
@@ -19,12 +22,26 @@ import {
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
-import { ORDER_STATUSES, type Order, type OrderStatus } from '@/api/types'
+import { ORDER_STATUSES, ORDER_STATUSES_MANUAL, type Order, type OrderStatus } from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
-import { COLOR_TYPE_LABEL, DUPLEX_LABEL, pickupCodeLabel, shortTime } from '@/utils/format'
+import {
+  COLOR_TYPE_LABEL,
+  DUPLEX_LABEL,
+  normalizePrice,
+  pickupCodeLabel,
+  priceLabel,
+  shortTime,
+} from '@/utils/format'
+
+/** 待计费。单独提成常量是因为它在这个文件里到处要判：计费按钮能不能点、
+ *  改状态要不要置灰、计费按钮是「计费」还是「改价」。 */
+const WAIT_PRICE: OrderStatus = '待计费'
+
+/** 已取件。取件时钱是当面结清的，所以这个是金额的终点，改价一路挡到这里为止。 */
+const DONE: OrderStatus = '已取件'
 
 const auth = useAuthStore()
 const message = useMessage()
@@ -58,7 +75,10 @@ const statusOptions = [
   ...ORDER_STATUSES.map((item) => ({ label: item, value: item })),
 ]
 
-const statusDropdownOptions: DropdownOption[] = ORDER_STATUSES.map((item) => ({
+// 改状态下拉里**没有**「待计费」：那个状态只能由计费动作产生（后端
+// config.ORDER_STATUSES_MANUAL 也是同一份名单）。让它出现在这里，管理员点了
+// 就会造出「已经标过价、又退回待计费」的单，金额和状态互相矛盾。
+const statusDropdownOptions: DropdownOption[] = ORDER_STATUSES_MANUAL.map((item) => ({
   label: item,
   key: item,
 }))
@@ -69,6 +89,7 @@ const poolSummary = computed(() => ({
   pool: orders.value.filter((order) => order.claimed_by === null).length,
   mine: orders.value.filter((order) => order.claimed_by === currentUserId.value).length,
   ready: orders.value.filter((order) => order.status === '可取了').length,
+  unpriced: orders.value.filter((order) => order.status === WAIT_PRICE).length,
 }))
 
 async function load(silent = false): Promise<void> {
@@ -98,10 +119,98 @@ function canDownload(order: Order): boolean {
   return order.claimed_by !== null && (isSuper.value || order.claimed_by === currentUserId.value)
 }
 
+/** 改状态按钮点不动的原因；null 表示可以点。分支与后端 `api_update_status` 一一对应。 */
+function statusBlockReason(order: Order): string | null {
+  if (order.status === WAIT_PRICE) return '这单还没计费，先填好金额'
+  if (!canReachOrder(order)) {
+    // 未接单和「别人接的」是两回事：一个是还没轮到自己，一个是轮不到自己
+    return order.claimed_by === null ? '请先接单，再接单后才能改状态' : '这单是别人接的'
+  }
+  return null
+}
+
 function canChangeStatus(order: Order): boolean {
+  return statusBlockReason(order) === null
+}
+
+/** 这一单归不归自己管（是自己接的，或者自己是超管）—— 管的是「按不按得动」。
+ *  未接单时 `claimed_by` 是 null，而 `currentUserId` 是个数字，自然对不上。 */
+function canReachOrder(order: Order): boolean {
   return isSuper.value || order.claimed_by === currentUserId.value
 }
 
+/** 计费按钮点不动的原因；null 表示可以点。
+ *  分三种而不是一句笼统的「不能计费」：按钮灰在那儿的时候，
+ *  管理员得知道下一步该干什么 —— 是去接单，还是去找揽下这单的人。 */
+function priceBlockReason(order: Order): string | null {
+  if (order.status === DONE) return '订单已取件，金额不再改动'
+  if (order.claimed_by === null) return '请先接单，看过文件后再填金额'
+  if (!canReachOrder(order)) return '这单是别人接的，只有接单人能给它计费'
+  return null
+}
+
+function canPrice(order: Order): boolean {
+  return priceBlockReason(order) === null
+}
+
+/* ---------- 计费 ----------
+ *  顺序是**先接单、后计费**：金额是按文件本身算出来的（几页、黑白还是彩色、
+ *  单面还是双面），没接过单就没人打开过那份文件，只能对着文件名猜价钱。
+ *  接单人就是看过文件的人，所以计费权限也只给接单人（超管不受限）。
+ *  这里的每一条都跟后端 `api_price_order` 的分支一一对应。 */
+
+const priceOrder = ref<Order | null>(null)
+const priceInput = ref('')
+const pricing = ref(false)
+
+/** 空输入不算错（用户刚开始输），填了东西才给格式提示 */
+const priceError = computed(() =>
+  priceInput.value.trim() === '' ? null : normalizePrice(priceInput.value) === null
+    ? '金额需为不超过 99999.99 元的数字，最多两位小数'
+    : null,
+)
+
+function openPrice(order: Order): void {
+  // 按钮已经置灰了，这里再挡一道：入口不止一处，少写一个就漏一个。
+  // 提示直接用那边算好的原因，两句文案分叉的话，以后改一处就会对不上。
+  const blocked = priceBlockReason(order)
+  if (blocked) {
+    message.warning(blocked)
+    return
+  }
+  priceOrder.value = order
+  // 已有金额就带出来，方便微调；没有就是空，让管理员自己填
+  priceInput.value = order.price === null || order.price === undefined ? '' : order.price.toFixed(2)
+}
+
+async function submitPrice(): Promise<void> {
+  const order = priceOrder.value
+  if (!order) return
+  const amount = normalizePrice(priceInput.value)
+  if (amount === null) {
+    message.error('请填写正确的金额')
+    return
+  }
+  pricing.value = true
+  try {
+    // 后端要的就是一个字符串（PRICE_RE 按十进制文本校验），
+    // 不在前端转 Number —— 转一道就会出现 0.1+0.2 这种二进制浮点尾巴。
+    await staffOrderApi.price(order.id, amount)
+    message.success(
+      order.price === null || order.price === undefined
+        ? `订单 #${order.id} 已计费 ¥${Number(amount).toFixed(2)}`
+        : `订单 #${order.id} 金额已改为 ¥${Number(amount).toFixed(2)}`,
+    )
+    priceOrder.value = null
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '计费失败')
+    // 409「刚被别人计过费了」这类要刷一下才看得到新金额
+    await load(true)
+  } finally {
+    pricing.value = false
+  }
+}
 async function claim(order: Order): Promise<void> {
   busyId.value = order.id
   try {
@@ -165,7 +274,14 @@ function statusButton(order: Order) {
       default: () =>
         h(
           NButton,
-          { size: 'tiny', quaternary: true, disabled: !canChangeStatus(order) },
+          {
+            size: 'tiny',
+            quaternary: true,
+            disabled: !canChangeStatus(order),
+            // 灰着的时候也要说清差在哪一步：待计费的单也能走到岔路上来
+            // （自己刚接、还没填金额）
+            title: statusBlockReason(order) ?? undefined,
+          },
           { default: () => '改状态' },
         ),
     },
@@ -213,6 +329,21 @@ const columns = computed<DataTableColumns<Order>>(() => [
     render: (row) => h(StatusTag, { status: row.status, size: 'sm' }),
   },
   {
+    title: '费用',
+    key: 'price',
+    width: 92,
+    // 未计费时金额是 null 而不是 0（老库遗留订单也走这条路）——
+    // 显示成「￥0.00」会让人以为这单免费。
+    render: (row) =>
+      h(
+        'span',
+        {
+          class: row.price === null || row.price === undefined ? 'text-[12px] opacity-50' : 'tnum text-[13px] font-bold',
+        },
+        priceLabel(row.price),
+      ),
+  },
+  {
     title: '取件码',
     key: 'pickup_code',
     width: 78,
@@ -233,7 +364,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 210,
+    width: 296,
     render: (row) =>
       h('div', { class: 'flex flex-wrap items-center gap-1' }, [
         row.claimed_by === null
@@ -248,6 +379,21 @@ const columns = computed<DataTableColumns<Order>>(() => [
               { default: () => '接单' },
             )
           : null,
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            type: row.price === null || row.price === undefined ? 'primary' : 'default',
+            loading: busyId.value === row.id && !priceOrder.value,
+            disabled: !canPrice(row),
+            // 灰着的原因直接写在按钮上：否则管理员只看到一颗按不动的按钮，
+            // 不知道是得先接单、还是该去找揽下这单的人。
+            title: priceBlockReason(row) ?? undefined,
+            onClick: () => openPrice(row),
+          },
+          { default: () => (row.price === null || row.price === undefined ? '计费' : '改价') },
+        ),
         canChangeStatus(row) ? statusButton(row) : null,
         canRelease(row)
           ? h(
@@ -339,9 +485,10 @@ onMounted(async () => {
       </template>
     </PageHeader>
 
-    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
       <StatCard label="当页订单" :value="orders.length" :icon="Package" />
       <StatCard label="本页待接单" :value="poolSummary.pool" accent />
+      <StatCard label="本页待计费" :value="poolSummary.unpriced" />
       <StatCard label="本页我接的" :value="poolSummary.mine" />
       <StatCard label="本页可取了" :value="poolSummary.ready" />
     </div>
@@ -430,7 +577,29 @@ onMounted(async () => {
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
 
+          <!-- 金额单独一行：它是这一屏上唯一跟钱有关的数字，跟规格、取件码挤在一行会被略过 -->
+          <p class="mt-2 flex flex-wrap items-center gap-x-3 text-[12px]">
+            <span
+              :class="
+                order.price === null || order.price === undefined
+                  ? 'text-ink-4'
+                  : 'tnum font-bold'
+              "
+            >
+              费用 {{ priceLabel(order.price) }}
+            </span>
+            <span v-if="order.pricer_nickname" class="text-ink-4">
+              由 {{ order.pricer_nickname }} 定价 {{ order.price_time ? shortTime(order.price_time) : '' }}
+            </span>
+          </p>
+
           <div class="mt-3 flex flex-wrap items-center gap-1.5">
+            <!-- 接单不再需要额外条件：待计费的单正是要人接过来看文件的，
+                 所以这颗按钮就是「我来处理这一单」，不带 Tooltip。
+                 （这里原本套着一层 NTooltip，v-if 曾经放进 #trigger 里，
+                 订单被接单后插槽变空，Naive UI 抛 slot[trigger] should have
+                 exactly one child。现在整个 Tooltip 都没了，坑跟着消失 ——
+                 但别再把 v-if 往 #trigger 里面塞。） -->
             <NButton
               v-if="order.claimed_by === null"
               size="tiny"
@@ -441,13 +610,34 @@ onMounted(async () => {
               <template #icon><Lock :size="12" /></template>
               接单
             </NButton>
+
+            <NButton
+              size="tiny"
+              :quaternary="order.price !== null && order.price !== undefined"
+              :type="order.price === null || order.price === undefined ? 'primary' : 'default'"
+              :disabled="!canPrice(order)"
+              :title="priceBlockReason(order) ?? undefined"
+              @click="openPrice(order)"
+            >
+              <template #icon><CircleDollarSign :size="12" /></template>
+              {{ order.price === null || order.price === undefined ? '计费' : '改价' }}
+            </NButton>
+
             <NDropdown
-              v-if="canChangeStatus(order)"
+              v-if="canReachOrder(order)"
               :options="statusDropdownOptions"
               trigger="click"
+              :disabled="!canChangeStatus(order)"
               @select="(key: string) => changeStatus(order, key as OrderStatus)"
             >
-              <NButton size="tiny" quaternary>改状态</NButton>
+              <NButton
+                size="tiny"
+                quaternary
+                :disabled="!canChangeStatus(order)"
+                :title="statusBlockReason(order) ?? undefined"
+              >
+                改状态
+              </NButton>
             </NDropdown>
             <NButton
               v-if="canRelease(order)"
@@ -479,5 +669,73 @@ onMounted(async () => {
         @update:page-size="onPageSizeChange"
       />
     </div>
+
+    <!-- 计费弹窗。金额一律以字符串来回（见 submitPrice 里的理由），
+         所以这里用 NInput 而不是 NInputNumber。 -->
+    <NModal
+      :show="priceOrder !== null"
+      preset="card"
+      class="max-w-[420px]"
+      :title="
+        priceOrder && (priceOrder.price === null || priceOrder.price === undefined)
+          ? '给订单计费'
+          : '修改金额'
+      "
+      :bordered="false"
+      @update:show="(value: boolean) => !value && (priceOrder = null)"
+    >
+      <template v-if="priceOrder">
+        <p class="mb-3 min-w-0 text-[13px] leading-6 text-ink-3">
+          <span class="block truncate font-semibold text-ink" :title="priceOrder.filename">
+            {{ priceOrder.filename }}
+          </span>
+          <span class="tnum">
+            #{{ priceOrder.id }} ·
+            {{ priceOrder.color_type ? COLOR_TYPE_LABEL[priceOrder.color_type] : '黑白' }}
+            /
+            {{ priceOrder.duplex ? DUPLEX_LABEL[priceOrder.duplex] : '单面' }}
+          </span>
+        </p>
+
+        <NInput
+          v-model:value="priceInput"
+          size="large"
+          placeholder="例如 3.50"
+          :status="priceError ? 'error' : undefined"
+          @keydown.enter="submitPrice"
+        >
+          <template #prefix>
+            <span class="font-heading font-bold" style="color: var(--primary)">¥</span>
+          </template>
+        </NInput>
+        <p class="mt-2 text-[11px]" :style="{ color: priceError ? 'var(--err)' : 'var(--ink-4)' }">
+          {{ priceError ?? '最多两位小数。计费完成后订单会从「待计费」进入「待打印」。' }}
+        </p>
+
+        <NAlert
+          v-if="priceOrder.price !== null && priceOrder.price !== undefined"
+          type="warning"
+          :bordered="false"
+          class="mt-3"
+        >
+          这单当前金额是 ¥{{ priceOrder.price.toFixed(2) }}，修改后学生端会立即看到新金额。
+        </NAlert>
+      </template>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <NButton quaternary @click="priceOrder = null">取消</NButton>
+          <NButton
+            type="primary"
+            class="!font-bold"
+            :loading="pricing"
+            :disabled="!priceInput.trim() || priceError !== null"
+            @click="submitPrice"
+          >
+            {{ priceOrder && (priceOrder.price === null || priceOrder.price === undefined) ? '确认计费' : '保存金额' }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>

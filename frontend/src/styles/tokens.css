@@ -52,7 +52,7 @@
   --deep-void: #f4f4f4;
   --technical-grey: #e2e2e2;
 
-  /* 订单状态：待打印 / 打印中 / 可取了 / 已取件 */
+  /* 订单状态：待计费 / 待打印 / 打印中 / 可取了 / 已取件 */
   --status-pending: #52525b;
   --status-pending-bg: #f4f4f4;
   --status-printing: #0e7490;
@@ -61,6 +61,12 @@
   --status-ready-bg: #fef9c3;
   --status-done: #15803d;
   --status-done-bg: #dcfce7;
+
+  /* 待计费：一个「等人动手」的状态，所以用一套淡淡的紫色跟其他四个区分开。
+   * 不沿用 --status-pending 的灰：那两个状态在列表里会同时出现，
+   * 色调一模一样的话「还没定过价」和「定了价还没人接」看起来就是同一件事。 */
+  --status-unpriced: #7e22ce;
+  --status-unpriced-bg: #f3e8ff;
 
   /* 角色：普通用户 / 管理员 / 超级管理员 */
   --role-user: #0e7490;
@@ -74,6 +80,9 @@
   --err: #b91c1c;
   --warn: #a16207;
   --info: #0e7490;
+  /* 错误色的低透明度填充（驳回标签、失败提示的底）。
+   * 跟状态色一样拆出 -bg 一支：--err 直接当背景会是一块刺眼的红。 */
+  --err-bg: #fef2f2;
 
   /* 主色的低透明度填充：图标底、自己的消息气泡、提示条等。
    * 单独做成令牌是因为深色下要用霓虹黄，直接写浅色那支会发闷。 */
@@ -182,6 +191,8 @@
   --status-ready-bg: #ffd0001f;
   --status-done: #4ade80;
   --status-done-bg: #4ade801f;
+  --status-unpriced: #c084fc;
+  --status-unpriced-bg: #c084fc1f;
 
   --role-user: #22d3ee;
   --role-user-bg: #00f0ff1a;
@@ -194,6 +205,7 @@
   --err: #f87171;
   --warn: #fbbf24;
   --info: #22d3ee;
+  --err-bg: #f871711f;
 
   /* 深色下换成霓虹黄的填充，浅色那支在深底上会显得发闷 */
   --accent-tint: rgb(255 208 0 / 0.12);
@@ -398,6 +410,8 @@
   --color-st-ready-bg: var(--status-ready-bg);
   --color-st-done: var(--status-done);
   --color-st-done-bg: var(--status-done-bg);
+  --color-st-unpriced: var(--status-unpriced);
+  --color-st-unpriced-bg: var(--status-unpriced-bg);
 
   --color-role-user: var(--role-user);
   --color-role-user-bg: var(--role-user-bg);
@@ -408,6 +422,7 @@
 
   --color-ok: var(--ok);
   --color-err: var(--err);
+  --color-err-bg: var(--err-bg);
   --color-warn: var(--warn);
   --color-info: var(--info);
 

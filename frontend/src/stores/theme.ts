@@ -36,6 +36,9 @@ export const useThemeStore = defineStore('theme', () => {
     if (!localStorage.getItem(STORAGE_KEY)) isDark.value = event.matches
   })
 
+  /** 手动切换主题。**目前没有调用方**：界面上的 ThemeToggle 已经拆掉，主题
+   *  跟着系统偏好走（下面那个 matchMedia 监听）。这个函数留着是因为深色令牌
+   *  和这套反读逻辑都还在正常服务图表与公告，将来想加回入口时不必重写。 */
   function toggle(): void {
     isDark.value = !isDark.value
     localStorage.setItem(STORAGE_KEY, isDark.value ? 'dark' : 'light')

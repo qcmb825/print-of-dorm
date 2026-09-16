@@ -19,8 +19,11 @@ export function fileExtension(filename: string): string {
   return index > 0 ? filename.slice(index + 1).toUpperCase() : '文件'
 }
 
-/** 订单状态 → 令牌色（对应 tokens.css 里的 --status-*）。 */
+/** 订单状态 → 令牌色（对应 tokens.css 里的 --status-*）。
+ *  新增状态时这里必须一起加：漏了不会报错（后端发的中文本来就是个 string），
+ *  只是那个标签会拿不到颜色 —— 静默的、只有肉眼能看出来的那种坏。 */
 export const STATUS_COLOR_VAR: Record<OrderStatus, string> = {
+  待计费: 'var(--status-unpriced)',
   待打印: 'var(--status-pending)',
   打印中: 'var(--status-printing)',
   可取了: 'var(--status-ready)',
@@ -28,6 +31,7 @@ export const STATUS_COLOR_VAR: Record<OrderStatus, string> = {
 }
 
 export const STATUS_BG_VAR: Record<OrderStatus, string> = {
+  待计费: 'var(--status-unpriced-bg)',
   待打印: 'var(--status-pending-bg)',
   打印中: 'var(--status-printing-bg)',
   可取了: 'var(--status-ready-bg)',
@@ -58,4 +62,25 @@ export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
 export function pickupCodeLabel(code: string | null): string {
   if (!code) return '—'
   return /^\d+$/.test(code) ? code.padStart(4, '0') : code
+}
+
+/** 金额展示。`null` 和 `undefined` 都是「还没计费」——
+ *  不能用 `price || '未计费'` 简写：0 元是合法金额（自己宿舍内部打印不算钱），
+ *  那种单会在界面上被显示成「未计费」，学生看不出到底要不要交钱。 */
+export function priceLabel(price: number | null | undefined): string {
+  if (price === null || price === undefined) return '未计费'
+  return `¥${price.toFixed(2)}`
+}
+
+/** 金额输入框里的原始文本 → 后端能接受的十进制字符串，或 null（明显不合法）。
+ *  校验规则是后端 config.PRICE_RE 的镜像，永远以后端为准；
+ *  这里只负责在按提交之前拦住一眼就能看出的错，少跑一趟网络。
+ *  注意返回的是**字符串**：金额全程按十进制文本传，不经过 float 转一道 ——
+ *  转了就轮到 0.1+0.2 那类误差来接管了。 */
+export function normalizePrice(input: string): string | null {
+  const text = input.trim().replace(/^¥/, '')
+  if (!/^\d{1,6}(\.\d{1,2})?$/.test(text)) return null
+  const amount = Number(text)
+  if (!(amount > 0)) return null
+  return text
 }

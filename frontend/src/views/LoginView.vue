@@ -15,7 +15,7 @@ import {
   type FormRules,
 } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
-import ThemeToggle from '@/components/ThemeToggle.vue'
+import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import { ApiError } from '@/api/client'
 import { CONTACT_LABELS, type ContactType } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
@@ -60,7 +60,9 @@ const contactOptions = (Object.keys(CONTACT_LABELS) as ContactType[]).map((value
 }))
 
 const loginRules: FormRules = {
-  identifier: [{ required: true, message: '请输入姓名或昵称', trigger: ['blur', 'input'] }],
+  // 登录只用学号（后端也拿 STUDENT_ID_RE 卡一道）。这里不再提「昵称」：
+  // 提示文案里写着昵称、后端又不收，用户会先把昵称输一遍才被告知不行。
+  identifier: [{ required: true, message: '请输入学号', trigger: ['blur', 'input'] }],
   password: [{ required: true, message: '请输入密码', trigger: ['blur', 'input'] }],
 }
 
@@ -181,11 +183,30 @@ async function submitRegister(): Promise<void> {
     message.success('注册成功')
     await router.replace('/upload')
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '注册失败，请稍后重试')
+    // 学号不在名单上时后端回 409 + need_audit，意思是「这次不行，但有正经出路」。
+    // 坐实这个标记（ApiError.needAudit）而不是比对那句话的意思：
+    // 拿中文提示当开关的话，后端改一个标点，这个入口就静默消失了。
+    if (error instanceof ApiError && error.needAudit) {
+      // 先把被拦下的原因说清楚，否则用户看到的就只是一个没来由的弹窗
+      message.warning(error.message)
+      auditOpen.value = true
+    } else {
+      message.error(error instanceof ApiError ? error.message : '注册失败，请稍后重试')
+    }
   } finally {
     submitting.value = false
   }
 }
+
+/** 审核申请弹窗。预填注册表单里的四样东西 —— 用户刚要提交的正是这些，
+ *  让他重新输一遍没有道理（尤其学号，输错一位就得等管理员打回来）。 */
+const auditOpen = ref(false)
+const auditPrefill = computed(() => ({
+  student_id: registerForm.student_id.trim(),
+  real_name: registerForm.real_name.trim(),
+  contact_type: registerForm.contact_type,
+  contact: registerForm.contact.trim(),
+}))
 
 onMounted(async () => {
   try {
@@ -239,7 +260,6 @@ onMounted(async () => {
             <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
           </span>
         </span>
-        <ThemeToggle />
       </div>
 
       <div class="panel login-card p-5 sm:p-6">
@@ -249,7 +269,7 @@ onMounted(async () => {
             class="tech-label inline-flex items-center gap-1.5 rounded-full px-2 py-1"
             :style="{
               color: online === false ? 'var(--err)' : 'var(--secondary)',
-              backgroundColor: online === false ? '#f871711f' : 'var(--role-user-bg)',
+              backgroundColor: online === false ? 'var(--err-bg)' : 'var(--role-user-bg)',
             }"
           >
             <component
@@ -268,8 +288,8 @@ onMounted(async () => {
         <p class="mt-1.5 mb-5 text-[13px] text-ink-3">
           {{
             tab === 'login'
-              ? '用姓名或昵称登录，提交文件后凭取件码取件。'
-              : '注册后即可上传文件下单，取件码会随订单生成。'
+              ? '用学号登录，提交文件后凭取件码取件。'
+              : '注册后即可上传文件下单。学号与学校名单不一致时，会引导你提交审核申请。'
           }}
         </p>
 
@@ -283,10 +303,10 @@ onMounted(async () => {
               :show-require-mark="false"
               @submit.prevent="submitLogin"
             >
-              <NFormItem label="姓名 / 昵称" path="identifier">
+              <NFormItem label="学号" path="identifier">
                 <NInput
                   v-model:value="loginForm.identifier"
-                  placeholder="请输入姓名或昵称"
+                  placeholder="请输入学号"
                   autocomplete="username"
                   :input-props="{ autocapitalize: 'off', autocorrect: 'off' }"
                 />
@@ -398,19 +418,20 @@ onMounted(async () => {
       <p class="mt-4 text-center text-[11px] text-ink-4">
         管理员账号由超管在后台开通，注册一律为普通用户。
       </p>
-      <!-- 换一套界面。用真的链接整页跳转，不能走 vue-router：
-           经典版是后端 Jinja 渲染的另一份代码，路由表里根本没有它，
-           router.push 只会掉进 404 兜底页。带上 ?ui=classic 后端会把这次
-           选择写进 pod-ui Cookie，后面的请求就跟着走了。
-           放登录页而不是只放用户菜单：没登录时顶栏不存在，而「一进来看到的
-           是哪一套」恰恰是登录前最该能改的东西。 -->
+      <!-- 这里曾经还有一个「换个界面」链接。全站已经锁死新版（app.py 的
+           UI_SWITCH_ENABLED），点过去也只会回到同一套外壳，留着反而像是坏了。 -->
       <p class="mt-2 text-center text-[11px] text-ink-4">
-        <a
-          href="/?ui=classic"
+        <button
+          type="button"
           class="underline decoration-dotted underline-offset-2 hover:text-ink-2"
-        >换个界面 →</a>
+          @click="auditOpen = true"
+        >
+          学号不在名单上？申请人工审核 →
+        </button>
       </p>
       </div>
     </div>
   </div>
+
+  <AuditRequestDialog v-model:show="auditOpen" :prefill="auditPrefill" />
 </template>

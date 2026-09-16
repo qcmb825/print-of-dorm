@@ -12,17 +12,19 @@ from auth import login_required, roles_required
 from config import (
     ALLOWED_EXTENSIONS,
     ORDER_STATUSES,
+    ORDER_STATUSES_MANUAL,
     ROLE_ADMIN,
     ROLE_SUPER,
     ST_DONE,
     ST_PENDING,
     ST_READY,
+    ST_UNPRICED,
     UPLOAD_FOLDER,
     logger,
 )
 from db import get_db
-from security import client_ip, hit_limit, security_event
-from utils import allowed_file, display_name, generate_pickup_code, positive_int
+from security import audit_action, client_ip, hit_limit, security_event
+from utils import allowed_file, display_name, generate_pickup_code, parse_price, positive_int
 
 bp = Blueprint('orders', __name__)
 
@@ -45,6 +47,10 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
     调用方负责：扩展名已过白名单、文件已完整落盘、三个参数已清洗。
     写库失败时本函数会把 save_path 一起删掉再抛异常 —— 订单没建成，
     那份文件就是垃圾，留着只会占磁盘、让运维以为它属于某个订单。
+
+    初始状态是「待计费」而不是「待打印」：新单要先等管理员看过文件、标好价格，
+    才回到待打印池。直传和分片两条路都走这个函数，所以状态只在这里定一次，
+    不会出现「分片传的单能直接接、直传的单卡住」这种一半对一半错的情形。
     """
     conn = None
     try:
@@ -58,7 +64,7 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
                 cursor = conn.execute('''
                     INSERT INTO orders (user_id, filename, file_path, color_type, duplex, remark, status, pickup_code)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (g.user['id'], original_name, save_path, color, duplex, remark, ST_PENDING, pickup_code))
+                ''', (g.user['id'], original_name, save_path, color, duplex, remark, ST_UNPRICED, pickup_code))
                 break
             except sqlite3.IntegrityError:
                 conn.rollback()
@@ -171,15 +177,18 @@ def api_orders():
         total = conn.execute(f'SELECT COUNT(*) AS c FROM orders o {where_sql}', params).fetchone()['c']
         rows = conn.execute(f'''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
-                   o.user_id, o.claimed_by,
+                   o.user_id, o.claimed_by, o.price,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.update_time, 'localtime') AS update_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
+                   datetime(o.price_time, 'localtime') AS price_time,
                    owner.nickname AS owner_nickname, owner.dorm AS owner_dorm, owner.status AS owner_status,
-                   claimer.nickname AS claimer_nickname, claimer.status AS claimer_status
+                   claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
+                   pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
             FROM orders o
             LEFT JOIN users owner ON owner.id = o.user_id
             LEFT JOIN users claimer ON claimer.id = o.claimed_by
+            LEFT JOIN users pricer ON pricer.id = o.priced_by
             {where_sql}
             ORDER BY o.id DESC
             LIMIT ? OFFSET ?
@@ -201,12 +210,101 @@ def api_orders():
         # 前端要的只是展示用的名字，多给一个字段就等于多一处要跟着改的地方。
         item['owner_nickname'] = display_name(item['owner_nickname'], item.pop('owner_status', None))
         item['claimer_nickname'] = display_name(item['claimer_nickname'], item.pop('claimer_status', None))
+        item['pricer_nickname'] = display_name(item['pricer_nickname'], item.pop('pricer_status', None))
         orders.append(item)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
 
 
 
+# 计费：管理员**看过文件之后**填写金额。
+#
+# 为什么必须先接单：金额是按文件本身算出来的 —— 几页、黑白还是彩色、单面还是双面，
+# 全在文件里。不接单就计费，等于对着一行文件名猜价钱。接单这个动作同时把
+# 「谁看的这份文件」和「这单该收多少」两个人合成一个 —— 标错了找得到人问。
+#
+# 一个接口担两件事，靠订单当前状态分流：
+#   还在「待计费」-> 这是第一次标价，标完推进到待打印，流程才开始走；
+#   已经计过费   -> 是来改价的。
+#
+# 为什么要留改价这条路 —— 标错一位数是常事（30 打成 300），
+# 没有它，唯一能修的办法就是直接改数据库。改库这件事只要开了头，
+# 后面每一次出错都会走同一条路，而这单到底该收多少就再也没人说得清了。
+# 改价同样进审计日志，所以「谁在什么时候把 300 改成了 30」是有据可查的。
+@bp.route('/api/order/<int:order_id>/price', methods=['POST'])
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_price_order(order_id):
+    data = request.get_json(silent=True) or {}
+    amount, error = parse_price(data.get('price'))
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            'SELECT status, price, claimed_by FROM orders WHERE id = ?', (order_id,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+        if row['status'] == ST_DONE:
+            # 已取件的单再改价，等于事后改一笔已经结清的钱。
+            # 真要退钱或者补收，那是收银那边的事，不该悄悄改这条记录。
+            return jsonify({'code': 400, 'msg': '订单已取件，不能再改金额'}), 400
+        if row['claimed_by'] is None:
+            # 没人接 = 还没人打开过这个文件，价格只能靠猜。
+            # 这里连超管一起挡：它是流程约束，不是权限问题。
+            return jsonify({'code': 400, 'msg': '这单还没人接，请先接单、看过文件后再填金额'}), 400
+        if g.user['role'] != ROLE_SUPER and row['claimed_by'] != g.user['id']:
+            # 别人接了单，说明文件已经在他手上；两个人都往同一单上填价钱，
+            # 后填的那个会把先填的盖掉，而先填的人还以为自己已经标好了。
+            security_event('price_denied',
+                           '订单 #%s 的接单人 uid=%s，操作人试图代为计费'
+                           % (order_id, row['claimed_by']))
+            return jsonify({'code': 403, 'msg': '这单是别人接的，只有接单人能给它计费'}), 403
+
+        if row['status'] == ST_UNPRICED:
+            # 两个管理员同时打开这单是正常的。条件写进 WHERE，让数据库来判谁先到，
+            # 而不是「先 SELECT 判一下、再 UPDATE」—— 那中间有个空隙，
+            # 两个人会双双通过检查，后写的把先写的金额直接盖掉。
+            cursor = conn.execute('''
+                UPDATE orders
+                SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP,
+                    status = ?, update_time = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = ?
+            ''', (amount, g.user['id'], ST_PENDING, order_id, ST_UNPRICED))
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return jsonify({'code': 409, 'msg': '这单刚被别人计过费了，刷新看看'}), 409
+            action, reply = 'price_order', f'已计费 {amount:.2f} 元，可以开始打印了'
+        else:
+            conn.execute('''
+                UPDATE orders
+                SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP,
+                    update_time = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (amount, g.user['id'], order_id))
+            action, reply = 'reprice_order', f'金额已改为 {amount:.2f} 元'
+        conn.commit()
+    finally:
+        conn.close()
+
+    audit_action(action,
+                 '订单 #%s 金额 %s -> %.2f 元，状态=%s'
+                 % (order_id, row['price'] if row['price'] is not None else '未计费',
+                    amount, row['status']))
+    logger.info('订单 #%s 计费 %.2f 元（原 %s）操作人=%s(%s) ip=%s',
+                order_id, amount, row['price'], g.user['nickname'], g.user['role'], client_ip())
+    return jsonify({'code': 0, 'msg': reply, 'price': amount})
+
+
+
 # 接单，用原子更新保证同一订单不会被两个人同时接走
+#
+# 接单和计费的先后顺序是**接单在前**：金额要看过文件才算得出来（页数、颜色、单双面），
+# 所以「谁接的谁计费」—— 接单页上那份文件就是计费的依据。
+#
+# 只有「已取件」接不了：这单早就打完、也被取走了，再放回某个人手上，
+# 他会对着一份已经不存在的活干半天。把条件写进 UPDATE 而不是先查后改，
+# 是为了挡住「查的时候还没人接、改的时候刚好被接走」这种夹缝 ——
+# 写进 WHERE 之后，这一句本身就是原子判断。
 @bp.route('/api/order/<int:order_id>/claim', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_claim_order(order_id):
@@ -214,14 +312,19 @@ def api_claim_order(order_id):
     try:
         cursor = conn.execute('''
             UPDATE orders SET claimed_by = ?, claim_time = CURRENT_TIMESTAMP
-            WHERE id = ? AND claimed_by IS NULL
-        ''', (g.user['id'], order_id))
+            WHERE id = ? AND claimed_by IS NULL AND status <> ?
+        ''', (g.user['id'], order_id, ST_DONE))
         if cursor.rowcount == 0:
             conn.rollback()
-            row = conn.execute('SELECT claimed_by FROM orders WHERE id = ?', (order_id,)).fetchone()
+            row = conn.execute(
+                'SELECT claimed_by, status FROM orders WHERE id = ?', (order_id,)).fetchone()
             if row is None:
                 logger.info('接单失败：订单 #%s 不存在，操作人=%s', order_id, g.user['nickname'])
                 return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+            if row['status'] == ST_DONE:
+                # 不是权限问题，是这单已经完结了 —— 提示里说清为什么，
+                # 只说「不能接」的话，打印员只会以为是系统抽风。
+                return jsonify({'code': 400, 'msg': '这单已经被取走了，不用再接'}), 400
             claimer = conn.execute('SELECT nickname FROM users WHERE id = ?', (row['claimed_by'],)).fetchone()
             name = claimer['nickname'] if claimer else '其他账户'
             # 抢单失败是正常的并发竞争，不算攻击，记 INFO 就行，别滥用安全告警
@@ -331,10 +434,15 @@ def api_withdraw_order(order_id):
 def api_update_status(order_id):
     data = request.get_json(silent=True) or {}
     new_status = (data.get('status') or request.form.get('status') or '').strip()
-    if new_status not in ORDER_STATUSES:
+    if new_status == ST_UNPRICED:
+        # 「待计费」只能由计费动作产生，不能手动切回去。
+        # 单独给一句提示而不是并进下面那句「状态不合法」：它是个合法状态，
+        # 只是不从这里进 —— 说成「不合法」，操作人只会去翻文档确认自己看错了。
+        return jsonify({'code': 400, 'msg': '不能手动切回「待计费」，改金额请用计费'}), 400
+    if new_status not in ORDER_STATUSES_MANUAL:
         return jsonify({
             'code': 400,
-            'msg': '状态不合法，可选：' + '、'.join(ORDER_STATUSES)
+            'msg': '状态不合法，可选：' + '、'.join(ORDER_STATUSES_MANUAL)
         }), 400
 
     conn = get_db()
@@ -353,6 +461,12 @@ def api_update_status(order_id):
                                '订单 #%s 接单人 uid=%s，操作人越权改为「%s」'
                                % (order_id, row['claimed_by'], new_status))
                 return jsonify({'code': 403, 'msg': '该订单已被他人接取，你无权修改其状态'}), 403
+        if row['status'] == ST_UNPRICED:
+            # 待计费的单只能通过「计费」离开这个状态。跳过计费直接标成待打印，
+            # 这张单的金额就永远是空的 —— 打完印找不到人收钱，
+            # 和允许手动切回「待计费」是同一个破洞，只是从另一头进。
+            # 老库遗留的单（金额为空但不是待计费）不受影响，状态照旧走。
+            return jsonify({'code': 400, 'msg': '这单还没计费，请先填好金额'}), 400
         conn.execute('''
             UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?
         ''', (new_status, order_id))
@@ -374,9 +488,10 @@ def api_my_orders():
     try:
         rows = conn.execute('''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
-                   o.claimed_by,
+                   o.claimed_by, o.price,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
+                   datetime(o.price_time, 'localtime') AS price_time,
                    claimer.nickname AS claimer_nickname, claimer.status AS claimer_status
             FROM orders o
             LEFT JOIN users claimer ON claimer.id = o.claimed_by
@@ -414,7 +529,7 @@ def api_my_stats():
     conn = get_db()
     try:
         rows = conn.execute('''
-            SELECT o.status, o.color_type, o.duplex,
+            SELECT o.status, o.color_type, o.duplex, o.price,
                    date(o.create_time, 'localtime') AS d
             FROM orders o
             WHERE o.user_id = ?
@@ -425,15 +540,27 @@ def api_my_stats():
     finally:
         conn.close()
 
-    mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0}
+    mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0, 'unpriced': 0, 'spent': 0.0}
     by_color = {'black': 0, 'color': 0}
     by_duplex = {'single': 0, 'double': 0}
     counts = {}
+    spent = 0.0
     for r in rows:
+        if r['price'] is not None:
+            # 「花掉多少」只算已经标过价的单。待计费的不算进去 ——
+            # 它连多少钱都还不知道，占个 0 会让总额看起来比实际低；
+            # 而归到另一档（待计费笔数）才是它真实的状态。
+            spent += r['price']
         if r['status'] == ST_READY:
             mine['ready'] += 1
         elif r['status'] == ST_DONE:
             mine['done'] += 1
+        elif r['status'] == ST_UNPRICED:
+            # 待计费单独报一笔数，因为它卡在管理员那边、用户催不了，
+            # 只能靠这个数字告诉用户「还没轮到你，不是系统没收到」。
+            # 但它同样属于「还没到我手上」，所以下面也要计入 in_progress。
+            mine['unpriced'] += 1
+            mine['in_progress'] += 1
         else:
             # 待打印 / 打印中都算「进行中」。数据库里万一出现第三个值，
             # 也归到这一档 —— 对用户来说「还没到我手上」才是他关心的分类。
@@ -452,6 +579,10 @@ def api_my_stats():
          'count': counts.get((today - timedelta(days=offset)).isoformat(), 0)}
         for offset in range(13, -1, -1)
     ]
+
+    # 金额求和后 round 一下：SQLite 里 price 是 REAL（二进制浮点），
+    # 几十单加起来末尾会挂出 1e-13 那种尾巴，界面就显示成「35.70000000000001 元」。
+    mine['spent'] = round(spent, 2)
 
     return jsonify({
         'code': 0,

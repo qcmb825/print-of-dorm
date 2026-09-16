@@ -6,7 +6,6 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
-import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
@@ -57,8 +56,9 @@ onMounted(() => {
             {{ item.label }}
           </RouterLink>
         </nav>
+        <!-- 这里原本还有一个主题切换按钮，已经拆掉：主题跟着系统偏好走。
+             少了一个固定宽度的按钮，账号区在窄屏上也不那么挤了。 -->
         <div class="ml-auto flex items-center gap-1">
-          <ThemeToggle />
           <UserMenu v-if="auth.isLoggedIn" />
         </div>
       </div>

@@ -3,7 +3,16 @@
  *  图表配色全部从主题令牌推导（canvas 用不了 CSS 变量，所以取的是 hex），
  *  因此切换明暗主题时图表跟着换，不需要重画两套。 */
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, Clock, Package, RefreshCw, TrendingUp, Users } from '@lucide/vue'
+import {
+  CheckCircle2,
+  CircleDollarSign,
+  Clock,
+  Package,
+  RefreshCw,
+  TrendingUp,
+  Users,
+  Wallet,
+} from '@lucide/vue'
 import { NButton, NSkeleton, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { adminApi } from '@/api/endpoints'
@@ -39,6 +48,9 @@ const palette = computed<ChartPalette>(() => {
 })
 
 const statusColors = computed<Record<string, string>>(() => ({
+  // 「待计费」不在 config.ORDER_STATUSES_MANUAL 里（只能由计费动作产生），
+  // 但它确实会出现在 by_status 里，少的这一个会让饼图多出一块默认色。
+  待计费: theme.tokens.statusUnpriced,
   待打印: theme.tokens.statusPending,
   打印中: theme.tokens.statusPrinting,
   可取了: theme.tokens.statusReady,
@@ -90,6 +102,10 @@ const claimRate = computed(() => {
   return `${Math.round((orders.claimed / orders.total) * 100)}%`
 })
 
+/** 累计金额。后端已经 COALESCE + round 过，这里只负责补上￥和两位小数 ——
+ *  直接插值会得到「12.5」这种少了小数位的写法。 */
+const revenueLabel = computed(() => `￥${(orderStats.value?.revenue ?? 0).toFixed(2)}`)
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -116,19 +132,35 @@ onMounted(load)
     </PageHeader>
 
     <div v-if="loading && !stats" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <NSkeleton v-for="index in 8" :key="index" height="104px" :sharp="false" />
+      <NSkeleton v-for="index in 10" :key="index" height="104px" :sharp="false" />
     </div>
 
     <template v-else>
-      <!-- 八张卡片一起出现会像「整块糊上来」，这里给 40ms 的错峰。
+      <!-- 十张卡片一起出现会像「整块糊上来」，这里给 40ms 的错峰。
            只加在这组轻量卡片上：下面那几块图表面板是 ECharts 实打实画出来的，
            让它们错峰入场等于把绘制压力排队，反而更容易掉帧。
            数值刷新（点「刷新」）时元素是原地打补丁的，不会重放动画。 -->
       <div class="motion-stagger mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="订单总数" :value="orderStats?.total ?? 0" :icon="Package" />
         <StatCard label="已接单" :value="orderStats?.claimed ?? 0" :icon="CheckCircle2" accent />
-        <StatCard label="待接单" :value="orderStats?.unclaimed ?? 0" :icon="Clock" />
+        <!-- 待计费的单也算「待接单」：它确实还没人认领 —— 而且这时候正该有人去接，
+             接单之后才能下载看过文件、算出金额。不写清楚的话，
+             「待接单」和「待计费」两个数字一起变大时会看起来像统计错了。 -->
+        <StatCard
+          label="待接单"
+          :value="orderStats?.unclaimed ?? 0"
+          :icon="Clock"
+          hint="含待计费的单"
+        />
         <StatCard label="接单率" :value="claimRate" :icon="TrendingUp" hint="已接单 / 订单总数" />
+        <StatCard
+          label="待计费"
+          :value="orderStats?.unpriced ?? 0"
+          :icon="CircleDollarSign"
+          accent
+          hint="待接单后填金额"
+        />
+        <StatCard label="累计计费" :value="revenueLabel" :icon="Wallet" hint="已定价订单的金额合计" />
         <StatCard label="账号总数" :value="userStats?.total ?? 0" :icon="Users" />
         <StatCard label="启用中" :value="userStats?.active ?? 0" />
         <StatCard label="已禁用" :value="userStats?.disabled ?? 0" />

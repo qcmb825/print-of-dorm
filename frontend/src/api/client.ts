@@ -32,11 +32,24 @@ export class ApiError extends Error {
   readonly code: number
   readonly status: number
 
-  constructor(message: string, code: number, status: number) {
+  /** 后端错误信封里的**原始**字段（除了 code / msg）。
+   *  为什么要把整个信封兜着：有些失败不是「报个错」而是「换个入口」，
+   *  比如注册被身份核验拦下时后端会多带一个 need_audit，前端据此弹审核申请。
+   *  不把字段透出来的话，调用方就只能去比对 msg 里那串中文 ——
+   *  后端改一个字，入口就静默消失，而且不报任何错。 */
+  readonly detail: Record<string, unknown>
+
+  constructor(
+    message: string,
+    code: number,
+    status: number,
+    detail: Record<string, unknown> = {},
+  ) {
     super(message)
     this.name = 'ApiError'
     this.code = code
     this.status = status
+    this.detail = detail
   }
 
   /** 会话失效（未登录 / 账号被禁用）。 */
@@ -48,12 +61,38 @@ export class ApiError extends Error {
   get isNetworkError(): boolean {
     return this.status === 0
   }
+
+  /** 这次失败是有正经出路的：可以提交身份审核申请。目前只有注册会给这个标记。 */
+  get needAudit(): boolean {
+    return this.detail.need_audit === true
+  }
 }
 
 export const http = axios.create({
   timeout: 30_000,
   withCredentials: true,
 })
+
+/** 重新握手：只为了拿一张新的 CSRF 令牌。
+ *
+ *  未登录时 /api/me 会返回 401，但响应体里照样带着一张新令牌，
+ *  下面的响应拦截器会顺手收下 —— 所以这里把失败当正常分支吞掉。
+ *  并发失败时共用一个 Promise，避免一次页面操作打出一串握手请求。
+ */
+let handshake: Promise<void> | null = null
+
+function refreshCsrf(): Promise<void> {
+  if (!handshake) {
+    handshake = http
+      .get('/api/me')
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => {
+        handshake = null
+      })
+  }
+  return handshake
+}
 
 http.interceptors.request.use((config) => {
   const method = (config.method ?? 'get').toLowerCase()
@@ -73,10 +112,23 @@ http.interceptors.response.use(
     if (data && typeof data === 'object') setCsrf(data.csrf)
     return response
   },
-  (error: AxiosError<ApiEnvelope>) => {
+  async (error: AxiosError<ApiEnvelope>) => {
     const status = error.response?.status ?? 0
     const data = error.response?.data
     setCsrf(data?.csrf)
+
+    // 令牌过期自愈。这一条是实测撞出来的：退出登录之后不刷新页面直接再登录/注册，
+    // 前端手里那张票已经作废（后端日志是 csrf_failed has_session_token=False），
+    // 于是写请求全被 403 挡下，用户只看到「请求校验失败，请刷新页面后重试」。
+    // 后端在这种情况下会补发一张新令牌并标 reason=csrf（令牌存在但对不上时刻意不补，
+    // 那种才可能是真的伪造），这里重新握手拿到它、再把原请求原样重发一次。
+    // 只重发一次：标记打在 config 上，两个请求同时失败也不会互相串。
+    const config = error.config as (AxiosRequestConfig & { csrfRetried?: boolean }) | undefined
+    if (status === 403 && data?.reason === 'csrf' && config && !config.csrfRetried) {
+      config.csrfRetried = true
+      await refreshCsrf()
+      return http.request(config)
+    }
 
     let message: string
     if (data?.msg) {
@@ -93,7 +145,9 @@ http.interceptors.response.use(
 
     if (status === 401) unauthorizedHandler?.()
 
-    return Promise.reject(new ApiError(message, data?.code ?? -1, status))
+    return Promise.reject(
+      new ApiError(message, data?.code ?? -1, status, (data ?? {}) as Record<string, unknown>),
+    )
   },
 )
 

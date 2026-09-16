@@ -6,7 +6,7 @@
  *  溢出到侧栏外面去，所以这里换成堆叠而不是靠截断硬挤。
  */
 import { computed, h } from 'vue'
-import { ChevronDown, LogOut, Palette } from '@lucide/vue'
+import { ChevronDown, LogOut } from '@lucide/vue'
 import { NButton, NDropdown } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import RoleTag from '@/components/RoleTag.vue'
@@ -35,11 +35,8 @@ const options = [
       ]),
   },
   { key: 'divider', type: 'divider' as const },
-  {
-    key: 'switch-ui',
-    label: '换个界面',
-    icon: () => h(Palette, { size: 15 }),
-  },
+  // 这里曾经还有一个「换个界面」—— 全站已经锁死新版了（app.py 的 UI_SWITCH_ENABLED），
+  // 留着入口只会把用户送去一个打不开的经典版，所以连同它的图标一起拆了。
   {
     key: 'logout',
     label: '退出登录',
@@ -48,13 +45,6 @@ const options = [
 ]
 
 async function onSelect(key: string): Promise<void> {
-  if (key === 'switch-ui') {
-    // 必须整页跳转，不能走 vue-router：经典版是后端 Jinja 渲染的另一份代码，
-    // 前端路由表里根本没有它，router.push 只会掉进 404 兜底页。
-    // 带上 ?ui=classic，后端会把这次选择写进 pod-ui Cookie，后续请求就跟着走。
-    window.location.assign('/?ui=classic')
-    return
-  }
   if (key !== 'logout') return
   const ok = await confirmAction({
     title: '退出登录',

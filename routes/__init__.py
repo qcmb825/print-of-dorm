@@ -7,6 +7,9 @@ from . import account, admin, announcements, orders, tickets
 # upload_chunks 依赖 orders 里的建订单函数，所以写在上面那行之后：
 # Python 从左到右导入，到这一行时 orders 已经进了 sys.modules。
 from . import upload_chunks
+# audit 这个名字容易和「审计日志」(audit_action) 混起来，这里指的是
+# 「身份审核」—— 学号不在名单上时的人工通道，见 routes/audit.py 开头。
+from . import audit
 
 BLUEPRINTS = (
     account.bp,
@@ -15,6 +18,7 @@ BLUEPRINTS = (
     admin.bp,
     announcements.bp,
     tickets.bp,
+    audit.bp,
 )
 
 

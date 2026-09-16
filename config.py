@@ -56,6 +56,26 @@ def env_int(name, default):
 
 
 
+# 项目根目录：所有相对路径配置都以它为基准。
+# 这里刻意用 __file__ 而不是 os.getcwd()。本项目要求从项目根启动，但「要求」不是「保证」——
+# 计划任务、IDE 调试配置、被别的进程 import 时，CWD 可能是任何地方，
+# 而同一个 './print_files' 在不同 CWD 下会指向不同目录，症状是「订单记录在，文件却找不到」。
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+
+def resolve_path(value, base=BASE_DIR):
+    """把配置里的路径统一成绝对路径：相对路径按 base（默认项目根）解析。
+
+    调用方负责保证 value 非空（空值会解析成 base 本身）。
+    """
+    value = (value or '').strip()
+    if not os.path.isabs(value):
+        value = os.path.join(base, value)
+    return os.path.normpath(value)
+
+
+
 # 日志
 # 控制台给人看，文件留给事后排查，按大小轮转，不会撑爆磁盘。
 # 业务 / 访问 / 安全各写一个文件，出事时直接看对应的那个；
@@ -67,10 +87,7 @@ LOG_LEVEL_NAME = os.getenv('LOG_LEVEL', 'INFO').strip().upper()
 
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
-LOG_DIR = os.getenv('LOG_DIR', 'logs').strip() or 'logs'
-
-if not os.path.isabs(LOG_DIR):
-    LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_DIR)
+LOG_DIR = resolve_path(os.getenv('LOG_DIR', 'logs').strip() or 'logs')
 
 LOG_FILE = os.getenv('LOG_FILE', 'app.log').strip() or 'app.log'
 
@@ -179,15 +196,37 @@ class _DropWerkzeugRequestLines(logging.Filter):
 logging.getLogger('werkzeug').addFilter(_DropWerkzeugRequestLines())
 
 
-# 数据库文件路径，默认放在项目目录下
-DATABASE_PATH = os.getenv('DATABASE_PATH', 'print_service.db')
+# 数据目录：所有 SQLite 库文件（主库、学生名单库、迁移前自动生成的 .bak 备份）都放这里。
+# 单独收进 data/ 而不是散在项目根：库文件和源码、前端产物混在一起时，
+# 「哪些文件是运行期数据、哪些能删」光看目录根本分不出来，
+# 清理旧版本或整目录替换前端产物时特别容易误伤。
+DATA_DIR = resolve_path(os.getenv('DATA_DIR', '').strip() or 'data')
 
-if not os.path.isabs(DATABASE_PATH):
-    DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), DATABASE_PATH)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
-# 上传文件保存路径，目录不存在会自动创建
-UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'C:/print/print_files/')
+# 主数据库路径。默认落在 data/ 下，也可以用环境变量指到别的磁盘（迁移时用得上）
+DATABASE_PATH = resolve_path(
+    os.getenv('DATABASE_PATH', '').strip() or os.path.join(DATA_DIR, 'print_service.db')
+)
+
+
+# 学生身份名单库（学号 -> 姓名），注册时按学号查它校验身份。
+# 为什么不并进主库：主库是本站自己的业务数据，名单是从校外系统整份导入的**别人的数据**，
+# 两者生命周期完全不同 —— 换届时名单要整份换掉，主库一条都不能动。
+# 代价是没法 JOIN，但校验只需要「按学号查一行」，用不上跨库查询。
+ROSTER_DB_PATH = resolve_path(
+    os.getenv('ROSTER_DB_PATH', '').strip() or os.path.join(DATA_DIR, 'roster.db')
+)
+
+
+# 上传文件保存路径，目录不存在会自动创建。
+# 默认落在 data/uploads 下，但建议在 .env 里指到数据盘：
+# 学生上传的是待打印文件，和数据库一样属于运行期数据，混在源码目录里不合适。
+# 相对路径按项目根解析（和 DATABASE_PATH 一套规则），不受启动目录影响。
+UPLOAD_FOLDER = resolve_path(
+    os.getenv('UPLOAD_FOLDER', '').strip() or os.path.join(DATA_DIR, 'uploads')
+)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -209,6 +248,18 @@ ALLOWED_EXTENSIONS = {
 
 
 # 订单状态机
+#
+# 「待计费」排在最前面，是这个流程里唯一没有替代方案的一环：
+# 打印是按份数和纸张算钱的，只有管理员看过文件才知道该收多少，
+# 下单人在提交时并不知道总价。所以订单不是直接进待打印池，
+# 而是先停在待计费等管理员标价；标完价才回到「待打印」走原来的流程。
+#
+# 为什么单独给它一个状态，而不是用「price 为空」当标志：
+# 打印员在待接单池里看到的就是「能不能接」。用空字段表达同一件事，
+# 就得每个查询都记得多写一个条件，而漏写的那一处不会报错，
+# 只会表现成「打印员把没标价的单接走了」。状态是显式的，漏不掉。
+ST_UNPRICED = '待计费'
+
 ST_PENDING = '待打印'
 
 ST_PRINTING = '打印中'
@@ -217,7 +268,23 @@ ST_READY = '可取了'
 
 ST_DONE = '已取件'
 
-ORDER_STATUSES = (ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
+ORDER_STATUSES = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
+
+# 能靠「改状态」按钮手动切到的状态。待计费不在里面：
+# 它只能由计费动作产生（计费成功时自动从它走到待打印）。
+# 允许手动往回切就会造出「已经标了价、又退回待计费」的单子 ——
+# 那单的钱已经在界面上了，再显示成待计费，用户看到的费用就和状态对不上。
+ORDER_STATUSES_MANUAL = (ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
+
+# 计费金额
+# 上限给得比现实高得多（够打印几千页），目的只是挡住手滑多打几个零和恶意超长数字。
+PRICE_MAX_YUAN = 99999.99
+
+# 金额一律以「元」为单位的十进制字符串处理，最多两位小数。
+# 不用 float(x) 直接吃请求体：0.1 在二进制里存不下，
+# 而 JSON 里的 0.1 传过来本来就已经带上浮点误差了，先转成字符串再按字符串解析，
+# 精度才可控。真正落库时四舍五入到两位。
+PRICE_RE = re.compile(r'^\d{1,6}(\.\d{1,2})?$')
 
 
 # 账户角色
@@ -302,6 +369,33 @@ TICKET_MAX_OPEN = 5  # 同一用户同时进行中的工单上限，防止刷屏
 TICKET_SUBJECT_MAX = 60
 
 TICKET_BODY_MAX = 1000
+
+
+# ---- 身份审核（学号不在名单上时的人工核验通道）----
+# 名单库是整份导入的外部数据，必然有遗漏：新生还没入库、转过专业换过学号、
+# 名单本身录错了。这些人不是「不配注册」，只是机器认不出来，
+# 所以留一条人工通道：本人提交申请 -> 管理员核对 -> 通过后才放行注册。
+#
+# 为什么不像工单那样允许多条：申请回答的是「我能不能注册」，
+# 同一个人不存在第二种答案。多条申请只会让管理员对着同一个学号反复核对同一件事。
+AUDIT_PENDING = 'pending'
+
+AUDIT_APPROVED = 'approved'
+
+AUDIT_REJECTED = 'rejected'
+
+AUDIT_STATUSES = (AUDIT_PENDING, AUDIT_APPROVED, AUDIT_REJECTED)
+
+# 状态文案收在这里，前端不自己翻译：两边各写一套，改的时候必漏一处，
+# 而漏掉的那一处不会报错，只是界面上写着个没人认识的状态。
+AUDIT_STATUS_LABELS = {AUDIT_PENDING: '待审核', AUDIT_APPROVED: '已通过', AUDIT_REJECTED: '已驳回'}
+
+# 申请说明给个下限：一个字「无」等于没写，管理员没法据此判断该不该放行。
+AUDIT_NOTE_MIN = 4
+
+AUDIT_NOTE_MAX = 200
+
+AUDIT_REVIEW_MAX = 200
 
 
 # 公告：字体只能用白名单里的键，前端按同样的键映射成 CSS，两端保持一致

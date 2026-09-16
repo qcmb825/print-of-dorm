@@ -9,7 +9,14 @@ import { ApiError } from '@/api/client'
 import { orderApi } from '@/api/endpoints'
 import type { Order } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
-import { COLOR_TYPE_LABEL, DUPLEX_LABEL, fullTime, pickupCodeLabel, shortTime } from '@/utils/format'
+import {
+  COLOR_TYPE_LABEL,
+  DUPLEX_LABEL,
+  fullTime,
+  pickupCodeLabel,
+  priceLabel,
+  shortTime,
+} from '@/utils/format'
 import { notify } from '@/composables/feedback'
 
 const orders = ref<Order[]>([])
@@ -19,10 +26,20 @@ const refreshMs = 20_000
 const visibility = useDocumentVisibility()
 
 const summary = computed(() => ({
-  active: orders.value.filter((o) => o.status === '待打印' || o.status === '打印中').length,
+  // 「待计费」也算进行中：学生那边这单同样还没结束（正等管理员报价），
+  // 不算进任何一格的话，刚提交完订单的学生会看到「进行中 0」而以为没提交上。
+  active: orders.value.filter(
+    (o) => o.status === '待计费' || o.status === '待打印' || o.status === '打印中',
+  ).length,
   ready: orders.value.filter((o) => o.status === '可取了').length,
   done: orders.value.filter((o) => o.status === '已取件').length,
 }))
+
+/** 花费合计：只算已经定过价的单。未计费的单金额是 null，当成 0 加进去没错，
+ *  但不应该把它显示成「￥0.00」让用户以为这单免费。 */
+const spent = computed(() =>
+  orders.value.reduce((sum, o) => (typeof o.price === 'number' ? sum + o.price : sum), 0),
+)
 
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
@@ -66,7 +83,7 @@ onMounted(async () => {
       </NButton>
     </header>
 
-    <div v-if="orders.length" class="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+    <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <div class="panel panel-raised px-3 py-2.5">
         <div class="tech-label text-ink-4">进行中</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.active }}</div>
@@ -80,6 +97,11 @@ onMounted(async () => {
       <div class="panel panel-raised px-3 py-2.5">
         <div class="tech-label text-ink-4">已取件</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.done }}</div>
+      </div>
+      <!-- 合计只统计当前这一页拉到的订单（此接口不带分页，学生自己能看到全部） -->
+      <div class="panel panel-raised px-3 py-2.5">
+        <div class="tech-label text-ink-4">已计费合计</div>
+        <div class="tnum font-heading text-xl font-bold">￥{{ spent.toFixed(2) }}</div>
       </div>
     </div>
 
@@ -117,6 +139,21 @@ onMounted(async () => {
         </div>
 
         <div class="mt-3 flex flex-wrap items-end gap-x-5 gap-y-2">
+          <div>
+            <div class="tech-label mb-0.5 text-ink-4">费用</div>
+            <!-- 未计费显示「未计费」而不是「￥0.00」：刚提交的订单本来就是 null，
+                 写成 0 元会让学生以为这单不要钱。 -->
+            <div
+              v-if="typeof order.price === 'number'"
+              class="tnum font-heading text-[23px] leading-none font-bold"
+            >
+              ￥{{ order.price.toFixed(2) }}
+            </div>
+            <div v-else class="text-[13px] leading-[23px] text-ink-4">
+              {{ priceLabel(order.price) }}
+              <span class="text-[11px]">· 等管理员确认</span>
+            </div>
+          </div>
           <div>
             <div class="tech-label mb-0.5 text-ink-4">取件码</div>
             <div

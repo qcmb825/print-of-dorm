@@ -5,8 +5,10 @@ import secrets
 from flask import Blueprint, g, jsonify, request, session
 
 from config import (ROLE_LABELS, ROLE_SUPER, ROLE_USER, STATUS_ACTIVE, STATUS_CLOSED,
-                    logger, public_role, public_role_label)
+                    STUDENT_ID_RE, logger, public_role, public_role_label)
 from db import get_db
+from identity import (GATE_CAN_APPLY_AUDIT, GATE_ROSTER_UNAVAILABLE, check_registration,
+                      fill_missing_name)
 from security import (
     actor_label,
     clear_login_failures,
@@ -89,14 +91,39 @@ def api_register():
         security_event('register_rate_limited', '该 IP 短时间内反复提交注册')
         return jsonify({'code': 429, 'msg': '注册过于频繁，请稍后再试'}), 429
 
-    password_hash, password_enc = make_password_records(payload['password'])
+    # 身份核验必须排在下面那一段「判重」之前。用户最该先知道的不是
+    # 「这个昵称被人用了」，而是「你这个学号根本不在我们学校的名单里」——
+    # 让他先改昵称、再换密码、最后才被告知身份不对，前面那几步全白做了。
+    verdict = check_registration(payload['student_id'], payload['real_name'])
+    if not verdict.allowed:
+        # 和判重里的处理一样也记一次失败：拿不存在的学号反复试，同样是异常流量。
+        record_login_failure(key)
+        logger.info('注册被拒（身份核验）：学号=%s 原因=%s ip=%s',
+                    payload['student_id'], verdict.reason, client_ip())
+        if verdict.reason == GATE_ROSTER_UNAVAILABLE:
+            # 这个是服务端自己的问题（名单文件没放对 / 被占着），不是用户填错了什么，
+            # 所以回 503 而不是 4xx：前端和监控能一眼分出是谁的责任。
+            return jsonify({'code': 503, 'msg': verdict.message}), 503
+        return jsonify({
+            'code': 409,
+            'msg': verdict.message,
+            # need_audit 告诉前端「这次被拒是有正经出路的」——
+            # 它据此弹出身份审核申请入口。不给这个标记，前端就只能去比对
+            # 上面那两句中文提示语，改一个字入口就消失，而且不会报错。
+            'need_audit': verdict.reason in GATE_CAN_APPLY_AUDIT,
+        }), 409
+
     conn = get_db()
     try:
-        # 判重必须带上「还没注销」这个条件，跟数据库里那三个部分唯一索引口径一致。
+        # 判重必须带上「还没注销」这个条件，跟数据库里那部分唯一索引口径一致。
         # 少了它就会出现很气人的情况：注销的账号明明把昵称让出来了，
         # 注册却还是被这句 SELECT 拦住 —— 数据库说能用、代码说不能用。
         # 同一件事在两个地方各判一遍，这种不一致迟早会撞上，所以两边都把条件写全。
-        for column, label in (('nickname', '昵称'), ('real_name', '姓名'), ('student_id', '学号')):
+        #
+        # 这里刻意不查姓名：同名同姓本来就该各注册各的账号（学号不同），
+        # 挡住第二个「张伟」没道理，注册人也无法自证自己不是第一个。
+        # 真正能唯一标识身份的是学号，唯一性也只留给它和登录用的昵称。
+        for column, label in (('nickname', '昵称'), ('student_id', '学号')):
             exists = conn.execute(
                 f'SELECT 1 FROM users WHERE {column} = ? AND status != ? LIMIT 1',
                 (payload[column], STATUS_CLOSED),
@@ -105,6 +132,11 @@ def api_register():
                 record_login_failure(key)
                 logger.info('注册被拒：%s「%s」已被占用 ip=%s', label, payload[column], client_ip())
                 return jsonify({'code': 409, 'msg': f'{label}已被注册，请更换'}), 409
+        # 密码哈希放到判重**之后**才算：pbkdf2 一次要三四百毫秒（那正是它防爆破的本钱），
+        # 而在身份核验和判重面前，绝大多数被拒的请求根本走不到下面那句 INSERT。
+        # 先算再判重的话，每一次「昵称重复」都要白白烧掉这几百毫秒 CPU ——
+        # 谁都能拿个重复昵称来刷，等于白送一个拖慢服务的手段。
+        password_hash, password_enc = make_password_records(payload['password'])
         cursor = conn.execute('''
             INSERT INTO users
                 (nickname, real_name, student_id, dorm, contact_type, contact,
@@ -119,10 +151,18 @@ def api_register():
         uid = cursor.lastrowid
     except sqlite3.IntegrityError:
         conn.rollback()
-        logger.warning('注册写入冲突（并发下同一昵称/姓名/学号被同时注册）ip=%s', client_ip())
-        return jsonify({'code': 409, 'msg': '昵称、姓名或学号已被注册'}), 409
+        logger.warning('注册写入冲突（并发下同一昵称/学号被同时注册）ip=%s', client_ip())
+        return jsonify({'code': 409, 'msg': '昵称或学号已被注册'}), 409
     finally:
         conn.close()
+
+    if verdict.backfill:
+        # 名单里这个学号空着姓名，把他填的补进去 —— 补上的正是名单缺的那一块。
+        # 失败不阻断注册：fill_missing_name 内部已经吞掉异常、只记一条 warning。
+        # 用户要的结果是账号能用，名单里补没补上这件事不该把它连坐 ——
+        # 补不上只表现成「下次有人查这个学号还是没名字」，功能一点不少。
+        if not fill_missing_name(payload['student_id'], payload['real_name']):
+            logger.info('注册成功，但名单姓名未能回填：学号=%s', payload['student_id'])
 
     session.clear()  # 防会话固定攻击，登录前后换个全新的会话
     session['uid'] = uid
@@ -149,7 +189,7 @@ def api_login():
     identifier = (data.get('identifier') or '').strip()
     password = data.get('password') or ''
     if not identifier or not password:
-        return jsonify({'code': 400, 'msg': '请输入姓名/昵称和密码'}), 400
+        return jsonify({'code': 400, 'msg': '请输入学号和密码'}), 400
 
     key = login_key(identifier)
     locked = login_blocked(key)
@@ -161,37 +201,34 @@ def api_login():
     fail_reason = ''
     row = None
     try:
-        # 登录框里填的是「姓名或昵称」，而这两个字段之间没有任何约束，
-        # 完全可能出现「甲的昵称恰好等于乙的姓名」。所以这里把两边命中的行都取回来，
-        # 再用密码去认人 —— 密码才是真正能区分身份的东西。
+        # 登录只认学号。以前写的是「姓名或昵称都可以」，那其实是重名逼出来的妥协：
+        # 姓名一旦允许重复，登录框里这句「我是张伟」后面就站着好几个人，
+        # 只能挨个拿密码去猜，还得处理「两个人密码恰好也一样」这个死局。
+        # 学号是学校发的、唯一且连号，拿它当登录名，上面这些麻烦一次全没了。
         #
-        # 早先这里写的是 `nickname = ? OR real_name = ? LIMIT 1`，
-        # 两处都命中时返回哪一行取决于扫描顺序，而扫描顺序不是我们能指望的东西：
-        # 一旦拿到的是别人的那一行，密码自然永远对不上，提示还偏偏是「密码错误」——
-        # 用户只能一遍遍怀疑自己打错了。这种 bug 只在撞名时发病，最难查。
-        rows = conn.execute(
-            'SELECT * FROM users WHERE nickname = ? COLLATE NOCASE OR real_name = ? COLLATE NOCASE',
-            (identifier, identifier),
-        ).fetchall()
-        # 返回给用户的永远是同一句话，避免泄露账号是否存在；
-        # 但日志里要记清真实原因，不然后面排查完全抓瞎。这两者必须分开。
-        if not rows:
-            fail_reason = '账号不存在'
-        else:
-            for candidate in rows:
-                if verify_password(candidate['password_hash'], password):
-                    row = candidate
-                    break
+        # 格式先校验一遍，不合法就直接按登录失败处理，不拿它去查库：
+        # 否则这个接口就成了「哪些学号注册过」的探测工具 ——
+        # 填个没注册的学号响应快一点，填个注册过的慢一点，这点差别已经够用了。
+        if STUDENT_ID_RE.match(identifier):
+            row = conn.execute(
+                'SELECT * FROM users WHERE student_id = ? LIMIT 1', (identifier,)).fetchone()
+            # 返回给用户的永远是同一句话，避免泄露账号是否存在；
+            # 但日志里要记清真实原因，不然后面排查完全抓瞎。这两者必须分开。
             if row is None:
+                fail_reason = '账号不存在'
+            elif not verify_password(row['password_hash'], password):
                 fail_reason = '密码错误'
             elif row['status'] != STATUS_ACTIVE:
-                # 对外永远只吐「账号或密码错误」这一句，但日志里必须分清是哪一种，
+                # 对外同样只吐「学号或密码错误」，但日志里必须分清是哪一种，
                 # 不然后面有人来问「我密码没打错啊」的时候，完全看不出是账号本身停了。
                 fail_reason = '账号已注销' if row['status'] == STATUS_CLOSED else '账号已被禁用'
+        else:
+            fail_reason = '学号格式不合法'
+
         if fail_reason:
             record_login_failure(key)
             security_event('login_failed', 'identifier=%s 真实原因=%s' % (identifier[:40], fail_reason))
-            return jsonify({'code': 401, 'msg': '账号或密码错误'}), 401
+            return jsonify({'code': 401, 'msg': '学号或密码错误'}), 401
         conn.execute('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?', (row['id'],))
         conn.commit()
     finally:
@@ -220,5 +257,13 @@ def api_login():
 def api_logout():
     who = actor_label()  # 必须在清空会话之前取，不然拿不到是谁退出的
     session.clear()
+    # 退出之后必须再下发一个新令牌，这一条是实测踩出来的：
+    # 前端点「退出登录」后并**不会刷新页面**，它手里那个旧令牌已经随着
+    # session.clear() 一起作废了；这里不带回去，用户紧接着的「登录 / 注册」
+    # 这类写请求会全部 403（日志里是 csrf_failed has_session_token=False），
+    # 界面上却只显示一句「请求校验失败，请刷新页面后重试」——
+    # 刷新确实能好，但没人知道要刷新。
+    # 这和 GET /api/me 未登录也下发 csrf 是同一个口径：匿名会话也该有令牌。
+    token = ensure_csrf_token()
     logger.info('用户退出登录 %s ip=%s', who, client_ip())
-    return jsonify({'code': 0, 'msg': '已退出登录'})
+    return jsonify({'code': 0, 'msg': '已退出登录', 'csrf': token})

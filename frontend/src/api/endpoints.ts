@@ -7,6 +7,9 @@ import type {
   AnnounceFont,
   AnnouncementListResponse,
   AnnouncementResponse,
+  AuditListResponse,
+  AuditStatus,
+  AuditStatusResponse,
   ChunkPendingResponse,
   ChunkSession,
   DashboardStats,
@@ -81,6 +84,11 @@ export const staffOrderApi = {
   release: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/release`),
   setStatus: (id: number, status: OrderStatus) =>
     put<{ code: number; msg: string }>(`/api/order/${id}/status`, { status }),
+  /** 计费 / 改价。金额传**字符串**：后端按十进制正则校验（config.PRICE_RE），
+   *  在这里先转成 number 再传，就轮到浮点误差来接管那个值了。
+   *  首次计费会顺带把单从「待计费」推到「待打印」（后端一个原子 UPDATE 完成）。 */
+  price: (id: number, price: string) =>
+    post<{ code: number; msg: string; price: number }>(`/api/order/${id}/price`, { price }),
   download: (id: number, filename: string) => download(`/api/order/${id}/download`, filename),
 }
 
@@ -129,4 +137,29 @@ export const ticketApi = {
     post<{ code: number; msg: string }>(`/api/tickets/${id}/messages`, { body }),
   setStatus: (id: number, status: TicketStatus) =>
     put<{ code: number; msg: string }>(`/api/tickets/${id}/status`, { status }),
+}
+
+/* 身份审核
+ * 与「审计日志」无关：这里指的是「这个人是谁、该不该放他进来」。
+ * submit / status 两个**未登录也能调**，所以后端频控卡得比别处紧（提交 3 次/小时）。 */
+export const auditApi = {
+  /** 提交申请。后端只会存「学号 + 姓名 + 联系方式 + 说明」，不收密码。 */
+  submit: (payload: {
+    student_id: string
+    real_name: string
+    contact_type: string
+    contact: string
+    note: string
+  }) => post<{ code: number; msg: string; id: number }>('/api/audit-request', payload),
+  /** 查进度。**学号和联系方式两个都得对**才给看 ——
+   *  只凭学号可查的话，拿一串连号学号挨个试就能问出「谁申请过、通没通过」。 */
+  status: (student_id: string, contact: string) =>
+    get<AuditStatusResponse>('/api/audit-request/status', { student_id, contact }),
+  /** 管理端列表。status 省略时后端默认只看待审核的 —— 那是个待办队列，不是档案库。 */
+  staffList: (status?: AuditStatus) =>
+    get<AuditListResponse>('/api/admin/audit-requests', status ? { status } : undefined),
+  /** 批准或驳回。驳回必须带理由：申请人只看到「未通过」而不知道为什么，
+   *  只会再找人来问一遍，一次处理变成两次。允许改判（调错、事后联系本人改主意）。 */
+  review: (id: number, action: 'approve' | 'reject', note = '') =>
+    post<{ code: number; msg: string }>(`/api/admin/audit-requests/${id}/review`, { action, note }),
 }

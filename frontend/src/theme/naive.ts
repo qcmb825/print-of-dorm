@@ -32,6 +32,7 @@ export interface Tokens {
   warn: string
   info: string
   /** 订单状态色。图表要的是真实色值 —— canvas 里用不了 var()，必须把 hex 取出来。 */
+  statusUnpriced: string
   statusPending: string
   statusPrinting: string
   statusReady: string
@@ -70,6 +71,7 @@ const VAR_MAP: Record<
   err: '--err',
   warn: '--warn',
   info: '--info',
+  statusUnpriced: '--status-unpriced',
   statusPending: '--status-pending',
   statusPrinting: '--status-printing',
   statusReady: '--status-ready',

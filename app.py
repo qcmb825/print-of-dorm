@@ -93,7 +93,10 @@ def log_startup_summary():
     logger.info('  允许上传 : %s', '、'.join(sorted(ALLOWED_EXTENSIONS)))
     logger.info('  登录策略 : 连续失败 %s 次锁定 %s 秒；登录态保持 %s 天',
                 LOGIN_MAX_FAILS, LOGIN_LOCK_SECONDS, env_int('SESSION_DAYS', 7))
-    logger.info('  界面版本 : %s（URL 加 ?ui=classic / ?ui=vue / ?ui=random 可临时切换）', UI_MODE)
+    # 这里写死 'vue' 而不是引 UI_VUE：横幅在模块加载到一半时就被调用，
+    # 那时 UI_VUE 还没赋值（它在下面「界面选择」那一段），引它会直接 NameError
+    # —— 而且是把整个服务起不来的那种崩。界面版本真要改，两处一起改。
+    logger.info('  界面版本 : %s（界面切换已关闭，?ui= 参数不再生效）', 'vue')
     logger.info('  调试模式 : %s', DEBUG_MODE)
     if DEBUG_MODE:
         logger.warning('调试模式已开启！该模式会暴露源码并允许执行任意代码，仅供本地开发，'
@@ -134,7 +137,17 @@ def csrf_protect():
         security_event('csrf_failed',
                        'method=%s path=%s has_session_token=%s has_header_token=%s'
                        % (request.method, request.path, bool(expected), bool(sent)))
-        return jsonify({'code': 403, 'msg': '请求校验失败，请刷新页面后重试'}), 403
+        payload = {'code': 403, 'msg': '请求校验失败，请刷新页面后重试'}
+        if not expected:
+            # 会话里压根没有令牌，说明前端手里那张票过期了（退出登录后没刷新页面、
+            # 会话到期、账号被禁用后会话被清），这不是攻击信号。
+            # 补发一张并在响应里标出来，前端据此自动重握手 + 重发一次原请求，
+            # 用户不用知道「刷新一下就好」这件事。
+            # 只在「本来就没有」时才补发：令牌存在但对不上属于可疑情形，
+            # 这时把有效令牌回给请求方，等于替伪造者把门打开。
+            payload['csrf'] = ensure_csrf_token()
+            payload['reason'] = 'csrf'
+        return jsonify(payload), 403
 
 
 
@@ -227,6 +240,19 @@ UI_CLASSIC = 'classic'
 UI_VUE = 'vue'
 UI_CHOICES = (UI_CLASSIC, UI_VUE)
 
+
+# 【总开关】界面版本切换目前关掉了，全站只跑新版（vue）。
+#
+# 关它的原因不是经典版坏了，而是「同时维护两套外壳」这件事本身有代价：
+# 每加一个功能（比如这套计费流程、注册时的身份审核）都得写两遍，
+# 而漏掉一套不会报错，只会表现成「随机分到老界面的那一半用户点不到这个按钮」
+# —— 这种故障得靠用户来报才会发现。先把精力集中在一套上，切换先锁死。
+#
+# 做成常量而不是「把代码删掉」：删掉之后想找回经典版就得翻提交历史，
+# 而这里改一行 True 就全回来了（classic 的那条分支和模板都还在，没动）。
+# 顺带看清楚了锁的到底是什么 —— 锁的是「选择」，不是「代码」。
+UI_SWITCH_ENABLED = False
+
 # 界面选择存在这个独立 Cookie 里，刻意不用 Flask 的 session。
 # 原因：登录 / 注册 / 登出都会 session.clear()（防会话固定攻击），选择放在 session
 # 里会被顺手清掉，用户刚登进来就莫名其妙换了一套界面。
@@ -243,7 +269,12 @@ def _spa_missing_response():
     """产物不存在时给一句能直接照做的话，而不是丢一个 500 或白屏。"""
     logger.error('前端产物缺失：%s 不存在。请在 frontend/ 目录下执行：'
                  'npm install && npm run build', SPA_INDEX)
-    return (
+    # 用 make_response 包一层，不要直接 return (字符串, 503)。
+    # 裸元组在 Flask 里也是合法返回值，但拿到它的调用方就只知道「这是个元组」，
+    # 再也改不了响应头 —— _page_response 接下来要 resp.set_cookie，
+    # 在元组上会直接 AttributeError，于是本该显示的 503 指引页变成一个 500，
+    # 而且只在「部署机忘了 build」这一种情况下出现 —— 恰好是最需要看到那句话的时候。
+    return make_response((
         '<!doctype html><meta charset="utf-8"><title>前端产物缺失</title>'
         '<body style="font-family:system-ui;padding:40px;line-height:1.7">'
         '<h1 style="font-size:20px">前端产物缺失</h1>'
@@ -253,7 +284,7 @@ def _spa_missing_response():
         'cd frontend\nnpm install\nnpm run build</pre>'
         '<p>后端接口不受影响，可以先访问 <code>/hello</code> 自检。</p>'
         '</body>'
-    ), 503
+    ), 503)
 
 
 def _serve_spa():
@@ -286,7 +317,15 @@ def _classic_page():
 def _pick_ui():
     """决定这次用哪一套前端，返回 'classic' 或 'vue'。
 
-    三个来源，优先级从高到低，顺序不能调：
+    切换关掉的时候（UI_SWITCH_ENABLED 为假，当前就是）恒返回 vue，
+    后面的三选一逻辑一点都不执行 —— 所以带不带 ?ui=classic 都是新版，
+    Cookie 里就算还留着上次的 classic 也不会起作用。
+
+    注意这里**故意不报错也不记日志**：老书签「/?ui=classic」会大量存在，
+    每访问一次就写一条日志的话，访问日志两下就被这些废请求刷满，
+    真正要看的 4xx 反而被埋了。安静地给新版即可。
+
+    打开的时候，三个来源优先级从高到低，顺序不能调：
 
     1) URL 参数 ?ui=classic / ?ui=vue —— 临时看另一套，也用来回答
        「是只有我这套有问题，还是两套都这样」。带上就跟着走，不用反复写。
@@ -299,6 +338,9 @@ def _pick_ui():
        每次请求都重掷的话，用户点一下页面就从一套界面换成另一套，
        连按钮在哪都不认识了，那不叫随机试用，叫故障。
     """
+    if not UI_SWITCH_ENABLED:
+        return UI_VUE
+
     wanted = (request.args.get('ui') or '').strip().lower()
     if wanted in UI_CHOICES:
         return wanted
@@ -321,7 +363,11 @@ def _page_response():
     ui = _pick_ui()
     resp = _serve_spa() if ui == UI_VUE else _classic_page()
     # 把这次的结果记进 Cookie，浏览器下次会自己带回来，就不用再掷一次。
-    if (request.cookies.get(UI_COOKIE) or '') != ui:
+    #
+    # 切换关掉时整段跳过：_pick_ui 已经不看 Cookie 了，
+    # 再写进去就是每个响应白多一个 Set-Cookie 头，而且下次改动的人会以为它还在起作用。
+    # 已经有 pod-ui 的浏览器也不用管 —— 它不会再被读。
+    if UI_SWITCH_ENABLED and (request.cookies.get(UI_COOKIE) or '') != ui:
         resp.set_cookie(UI_COOKIE, ui, httponly=True, samesite='Lax',
                         secure=app.config['SESSION_COOKIE_SECURE'])
     return resp

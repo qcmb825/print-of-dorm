@@ -6,10 +6,14 @@ import secrets
 
 from config import (
     ALLOWED_EXTENSIONS,
+    AUDIT_NOTE_MAX,
+    AUDIT_NOTE_MIN,
     CONTACT_LABELS,
     CONTACT_TYPES,
     EMAIL_RE,
     NICKNAME_RE,
+    PRICE_MAX_YUAN,
+    PRICE_RE,
     QQ_RE,
     REALNAME_RE,
     STATUS_CLOSED,
@@ -71,27 +75,58 @@ def positive_int(value, default, maximum=None):
 
 
 
-def validate_registration(data):
-    """校验注册字段，返回 (清洗后的字典, 错误信息)，失败时字典为 None。"""
-    nickname = (data.get('nickname') or '').strip()
-    real_name = (data.get('real_name') or '').strip()
-    student_id = (data.get('student_id') or '').strip()
-    dorm = (data.get('dorm') or '').strip()
-    password = data.get('password') or ''
-    confirm = data.get('confirm_password') or ''
-    # 联系方式必填：先选类型（微信 / QQ / 邮箱），号码再按对应类型校验格式。
-    # 前端也会校验一遍，但那只是让用户少等一次请求，真正的把关必须在后端。
+def parse_price(value):
+    """把计费金额解析成「元」，返回 (金额, 错误信息)，失败时金额为 None。
+
+    为什么先转字符串再解析，而不是 float(value) 一路到底 ——
+    请求体是 JSON，`{"price": 12.5}` 到这边已经是二进制浮点数了，精度早丢了；
+    更麻烦的是 float 能接受一大堆不该当金额的东西：`Infinity`、`NaN`、
+    `1e500`。它们在比较大小那一步全都不按常理出牌（NaN 跟任何数比都是 False），
+    于是「大于 0 且小于上限」这个看起来无懈可击的判断会把 NaN 放进来，
+    最后落库变成一个显示成「nan 元」的订单。
+    按字符串走，正则先把形状卡死（最多六位整数、最多两位小数），再转一次，
+    这一步已经没有异常值能溜过去了。
+
+    注意 bool 要单独挡：Python 里 True 是 int 的子类，不挡的话
+    `{"price": true}` 会算成 1 元，静默地给一单标上一块钱。
+    """
+    if isinstance(value, bool):
+        return None, '金额请填写数字'
+    if isinstance(value, (int, float)):
+        # 数字型也统一按字符串走一遍，好让两种写法共用同一套规则。
+        # repr 而不是 str：str(1e21) 是 '1e+21'，repr 也是，两者在这里等价，
+        # 但 repr 对 float 的往返表示更可靠。
+        text = repr(value)
+    else:
+        text = (value or '').strip() if isinstance(value, str) else ''
+    if not text:
+        return None, '请填写金额'
+    if not PRICE_RE.match(text):
+        return None, '金额需为不超过 %s 元的数字，最多两位小数' % PRICE_MAX_YUAN
+    amount = round(float(text), 2)
+    if amount <= 0:
+        # 允许 0 没有意义：真要免费，那单就不该走计费这一步。
+        # 拦在这里，免得屏幕上出现一批 0 元的「已计费」订单。
+        return None, '金额要大于 0'
+    if amount > PRICE_MAX_YUAN:
+        return None, '金额不能超过 %s 元' % PRICE_MAX_YUAN
+    return amount, None
+
+
+
+def validate_contact(data):
+    """校验「联系方式」这一组字段，返回 (清洗后的字段, 错误信息)。
+
+    注册和身份审核申请都要收联系方式，所以规则只能有一份 ——
+    各写一套的话，改了一处忘了另一处，就会出现「注册时要求微信号字母开头、
+    申请时不管」这种前后不一：用户填同一个号，一个入口过、另一个入口不过。
+
+    联系方式在注册时是必填的，理由不是为了骚扰用户，而是因为它**是唯一
+    能把线上账号和线下真人对上号的东西**：出了事（传了不该传的文件、
+    订单一直不取），管理员得能找得到这个人。
+    """
     contact_type = (data.get('contact_type') or '').strip().lower()
     contact = (data.get('contact') or '').strip()
-
-    if not NICKNAME_RE.match(nickname):
-        return None, '昵称需为 2-20 位中文、字母、数字或下划线'
-    if not REALNAME_RE.match(real_name):
-        return None, '姓名需为 2-20 位中文或字母'
-    if not STUDENT_ID_RE.match(student_id):
-        return None, '学号需为 4-20 位数字'
-    if not (2 <= len(dorm) <= 50) or not all(ch.isprintable() for ch in dorm):
-        return None, '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
     if contact_type not in CONTACT_TYPES:
         return None, '请选择联系方式类型（微信 / QQ / 邮箱）'
     if not contact:
@@ -104,6 +139,34 @@ def validate_registration(data):
         return None, 'QQ 号需为 5-12 位数字，且不能以 0 开头'
     if contact_type == 'email' and not EMAIL_RE.match(contact):
         return None, '邮箱格式不正确，例：name@example.com'
+    return {'contact_type': contact_type, 'contact': contact}, None
+
+
+
+def validate_registration(data):
+    """校验注册字段，返回 (清洗后的字典, 错误信息)，失败时字典为 None。"""
+    nickname = (data.get('nickname') or '').strip()
+    real_name = (data.get('real_name') or '').strip()
+    student_id = (data.get('student_id') or '').strip()
+    dorm = (data.get('dorm') or '').strip()
+    password = data.get('password') or ''
+    confirm = data.get('confirm_password') or ''
+
+    if not NICKNAME_RE.match(nickname):
+        return None, '昵称需为 2-20 位中文、字母、数字或下划线'
+    if not REALNAME_RE.match(real_name):
+        return None, '姓名需为 2-20 位中文或字母'
+    if not STUDENT_ID_RE.match(student_id):
+        return None, '学号需为 4-20 位数字'
+    if not (2 <= len(dorm) <= 50) or not all(ch.isprintable() for ch in dorm):
+        return None, '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
+    # 联系方式这组字段和身份审核申请共用同一份规则（见 validate_contact）。
+    # 报错顺序和原来一致：先把各字段的格式挑完，最后才说密码的事。
+    contact_fields, error = validate_contact(data)
+    if contact_fields is None:
+        # 判 None 而不是判 error 真假：两者本来就同进同出，
+        # 但写成判 None 才能让读代码的人和类型检查器都确定后面能安全取键。
+        return None, error
     if not (8 <= len(password) <= 64):
         return None, '密码长度需为 8-64 位'
     if not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
@@ -117,7 +180,42 @@ def validate_registration(data):
         'real_name': real_name,
         'student_id': student_id,
         'dorm': dorm,
-        'contact_type': contact_type,
-        'contact': contact,
+        'contact_type': contact_fields['contact_type'],
+        'contact': contact_fields['contact'],
         'password': password,
+    }, None
+
+
+
+def validate_audit_request(data):
+    """校验身份审核申请，返回 (清洗后的字典, 错误信息)。
+
+    只收「学号 + 姓名 + 联系方式 + 说明」四样。
+    申请要回答的是「你是谁、怎么联系到你」，管理员据此人工核对 ——
+    所以**密码不在其中**：申请不等于注册，不能让一个还没通过审核的人
+    提前把密码交给系统存着（存的东西越多，出了泄露事就越大）。
+    """
+    student_id = (data.get('student_id') or '').strip()
+    real_name = (data.get('real_name') or '').strip()
+    note = (data.get('note') or '').strip()
+
+    if not STUDENT_ID_RE.match(student_id):
+        return None, '学号需为 4-20 位数字'
+    if not REALNAME_RE.match(real_name):
+        return None, '姓名需为 2-20 位中文或字母'
+    contact_fields, error = validate_contact(data)
+    if contact_fields is None:
+        return None, error
+    if not (AUDIT_NOTE_MIN <= len(note) <= AUDIT_NOTE_MAX):
+        # 说明给个下限是有必要的：只写「无」的话管理员没有任何可以下手核对的东西，
+        # 只能回头再问一遍，一次审核变成两次。
+        return None, ('请用 %s-%s 个字说明一下情况'
+                      '（比如：我是新生还没录进名单、转过专业换了学号）'
+                      % (AUDIT_NOTE_MIN, AUDIT_NOTE_MAX))
+    return {
+        'student_id': student_id,
+        'real_name': real_name,
+        'contact_type': contact_fields['contact_type'],
+        'contact': contact_fields['contact'],
+        'note': note,
     }, None

@@ -2,6 +2,7 @@
 /** 管理端布局：桌面用左侧固定导航，窄屏收进抽屉（管理员也可能拿手机用）。 */
 import { computed, onMounted, ref } from 'vue'
 import {
+  ClipboardCheck,
   LayoutDashboard,
   Megaphone,
   Menu,
@@ -15,7 +16,6 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
-import ThemeToggle from '@/components/ThemeToggle.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
@@ -31,6 +31,7 @@ const navItems = computed(() =>
   [
     { to: '/staff/orders', label: '订单台', icon: Package, show: true },
     { to: '/staff/dashboard', label: '数据看板', icon: LayoutDashboard, show: true },
+    { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck, show: true },
     { to: '/staff/tickets', label: '工单处理', icon: MessageSquare, show: true },
     { to: '/staff/announcements', label: '公告管理', icon: Megaphone, show: true },
     { to: '/staff/users', label: '账号管理', icon: Users, show: auth.isSuper },
@@ -71,13 +72,13 @@ onMounted(() => {
           {{ item.label }}
         </RouterLink>
       </nav>
-      <!-- 主题切换固定宽度，账号区吃掉剩下的并允许收缩（min-w-0），
-           否则账号按钮会顶破 236px 的侧栏溢到外面去。 -->
+      <!-- 这里原本还有一个主题切换按钮。主题系统本身留着（tokens.css 的 .dark、
+           theme/naive.ts 都还在用），拆掉的只是这个入口 —— 深色由系统偏好决定。
+           账号区现在整行都是它，所以允许收缩（min-w-0）。 -->
       <div
         class="mt-auto flex items-center gap-1 border-t px-3 py-3"
         style="border-color: var(--border)"
       >
-        <ThemeToggle />
         <UserMenu stacked class="min-w-0 flex-1" />
       </div>
     </aside>
@@ -127,7 +128,6 @@ onMounted(() => {
           <span class="font-heading text-[15px] font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
-          <ThemeToggle />
           <UserMenu />
         </div>
       </header>

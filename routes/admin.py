@@ -6,7 +6,7 @@ from flask import Blueprint, g, jsonify, request
 from auth import roles_required
 from config import (ROLE_ADMIN, ROLE_LABELS, ROLE_SUPER, ROLE_USER,
                     STATUS_ACTIVE, STATUS_CLOSED, STATUS_DISABLED,
-                    public_role, public_role_label)
+                    ST_UNPRICED, public_role, public_role_label)
 from db import get_db
 from security import audit_action, decrypt_password, security_event
 from utils import display_name
@@ -275,6 +275,27 @@ def api_admin_stats():
             "SELECT COUNT(*) AS c FROM users WHERE "
             "date(create_time, 'localtime') >= date('now', 'localtime', '-6 days')" + account_filter,
             account_params).fetchone()['c']
+        # 启用 / 禁用分开数，不拿 total 减出来：注销的账号既不是启用也不是禁用，
+        # 用减法得到的是「非启用」而不是「禁用」，界面上会多出一批不存在的禁用账号。
+        #
+        # 这两个数和下面的 by_role 都带 account_filter，跟账号列表一个口径：
+        # 挡了列表却漏了数字，等于变相告诉看的人「还有一个你看不到的账号」。
+        active_users = conn.execute(
+            'SELECT COUNT(*) AS c FROM users WHERE status = ?' + account_filter,
+            [STATUS_ACTIVE] + account_params).fetchone()['c']
+        disabled_users = conn.execute(
+            'SELECT COUNT(*) AS c FROM users WHERE status = ?' + account_filter,
+            [STATUS_DISABLED] + account_params).fetchone()['c']
+        # 角色分组按「对外角色」翻译成中文再发出去，不直接把 user/admin/super
+        # 发给前端：界面上那一栏的标题就是拿这个键当文字显示的，
+        # 发英文键会在卡片上出现一个光齾齾的 "admin"。
+        role_rows = conn.execute(
+            'SELECT role, COUNT(*) AS count FROM users WHERE 1 = 1' + account_filter +
+            ' GROUP BY role', account_params).fetchall()
+        by_role = {}
+        for item in role_rows:
+            label = public_role_label(item['role'])
+            by_role[label] = by_role.get(label, 0) + item['count']
         # 订单量按「今天 / 近 7 天 / 近 30 天」三档给。
         # 时间范围交给 SQLite 自己算（now / localtime），不从浏览器传日期过来：
         # 基准永远是数据库的当前时间，就不会出现「浏览器时区和服务器时区不一致，
@@ -298,6 +319,50 @@ def api_admin_stats():
         ).fetchone()['c']
         unclaimed = conn.execute(
             'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NULL').fetchone()['c']
+        # 已接单。它和 unclaimed 加起来应该正好等于 total ——
+        # 这两个数就是靠这个关系互相盯着的：哪天有人把「已接单」改成了
+        # 「状态不是待打印」，两个数字加起来对不上总数，一眼就能发现。
+        claimed = conn.execute(
+            'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NOT NULL').fetchone()['c']
+        # 按状态 / 颜色 / 双面分组。这里**不补零值**：
+        # 补上 0 的话「有没有数据」就永远是真，前端那个「暂无数据」的空状态
+        # 再也不会出现 —— 刚上线、一单都没有的时候，用户看到的是五个 0 围成的
+        # 空圆环，而不是一句「还没有订单」。
+        # 缺的键交给前端的 ?? 0 处理，那本来就是它该干的活。
+        #
+        # 颜色和双面可能为 NULL（老数据、或者上传时没传），
+        # COALESCE 到默认值上：不管的话 GROUP BY 会多出一个键叫 None/空串的分组，
+        # 前端的「黑白」「单面」两栏就少算了这些单。
+        status_rows = conn.execute(
+            'SELECT status AS k, COUNT(*) AS count FROM orders GROUP BY k').fetchall()
+        color_rows = conn.execute(
+            "SELECT COALESCE(color_type, 'black') AS k, COUNT(*) AS count"
+            ' FROM orders GROUP BY k').fetchall()
+        duplex_rows = conn.execute(
+            "SELECT COALESCE(duplex, 'single') AS k, COUNT(*) AS count"
+            ' FROM orders GROUP BY k').fetchall()
+        # 待计费单数和累计金额。口径必须写清楚，否则以后一对账就要扯皮：
+        #
+        #   unpriced —— 只数「此刻停在待计费状态」的单，它就是待办队列的长度。
+        #   revenue  —— 已经计过费的单金额之和，不管有没有打印、有没有取件。
+        #     为什么不是「只算已取件」：管理员看这个数字回答的是「这段时间开了多少钱的单」，
+        #     而不是「收回了多少钱」（这个系统里根本没有收款环节，无法知道收了没）。
+        #     把没收到的钱也算成收入是不对的，但这里两个都不是 ——
+        #     它叫「累计计费金额」，改名字的时候要连这里一起改。
+        #
+        # SUM 在没有匹配行时返回 NULL，不是 0。直接发给前端会得到 null，
+        # 而前端拿 null 做运算会得出 NaN，界面上就是一个空白的金额格子 ——
+        # 所以用 COALESCE 在 SQL 里就补成 0。
+        #
+        # 金额求和后再 round 一次：SQLite 的 REAL 是二进制浮点，
+        # 几千笔加起来末尾会带出 1e-13 这种尾巴，不修就会显示成
+        # 「1234.5600000000002 元」——数字没错，但看起来像系统出错了。
+        unpriced = conn.execute(
+            'SELECT COUNT(*) AS c FROM orders WHERE status = ?',
+            (ST_UNPRICED,)).fetchone()['c']
+        revenue = round(conn.execute(
+            'SELECT COALESCE(SUM(price), 0) AS total FROM orders WHERE price IS NOT NULL'
+        ).fetchone()['total'], 2)
         day_rows = conn.execute('''
             SELECT date(create_time, 'localtime') AS d, COUNT(*) AS c
             FROM orders
@@ -354,6 +419,9 @@ def api_admin_stats():
         'users': {
             'total': users_total,
             'new_7d': new_users_7d,
+            'active': active_users,
+            'disabled': disabled_users,
+            'by_role': by_role,
         },
         'orders': {
             'total': orders_total,
@@ -361,6 +429,12 @@ def api_admin_stats():
             'last_7d': orders_7d,
             'last_30d': orders_30d,
             'unclaimed': unclaimed,
+            'unpriced': unpriced,
+            'revenue': revenue,
+            'claimed': claimed,
+            'by_status': {r['k']: r['count'] for r in status_rows},
+            'by_color': {r['k']: r['count'] for r in color_rows},
+            'by_duplex': {r['k']: r['count'] for r in duplex_rows},
         },
         'daily': daily,
         'top_orderers': _rank_rows(top_orderers),
