@@ -12,7 +12,10 @@ import StatusTag from '@/components/StatusTag.vue'
 import {
   COLOR_TYPE_LABEL,
   DUPLEX_LABEL,
+  copiesLabel,
   fullTime,
+  orderFileLabel,
+  paperLabel,
   pickupCodeLabel,
   priceLabel,
   shortTime,
@@ -98,9 +101,13 @@ async function withdraw(order: Order): Promise<void> {
   }
   // 二次确认，并且把文件名和单号摆在里面：一屏订单长得都差不多，
   // 确认框只写「确定要撤回吗」等于没问。文件和记录都会没，先把后果说清楚。
+  // 预设单没有文件，「上传的文件也会一并删掉」在那时候是假的 ——
+  // 后果说错比少说更糟，所以两种说法分开写。
   const ok = await confirmAction({
     title: '撤回这份订单？',
-    content: `「${order.filename}」#${order.id} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
+    content: order.preset_content
+      ? `「${orderFileLabel(order)}」#${order.id} 会被整条删除，无法恢复。这一单没有文件，不会动到任何文件。`
+      : `「${orderFileLabel(order)}」#${order.id} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
     positiveText: '撤回订单',
     negativeText: '再想想',
   })
@@ -183,7 +190,9 @@ async function withdraw(order: Order): Promise<void> {
       <li v-for="order in orders" :key="order.id" class="panel p-3.5 sm:p-4">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
-            <p class="truncate text-[14px] font-bold">{{ order.filename }}</p>
+            <!-- 预设单没有文件名（后端存的是空串哨兵值），直接插值会得到一片空白，
+                 学生会以为自己的订单没记录上。 -->
+            <p class="truncate text-[14px] font-bold">{{ orderFileLabel(order) }}</p>
             <p class="tnum mt-1 text-[11px] text-ink-4">
               #{{ order.id }} · {{ shortTime(order.create_time) }}
             </p>
@@ -223,8 +232,30 @@ async function withdraw(order: Order): Promise<void> {
             <span class="tech-label rounded-full px-2 py-1" style="background-color: var(--muted)">
               {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             </span>
+            <!-- 份数一定要显示：它直接决定交多少钱，学生看不出来就会反复问管理员。
+                 null 是「未记录」（本次升级前的老订单）而不是 1 份，走 copiesLabel。 -->
+            <span class="tech-label tnum rounded-full px-2 py-1" style="background-color: var(--muted)">
+              {{ copiesLabel(order.copies) }}
+            </span>
+            <span
+              v-if="order.paper_name"
+              class="tech-label rounded-full px-2 py-1"
+              style="background-color: var(--muted)"
+            >
+              {{ paperLabel(order.paper_name) }}
+            </span>
           </div>
         </div>
+
+        <!-- 预设服务那句话：学生看不到「自己下单时选了什么」会很没安全感，
+             而他们甚至没有文件名可以对照。 -->
+        <p
+          v-if="order.preset_content"
+          class="mt-3 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-2"
+          style="background-color: var(--muted)"
+        >
+          预设服务：{{ order.preset_content }}
+        </p>
 
         <p v-if="order.remark" class="mt-3 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-2" style="background-color: var(--muted)">
           备注：{{ order.remark }}

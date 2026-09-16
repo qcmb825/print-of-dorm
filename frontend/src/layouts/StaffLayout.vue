@@ -42,6 +42,9 @@ const navItems = computed(() =>
     { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck, show: true },
     { to: '/staff/tickets', label: '工单处理', icon: MessageSquare, show: true },
     { to: '/staff/announcements', label: '公告管理', icon: Megaphone, show: true },
+    // 打印选项在公告管理后面、账号管理前面：它也是「内容维护」那一类，
+    // 而账号管理涉及权限，习惯上放最后。这里对所有管理员可见，理由见该页顶部注释。
+    { to: '/staff/print-options', label: '打印选项', icon: Printer, show: true },
     { to: '/staff/users', label: '账号管理', icon: Users, show: true },
   ].filter((item) => item.show),
 )

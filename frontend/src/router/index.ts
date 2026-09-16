@@ -102,6 +102,16 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '公告管理' },
       },
       {
+        // 打印选项对所有管理员开放，**不是** `super: true`：
+        // 「楼里现在有哪种纸」是打印员自己最清楚的事。这条与后端
+        // routes/order_options.py 里那几个 ROLE_ADMIN 写接口一一对应 ——
+        // 路由放开而接口收着（或反过来）都会变成「能点，点了 403」。
+        path: 'print-options',
+        name: 'staff-print-options',
+        component: () => import('@/views/staff/PrintOptionsView.vue'),
+        meta: { title: '打印选项' },
+      },
+      {
         path: 'tickets',
         name: 'staff-tickets',
         component: () => import('@/views/staff/TicketsView.vue'),

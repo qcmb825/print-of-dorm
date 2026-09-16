@@ -10,6 +10,9 @@ from config import (
     AUDIT_NOTE_MIN,
     CONTACT_LABELS,
     CONTACT_TYPES,
+    COPIES_DEFAULT,
+    COPIES_MAX,
+    COPIES_MIN,
     EMAIL_RE,
     NICKNAME_RE,
     PRICE_MAX_YUAN,
@@ -135,6 +138,34 @@ def parse_price(value):
     if amount > PRICE_MAX_YUAN:
         return None, '金额不能超过 %s 元' % PRICE_MAX_YUAN
     return amount, None
+
+
+
+def parse_copies(value):
+    """把份数解析成整数，返回 (份数, 错误信息)。
+
+    空值（None / 空串）当作**没填**，回落到 COPIES_DEFAULT —— 这是老前端
+    （升级前那个只会传 color/duplex/remark 的版本）发过来的形状，
+    它没有份数这个概念，而那时候的含义就是「打一份」。
+    不能因为客户端少传一个字段就判 400：那会变成「缓存里的旧页面突然下不了单」。
+
+    bool 必须单独挡：Python 里 True 是 int 的子类，不挡的话 {"copies": true}
+    会静默变成 1 份 —— 金额那边踩过同一个坑，见 parse_price 的说明。
+
+    字符串照收（表单传过来就是字符串），但只认纯整数文本：'2.5' 会被 int() 拒掉，
+    这是对的，从来没听说过打 2.5 份。
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return COPIES_DEFAULT, None
+    if isinstance(value, bool):
+        return None, '份数请填写 %s-%s 之间的整数' % (COPIES_MIN, COPIES_MAX)
+    try:
+        copies = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None, '份数请填写 %s-%s 之间的整数' % (COPIES_MIN, COPIES_MAX)
+    if not COPIES_MIN <= copies <= COPIES_MAX:
+        return None, '份数需在 %s-%s 之间' % (COPIES_MIN, COPIES_MAX)
+    return copies, None
 
 
 

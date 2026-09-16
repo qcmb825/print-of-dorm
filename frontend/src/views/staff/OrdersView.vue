@@ -40,7 +40,10 @@ import { useAuthStore } from '@/stores/auth'
 import {
   COLOR_TYPE_LABEL,
   DUPLEX_LABEL,
+  copiesLabel,
   normalizePrice,
+  orderFileLabel,
+  paperLabel,
   pickupCodeLabel,
   priceLabel,
   shortTime,
@@ -143,7 +146,11 @@ function canRelease(order: Order): boolean {
 }
 
 function canDownload(order: Order): boolean {
+  // 预设单没有文件，后端会回 400「这一单用的是预设服务，没有文件可下载」。
+  // 按钮得跟着一起消失：它本来就和「释放」一个条件，天生会跟着亮起来，
+  // 而一颗点了就弹错的按钮比没有按钮更糟（管理员会以为文件丢了）。
   return (
+    !!order.filename &&
     order.claimed_by !== null &&
     (isDefaultAdmin.value || order.claimed_by === currentUserId.value)
   )
@@ -285,7 +292,7 @@ async function changeStatus(order: Order, next: OrderStatus): Promise<void> {
 
 async function download(order: Order): Promise<void> {
   try {
-    await staffOrderApi.download(order.id, order.filename)
+    await staffOrderApi.download(order.id, orderFileLabel(order))
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '下载失败')
   }
@@ -327,14 +334,17 @@ const columns = computed<DataTableColumns<Order>>(() => [
       h('div', { class: 'min-w-0' }, [
         // 文件名同时是详情入口：它本来就是这一列里最大的一块可点区域，
         // 比旁边再加一颗小按钮好按得多（手机上尤其明显）。
+        // 标签走 orderFileLabel：预设单的 filename 是空串，直接渲染就是一列点不动的空气。
         h(
           RouterLink,
           {
             to: `/staff/orders/${row.id}`,
             class: 'block truncate text-[13px] font-semibold hover:underline',
-            title: `${row.filename} — 点开看详情`,
+            title: row.preset_content
+              ? `${row.preset_content} — 点开看详情`
+              : `${row.filename} — 点开看详情`,
           },
-          { default: () => row.filename },
+          { default: () => orderFileLabel(row) },
         ),
         h('div', { class: 'tnum text-[11px] opacity-60' }, `#${row.id} · ${shortTime(row.create_time)}`),
       ]),
@@ -350,17 +360,50 @@ const columns = computed<DataTableColumns<Order>>(() => [
       ]),
   },
   {
+    // 规格两行：第一行颜色/单双面，第二行份数/纸张。
+    // 挤成一行的话这一列要 200px 出头，而「份数」正是打印的人最先要看的东西，
+    // 放在第二行反而更抓眼。
+    // 份数用 copiesLabel 而不是 `copies ?? 1` —— 本次升级前的老订单是 null，
+    // 显示成「1 份」等于替它们编了一个没人记得的数字。
     title: '规格',
     key: 'spec',
-    width: 106,
+    width: 132,
     render: (row) =>
-      h(
-        'span',
-        { class: 'text-[12px] opacity-80' },
-        `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} / ${
-          row.duplex ? DUPLEX_LABEL[row.duplex] : '单面'
-        }`,
-      ),
+      h('div', { class: 'min-w-0' }, [
+        h(
+          'div',
+          { class: 'truncate text-[12px] opacity-80' },
+          `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} / ${
+            row.duplex ? DUPLEX_LABEL[row.duplex] : '单面'
+          }`,
+        ),
+        h(
+          'div',
+          {
+            class: 'truncate text-[11px] opacity-60',
+            title: row.paper_remark ?? undefined,
+          },
+          `${copiesLabel(row.copies)} · ${paperLabel(row.paper_name)}`,
+        ),
+      ]),
+  },
+  {
+    // 预设单。它没有文件名，也不该在「备注」里找说明 —— 那句话是这项服务本身。
+    // 用单独一列而不是塞进规格：它比规格长得多，挤进去会把列宽撑坏。
+    title: '打印服务',
+    key: 'preset',
+    width: 168,
+    render: (row) =>
+      row.preset_content
+        ? h(
+            'span',
+            {
+              class: 'block truncate text-[12px] opacity-80',
+              title: row.preset_content,
+            },
+            row.preset_content,
+          )
+        : h('span', { class: 'text-[12px] opacity-40' }, '—'),
   },
   {
     title: '备注',
@@ -638,9 +681,9 @@ onMounted(async () => {
               <RouterLink
                 :to="`/staff/orders/${order.id}`"
                 class="block truncate text-[13px] font-bold hover:underline"
-                :title="`${order.filename} — 点开看详情`"
+                :title="`${orderFileLabel(order)} — 点开看详情`"
               >
-                {{ order.filename }}
+                {{ orderFileLabel(order) }}
               </RouterLink>
               <p class="tnum mt-0.5 text-[11px] text-ink-4">
                 #{{ order.id }} · {{ shortTime(order.create_time) }}
@@ -654,6 +697,24 @@ onMounted(async () => {
             <span class="tnum">取件码 {{ pickupCodeLabel(order.pickup_code) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
+
+          <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
+               完全看不到「几份、什么纸」，这两样恰恰是他最需要知道的。
+               这里和宽屏那两行取同一组助函数，口径必须一样。 -->
+          <p class="mt-2 flex flex-wrap items-center gap-x-3 text-[12px] text-ink-3">
+            <span>
+              {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
+              / {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
+            </span>
+            <span class="tnum">{{ copiesLabel(order.copies) }}</span>
+            <span :title="order.paper_remark ?? undefined">{{ paperLabel(order.paper_name) }}</span>
+          </p>
+
+          <!-- 预设服务那一句话。没有文件名可看，这句话就是这一单的全部内容 -->
+          <p v-if="order.preset_content" class="mt-2 text-[12px] leading-5">
+            <span class="text-ink-4">预设</span>
+            <span class="ml-1.5 text-ink-3">{{ order.preset_content }}</span>
+          </p>
 
           <!-- 备注：学生的打印要求（「只打第 3 页」这类）。宽屏在表格里有单独一列，
                窄屏之前哪都没有 —— 管理员拿手机接单时完全看不到。
@@ -772,15 +833,28 @@ onMounted(async () => {
     >
       <template v-if="priceOrder">
         <p class="mb-3 min-w-0 text-[13px] leading-6 text-ink-3">
-          <span class="block truncate font-semibold text-ink" :title="priceOrder.filename">
-            {{ priceOrder.filename }}
+          <span
+            class="block truncate font-semibold text-ink"
+            :title="priceOrder.preset_content ?? priceOrder.filename"
+          >
+            {{ orderFileLabel(priceOrder) }}
           </span>
           <span class="tnum">
             #{{ priceOrder.id }} ·
             {{ priceOrder.color_type ? COLOR_TYPE_LABEL[priceOrder.color_type] : '黑白' }}
             /
             {{ priceOrder.duplex ? DUPLEX_LABEL[priceOrder.duplex] : '单面' }}
+            · {{ copiesLabel(priceOrder.copies) }} · {{ paperLabel(priceOrder.paper_name) }}
           </span>
+        </p>
+        <!-- 计费时最该看到的就是这一单到底要打什么。预设单没有文件，
+             不把它的那句话摆出来的话，管理员只能对着一颗空标题猜价钱。 -->
+        <p
+          v-if="priceOrder.preset_content"
+          class="mb-3 rounded-lg px-3 py-2 text-[12px] leading-5 whitespace-pre-wrap"
+          style="background-color: var(--muted)"
+        >
+          {{ priceOrder.preset_content }}
         </p>
 
         <NInput

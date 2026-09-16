@@ -19,6 +19,10 @@ import type {
   OrderDetailResponse,
   OrderListResponse,
   OrderStatus,
+  PaperTypeListResponse,
+  PresetOrderRequest,
+  PrintOptionsResponse,
+  PrintPresetListResponse,
   RestoreResponse,
   Role,
   ServiceBoard,
@@ -52,8 +56,19 @@ export const orderApi = {
     form.append('color', options.color)
     form.append('duplex', options.duplex)
     form.append('remark', options.remark)
+    // 份数和纸张走同一个 FormData。空值**必须不 append**，不要 append('')：
+    // 后端把空串当作「没填」处理，但「字段根本不存在」和「字段是空串」这两条路
+    // 在 Flask 里就是两种输入形状，能少一种就少一种。
+    if (options.copies != null) form.append('copies', String(options.copies))
+    if (options.paper_type_id != null) form.append('paper_type_id', String(options.paper_type_id))
     return upload<UploadResponse>('/api/upload', form, onProgress)
   },
+  /** 用预设打印服务下单 —— 这一单**没有文件**。
+   *  单独一个接口而不是给 upload 传「文件为空」：那样这个函数就有两种
+   *  完全不同的输入形状，谁调用它、传了什么都看不出。
+   *  服务端也会挡带文件的请求（400），所以这里不传文件是必然的，不是约定。 */
+  createPresetOrder: (payload: PresetOrderRequest) =>
+    post<UploadResponse>('/api/order/preset', payload),
   mine: () => get<MyOrdersResponse>('/api/my-orders'),
   /** 撤回自己下的、还没被接单的订单。服务端会把整条记录和落盘的文件一起删掉，
    *  「已被接单」（400）和「已取件 / 状态刚变」（400 / 409）都会被挡回来。
@@ -69,7 +84,9 @@ export const boardApi = {
 
 /* 大文件分片上传。分片尺寸由服务端的 CHUNK_SIZE 定，前端跟着它的返回值走，不自己算。 */
 export const chunkApi = {
-  /** 开会话。同名同大小会复用上一次没传完的那份（resumed: true），断点续传就靠这条。 */
+  /** 开会话。同名同大小会复用上一次没传完的那份（resumed: true），断点续传就靠这条。
+   *  **不接受 preset_id**：选了预设就没有文件，也就不需要分片上传
+   *  （服务端在 init 和 complete 两处都会拒，不只是没入口）。 */
   init: (filename: string, size: number) =>
     post<ChunkSession>('/api/upload/chunked', { filename, size }),
   /** 未完成的会话列表，用来提醒「上次那份还没传完」。 */
@@ -164,6 +181,41 @@ export interface AdminProfilePayload {
   dorm: string
   contact_type: ContactType
   contact: string
+}
+
+/* 打印选项：预设打印服务 + 纸张类型
+ *
+ * 两块东西共用一组接口（后端也在同一个 Blueprint 里），因为它们是同一个下拉框
+ * 的两半：选了预设就不用传文件，而纸张两边都要选。
+ *
+ * 权限口径与账号管理不同：**下面这些写接口全部是 ROLE_ADMIN 起步，不是只给默认管理员**。
+ * 「楼里现在有哪种纸」正是打印员自己最清楚的事，收进超管只会让这张表没人维护。
+ * 界面上因此对所有管理员都开入口，见 views/staff/PrintOptionsView.vue 顶部那段说明。 */
+export const printOptionsApi = {
+  /** 学生下单页用：一次拿回**启用中的**预设和纸张。
+   *  拆两个请求的话，下单页要处理「一个到了一个没到」的中间态，
+   *  而那个中间态下无论画什么都是错的。 */
+  load: () => get<PrintOptionsResponse>('/api/print-options'),
+}
+
+export const staffPrintOptionsApi = {
+  presets: () => get<PrintPresetListResponse>('/api/admin/print-presets'),
+  createPreset: (content: string) =>
+    post<{ code: number; msg: string; id: number }>('/api/admin/print-presets', { content }),
+  updatePreset: (id: number, content: string) =>
+    put<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`, { content }),
+  setPresetActive: (id: number, active: boolean) =>
+    put<{ code: number; msg: string }>(`/api/admin/print-presets/${id}/active`, { active }),
+  removePreset: (id: number) => del<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`),
+
+  papers: () => get<PaperTypeListResponse>('/api/admin/paper-types'),
+  createPaper: (payload: { name: string; remark: string }) =>
+    post<{ code: number; msg: string; id: number }>('/api/admin/paper-types', payload),
+  updatePaper: (id: number, payload: { name: string; remark: string }) =>
+    put<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`, payload),
+  setPaperActive: (id: number, active: boolean) =>
+    put<{ code: number; msg: string }>(`/api/admin/paper-types/${id}/active`, { active }),
+  removePaper: (id: number) => del<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`),
 }
 
 /* 公告 */

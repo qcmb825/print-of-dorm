@@ -1,27 +1,48 @@
 <script setup lang="ts">
-/** 学生下单：选文件 + 打印选项，上传成功后把取件码放大展示 —— 那是学生真正要记住的东西。
+/** 学生下单：选文件**或用预设打印服务** + 打印选项，上传成功后把取件码放大展示 ——
+ *  那是学生真正要记住的东西。
+ *
+ *  两条下单路径互斥，而且是在**服务端**互斥的：用了预设就不许带文件
+ *  （routes/orders.py 的 api_create_preset_order 见到 request.files 直接 400，
+ *  分片上传那三条路也各自挡了一道）。这里把上传框藏起来只是让人看不见它，
+ *  不是那条规矩本身 —— 谁都能手搓一个带文件的请求打过来。
  *
  *  上传分两条路，由 `uploadFile()` 按文件大小自动选：
  *  小文件走单请求直传；大文件切 8MB 分片。原因见 utils/chunkedUpload.ts 顶部的注释。
+ *  预设那条路根本没有文件，所以和分片上传完全不搭界。
  */
 import { computed, onMounted, ref } from 'vue'
-import { CircleCheck, FileText, Hash, History, Rocket, Upload, X } from '@lucide/vue'
+import {
+  CircleCheck,
+  FileText,
+  Hash,
+  History,
+  Layers,
+  Printer,
+  Rocket,
+  Upload,
+  X,
+} from '@lucide/vue'
 import {
   NButton,
   NFormItem,
   NInput,
+  NInputNumber,
   NProgress,
   NRadioButton,
   NRadioGroup,
+  NSelect,
   NUpload,
   NUploadDragger,
   useMessage,
   type UploadFileInfo,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import type { ChunkSession } from '@/api/types'
+import { orderApi, printOptionsApi } from '@/api/endpoints'
+import type { ChunkSession, PaperType, PrintPreset } from '@/api/types'
 import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
+import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
 
 const message = useMessage()
 
@@ -29,21 +50,54 @@ const message = useMessage()
  *  真正的把关在服务端（上传接口会再校验一次）。 */
 const ACCEPT = '.pdf,.jpg,.jpeg,.png,.doc,.docx'
 
+/** 下单方式。'preset' 时整块文件上传区都不渲染，这份 ref 是唯一的开关。 */
+type OrderMode = 'file' | 'preset'
+const mode = ref<OrderMode>('file')
+
 const fileList = ref<UploadFileInfo[]>([])
 const color = ref<'black' | 'color'>('black')
 const duplex = ref<'single' | 'double'>('single')
 const remark = ref('')
+const copies = ref<number>(COPIES_DEFAULT)
+const paperTypeId = ref<number | null>(null)
+/** 选中的预设 id。null = 还没选，这时不允许提交（不能替学生挑一条）。 */
+const presetId = ref<number | null>(null)
 const submitting = ref(false)
 const progress = ref(0)
 const uploadedBytes = ref(0)
 const totalBytes = ref(0)
 /** 服务端还留着的未完成上传，进页面时提醒一句 */
 const pending = ref<ChunkSession[]>([])
+/** 服务端给的启用中预设与纸张 */
+const presets = ref<PrintPreset[]>([])
+const paperTypes = ref<PaperType[]>([])
+/** 预设/纸张清单没拉到时的提示语。清单为空**不等于**没有可选项 ——
+ *  这两种情况在下拉框里长得一模一样（都是空的），但一个是「还没配置」、
+ *  一个是「网络出问题了」。不给提示的话，学生只会以为这功能不存在。 */
+const optionsError = ref('')
+const optionsLoading = ref(true)
 /** 下单成功后的回执 */
 const receipt = ref<{ orderId: number; code: string; filename: string } | null>(null)
 
 const selected = computed(() => fileList.value[0] ?? null)
 const selectedFile = computed(() => selected.value?.file ?? null)
+
+const usingPreset = computed(() => mode.value === 'preset')
+const selectedPreset = computed(
+  () => presets.value.find((item) => item.id === presetId.value) ?? null,
+)
+
+const presetOptions = computed(() =>
+  presets.value.map((item) => ({ label: item.content, value: item.id })),
+)
+/** 纸张可以不选（后端落 NULL）。「不指定」是一个真实选项，
+ *  不是「还没选」—— 所以我们不去猜一个默认纸张。 */
+const paperOptions = computed(() =>
+  paperTypes.value.map((item) => ({
+    label: item.remark ? `${item.name} · ${item.remark}` : item.name,
+    value: item.id,
+  })),
+)
 
 /** 只有大文件才会走分片，提前告诉用户「会分几片」，免得他以为卡住了。 */
 const chunkCount = computed(() => {
@@ -56,6 +110,33 @@ const progressHint = computed(() => {
   return '正在上传，请不要关闭页面或断网'
 })
 
+/** 能不能提交。分两种模式各算一次，别合成一个布尔表达式 ——
+ *  按钮上要显示的「为什么按不动」是两套完全不同的话。 */
+const blockReason = computed<string | null>(() => {
+  if (submitting.value) return null
+  if (usingPreset.value) {
+    if (!presets.value.length) return '还没有可用的预设打印服务'
+    if (presetId.value === null) return '请选择一项预设打印服务'
+    return null
+  }
+  if (!selected.value) return '请先选择要打印的文件'
+  return null
+})
+
+async function loadOptions(): Promise<void> {
+  optionsLoading.value = true
+  optionsError.value = ''
+  try {
+    const data = await printOptionsApi.load()
+    presets.value = data.presets ?? []
+    paperTypes.value = data.paper_types ?? []
+  } catch (error) {
+    optionsError.value = error instanceof ApiError ? error.message : '打印选项加载失败'
+  } finally {
+    optionsLoading.value = false
+  }
+}
+
 async function refreshPending(): Promise<void> {
   pending.value = await pendingUploads()
 }
@@ -65,35 +146,60 @@ function reset(): void {
   remark.value = ''
   color.value = 'black'
   duplex.value = 'single'
+  copies.value = COPIES_DEFAULT
+  paperTypeId.value = null
+  presetId.value = null
+  mode.value = 'file'
   progress.value = 0
   uploadedBytes.value = 0
   totalBytes.value = 0
 }
 
 async function submit(): Promise<void> {
-  const file = selectedFile.value
-  if (!file) {
-    message.warning('请先选择要打印的文件')
+  if (blockReason.value) {
+    message.warning(blockReason.value)
     return
   }
   submitting.value = true
   progress.value = 0
   uploadedBytes.value = 0
-  totalBytes.value = file.size
   try {
-    const data = await uploadFile(
-      file,
-      { color: color.value, duplex: duplex.value, remark: remark.value.trim() },
-      (state) => {
-        progress.value = state.percent
-        uploadedBytes.value = state.uploaded
-      },
-    )
+    // 份数已经是 number（NInputNumber），这里原样传 —— 不做字符串拼装、不做算术。
+    // 顺着后端的口径走：份数只认整数，范围由服务端最终裁定。
+    const common = {
+      color: color.value,
+      duplex: duplex.value,
+      remark: remark.value.trim(),
+      copies: copies.value ?? COPIES_DEFAULT,
+      paper_type_id: paperTypeId.value,
+    }
+
+    if (usingPreset.value) {
+      const preset = selectedPreset.value
+      if (!preset) return
+      const data = await orderApi.createPresetOrder({ preset_id: preset.id, ...common })
+      receipt.value = {
+        orderId: data.order_id,
+        code: data.pickup_code,
+        filename: preset.content,
+      }
+      reset()
+      message.success('下单成功，请记住取件码')
+      return
+    }
+
+    const file = selectedFile.value
+    if (!file) return
+    totalBytes.value = file.size
+    const data = await uploadFile(file, common, (state) => {
+      progress.value = state.percent
+      uploadedBytes.value = state.uploaded
+    })
     receipt.value = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
     reset()
     message.success('下单成功，请记住取件码')
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '上传失败，请稍后重试')
+    message.error(error instanceof ApiError ? error.message : '提交失败，请稍后重试')
   } finally {
     submitting.value = false
     // 不管成没成，服务端那边的会话状态都变了（成功则清掉，失败则留下一份半成品），
@@ -102,7 +208,9 @@ async function submit(): Promise<void> {
   }
 }
 
-onMounted(refreshPending)
+onMounted(async () => {
+  await Promise.all([refreshPending(), loadOptions()])
+})
 </script>
 
 <template>
@@ -186,15 +294,67 @@ onMounted(refreshPending)
     <div class="panel p-4 sm:p-5">
       <h1 class="font-heading text-lg font-bold sm:text-xl">下单打印</h1>
       <p class="mt-1 mb-4 text-[13px] text-ink-3">
-        支持 PDF、Word 和图片。上传后由管理员接单打印。
+        {{ usingPreset
+          ? '选一项预设打印服务下单，管理员按它的说明打印，不需要上传文件。'
+          : '支持 PDF、Word 和图片。上传后由管理员接单打印。' }}
       </p>
 
+      <!-- 下单方式。两个按钮而不是下拉框：这是两条完全不同的流程（一个有文件、
+           一个没有），下拉框会让人以为「选了预设之后还能再补个文件」。 -->
+      <NRadioGroup v-model:value="mode" :disabled="submitting" class="mb-4 flex flex-wrap gap-2">
+        <NRadioButton value="file">上传文件</NRadioButton>
+        <NRadioButton value="preset" :disabled="!presets.length && !optionsLoading">
+          使用预设打印服务
+        </NRadioButton>
+      </NRadioGroup>
+
+      <!-- 预设清单拉不到时给一句人话。不写它的话，第二个按钮是灰的、
+           下拉框是空的，看起来就是这个功能没做。 -->
+      <p v-if="optionsError" class="mb-4 rounded-lg px-3 py-2 text-[12px]" role="alert"
+         style="background-color: var(--err-bg); color: var(--err)">
+        {{ optionsError }}
+      </p>
+
+      <!-- 预设模式：上传区整块换成预设选择。**不是把上传框 disabled 掉** ——
+           置灰的拖拽区还在那儿招手，学生照样会把文件拖上去，然后什么也不发生。 -->
+      <template v-if="usingPreset">
+        <NFormItem label="选择预设打印服务" :show-feedback="false" class="!mb-0">
+          <NSelect
+            v-model:value="presetId"
+            :options="presetOptions"
+            :loading="optionsLoading"
+            :disabled="submitting || !presets.length"
+            placeholder="选一项已经配置好的打印服务"
+            class="w-full"
+          />
+        </NFormItem>
+
+        <div
+          v-if="selectedPreset"
+          class="mt-3 flex items-start gap-3 rounded-xl border p-3"
+          style="border-color: var(--border); background-color: var(--muted)"
+        >
+          <span
+            class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg"
+            style="background-color: var(--accent-tint); color: var(--primary)"
+            aria-hidden="true"
+          >
+            <Printer :size="17" />
+          </span>
+          <p class="min-w-0 flex-1 text-[13px] leading-relaxed whitespace-pre-wrap">
+            {{ selectedPreset.content }}
+          </p>
+        </div>
+      </template>
+
       <NUpload
+        v-else
         v-model:file-list="fileList"
         :default-upload="false"
         :max="1"
         :accept="ACCEPT"
         class="block"
+        :disabled="submitting"
       >
         <NUploadDragger>
           <div class="flex flex-col items-center gap-2 py-5">
@@ -217,7 +377,7 @@ onMounted(refreshPending)
 
       <!-- 已选文件 -->
       <div
-        v-if="selected"
+        v-if="!usingPreset && selected"
         class="mt-3 flex items-center gap-3 rounded-xl border p-3"
         style="border-color: var(--border)"
       >
@@ -259,7 +419,34 @@ onMounted(refreshPending)
             <NRadioButton value="double">双面</NRadioButton>
           </NRadioGroup>
         </NFormItem>
+        <NFormItem label="份数" :show-feedback="false" class="!mb-0">
+          <NInputNumber
+            v-model:value="copies"
+            :min="COPIES_MIN"
+            :max="COPIES_MAX"
+            :precision="0"
+            :step="1"
+            :disabled="submitting"
+            class="w-full"
+            placeholder="份数"
+          />
+        </NFormItem>
+        <NFormItem label="纸张（可选）" :show-feedback="false" class="!mb-0">
+          <NSelect
+            v-model:value="paperTypeId"
+            :options="paperOptions"
+            :loading="optionsLoading"
+            :disabled="submitting || optionsLoading"
+            clearable
+            placeholder="不指定"
+            class="w-full"
+          />
+        </NFormItem>
       </div>
+      <p class="mt-2 text-[12px] text-ink-4">
+        份数范围 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
+        不确定就用「不指定」，打印时会按常规纸走。
+      </p>
 
       <NFormItem label="备注（可选）" :show-feedback="false" class="mt-4">
         <NInput
@@ -274,8 +461,10 @@ onMounted(refreshPending)
       </NFormItem>
 
       <!-- 上传进度。进度条只在真正上传时出现（而不是一直占着位置显示 0%），
-           它存在本身就意味着「有事在发生」。 -->
-      <div v-if="submitting" class="mt-4">
+           它存在本身就意味着「有事在发生」。预设单没有文件，所以这一块不会出现
+           （它被 `submitting` 关着，但预设单提交时 totalBytes 是 0，
+           进度条会出现一条 0/0 的空条 —— 所以这里还要排掉 usingPreset）。 -->
+      <div v-if="submitting && !usingPreset" class="mt-4">
         <div class="mb-1.5 flex items-center justify-between gap-3 text-[12px]">
           <span class="text-ink-3">{{ progressHint }}</span>
           <span class="tnum shrink-0 text-ink-4">
@@ -298,15 +487,20 @@ onMounted(refreshPending)
           size="large"
           class="!font-bold shadow-[var(--glow-primary)]"
           :loading="submitting"
-          :disabled="!selected"
+          :disabled="!!blockReason"
+          :title="blockReason ?? undefined"
           @click="submit"
         >
-          <template #icon><Rocket :size="16" /></template>
-          {{ submitting ? '上传中…' : '提交订单' }}
+          <template #icon>
+            <Layers v-if="usingPreset" :size="16" />
+            <Rocket v-else :size="16" />
+          </template>
+          {{ submitting ? (usingPreset ? '提交中…' : '上传中…') : '提交订单' }}
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-4">
           <Hash :size="12" />
-          <template v-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>
+          <template v-if="usingPreset">不需要上传文件，提交后立即生成取件码</template>
+          <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>
           <template v-else>上传完成后立即生成取件码</template>
         </span>
       </div>

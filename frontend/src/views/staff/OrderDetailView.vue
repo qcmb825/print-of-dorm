@@ -25,8 +25,12 @@ import {
   COLOR_TYPE_LABEL,
   DUPLEX_LABEL,
   LOG_ACTION_COLOR,
+  copiesLabel,
   formatBytes,
   fullTime,
+  isPresetOrder,
+  orderFileLabel,
+  paperLabel,
   pickupCodeLabel,
   priceLabel,
   shortTime,
@@ -58,9 +62,19 @@ const isDefaultAdmin = computed(() => auth.advancedAllowed)
 
 const canDownload = computed(() => {
   const item = order.value
-  if (!item || item.claimed_by === null) return false
+  // `!!item.filename` 不能省：预设单没有文件（file_path 是个空串哨兵值），
+  // 后端的下载接口会回 400。但这个判断单独看不出问题 ——
+  // 预设单恰好也满足 claimed_by 那两个条件，不主动排掉就会长出一颗点了就报错的按钮。
+  if (!item || item.claimed_by === null || !item.filename) return false
   return isDefaultAdmin.value || item.claimed_by === currentUserId.value
 })
+
+/** 这一单是不是「没有文件」的那种。列表页与详情页都问这一个函数。
+ *
+ *  区分它和「文件真的丢了」非常重要：预设单的 file_size / file_exists 也是
+ *  空与 false（后端就是这么填的），直接拿 file_exists 当作告警条件，
+ *  预设单进去看一眼就会被一条红色的「服务器上找不到这份文件了」诈一次。 */
+const isPreset = computed(() => !!order.value && isPresetOrder(order.value))
 
 /** 字段网格的数据。写成数组是因为这些行长得一模一样，
  *  模板里复制十遍「<dt>…</dt><dd>…</dd>」只会让漏改某一行变得更难发现。 */
@@ -72,16 +86,26 @@ interface Field {
 const specFields = computed<Field[]>(() => {
   const item = order.value
   if (!item) return []
-  return [
+  const fields: Field[] = [
     {
       label: '规格',
       value: `${item.color_type ? COLOR_TYPE_LABEL[item.color_type] : '黑白'} / ${
         item.duplex ? DUPLEX_LABEL[item.duplex] : '单面'
       }`,
     },
-    { label: '文件名', value: item.filename },
-    { label: '文件大小', value: formatBytes(item.file_size) },
+    // 份数与纸张用 copiesLabel / paperLabel：份数为 null 是「未记录」而不是 1 份
+    // （本次升级前的老订单后端刻意没回填），纸张为 null 是「下单时没选」。
+    { label: '份数', value: copiesLabel(item.copies) },
+    { label: '纸张', value: paperLabel(item.paper_name) },
+    { label: '纸张备注', value: item.paper_remark },
   ]
+  // 文件名/大小只对有文件的单有意义。预设单写两行「—」会让这一块看起来像数据缺失，
+  // 而它本来就是「没有文件」，不是「文件信息没取到」。
+  if (item.filename) {
+    fields.push({ label: '文件名', value: item.filename })
+    fields.push({ label: '文件大小', value: formatBytes(item.file_size) })
+  }
+  return fields
 })
 
 const ownerFields = computed<Field[]>(() => {
@@ -130,7 +154,7 @@ async function download(): Promise<void> {
   if (!item) return
   downloading.value = true
   try {
-    await staffOrderApi.download(item.id, item.filename)
+    await staffOrderApi.download(item.id, orderFileLabel(item))
     // 下载本身也会写一条留痕，所以拉一遍让时间线跟上 ——
     // 否则「我刚下载过」这件事要刷新才看得到，像没记上。
     await load()
@@ -183,8 +207,11 @@ onMounted(load)
       <div class="panel mb-3 p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
-            <h2 class="truncate text-[17px] font-bold" :title="order.filename">
-              {{ order.filename }}
+            <h2
+              class="truncate text-[17px] font-bold"
+              :title="order.preset_content ?? order.filename"
+            >
+              {{ orderFileLabel(order) }}
             </h2>
             <p class="tech-label mt-1 text-ink-4">
               提交于 {{ fullTime(order.create_time) }}
@@ -207,9 +234,11 @@ onMounted(load)
         </div>
 
         <!-- 「订单还在、文件没了」必须显式说出来：只把下载按钮置灰的话，
-             管理员会以为是权限问题，跑去找人开权限而不是去找文件。 -->
+             管理员会以为是权限问题，跑去找人开权限而不是去找文件。
+             但 **`file_exists === false` 不等于文件丢了** —— 预设单本来就没有文件，
+             后端给它的也是 false。少了 `!isPreset`，每张预设单进去都白白被诈一次。 -->
         <NAlert
-          v-if="!order.file_exists"
+          v-if="!order.file_exists && !isPreset"
           type="warning"
           :bordered="false"
           class="mt-3"
@@ -220,11 +249,25 @@ onMounted(load)
         </NAlert>
       </div>
 
+      <!-- 预设打印服务：这一单没有文件，这一句话就是它的全部内容。
+           单独一整块、摆在那两栏之前：它可能很长（上限 300 字），
+           塞进任何一栏都会把那一栏撑成一条窄长的筒。 -->
+      <section v-if="isPreset" class="panel mb-3 p-4">
+        <h3 class="tech-label mb-1 text-ink-3">预设打印服务</h3>
+        <p class="whitespace-pre-wrap break-words text-[13px] leading-6">
+          {{ order.preset_content }}
+        </p>
+        <p class="mt-2 text-[11px] text-ink-4">
+          这一单没有上传文件。上面这段话是下单当时从预设里抄下来的快照，
+          即使后来预设被改动或删掉了，这里显示的仍是学生当时看到的原文。
+        </p>
+      </section>
+
       <div class="mb-3 grid gap-3 sm:grid-cols-2">
         <section class="panel p-4">
           <h3 class="tech-label mb-1 flex items-center gap-1.5 text-ink-3">
             打印要求
-            <FileWarning v-if="!order.file_exists" :size="13" />
+            <FileWarning v-if="!order.file_exists && !isPreset" :size="13" />
           </h3>
           <dl class="divide-y" style="border-color: var(--border)">
             <div

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-/** 服务数据：这台打印机至今为止的公开数据 —— 服务规模、排队情况、下单榜、近两周趋势。
+/** 服务数据：这台打印机上的排队情况、下单榜，以及**我自己的进度**。
  *
- *  只有「登录用户能看」和「谁都能看」的交集才放上来，界线由后端划（routes/orders.py 的
- *  api_board）：规模与排队不涉及具体是谁，榜单是人人都在同一张榜上的对等信息。
- *  **响应里没有金额** —— 后端就没查 price 那一列，所以这个页面不是「不画金额」，
- *  而是根本拿不到金额。同样地，别人昵称是服务端打的码（张*三），这里拿到什么画什么，
+ *  界线由后端划（routes/orders.py 的 api_board），页面只画后端给的那几个数：
+ *  **响应里没有金额，也没有站点规模**（总单数 / 近 7 天 / 账号数）—— 后端就没查那几列，
+ *  所以这个页面不是「不画它们」，而是根本拿不到。别为了「卡片好看」在前端补算：
+ *  前端能算出来的东西，网络面板里也就看得见；算不出来才是防线。
+ *  同样地，别人昵称是服务端打的码（张*三），这里拿到什么画什么，
  *  不在前端再补一层打码：前端能解出来的东西，网络面板里也解得出。
  *
  *  不复用 /api/my-stats：那条只查我自己，而管理端的 /api/admin/stats 又带
@@ -14,7 +15,7 @@ import { Inbox, RefreshCw } from '@lucide/vue'
 import { NButton, NEmpty, NSkeleton } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { boardApi } from '@/api/endpoints'
-import type { Board, OrderStatus, ServiceBoard } from '@/api/types'
+import type { Board, ServiceBoard } from '@/api/types'
 import { trendOption } from '@/charts/options'
 import type { ChartPalette } from '@/charts/setup'
 import ChartBox from '@/components/charts/ChartBox.vue'
@@ -49,7 +50,7 @@ const palette = computed<ChartPalette>(() => {
 
 const trend = computed(() => trendOption(board.value?.daily ?? [], palette.value))
 
-const service = computed(() => board.value?.service)
+const mine = computed(() => board.value?.mine)
 const queue = computed(() => board.value?.queue)
 const current = computed<Board | undefined>(
   () => board.value?.boards.find((item) => item.key === tab.value),
@@ -61,13 +62,17 @@ const current = computed<Board | undefined>(
 const boardTabs = computed(() => board.value?.boards ?? [])
 const topRows = computed(() => current.value?.top ?? [])
 
-/** 五档按 config.ORDER_STATUSES 的顺序摆（也就是流程本身的顺序）：
- *  按数字大小排的话，「哪一档堵住了」就看不出来了。 */
+/** 排队里摆哪几档、按什么次序摆，**两件事都由后端说了算** ——
+ *  后端发的就是一个排好序的数组，这里照着画，前端不另抄一份清单、也不重排。
+ *  抄一份的坏处很具体：后端把「已取件」从排队里去掉之后，前端这份清单并不知道，
+ *  界面上会稳稳留下一格「已取件 0」—— 不报错，只是那句话是假的。
+ *  自己按数字大小重排也不行：那样「哪一档堵住了」就看不出来了，
+ *  而排队这一行的意义正是看出哪一档堵住了。 */
 const statusRows = computed(() =>
-  (Object.keys(STATUS_COLOR_VAR) as OrderStatus[]).map((status) => ({
-    status,
-    color: STATUS_COLOR_VAR[status],
-    count: queue.value?.by_status?.[status] ?? 0,
+  (queue.value?.statuses ?? []).map((row) => ({
+    status: row.status,
+    color: STATUS_COLOR_VAR[row.status],
+    count: row.count,
   })),
 )
 
@@ -90,10 +95,19 @@ const myLine = computed(() => {
   return `你在这张榜上共 ${me.count} 单，排在第 ${me.rank} 名（共 ${me.ranked} 人上榜）`
 })
 
+/** 「我的名次」那格。**没下过单时不报名次**：后端为了让「比我多的有几个人 + 1」
+ *  这个算法少一个分支，没单时返回的也是 rank: 1，照它画就成了「你排第 1 名」，
+ *  而榜上根本没有你 —— 跟下面 myLine 是同一个坑，所以两处都先判 total。 */
+const mineRankText = computed(() => {
+  const me = mine.value
+  if (!me || !me.total) return '—'
+  return `第 ${me.rank} 名`
+})
+
 const hasTrendData = computed(() => (board.value?.daily ?? []).some((item) => item.count > 0))
 
 /** 这个页面刻意不自动刷新（订单列表那种轮询不适合它）：
- *  服务规模和小榜单一天也变不了几次，而它每次访问都要算两遍榜单，
+ *  排队情况和榜单一天也变不了几次，而它每次访问都要算两遍榜单，
  *  后台开着标签页一直轮询只是在白烧数据库。 */
 async function load(): Promise<void> {
   loading.value = true
@@ -114,7 +128,7 @@ onMounted(load)
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h1 class="font-heading text-lg font-bold sm:text-xl">服务数据</h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">这台打印机至今的公开数据 · 不含费用</p>
+        <p class="mt-0.5 text-[13px] text-ink-3">排队情况 · 下单榜 · 我的进度</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="load()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -128,21 +142,23 @@ onMounted(load)
 
     <template v-else-if="board">
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">累计打印</div>
-          <div class="tnum font-heading text-xl font-bold">{{ service?.orders_total ?? 0 }}</div>
+        <div class="panel panel-raised border-primary/40 px-3 py-2.5">
+          <div class="tech-label text-ink-4">待我取件</div>
+          <div class="tnum font-heading text-xl font-bold" style="color: var(--primary)">
+            {{ mine?.ready ?? 0 }}
+          </div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">近 7 天</div>
-          <div class="tnum font-heading text-xl font-bold">{{ service?.orders_7d ?? 0 }}</div>
+          <div class="tech-label text-ink-4">进行中</div>
+          <div class="tnum font-heading text-xl font-bold">{{ mine?.active ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">今日</div>
-          <div class="tnum font-heading text-xl font-bold">{{ service?.orders_today ?? 0 }}</div>
+          <div class="tech-label text-ink-4">我的单数</div>
+          <div class="tnum font-heading text-xl font-bold">{{ mine?.total ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">同学人数</div>
-          <div class="tnum font-heading text-xl font-bold">{{ service?.users_total ?? 0 }}</div>
+          <div class="tech-label text-ink-4">我的名次</div>
+          <div class="tnum font-heading text-xl font-bold">{{ mineRankText }}</div>
         </div>
       </div>
 
@@ -153,7 +169,7 @@ onMounted(load)
             {{ queue?.unclaimed ?? 0 }} 单还没人接
           </span>
         </div>
-        <ul class="mt-3 grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-5">
+        <ul class="mt-3 grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-4">
           <li
             v-for="row in statusRows"
             :key="row.status"

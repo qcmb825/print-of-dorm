@@ -10,6 +10,7 @@ from pathlib import Path
 from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ROLE_SUPER, ST_DONE, ST_UNPRICED,
                     STATUS_CLOSED, logger)
 from security import audit_action, make_password_records
+from utils import generate_pickup_code
 
 
 def ensure_database_directory():
@@ -51,6 +52,66 @@ def log_order_event(conn, order_id, actor_id, actor_role, action, detail=''):
 
 
 
+# 插入订单时用到的列，顺序固定。
+# 写成元组是为了让两条下单路径（传文件 / 用预设，后者没有文件）共用同一条 INSERT：
+# 各写一条的话，哪天加了新列只更新了其中一条，就会出现「用预设下的单没记份数、
+# 传文件下的单记了」这种一半生效的情形 —— 而页面上两单看起来一样。
+_ORDER_INSERT_COLUMNS = (
+    'user_id', 'filename', 'file_path', 'color_type', 'duplex', 'remark',
+    'status', 'preset_id', 'preset_content', 'copies',
+    'paper_type_id', 'paper_name', 'paper_remark',
+)
+
+
+
+def insert_order_row(conn, values):
+    """插一行订单，取件码交给这里生成，返回 (order_id, pickup_code)。
+
+    **不 commit** —— 订单和它那条「提交订单」留痕必须落在同一个事务里
+    （理由同 log_order_event），事务边界归调用方管。
+
+    values 是「列名 -> 值」的字典，缺的列按 NULL 处理。
+
+    「摇取件码 → 撞了就重摇」这段刻意只写一份：直传下单、分片合并、预设下单
+    三条路都走这里。复制成三份的话，哪天改了重试次数或者码长，
+    改漏的那条路会变成偶发报错（「取件码连续 5 次都重复」），
+    而另外两条一切正常 —— 这种一半好的毛病最难查。
+    """
+    placeholders = ', '.join(['?'] * (len(_ORDER_INSERT_COLUMNS) + 1))
+    sql = 'INSERT INTO orders (%s, pickup_code) VALUES (%s)' % (
+        ', '.join(_ORDER_INSERT_COLUMNS), placeholders)
+    for attempt in range(5):
+        pickup_code = generate_pickup_code(conn)
+        try:
+            cursor = conn.execute(
+                sql, tuple(values.get(column) for column in _ORDER_INSERT_COLUMNS) + (pickup_code,))
+            return cursor.lastrowid, pickup_code
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            logger.warning('取件码「%s」已被占用（第 %s 次），重摇一个', pickup_code, attempt + 1)
+    # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
+    raise RuntimeError('取件码连续 5 次都与其他订单重复')
+
+
+
+def find_preset(conn, preset_id):
+    """按 id 取一条预设打印服务，没有就返回 None。
+
+    只负责「有没有这一条」，「能不能用」（is_active）留给调用方判断 ——
+    管理端要能停用之后再改回来，那它必须读得到停用记录；
+    而学生下单时读到停用的就该被拒。同一个查询、两种结论，
+    把结论写进这个函数里就必然有一边是错的。
+    """
+    return conn.execute('SELECT * FROM print_presets WHERE id = ?', (preset_id,)).fetchone()
+
+
+
+def find_paper_type(conn, paper_type_id):
+    """按 id 取一种纸张类型，没有就返回 None。is_active 的判定同上，留给调用方。"""
+    return conn.execute('SELECT * FROM paper_types WHERE id = ?', (paper_type_id,)).fetchone()
+
+
+
 # 数据库结构版本，用来判断是否要做一次性迁移
 # v2 -> v3：新增了联系方式列、工单表和公告表，全是加东西，老数据一概保留
 # v3 -> v4：users 表那三个列级 UNIQUE 换成「部分唯一索引」，
@@ -66,7 +127,16 @@ def log_order_event(conn, order_id, actor_id, actor_role, action, detail=''):
 #          历史订单在这个新表里是空的 —— 那些步骤本来就没被记下来，
 #          不要为了「看起来完整」去用 orders 的列倒推补几条，
 #          倒推出来的时间和操作人只会比空白更容易看错。
-SCHEMA_VERSION = '8'
+# v8 -> v9：新增预设打印服务表 print_presets、纸张类型表 paper_types，
+#          再给 orders 加六列（preset_id / preset_content / copies /
+#          paper_type_id / paper_name / paper_remark）。新表靠
+#          CREATE TABLE IF NOT EXISTS 补，新列照抄下面 contact_type 那段
+#          幂等的 PRAGMA TABLE_INFO + ALTER TABLE，没有重建表。
+#          老订单这六列全是 NULL，含义是「下单时还没有这些选项」——
+#          不要给它们补一个默认份数或默认纸张：那时候打的就是一份，
+#          但记录里没有这件事，编一个「1 份」出来只会让人分不清
+#          哪一单是学生真的选了一份、哪一单是我们替他猜的。
+SCHEMA_VERSION = '9'
 
 
 
@@ -263,7 +333,13 @@ def init_database():
                 update_time TIMESTAMP,
                 price REAL,
                 priced_by INTEGER,
-                price_time TIMESTAMP
+                price_time TIMESTAMP,
+                preset_id INTEGER,
+                preset_content TEXT,
+                copies INTEGER,
+                paper_type_id INTEGER,
+                paper_name TEXT,
+                paper_remark TEXT
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -314,6 +390,32 @@ def init_database():
             cursor.execute('ALTER TABLE orders ADD COLUMN priced_by INTEGER')
         if 'price_time' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN price_time TIMESTAMP')
+
+        # 预设打印服务与打印选项这六列，还是同一个套路。
+        #
+        # preset_content / paper_name / paper_remark 存的是**下单当时的文本快照**。
+        # 订单里明明已经有 preset_id 和 paper_type_id 了，为什么还要再抄一份字？
+        # 因为预设和纸张都是管理员随时能改名、改内容、停用的，
+        # 只存 id 的话，三个月前那一单的「打印要求」会跟着今天的管理操作一起变 ——
+        # 打印员照着被改过的要求去核对一份早就打完的活，谁也说不清当时要的是什么。
+        # 同理，纸张被删掉之后，老订单里那句「是什么纸」还得读得出来。
+        #
+        # copies 可空是有意的，不给老订单补默认值 1：
+        # 那些单子下的时候还没「份数」这个东西，库里没有这个事实。
+        # 补一个 1 出来，界面就会显示「1 份」，而我们分不清这是学生真的选了一份、
+        # 还是我们替他猜的。空着，读的地方一律把 NULL 说成「未指定」。
+        if 'preset_id' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN preset_id INTEGER')
+        if 'preset_content' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN preset_content TEXT')
+        if 'copies' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN copies INTEGER')
+        if 'paper_type_id' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN paper_type_id INTEGER')
+        if 'paper_name' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN paper_name TEXT')
+        if 'paper_remark' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN paper_remark TEXT')
 
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。
@@ -450,6 +552,49 @@ def init_database():
         ''')
         # 详情页永远是「按订单号取这几条」，所以索引直接建在 order_id 上。
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_order ON order_logs(order_id)')
+
+        # 预设打印服务：管理员维护的「一段描述」，学生下单时可以挑一条套用。
+        #
+        # 只有 content 一个业务字段，是刻意的：见 config.PRESET_CONTENT_MIN 上面那段
+        # 「多一个短名就有两处描述」的说明。要停用一种预设就 is_active = 0，
+        # 不删 —— 老订单里存的虽然是文本快照，列表页还按 preset_id 反查它是不是还在，
+        # 删掉只会让那一列永远显示「预设已删除」，而停用还能说清「这条停用了」。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS print_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_print_presets_active ON print_presets(is_active)'
+        )
+
+        # 纸张类型：管理员自己加（A4 / A3 / 16K / 相纸……），不写死在代码里。
+        #
+        # name 带 COLLATE NOCASE：'A4' 和 'a4' 是同一张纸，让它们同时存在的话，
+        # 打印员点开列表会看到两个看起来一模一样的选项，只能靠猜哪个是哪个。
+        # 重复判在**应用层**（新建/改名时查一遍，包括已停用的），不建唯一索引 ——
+        # 唯一索引会连已停用的记录一起挡住，于是「删了再建」和「停用了再建同名」
+        # 都会失败，报出来的还是数据库层的 IntegrityError，用户完全看不懂。
+        # 顺带一提，这里也不能用部分唯一索引：WHERE 里要写 is_active = 1，
+        # 那表达出来的意思是「停用的可以叫同一个名字」，
+        # 而我们要的恰恰是「名字整表唯一，跟启停无关」。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS paper_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                remark TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
 
         cursor.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",

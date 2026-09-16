@@ -49,12 +49,14 @@ from config import (
     logger,
 )
 from security import client_ip, hit_limit, security_event
-from utils import allowed_file
+from db import get_db
+from utils import allowed_file, parse_copies
 
 from .orders import (
     UPLOAD_MAX_IN_WINDOW,
     UPLOAD_WINDOW_SECONDS,
     create_order_from_saved_file,
+    resolve_print_options,
 )
 
 bp = Blueprint('upload_chunks', __name__)
@@ -277,6 +279,12 @@ def api_chunk_init():
     _cleanup_stale('init')
 
     data = request.get_json(silent=True) or {}
+    # 「用了预设服务就不许传文件」这条规矩要在**每条**能落盘的入口上成立，
+    # 分片这条路也得挡。只挡单片直传的话，前端把 sort 一改就能下出
+    # 「既是预设、又带文件」的单 —— 而这一单在打印员眼里到底要不要打文件，
+    # 没有任何约定，只能靠猜。
+    if data.get('preset_id'):
+        return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
     raw_name = data.get('filename') or ''
     if not isinstance(raw_name, str) or not raw_name.strip():
         return jsonify({'code': 1, 'msg': '请选择要上传的文件'}), 400
@@ -482,11 +490,28 @@ def api_chunk_complete(upload_id):
         return failure
 
     data = request.get_json(silent=True) or {}
+    # 同上：预设服务不许带文件。init 那关挡过一道，这里再挡一道 ——
+    # init 是几分钟前调的，中间改个参数重发 complete 就能绕过去。
+    if data.get('preset_id'):
+        return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
     color = data.get('color', 'black')
     duplex = data.get('duplex', 'single')
     remark = (data.get('remark') or '').strip()[:200]
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
+
+    # 份数和纸张与单片直传同一套校验（parse_copies / resolve_print_options）。
+    # 两边各写一套的下场是「大文件小文件能填的份数不一样」，没人能解释。
+    copies, error = parse_copies(data.get('copies'))
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
+    options_conn = get_db()
+    try:
+        paper, error = resolve_print_options(options_conn, data)
+    finally:
+        options_conn.close()
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
 
     # 用「把整个会话目录改名」当互斥锁：同一份上传被点两次提交（或者前端超时重试），
     # 只有一个请求能改成功，另一个立刻失败退出。改名是原子操作，比拿锁文件可靠，
@@ -535,7 +560,7 @@ def api_chunk_complete(upload_id):
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——取件码重摇、失败清理都只有一份实现。
         order_id, pickup_code = create_order_from_saved_file(
-            meta['filename'], final_path, color, duplex, remark)
+            meta['filename'], final_path, color, duplex, remark, copies, paper)
     except Exception:
         # create_order_from_saved_file 失败时自己删了文件；这里兜住合并阶段抛出的异常
         if os.path.exists(final_path):

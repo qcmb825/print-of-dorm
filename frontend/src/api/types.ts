@@ -120,6 +120,24 @@ export interface Order {
   is_mine?: boolean
   /** 仅管理端列表返回：当前账号能否改这单的状态 */
   can_manage?: boolean
+
+  /* ---- 打印选项与预设（快照，见文件顶部那段说明） ---- */
+
+  /** 用的哪条预设。null = 这一单传的是文件，不是预设单。 */
+  preset_id?: number | null
+  /** 下单那一刻预设的原文。**判「是不是预设单」看这个字段，
+   *  不要看 preset_id**：预设有被删掉的可能，那时 id 还在、内容也在，
+   *  但一条更早的、预设已被删的订单……这两者本来就该一起出现，
+   *  所以只判一个即可 —— 判 preset_content 更直接，它就是页面要显示的东西。 */
+  preset_content?: string | null
+  /** 份数。老订单（本次升级之前下的）是 null —— 后端**刻意不回填 1**：
+   *  分不清「当时真的要 1 份」和「我们猜的 1 份」，猜错会写进对账。
+   *  所以渲染时要区分 null（「未记录」）和具体的数字，不要 `?? 1`。 */
+  copies?: number | null
+  paper_type_id?: number | null
+  /** 下单那一刻的纸张名。管理员随时能改名，所以订单显示的是这个快照，不是纸张表的现值。 */
+  paper_name?: string | null
+  paper_remark?: string | null
 }
 
 export interface OrderListResponse extends ApiEnvelope {
@@ -193,8 +211,19 @@ export interface OrderDetail {
   /** 上传时的大小（字节）；文件已被清掉时是 null */
   file_size: number | null
   /** 文件还在不在磁盘上。false 时界面上要给个明确提示 ——
-   *  「订单还在、文件没了」是运维要知道的事，不该只是一个失效的下载按钮。 */
+   *  「订单还在、文件没了」是运维要知道的事，不该只是一个失效的下载按钮。
+   *  预设单没有文件，这里**也是 false**，但那是正常情况，不是丢文件：
+   *  要区分的话看 filename / preset_content，别把预设单渲染成「文件丢了」。 */
   file_exists: boolean
+  /** 用的哪条预设；null = 传文件的单 */
+  preset_id: number | null
+  /** 下单那一刻预设的原文 */
+  preset_content: string | null
+  /** 份数；老订单是 null（后端刻意不回填，见 Order.copies） */
+  copies: number | null
+  paper_type_id: number | null
+  paper_name: string | null
+  paper_remark: string | null
 }
 
 export interface OrderDetailResponse extends ApiEnvelope {
@@ -202,16 +231,91 @@ export interface OrderDetailResponse extends ApiEnvelope {
   logs: OrderLog[]
 }
 
+/* ---------------- 预设打印服务 与 纸张类型 ----------------
+   两者都是「管理员维护、学生下单时选用」的选项，形态很像，但**用途完全不同**，
+   不要合并成一张表：预设是一段说明（下单时它替代了整个文件），
+   纸张是打印的物料（下单时它只是选项之一，文件照样要传）。
+
+   订单会**抄一份快照**（preset_content / paper_name / paper_remark）进自己那一行。
+   所以这里的 PrintPreset.content 是「预设现在长什么样」，而订单里的
+   preset_content 是「下单那一刻长什么样」—— 两个字段不能互相代用。 */
+
+export interface PrintPreset {
+  id: number
+  /** 预设的说明文字。预设刻意**没有名字**：一个描述就够了，
+   *  再加一个名字，两处描述迟早会各说一套，而学生看到的是名字、打印员看到的是描述。 */
+  content: string
+  is_active?: number
+  create_time?: string | null
+  update_time?: string | null
+  /** 创建人昵称，仅管理端列表返回 */
+  author?: string | null
+  /** 已经有多少单用过它。删之前要让人看见这个数字 ——
+   *  预设被删了，历史订单里那份快照还在，但「当初是哪条预设」就断线了。 */
+  used_count?: number
+}
+
+export interface PaperType {
+  id: number
+  /** 纸张名（如 A4、A3）。后端用 COLLATE NOCASE 存，A4 和 a4 视为同一个。 */
+  name: string
+  /** 给打印员看的一句话备注（克重、装订、放哪一格纸盒）。可以是 null ——
+   *  为空时后端存的是 NULL 而不是空串，这里只要判一次。 */
+  remark: string | null
+  is_active?: number
+  create_time?: string | null
+  update_time?: string | null
+  author?: string | null
+  used_count?: number
+}
+
+export interface PrintOptionsResponse extends ApiEnvelope {
+  /** 只回**启用的**预设与纸张。停用的那些留在管理端，
+   *  学生端拿不到 —— 「没拿过」比「不画出来」可靠。 */
+  presets: PrintPreset[]
+  paper_types: PaperType[]
+}
+
+/** 管理端列表：比学生端多停用项，以及各自的用量。 */
+export interface PrintPresetListResponse extends ApiEnvelope {
+  presets: PrintPreset[]
+}
+
+export interface PaperTypeListResponse extends ApiEnvelope {
+  paper_types: PaperType[]
+}
+
+/** 用预设下单的请求体。**没有文件字段** —— 后端发现请求里带文件会直接 400
+ *  （见 routes/orders.py 的 api_create_preset_order），前端把上传框藏起来
+ *  只是让人看不见，规矩立在服务端。 */
+export interface PresetOrderRequest {
+  preset_id: number
+  copies: number
+  paper_type_id: number | null
+  color: ColorType
+  duplex: Duplex
+  remark: string
+}
+
 export interface UploadResponse extends ApiEnvelope {
   order_id: number
   pickup_code: string
 }
 
-/** 上传时选的打印选项，直传与分片两条路共用。 */
+/** 下单时选的打印选项，直传、分片、预设三条路共用。
+ *
+ *  copies 在这里是 number，但**提交前不要对它做算术** ——
+ *  后端按字符串收、只认纯整数文本（utils.parse_copies）。
+ *  份数是个位数到两位数的整数，没有精度问题；
+ *  真正有精度问题的是金额，那个一律原样传字符串。 */
 export interface UploadOptions {
   color: string
   duplex: string
   remark: string
+  /** 份数。不传或传空由后端兜成 COPIES_DEFAULT（老客户端兼容）。 */
+  copies?: number
+  /** 选中的纸张类型 id；null / 不传表示不指定。 */
+  paper_type_id?: number | null
 }
 
 /** 分片上传会话 —— 服务端只回必要信息，不含磁盘路径。 */
@@ -305,19 +409,35 @@ export interface DashboardStats extends ApiEnvelope {
  *  复用了类型就等于给前端开了个「顺手也把金额画出来」的口子。
  *  两边的字段名也确实不一样（比如这边叫 service、那边叫 users）。 */
 export interface ServiceBoard extends ApiEnvelope {
-  service: {
-    orders_total: number
-    orders_today: number
-    orders_7d: number
-    orders_30d: number
-    /** 已注册且未注销的账号数（注销的账号不算「同学」） */
-    users_total: number
+  /** 我自己的概览。**刻意不含站点规模**（总单数 / 近 7 天 / 账号数）：
+   *  那些是经营数据，后端 SQL 里就没查 —— 不是这里少一个字段，
+   *  而是响应体里根本没有，网络面板里也看不到。 */
+  mine: {
+    /** 我的累计单数。跟累计榜上「你共 N 单」是同一个数（后端同源取的） */
+    total: number
+    /** 进行中：待计费 / 待打印 / 打印中。刚提交完在等报价的也算 */
+    active: number
+    /** 我还没取的件数（状态「可取了」） */
+    ready: number
+    /** 我在累计榜上的名次。**没下过单时后端也返回 1**，页面必须先判 total */
+    rank: number
+    /** 累计榜上一共有多少人上榜 */
+    ranked: number
   }
   queue: {
     /** 还没人接过的单 */
     unclaimed: number
-    /** 五档状态各剩多少单。键就是中文状态本身（后端给全 5 档，没单的是 0） */
-    by_status: Record<OrderStatus, number>
+    /** 排队里各档各剩多少单，**按流程先后排好序的数组**（后端给全 4 档，没单的是 0）。
+     *
+     *  为什么是数组不是 `{ 状态: 数量 }`：Flask 的 JSON 序列化默认对键排序
+     *  （`app.json.sort_keys`，Flask 2.3+ 起默认 True），字典里在 config 中按流程
+     *  摆好的顺序，发出去会变成「可取了 / 待打印 / 待计费 / 打印中」这种字面顺序。
+     *  排队这一行要的正是顺序，而 JSON 对象的键顺序规范上不作数，只能交给数组。
+     *
+     *  **没有「已取件」**：它已经出队，而且那是个累计数、属站点规模，
+     *  后端压根没往响应里放。所以这里也不是 `OrderStatus[]` ——
+     *  类型上就摆明「后端给什么画什么」，界面上那句「按后端给的顺序画」才是真的。 */
+    statuses: { status: OrderStatus; count: number }[]
   }
   daily: { date: string; count: number }[]
   /** 两个榜（近 30 天 / 累计）一次性都给，切换不再发请求：

@@ -22,11 +22,12 @@ from config import (
     ORDER_LOG_WITHDRAW,
     ORDER_STATUSES,
     ORDER_STATUSES_MANUAL,
+    ORDER_STATUSES_QUEUE,
     ROLE_ADMIN,
     ROLE_SUPER,
-    STATUS_CLOSED,
     ST_DONE,
     ST_PENDING,
+    ST_PRINTING,
     ST_READY,
     ST_UNPRICED,
     UPLOAD_FOLDER,
@@ -34,10 +35,10 @@ from config import (
     public_role,
     public_role_label,
 )
-from db import get_db, log_order_event
+from db import find_paper_type, find_preset, get_db, insert_order_row, log_order_event
 from security import audit_action, client_ip, hit_limit, security_event
-from utils import (allowed_file, display_name, generate_pickup_code, mask_nickname,
-                   parse_price, positive_int)
+from utils import (allowed_file, display_name, mask_nickname,
+                   parse_copies, parse_price, positive_int)
 
 bp = Blueprint('orders', __name__)
 
@@ -74,53 +75,53 @@ def log_event(order_id, action, detail='', conn=None):
             short.close()
 
 
-def create_order_from_saved_file(original_name, save_path, color, duplex, remark):
+def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies, paper=None):
     """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code)。
 
     单片直传（/api/upload）和分片上传合并完成之后都走这里，
-    取件码重摇、写库失败回滚的动作就只有一份。复制成两份的话，
+    写库失败回滚、删孤儿文件的动作就只有一份。复制成两份的话，
     哪天改了其中一处，症状会是「直传的订单正常，分片传的订单缺字段」，
     而这种差异光看页面很难发现。
 
-    调用方负责：扩展名已过白名单、文件已完整落盘、三个参数已清洗。
+    调用方负责：扩展名已过白名单、文件已完整落盘、参数已清洗。
     写库失败时本函数会把 save_path 一起删掉再抛异常 —— 订单没建成，
     那份文件就是垃圾，留着只会占磁盘、让运维以为它属于某个订单。
 
     初始状态是「待计费」而不是「待打印」：新单要先等管理员看过文件、标好价格，
     才回到待打印池。直传和分片两条路都走这个函数，所以状态只在这里定一次，
     不会出现「分片传的单能直接接、直传的单卡住」这种一半对一半错的情形。
+
+    paper 是已校验过的纸张类型字典（含 id / name / remark），学生没选就是 None。
+    纸张的名字和备注**抄进订单**而不是只存 id：管理员随时能改名，
+    只存 id 的话，三个月前那一单的「用什么纸」会跟着今天的改名一起变。
     """
     conn = None
     try:
         conn = get_db()
-        # 取件码是 4 位随机数字，重码的概率很小但不是零。generate_pickup_code
-        # 的做法是「先查有没有人用、没有就用」，两个人同时下单就可能都查到「没人用」。
-        # 库里那个部分唯一索引会把后来者挡住，所以撞了就重摇一个。
-        for attempt in range(5):
-            pickup_code = generate_pickup_code(conn)
-            try:
-                cursor = conn.execute('''
-                    INSERT INTO orders (user_id, filename, file_path, color_type, duplex, remark, status, pickup_code)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (g.user['id'], original_name, save_path, color, duplex, remark, ST_UNPRICED, pickup_code))
-                break
-            except sqlite3.IntegrityError:
-                conn.rollback()
-                logger.warning('取件码「%s」已被占用（第 %s 次），重摇一个',
-                               pickup_code, attempt + 1)
-        else:
-            # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
-            raise RuntimeError('取件码连续 5 次都与其他订单重复')
+        order_id, pickup_code = insert_order_row(conn, {
+            'user_id': g.user['id'],
+            'filename': original_name,
+            'file_path': save_path,
+            'color_type': color,
+            'duplex': duplex,
+            'remark': remark,
+            'status': ST_UNPRICED,
+            'copies': copies,
+            'paper_type_id': paper['id'] if paper else None,
+            'paper_name': paper['name'] if paper else None,
+            'paper_remark': paper['remark'] if paper else None,
+        })
         # 留痕和订单在同一个事务里。订单落了库却没有「谁什么时候传的」这一条，
         # 详情页的操作记录就得从半路开始讲 —— 而第一条恰恰是最该有的那条。
-        log_event(cursor.lastrowid, ORDER_LOG_CREATE,
-                  '上传文件「%s」并提交打印' % original_name, conn=conn)
+        log_event(order_id, ORDER_LOG_CREATE,
+                  '上传文件「%s」并提交打印%s' % (original_name, describe_print_options(copies, paper)),
+                  conn=conn)
         conn.commit()
-        return cursor.lastrowid, pickup_code
+        return order_id, pickup_code
     except Exception:
         if conn is not None:
             conn.rollback()
-        if os.path.exists(save_path):
+        if save_path and os.path.exists(save_path):
             try:
                 os.remove(save_path)
             except OSError:
@@ -129,6 +130,100 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
     finally:
         if conn is not None:
             conn.close()
+
+
+
+def describe_print_options(copies, paper):
+    """把打印选项拼成一句给人看的补充说明，给操作留痕用。
+
+    留痕是**事后复查的凭证**，所以它必须自洽：当时是几份、用什么纸，
+    读这句话就能知道，不需要再去 JOIN 已经可能被改过的纸张表。
+    """
+    parts = []
+    if copies is not None:
+        parts.append('%s 份' % copies)
+    if paper:
+        parts.append('纸张 %s' % paper['name'])
+    return ('，' + '，'.join(parts)) if parts else ''
+
+
+
+def create_preset_order(preset, copies, paper, color, duplex, remark):
+    """用预设打印服务下单 —— 这一单**没有文件**，返回 (order_id, pickup_code)。
+
+    filename / file_path 存空字符串，不是编一个假路径：
+    这两列是 NOT NULL，而 SQLite 要改掉 NOT NULL 只能把整张表重建一遍，
+    为了一个空值去动 orders 这种核心表不划算。空串在这里是个明确的
+    「没有文件」标记 —— 代价是**所有读 file_path 的地方都必须先判有没有文件**，
+    这一点在下载、撤回、详情页三处都各自写了注释，改动时一处都别漏。
+
+    preset 是已经校验过、且启用的预设记录；preset_content 抄的是**此刻的原文**。
+    为什么订单不干脆只存 preset_id：预设随时能被编辑、停用、删除，
+    只存 id 的话，三个月前那一单的打印要求会跟着今天的管理操作一起变。
+    打印员拿着被改过的要求去核对一份早就打完的活，谁也说不清当时要的是什么。
+    preset_id 一并留着，是为了能回答「这一单当初用的是哪条预设」。
+    """
+    conn = None
+    try:
+        conn = get_db()
+        order_id, pickup_code = insert_order_row(conn, {
+            'user_id': g.user['id'],
+            'filename': '',
+            'file_path': '',
+            'color_type': color,
+            'duplex': duplex,
+            'remark': remark,
+            'status': ST_UNPRICED,
+            'preset_id': preset['id'],
+            'preset_content': preset['content'],
+            'copies': copies,
+            'paper_type_id': paper['id'] if paper else None,
+            'paper_name': paper['name'] if paper else None,
+            'paper_remark': paper['remark'] if paper else None,
+        })
+        log_event(order_id, ORDER_LOG_CREATE,
+                  '使用预设打印服务下单：%s%s'
+                  % (preset['content'], describe_print_options(copies, paper)),
+                  conn=conn)
+        conn.commit()
+        return order_id, pickup_code
+    except Exception:
+        if conn is not None:
+            conn.rollback()
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+
+def resolve_print_options(conn, data):
+    """校验下单时选的纸张类型，返回 (纸张字典, 错误信息)。
+
+    只有一处判定 —— 直传下单和预设下单都走它。分开写的话，
+    很快就会出现「传文件下的单能选 A3、用预设下的单选不了」这种没人能解释的差异。
+
+    纸张可以为空（学生没选）。空的时候落库是 NULL，
+    不去猜一个「默认 A4」：我们并不知道楼里默认是哪种纸，
+    替学生选一个，出了问题还查不出是谁选的。
+    """
+    raw_id = data.get('paper_type_id')
+    if raw_id in (None, '', 0, '0'):
+        return None, None
+    if isinstance(raw_id, bool):
+        return None, '纸张类型不合法，刷新页面重新选择'
+    try:
+        paper_type_id = int(raw_id)
+    except (TypeError, ValueError):
+        return None, '纸张类型不合法，刷新页面重新选择'
+    row = find_paper_type(conn, paper_type_id)
+    if row is None:
+        return None, '这个纸张类型不存在了，刷新页面重新选择'
+    if row['is_active'] != 1:
+        # 学生打开页面之后管理员刚好把它停用了。这里只提醒刷新，
+        # 不悄悄替他换一个 —— 换掉的那张纸可能正好是打不了的。
+        return None, '这个纸张类型已经停用了，刷新页面重新选择'
+    return {'id': row['id'], 'name': row['name'], 'remark': row['remark']}, None
 
 
 @bp.route('/api/upload', methods=['POST'])
@@ -151,6 +246,20 @@ def api_upload():
     remark = (request.form.get('remark') or '').strip()[:200]  # 备注限长，防止有人塞超长文本
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
+
+    # 份数与纸张。份数在磁盘操作之前校验：填错一个数就不该先落一份文件再看结果。
+    copies, error = parse_copies(request.form.get('copies'))
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
+
+    # 纸张要查库，所以放后面一起做，别为了早而早把校验顺序搞得七零八落
+    conn = get_db()
+    try:
+        paper, error = resolve_print_options(conn, request.form)
+    finally:
+        conn.close()
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
 
     # 文件名安全处理 + 扩展名白名单校验
     original_name = os.path.basename(file.filename)
@@ -176,19 +285,91 @@ def api_upload():
             os.remove(save_path)
             return jsonify({'code': 1, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
         order_id, pickup_code = create_order_from_saved_file(
-            original_name, save_path, color, duplex, remark)
+            original_name, save_path, color, duplex, remark, copies, paper)
     except Exception:
         logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 1, 'msg': '上传失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 取件码=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 纸张=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
-                color, duplex, pickup_code, client_ip())
+                color, duplex, copies, paper['name'] if paper else '未指定',
+                pickup_code, client_ip())
     # 只返回订单号和取件码，不暴露服务器绝对路径
     return jsonify({
         'code': 0,
         'msg': '上传成功！订单已记录',
+        'order_id': order_id,
+        'pickup_code': pickup_code
+    })
+
+
+
+# 用预设打印服务下单：只有参数，**没有文件**。
+#
+# 为什么单独一个接口，而不是让 /api/upload 在「没传文件」时改走别的分支 ——
+# 那样这个接口就有两种完全不同的输入形状（有文件 / 无文件），
+# 校验、频控、错误文案全都要写两遍分支。分开之后各自的正常路径都很短，
+# 而「用了预设就不许传文件」这条规矩在这里是一条明确的 400：
+#     if request.files: 拒绝
+# 这条规矩**必须在服务端成立**。前端把上传框藏起来只是让人看不见，
+# 谁都能直接构造一个带文件的请求打过来，而学生看到的就是「能传」。
+@bp.route('/api/order/preset', methods=['POST'])
+@login_required
+def api_create_preset_order():
+    # 频控和上传共用一个计数器：不管走哪条路，一分钟能下多少单是同一个额度。
+    # 分成两个计数器的话，两边各刷一半就等于额度翻倍。
+    if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
+        security_event('preset_order_rate_limited',
+                       '账号 %s 在 %s 秒内提交超过 %s 次下单'
+                       % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW))
+        return jsonify({'code': 429, 'msg': '提交太频繁了，稍等一会儿再试'}), 429
+
+    if request.files:
+        # 用了预设服务就不能再传文件。带文件来的一律拒掉，
+        # 而不是「默默忽略那个文件」—— 忽略了就等于收下一单却把学生传的东西丢了。
+        return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
+
+    data = request.get_json(silent=True) or {}
+    preset_id = data.get('preset_id')
+    if isinstance(preset_id, bool) or not isinstance(preset_id, int) or preset_id < 1:
+        return jsonify({'code': 400, 'msg': '请选择一个预设服务'}), 400
+
+    color = (data.get('color') or 'black').strip()
+    duplex = (data.get('duplex') or 'single').strip()
+    color = color if color in ('black', 'color') else 'black'
+    duplex = duplex if duplex in ('single', 'double') else 'single'
+    remark = (data.get('remark') or '').strip()[:200]
+
+    copies, error = parse_copies(data.get('copies'))
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
+
+    conn = get_db()
+    try:
+        preset = find_preset(conn, preset_id)
+        if preset is None:
+            return jsonify({'code': 400, 'msg': '这个预设服务不存在了，刷新页面重新选择'}), 400
+        if preset['is_active'] != 1:
+            # 页面打开着、管理员刚好把它停用了。明确说清楚，别让学生以为是系统坏了。
+            return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，刷新页面重新选择'}), 400
+        paper, error = resolve_print_options(conn, data)
+        if error:
+            return jsonify({'code': 400, 'msg': error}), 400
+        order_id, pickup_code = create_preset_order(preset, copies, paper, color, duplex, remark)
+    except Exception:
+        logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
+                         g.user['nickname'], preset_id, client_ip())
+        return jsonify({'code': 1, 'msg': '下单失败，请稍后重试'}), 500
+    finally:
+        conn.close()
+
+    logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 取件码=%s ip=%s',
+                order_id, g.user['nickname'], preset_id, copies,
+                paper['name'] if paper else '未指定', pickup_code, client_ip())
+    return jsonify({
+        'code': 0,
+        'msg': '下单成功！用的是预设服务，不需要上传文件',
         'order_id': order_id,
         'pickup_code': pickup_code
     })
@@ -220,6 +401,8 @@ def api_orders():
         rows = conn.execute(f'''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
                    o.user_id, o.claimed_by, o.price,
+                   o.preset_id, o.preset_content, o.copies,
+                   o.paper_type_id, o.paper_name, o.paper_remark,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.update_time, 'localtime') AS update_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
@@ -276,6 +459,8 @@ def api_order_detail(order_id):
         row = conn.execute('''
             SELECT o.id, o.filename, o.file_path, o.color_type, o.duplex, o.remark,
                    o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
+                   o.preset_id, o.preset_content, o.copies,
+                   o.paper_type_id, o.paper_name, o.paper_remark,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.update_time, 'localtime') AS update_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
@@ -297,14 +482,23 @@ def api_order_detail(order_id):
         detail = dict(row)
         # file_path 只用来回一个「文件还在不在、多大」，拿到结果就地丢掉 ——
         # 服务器绝对路径没有任何理由进响应体（下载接口那边是同一口径）。
+        #
+        # 预设服务下的单没有文件（filename / file_path 都是空串，见 create_preset_order），
+        # 所以这里必须先判空。别指望 Path('') 自己会失败：它等于当前目录，
+        # stat() 是成功的，于是详情页会给一个没有文件的单显示「文件大小 = 4096 字节」，
+        # 既离谱又不像出错，查起来得从渲染追到磁盘。
         path = Path(detail.pop('file_path'))
-        try:
-            detail['file_size'] = path.stat().st_size
-            detail['file_exists'] = True
-        except OSError:
-            # 文件被外部清理过是可能的（运维手动清理、误删）。这里不报错：
-            # 「订单还在、文件没了」本身就是要让人看见的一条信息 ——
-            # 详情页会明确标出来，比对着一个下载按钮点半天强。
+        if detail['filename']:
+            try:
+                detail['file_size'] = path.stat().st_size
+                detail['file_exists'] = True
+            except OSError:
+                # 文件被外部清理过是可能的（运维手动清理、误删）。这里不报错：
+                # 「订单还在、文件没了」本身就是要让人看见的一条信息 ——
+                # 详情页会明确标出来，比对着一个下载按钮点半天强。
+                detail['file_size'] = None
+                detail['file_exists'] = False
+        else:
             detail['file_size'] = None
             detail['file_exists'] = False
 
@@ -563,21 +757,30 @@ def api_withdraw_order(order_id):
         # 订单行随即被删掉，这条留痕就成了一份「悬空记录」（order_id 已经指不到订单了）。
         # 故意留着：它不参与任何查询（详情页是按订单号查的），
         # 但事后要知道「那天那份文件是被本人自己撤掉的，不是丢了」时，只有它答得上来。
+        #
+        # 预设下单没有文件（file_path 是空串），文案跟着分开 ——
+        # 统一写成「文件已一并删除」的话，这条留痕会让人以为文件被删了，
+        # 实际上从来就没有过，事后查「那份文件哪去了」会白查一场。
         log_event(order_id, ORDER_LOG_WITHDRAW,
-                  '本人撤回订单，文件「%s」已一并删除' % row['filename'], conn=conn)
+                  '本人撤回订单%s' % ('，文件「%s」已一并删除' % row['filename']
+                                      if row['filename'] else '（预设服务，无文件）'),
+                  conn=conn)
         conn.commit()
     finally:
         conn.close()
 
     # 数据库那边确认删掉了才动文件。万一删文件失败，留下的只是一个没人引用的孤儿文件；
     # 反过来先删文件的话，就会出现「订单还在、文件没了」——接单人一点开就是 404。
-    try:
-        os.remove(row['file_path'])
-    except OSError:
-        logger.warning('撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                       order_id, row['file_path'])
+    # 没文件的单直接跳过这一段：os.remove('') 一定抛 OSError，
+    # 白白写一条「删除文件失败」的 warning，把日志留给别的问题。
+    if row['file_path']:
+        try:
+            os.remove(row['file_path'])
+        except OSError:
+            logger.warning('撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
+                           order_id, row['file_path'])
     logger.info('订单 #%s 被 %s 撤回，文件=%s ip=%s',
-                order_id, g.user['nickname'], row['filename'], client_ip())
+                order_id, g.user['nickname'], row['filename'] or '（无文件）', client_ip())
     return jsonify({'code': 0, 'msg': '订单已撤回'})
 
 
@@ -647,6 +850,8 @@ def api_my_orders():
         rows = conn.execute('''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
                    o.claimed_by, o.price,
+                   o.preset_id, o.preset_content, o.copies,
+                   o.paper_type_id, o.paper_name, o.paper_remark,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
                    datetime(o.price_time, 'localtime') AS price_time,
@@ -763,12 +968,18 @@ def api_board():
     一个函数里靠变量决定要不要加 user_id 过滤，那个变量写反就是「把别人的数据发给你」，
     而这种错上线之后几乎没人看得出来。两条 SQL 各自一眼看得出在查谁，多写一份值。
 
-    放行的界线是「所有人拿到的都是同一份」：
-      · 服务规模与排队情况 —— 不涉及具体是谁，学生真正想知道的是「我前面还堆着多少单」；
-      · 下单榜 —— 榜上每个人都可能上去，是平等的公开信息，不是把某个人单拎出来看。
-    不放行的只有一样：**金额**。它是经营数据，学生看了没用，还等于把营业额摊开，
-    所以下面连 price 这一列都不出现在 SELECT 里 —— 不是前端不显示，是根本没查。
-    数据不出库，比指望界面上不画它可靠得多。
+    放行的界线是「不含别人的经营数据」：
+      · 排队情况 —— 不涉及具体是谁，学生真正想知道的是「我前面还堆着多少单」。
+        只数还在流程里的四档（config.ORDER_STATUSES_QUEUE），已取件的单不算：
+        它是终态、纸也已经被取走了，摆在「排队」里没有意义；
+      · 下单榜 —— 榜上每个人都可能上去，是平等的公开信息，不是把某个人单拎出来看；
+      · 我的概览（mine）—— 只数我自己的单，看得见也用得上。
+    不放行的是两类，而它们连 SELECT 都不出现 —— 不是前端不显示，是根本没查。
+    数据不出库，比指望界面上不画它可靠得多：
+      · **金额**：它是经营数据，学生看了没用，还等于把营业额摊开；
+      · **站点规模**（总单数 / 近 7 天 / 账号数 / 已取件数）：同样是经营数据。
+        早先它是以「服务规模」的名义放在页面上的，现在收回来了 ——
+        「多少人在用、一天出多少单、累计做完多少」该由业主对外说，不该由页面替他说。
 
     榜上别人的昵称一律打码（utils.mask_nickname），自己那一行原样显示：
     要挡的是「同学之间对号入座」，不是挡本人看自己。
@@ -825,34 +1036,34 @@ def api_board():
             '''.format(extra=extra), (mine,)).fetchone()
             return {'count': mine, 'rank': row['ahead'] + 1, 'ranked': row['ranked']}
 
-        orders_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
-        orders_today = conn.execute(
-            "SELECT COUNT(*) AS c FROM orders"
-            " WHERE date(create_time, 'localtime') = date('now', 'localtime')"
-        ).fetchone()['c']
-        orders_7d = conn.execute(
-            "SELECT COUNT(*) AS c FROM orders WHERE "
-            "date(create_time, 'localtime') >= date('now', 'localtime', '-6 days')"
-        ).fetchone()['c']
-        orders_30d = conn.execute(
-            "SELECT COUNT(*) AS c FROM orders WHERE "
-            "date(create_time, 'localtime') >= date('now', 'localtime', '-29 days')"
-        ).fetchone()['c']
-        # 注销的账号不算「同学」：人已经走了，还挂在服务规模里只会让数字虚高。
-        # 判据用 != 'closed' 而不是 = 'active'：临时被禁用的账号当然还算数，
-        # 和 users 表上那几条部分唯一索引的口径一致。
-        users_total = conn.execute(
-            'SELECT COUNT(*) AS c FROM users WHERE status != ?',
-            (STATUS_CLOSED,)).fetchone()['c']
+        # 我自己各状态的单数，一条 GROUP BY 全出（卡片上只用到「进行中 / 可取了」两格）。
+        # 之所以只查自己：总单数 / 近 7 天 / 账号数这类站点规模不再出库（见本函数开头），
+        # 学生要的是「我自己的进度」，不是「这个站一共印了多少张纸」。
+        # 分头查几个数字的写法也不可取：口径改一处漏一处，就会出现
+        # 「进行中比我的单数还多」这种自相矛盾的卡片，而且不会报错。
+        my_status = {}
+        for item in conn.execute(
+                'SELECT status AS k, COUNT(*) AS c FROM orders WHERE user_id = ?'
+                ' GROUP BY k', (uid,)).fetchall():
+            my_status[item['k']] = item['c']
         unclaimed = conn.execute(
             'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NULL').fetchone()['c']
-        # 五档全从 0 起、只认 config 里的状态。直接把 GROUP BY 的结果塞给前端的话，
+        # 只摆排队还认的那几档（config.ORDER_STATUSES_QUEUE，不含已取件）：
+        # 只认 config 里的状态。直接把 GROUP BY 的结果塞给前端的话，
         # 库里万一留着一个历史脏状态，界面就冒出一格没人认识的分类，而且不报错。
-        by_status = {status: 0 for status in ORDER_STATUSES}
+        # 已取件那一档连条目都不出现在响应里，前端因此也没法「顺手」把它画出来。
+        counted = {}
         for item in conn.execute(
                 'SELECT status AS k, COUNT(*) AS c FROM orders GROUP BY k').fetchall():
-            if item['k'] in by_status:
-                by_status[item['k']] = item['c']
+            counted[item['k']] = item['c']
+        # 这里发的是**有序数组**，不是 {状态: 数量} 字典 —— 顺序是这个接口的一部分。
+        # 用字典的话，在 config 里按流程摆好的先后到了前端就没了：Flask 的 JSON
+        # 序列化默认对键排序（app.json.sort_keys，Flask 2.3+ 起默认 True），
+        # 排出来是「可取了 / 待打印 / 待计费 / 打印中」，看着像随手撒的。
+        # 排队这一行要的是流程顺序（哪一档堵住了得一眼看出来），
+        # 而 JSON 对象的键顺序在规范里本来就不作数，所以让数组来担这个保证。
+        statuses = [{'status': status, 'count': counted.get(status, 0)}
+                    for status in ORDER_STATUSES_QUEUE]
         day_rows = conn.execute('''
             SELECT date(create_time, 'localtime') AS d, COUNT(*) AS c
             FROM orders
@@ -890,14 +1101,25 @@ def api_board():
 
     return jsonify({
         'code': 0,
-        'service': {
-            'orders_total': orders_total,
-            'orders_today': orders_today,
-            'orders_7d': orders_7d,
-            'orders_30d': orders_30d,
-            'users_total': users_total,
+        # 卡片上这四个数字全是本人的。rank / ranked 复用累计榜那条 SQL 的结果，
+        # 前端不要再自己数「比我多的有几个人」—— 两处算法迟早对不上。
+        # 注意没下过单时 rank 仍是 1（后端为了让算法少一个分支），
+        # 所以前端必须先判 total，不能见数就画（见 BoardView 的 mineRankText）。
+        'mine': {
+            # total 故意取累计榜那个数（me_all['count']），而不是再 COUNT 一遍：
+            # 卡片上的「我的单数」和榜上「你在这张榜上共 N 单」必须一模一样，
+            # 同源才保证有一天改口径时不会只改一边。
+            'total': me_all['count'],
+            # 「进行中」把待计费算进来，跟学生端 /api/my-orders 的口径一致：
+            # 刚提交完、还在等报价的单如果被算成「没在动」，
+            # 学生看到「进行中 0」会以为没提交上，转头再传一遍。
+            'active': sum(my_status.get(status, 0)
+                          for status in (ST_UNPRICED, ST_PENDING, ST_PRINTING)),
+            'ready': my_status.get(ST_READY, 0),
+            'rank': me_all['rank'],
+            'ranked': me_all['ranked'],
         },
-        'queue': {'unclaimed': unclaimed, 'by_status': by_status},
+        'queue': {'unclaimed': unclaimed, 'statuses': statuses},
         'daily': daily,
         'boards': [
             {'key': 'recent', 'label': '近 30 天', 'hint': 'Recent 30 days',
@@ -930,6 +1152,13 @@ def api_download(order_id):
                        '订单 #%s 接单人 uid=%s，操作人试图下载他人订单文件'
                        % (order_id, row['claimed_by']))
         return jsonify({'code': 403, 'msg': '只有接单人可以下载该订单的文件'}), 403
+
+    # 预设服务下的单没有文件（file_path 是空串，见 create_preset_order），
+    # 必须在这里就挡住。放过去的话，Path('').resolve() 等于当前目录，
+    # 会被下面那道路径校验判成「不在上传目录内」——于是一次普通的点错按钮
+    # 变成一条 path_traversal_blocked 安全告警，真正被篡改时反而淹在噪声里。
+    if not row['file_path']:
+        return jsonify({'code': 400, 'msg': '这一单用的是预设服务，没有文件可下载'}), 400
 
     # 双重校验：解析后的真实路径必须在上传目录内，防止路径穿越
     upload_root = Path(UPLOAD_FOLDER).resolve()

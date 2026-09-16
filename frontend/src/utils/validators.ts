@@ -35,3 +35,21 @@ export function passwordIssue(password: string): string | null {
   if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码需同时包含字母和数字'
   return null
 }
+
+/* ---- 下单打印选项 ---- */
+
+/** 份数范围，与后端 config.COPIES_MIN / COPIES_MAX / COPIES_DEFAULT 对齐。
+ *
+ *  这三条**必须和后端一致**，而且前端这层不是边界：学生把 input 的 min/max 改掉
+ *  照样能提交，真正拦住的是 utils.parse_copies（那里先挡 bool、再限定范围）。
+ *  但范围写小了会很难看 —— 后端收 50 份、前端只让填 10 份，
+ *  学生只会以为「这系统不支持我要的量」。 */
+export const COPIES_MIN = 1
+export const COPIES_MAX = 50
+export const COPIES_DEFAULT = 1
+
+/** 预设正文长度上限，镜像 config.PRESET_CONTENT_MAX。管理端输入框用它做 maxlength。 */
+export const PRESET_CONTENT_MAX = 300
+/** 纸张名 / 备注长度上限，镜像 config.PAPER_NAME_MAX / PAPER_REMARK_MAX。 */
+export const PAPER_NAME_MAX = 20
+export const PAPER_REMARK_MAX = 120

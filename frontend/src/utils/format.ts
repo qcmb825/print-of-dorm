@@ -60,6 +60,46 @@ export const ROLE_BG_VAR: Record<Role, string> = {
 export const COLOR_TYPE_LABEL: Record<ColorType, string> = { black: '黑白', color: '彩色' }
 export const DUPLEX_LABEL: Record<Duplex, string> = { single: '单面', double: '双面' }
 
+/** 份数。null **不等于** 1 —— 本次升级前的老订单后端刻意没回填，
+ *  因为分不清「当时真的要 1 份」和「我们猜的 1 份」。
+ *  写成 `copies ?? 1` 会让一条没有记录的单显示成「1 份」，
+ *  而这正是它不该说的那句话（对账时会按 1 份去收钱）。 */
+export function copiesLabel(copies: number | null | undefined): string {
+  if (copies === null || copies === undefined) return '未记录'
+  return `${copies} 份`
+}
+
+/** 纸张名。null 是「下单时没选」，不是「没查到」——
+ *  不要回落到某个默认纸张名，那等于替学生做了个我们并不知道的选择。 */
+export function paperLabel(name: string | null | undefined): string {
+  if (!name) return '未指定'
+  return name
+}
+
+/** 这一单是不是预设单（用预设打印服务下的、没有文件的那种）。
+ *
+ *  判据用 preset_content 而不是 preset_id：预设被删掉之后 id 就没意义了，
+ *  而内容还在（订单里存的是快照），页面要显示的也正是那句话。
+ *  两边前端、以及详情页与列表，都走这一个函数 —— 各自判各自的话，
+ *  迟早出现「列表认得这是预设单、详情页认不出来」这种没人能解释的差异。 */
+export function isPresetOrder(order: { preset_content?: string | null }): boolean {
+  return !!order.preset_content
+}
+
+/** 列表里「这一单打印的是什么」的短标签。
+ *
+ *  预设单没有文件，后台给它的 `filename` 是**空字符串**（见 db.insert_order_row
+ *  那段哨兵值的说明）。直接渲染 `row.filename` 的话，那一列是空的、可点区域也没了
+ *  —— 而文件名本身就是进详情页的入口，于是整列变成一排点不动的空气，
+ *  不报错、类型检查也查不出来。所以统一从这里取。 */
+export function orderFileLabel(order: {
+  filename?: string | null
+  preset_content?: string | null
+}): string {
+  if (order.filename) return order.filename
+  return isPresetOrder(order) ? '预设打印服务' : '（无文件）'
+}
+
 /** 订单操作留痕的动作 → 令牌色（时间线上的圆点）。
  *
  *  配色不是装饰：「谁把单撤了、谁释放了别人的单」这类要一眼看见（err / warn），
