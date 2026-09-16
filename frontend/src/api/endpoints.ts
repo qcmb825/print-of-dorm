@@ -12,11 +12,13 @@ import type {
   AuditStatusResponse,
   ChunkPendingResponse,
   ChunkSession,
+  ContactType,
   DashboardStats,
   MeResponse,
   MyOrdersResponse,
   OrderListResponse,
   OrderStatus,
+  RestoreResponse,
   Role,
   TicketDetailResponse,
   TicketListResponse,
@@ -92,16 +94,60 @@ export const staffOrderApi = {
   download: (id: number, filename: string) => download(`/api/order/${id}/download`, filename),
 }
 
-/* 账号管理：管理端 */
+/* 账号管理：管理端
+ * 列表对**所有管理员**开放（普通管理员看不到默认管理员那一行，服务端过滤的）；
+ * 下面那些写操作全部只对默认管理员开放，接口上都有 @roles_required(ROLE_SUPER)。
+ * 也就是说：这里是不是渲染出了那个按钮，纯属界面礼貌，拦人在后端。 */
 export const adminApi = {
-  users: (withPassword = false) =>
-    get<AdminUsersResponse>('/api/admin/users', withPassword ? { with_password: 1 } : undefined),
+  /** 列表。detail 要明文密码（服务端会强制审计留痕），includeClosed 带上已注销账号。
+   *  两个参数的字段名跟后端保持一致：detail / include_closed。 */
+  users: (detail = false, includeClosed = false) => {
+    const params: Record<string, number> = {}
+    if (detail) params.detail = 1
+    if (includeClosed) params.include_closed = 1
+    return get<AdminUsersResponse>(
+      '/api/admin/users',
+      Object.keys(params).length ? params : undefined,
+    )
+  },
   setRole: (id: number, role: Role) =>
     put<{ code: number; msg: string }>(`/api/admin/user/${id}/role`, { role }),
   setStatus: (id: number, status: 'active' | 'disabled') =>
     put<{ code: number; msg: string }>(`/api/admin/user/${id}/status`, { status }),
-  removeUser: (id: number) => del<{ code: number; msg: string }>(`/api/admin/user/${id}`),
+  /** 注销是 POST，不是 DELETE。数据一条都不会少 —— 账号只是登不进来了，
+   *  订单和工单全部原样留着，所以「删除」这个动作在这个系统里根本不存在。 */
+  closeUser: (id: number) =>
+    post<{ code: number; msg: string }>(`/api/admin/user/${id}/close`),
+  /** 恢复已注销的账号。昵称/学号被别人占了会被整体拒绝（409 + conflicts），
+   *  这时失败信息里带着占用者是谁，界面上要能显示出来。 */
+  restoreUser: (id: number) =>
+    post<RestoreResponse>(`/api/admin/user/${id}/restore`),
+  /** 改资料：昵称 / 姓名 / 学号 / 宿舍 / 联系方式，一次全量提交。
+   *  学号是登录名，改完本人就得用新的学号登录。 */
+  setProfile: (id: number, payload: AdminProfilePayload) =>
+    put<{ code: number; msg: string }>(`/api/admin/user/${id}/profile`, payload),
+  /** 重置密码。密码是**明文传一次**，由服务端做哈希与可逆加密 —— 
+   *  客户端不做任何加工，也就不会在本地留下浮点式的那种「处理痕迹」。 */
+  resetPassword: (id: number, password: string) =>
+    put<{ code: number; msg: string }>(`/api/admin/user/${id}/password`, { password }),
+  /** 代发工单：工单归属指定学生，正文以该学生名义入库（学生端能正常看到并追问）。 */
+  ticketFor: (id: number, subject: string, body: string) =>
+    post<{ code: number; msg: string; id: number }>(`/api/admin/user/${id}/ticket`, {
+      subject,
+      body,
+    }),
   stats: () => get<DashboardStats>('/api/admin/stats'),
+}
+
+/** 改资料提交的字段。和注册表单是同一批字段、同一套校验规则
+ *  （utils.validate_identity_fields 与这里的 validators.ts 互为镜像）。 */
+export interface AdminProfilePayload {
+  nickname: string
+  real_name: string
+  student_id: string
+  dorm: string
+  contact_type: ContactType
+  contact: string
 }
 
 /* 公告 */

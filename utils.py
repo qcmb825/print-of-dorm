@@ -143,14 +143,20 @@ def validate_contact(data):
 
 
 
-def validate_registration(data):
-    """校验注册字段，返回 (清洗后的字典, 错误信息)，失败时字典为 None。"""
+def validate_identity_fields(data):
+    """校验「身份资料」这一组字段：昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
+
+    注册和管理端改资料收的是同一批字段，规则就只该有一份 ——
+    各写一套的话，改了一处忘了另一处，会出现「注册说昵称不能带减号、
+    管理端改资料却放行」这种自相矛盾：同一个值，一个入口过、另一个入口不过。
+    和 validate_contact 拆出来的理由完全一样，只是往外再拆一层。
+
+    返回 (清洗后的字典, 错误信息)，失败时字典为 None。
+    """
     nickname = (data.get('nickname') or '').strip()
     real_name = (data.get('real_name') or '').strip()
     student_id = (data.get('student_id') or '').strip()
     dorm = (data.get('dorm') or '').strip()
-    password = data.get('password') or ''
-    confirm = data.get('confirm_password') or ''
 
     if not NICKNAME_RE.match(nickname):
         return None, '昵称需为 2-20 位中文、字母、数字或下划线'
@@ -160,21 +166,12 @@ def validate_registration(data):
         return None, '学号需为 4-20 位数字'
     if not (2 <= len(dorm) <= 50) or not all(ch.isprintable() for ch in dorm):
         return None, '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
-    # 联系方式这组字段和身份审核申请共用同一份规则（见 validate_contact）。
-    # 报错顺序和原来一致：先把各字段的格式挑完，最后才说密码的事。
+    # 联系方式这组字段和身份审核申请也共用同一份规则（见 validate_contact）。
     contact_fields, error = validate_contact(data)
     if contact_fields is None:
         # 判 None 而不是判 error 真假：两者本来就同进同出，
         # 但写成判 None 才能让读代码的人和类型检查器都确定后面能安全取键。
         return None, error
-    if not (8 <= len(password) <= 64):
-        return None, '密码长度需为 8-64 位'
-    if not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
-        return None, '密码需同时包含字母和数字'
-    if password != confirm:
-        return None, '两次输入的密码不一致'
-    if password in (nickname, student_id):
-        return None, '密码不能与昵称或学号相同'
     return {
         'nickname': nickname,
         'real_name': real_name,
@@ -182,8 +179,45 @@ def validate_registration(data):
         'dorm': dorm,
         'contact_type': contact_fields['contact_type'],
         'contact': contact_fields['contact'],
-        'password': password,
     }, None
+
+
+
+def password_error(password, nickname='', student_id=''):
+    """密码本身的强度规则，返回错误信息；合规时返回 None。
+
+    注册和管理端重置密码共用这一份：两处各写一套的话，会变成
+    「注册要求带数字、重置却什么都不要求」，管理员随手设一个 123 就进去了。
+
+    确认密码**不在这里比** —— 确认框是防手滑的交互手段，只有用户自己打字的
+    注册流程需要它；管理端重置是管理员打一串临时密码交给本人，
+    多设一道「两次一致」只是让人多打一遍，挡不住任何事。
+    """
+    if not (8 <= len(password) <= 64):
+        return '密码长度需为 8-64 位'
+    if not re.search(r'[A-Za-z]', password) or not re.search(r'\d', password):
+        return '密码需同时包含字母和数字'
+    if password in (nickname, student_id):
+        return '密码不能与昵称或学号相同'
+    return None
+
+
+
+def validate_registration(data):
+    """校验注册字段，返回 (清洗后的字典, 错误信息)，失败时字典为 None。"""
+    fields, error = validate_identity_fields(data)
+    if fields is None:
+        return None, error
+    password = data.get('password') or ''
+    confirm = data.get('confirm_password') or ''
+    error = password_error(password, fields['nickname'], fields['student_id'])
+    if error:
+        return None, error
+    if password != confirm:
+        return None, '两次输入的密码不一致'
+    # 报错顺序和原来一致：先把各字段的格式挑完，最后才说密码的事。
+    fields['password'] = password
+    return fields, None
 
 
 

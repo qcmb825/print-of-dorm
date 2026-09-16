@@ -4,10 +4,13 @@
 
 export type Role = 'user' | 'admin' | 'super'
 
+/** 对外只有两种叫法。第三种的文案刻意与 admin 完全相同：
+ *  给它单独起个名字，等于在界面上给那一行盖了个「这行不一样」的记号。
+ *  后端出库前也会把角色名一起换掉（config.public_role_label），两边口径一致。 */
 export const ROLE_LABELS: Record<Role, string> = {
   user: '普通用户',
   admin: '管理员',
-  super: '超级管理员',
+  super: '管理员',
 }
 
 /** 订单状态。这五个字符串既是展示文案、也是前后端共用的标识：
@@ -38,7 +41,16 @@ export const CONTACT_LABELS: Record<ContactType, string> = {
   email: '邮箱地址',
 }
 
-export type AccountStatus = 'active' | 'disabled'
+/** 账号状态。三种都要写全：'closed' 是注销 ——
+ *  界面上要拿它区分「临时停用」和「已经走的人」，只写前两种的话，
+ *  列表里已注销的行会取不到分支，看起来和正常账号一样（而且不报错）。 */
+export type AccountStatus = 'active' | 'disabled' | 'closed'
+
+export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
+  active: '启用',
+  disabled: '已禁用',
+  closed: '已注销',
+}
 
 /** 所有接口的外层信封；code === 0 才算成功。 */
 export interface ApiEnvelope {
@@ -67,6 +79,13 @@ export interface User {
   status?: AccountStatus
   create_time?: string | null
   last_login?: string | null
+  /** 这个账号要不要多给一个「高级视图」入口。
+   *
+   *  和 role 是两件事，别合并：role 已经收敛成 user / admin 两种，
+   *  而「谁是默认管理员」这件事就靠这个布尔值传达 ——
+   *  正是为了不在界面上留下第三种角色名，它才单独存在。
+   *  它只决定**界面**给不给你入口，能不能调那些接口始终由服务端说了算。 */
+  advanced?: boolean
 }
 
 export interface MeResponse extends ApiEnvelope {
@@ -153,14 +172,38 @@ export interface AdminUser extends User {
   status: AccountStatus
   order_count: number
   claimed_count: number
-  /** 只有超管显式请求 with_password 时才有 */
+  /** 这一行是不是调用者自己。只用来决定哪些按钮不显示 ——
+   *  真正拦住「改自己」的是接口里的判断，前端藏按钮只是免得人白点一次。 */
+  is_self: boolean
+  /** 只有默认管理员显式带 ?detail=1 请求时才解密返回（见 routes/admin.py）。 */
   password?: string
 }
 
 export interface AdminUsersResponse extends ApiEnvelope {
   total_users: number
-  with_password: boolean
+  /** 本次响应有没有带明文密码。字段名就是后端的 detail，
+   *  这里千万别照感觉写成 with_password —— 对不上时后端不会报错，
+   *  只会把密文列静静地空着（`with_password` 是老版本的叫法）。 */
+  detail: boolean
+  include_closed: boolean
+  /** 列表里藏了几个已注销的账号。只给数字不给名单：开关没打开时，
+   *  这些人的资料就真的不该出现在响应体里。 */
+  closed_total: number
   users: AdminUser[]
+}
+
+/** 恢复注销账号时撞上的占用者。一个账号被注销后，它的昵称和学号
+ *  会立刻让给别人，所以「恢复」可能因为名字已经有人用而失败 ——
+ *  这时后端把这些信息结构化地还回来，好让操作者知道该去找谁。 */
+export interface RestoreConflict {
+  label: string
+  value: string
+  owner_id: number
+  owner_nickname: string
+}
+
+export interface RestoreResponse extends ApiEnvelope {
+  conflicts?: RestoreConflict[]
 }
 
 export interface DashboardStats extends ApiEnvelope {

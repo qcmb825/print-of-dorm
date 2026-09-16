@@ -1,15 +1,17 @@
 """routes/admin.py —— 管理员接口：账号管理、统计。"""
 
+import sqlite3
 from datetime import datetime, timedelta
 from flask import Blueprint, g, jsonify, request
 
 from auth import roles_required
 from config import (ROLE_ADMIN, ROLE_LABELS, ROLE_SUPER, ROLE_USER,
                     STATUS_ACTIVE, STATUS_CLOSED, STATUS_DISABLED,
-                    ST_UNPRICED, public_role, public_role_label)
+                    ST_UNPRICED, logger, public_role, public_role_label)
 from db import get_db
-from security import audit_action, decrypt_password, security_event
-from utils import display_name
+from security import (audit_action, client_ip, decrypt_password, make_password_records,
+                      security_event)
+from utils import display_name, password_error, validate_identity_fields
 
 bp = Blueprint('admin', __name__)
 
@@ -215,6 +217,197 @@ def api_admin_close_user(user_id):
                  '注销账号 #%s/%s，状态 %s -> closed，订单与工单全部保留'
                  % (user_id, target['nickname'], target['status']))
     return jsonify({'code': 0, 'msg': '账号已注销，历史数据保留'})
+
+
+
+# 改资料：昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
+#
+# 一次提交全量覆盖，不做「只改传了的字段」那种 PATCH ——
+# 前端弹窗本来就是把当前值全填进去再让人改，全量写法就少一层
+# 「这个字段到底传没传」的判断，也少一种「以为自己在清空、其实是没传」的歧义。
+@bp.route('/api/admin/user/<int:user_id>/profile', methods=['PUT'])
+@roles_required(ROLE_SUPER)
+def api_admin_set_profile(user_id):
+    """管理员改账号资料。
+
+    这里刻意**不查学生名单库**。名单库是注册的闸门，它回答的是
+    「这个身份能不能开一个新账号」；而管理员改资料属于人工介入 ——
+    名单本身就落后于现实（新生、转专业、名字写错都得靠人去改），
+    再拿那份静态数据去挡在场的人的判断，只会把「名单里还没录」的人卡住，
+    最后又绕回私下改库，那才是真的失控。
+    格式和唯一性照旧严卡：学号是登录名，形状错了这人当场就登不进来了。
+    """
+    data = request.get_json(silent=True) or {}
+    fields, error = validate_identity_fields(data)
+    if fields is None:
+        return jsonify({'code': 400, 'msg': error}), 400
+
+    conn = get_db()
+    try:
+        target = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+        if target is None:
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        if target['status'] == STATUS_CLOSED:
+            # 注销账号的资料没有意义：人已经登不进来，而它的昵称/学号
+            # 早就让给别人了，改它只会撞上唯一索引。
+            return jsonify({'code': 403, 'msg': '该账号已注销，如需修改请先恢复'}), 403
+
+        # 昵称和学号是全表仅有的两个「唯一」字段，改之前得先看有没有人占着。
+        # 这里的条件要和数据库里那两条部分唯一索引**一字不差**地对上：
+        # 只跟「还没注销」的账号比，还要把自己排除掉（不然改谁都撞自己）。
+        # 两边口径不一致是最难受的失败形态 —— 代码说能用，改下去却撞索引报 500。
+        for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+            if fields[column] == target[column]:
+                continue
+            owner = conn.execute(
+                'SELECT id, nickname FROM users'
+                f' WHERE {column} = ? AND status != ? AND id != ? LIMIT 1',
+                (fields[column], STATUS_CLOSED, user_id)).fetchone()
+            if owner is not None:
+                return jsonify({
+                    'code': 409,
+                    'msg': '%s「%s」已被账号 %s（#%s）占用'
+                           % (label, fields[column], owner['nickname'], owner['id']),
+                }), 409
+
+        conn.execute('''
+            UPDATE users
+               SET nickname = ?, real_name = ?, student_id = ?, dorm = ?,
+                   contact_type = ?, contact = ?
+             WHERE id = ?
+        ''', (fields['nickname'], fields['real_name'], fields['student_id'], fields['dorm'],
+              fields['contact_type'], fields['contact'], user_id))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # 上面查重到这句 UPDATE 之间还有一点缝（两个人同时改同一个昵称）。
+        # 让它撞在这里并回一句人话，比抛 500 强：唯一索引是最后一道防线，不是唯一一道。
+        conn.rollback()
+        logger.warning('改资料撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
+        return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+    finally:
+        conn.close()
+
+    # 审计要记「哪个字段从什么改成了什么」。只列真的变了的字段：
+    # 全量列一遍的话日志里九成是没动过的值，真去查「谁把学号改了」反而得一行行看。
+    changes = [
+        '%s %s → %s' % (label, target[column], fields[column])
+        for column, label in (('nickname', '昵称'), ('real_name', '姓名'),
+                              ('student_id', '学号'), ('dorm', '宿舍'))
+        if fields[column] != target[column]
+    ]
+    # 联系方式是一组两个字段（类型 + 号码）。只比号码的话，「把微信换成 QQ、
+    # 号码一个字没动」会被算成「没有变化」—— 改动就这么从日志里消失了。
+    if (fields['contact_type'], fields['contact']) != (target['contact_type'], target['contact']):
+        changes.append('联系方式 %s:%s → %s:%s' % (
+            target['contact_type'], target['contact'],
+            fields['contact_type'], fields['contact']))
+    if changes:
+        audit_action('change_profile',
+                     '目标 #%s/%s %s' % (user_id, target['nickname'], '；'.join(changes)))
+    logger.info('管理员修改账号资料 #%s 变更=%s ip=%s',
+                user_id, '；'.join(changes) or '(无变化)', client_ip())
+    return jsonify({'code': 0, 'msg': '资料已更新' if changes else '资料没有变化'})
+
+
+
+@bp.route('/api/admin/user/<int:user_id>/password', methods=['PUT'])
+@roles_required(ROLE_SUPER)
+def api_admin_reset_password(user_id):
+    """管理员给账号设一个新密码。
+
+    和「查看明文密码」不是一回事：那个是读，这个是写，写进去的东西
+    当事人下次登录当场生效。所以这条也过审计，但**审计里绝不记密码本身** ——
+    日志不能变成第二个泄露源，密钥轮换后翻日志还能捞到旧密码就更荒唐了。
+    """
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('password') or ''
+    if not new_password:
+        return jsonify({'code': 400, 'msg': '请填写新密码'}), 400
+
+    conn = get_db()
+    try:
+        target = conn.execute(
+            'SELECT id, nickname, student_id, status FROM users WHERE id = ?',
+            (user_id,)).fetchone()
+        if target is None:
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        if target['status'] == STATUS_CLOSED:
+            return jsonify({'code': 403, 'msg': '该账号已注销，如需修改请先恢复'}), 403
+        # 强度规则和注册共用一份（utils.password_error）—— 两边各写一套的话，
+        # 迟早变成「注册要带数字、重置却什么都不要求」，管理员随手设个 123 就进去了。
+        # 这里只有一道：不比对「确认密码」，那是用户自己打字时防手滑用的，
+        # 管理员重置是他打一串临时密码交给本人，多设一道挡不住任何事。
+        error = password_error(new_password, target['nickname'], target['student_id'])
+        if error:
+            return jsonify({'code': 400, 'msg': error}), 400
+        password_hash, password_enc = make_password_records(new_password)
+        conn.execute('UPDATE users SET password_hash = ?, password_enc = ? WHERE id = ?',
+                     (password_hash, password_enc, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+    audit_action('reset_password', '目标 #%s/%s' % (user_id, target['nickname']))
+    logger.info('管理员重置账号密码 #%s/%s ip=%s', user_id, target['nickname'], client_ip())
+    return jsonify({'code': 0, 'msg': '密码已重置，请把新密码转告本人'})
+
+
+
+# 恢复一个已注销的账号。
+#
+# 注销当初是当终态设计的，连数据库都替它守着：昵称/学号的部分唯一索引
+# 条件写的是 status <> 'closed'，意思是注销的账号把那两个名字**让了出去**。
+# 所以「恢复」不是把状态改回来这么简单 —— 名字可能已经被别人用了，
+# 直接改回来会撞索引。而这一撞其实是好事：它逼着恢复这件事必须先由人确认。
+#
+# 因此这里先查冲突，撞上了整体拒绝，并把「被谁占着」一并说清楚：
+# 只回一句「冲突了」的话，管理员除了挨个翻列表没有别的办法，
+# 而这件事最终也只能由人来定夺（让谁改名，还是就这么算了）。
+@bp.route('/api/admin/user/<int:user_id>/restore', methods=['POST'])
+@roles_required(ROLE_SUPER)
+def api_admin_restore_user(user_id):
+    """恢复已注销账号。昵称或学号被别人占了就整体拒绝，不做任何自动改名。"""
+    conn = get_db()
+    try:
+        target = conn.execute(
+            'SELECT id, nickname, real_name, student_id, status FROM users WHERE id = ?',
+            (user_id,)).fetchone()
+        if target is None:
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        # 和注销那侧对称：注销「已经注销的账号」返回 400，恢复「没注销的账号」也返回 400。
+        # 这里不用 409 —— 它不是并发冲突，是这个动作本身不适用。
+        if target['status'] != STATUS_CLOSED:
+            return jsonify({'code': 400, 'msg': '该账号没有注销，无需恢复'}), 400
+
+        conflicts = []
+        for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+            owner = conn.execute(
+                'SELECT id, nickname FROM users WHERE %s = ? AND status != ? LIMIT 1' % column,
+                (target[column], STATUS_CLOSED)).fetchone()
+            if owner is not None:
+                conflicts.append({'label': label, 'value': target[column],
+                                  'owner_id': owner['id'],
+                                  'owner_nickname': owner['nickname']})
+        if conflicts:
+            # 冲突项结构化地回给前端，不拼进 msg 里：前端要逐条列出来，
+            # 还要让操作者能直接点进那个占用的账号去看 —— 都靠这些字段。
+            return jsonify({
+                'code': 409,
+                'msg': '昵称或学号已被其他账号占用，无法恢复',
+                'conflicts': conflicts,
+            }), 409
+
+        conn.execute('UPDATE users SET status = ? WHERE id = ?', (STATUS_ACTIVE, user_id))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        logger.warning('恢复账号撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
+        return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+    finally:
+        conn.close()
+    audit_action('restore_account',
+                 '恢复账号 #%s/%s（状态 closed -> active）' % (user_id, target['nickname']))
+    logger.info('恢复账号 #%s/%s ip=%s', user_id, target['nickname'], client_ip())
+    return jsonify({'code': 0, 'msg': '账号已恢复，现在可以用原学号登录'})
 
 
 

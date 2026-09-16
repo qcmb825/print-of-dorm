@@ -334,7 +334,7 @@ STATUS_ACTIVE = 'active'      # 正常，能登录
 
 STATUS_DISABLED = 'disabled'  # 管理员临时停用的，随时可以放回来
 
-STATUS_CLOSED = 'closed'      # 已注销：不能登录，也不提供恢复入口
+STATUS_CLOSED = 'closed'      # 已注销：不能登录，昵称/学号让给别人，恢复要显式走恢复接口
 
 
 # 注册字段的格式约束。服务端必须校验，前端的只是体验，不能当安全边界

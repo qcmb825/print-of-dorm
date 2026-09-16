@@ -2,8 +2,11 @@
 
 from flask import Blueprint, g, jsonify, request
 
-from auth import _is_staff, login_required
+from auth import _is_staff, login_required, roles_required
 from config import (
+    ROLE_SUPER,
+    ROLE_USER,
+    STATUS_CLOSED,
     TICKET_BODY_MAX,
     TICKET_CLOSED,
     TICKET_MAX_OPEN,
@@ -13,7 +16,7 @@ from config import (
     public_role,
 )
 from db import get_db
-from security import actor_label, client_ip, hit_limit, security_event
+from security import actor_label, audit_action, client_ip, hit_limit, security_event
 from utils import display_name, positive_int
 
 bp = Blueprint('tickets', __name__)
@@ -153,6 +156,71 @@ def api_create_ticket():
     logger.info('新工单 #%s 发起人=%s 标题=%s ip=%s',
                 tid, g.user['nickname'], subject, client_ip())
     return jsonify({'code': 0, 'msg': '工单已提交，请等待管理员回复', 'id': tid})
+
+
+
+# 代发工单：管理员替某个学生提一条工单。
+#
+# 为什么需要它：学生的正常路径是自己发工单，但现实里总会遇到
+# 「不太会用 / 手机上没留登录态 / 当面跟管理员说了一声」这些情况 ——
+# 于是那件事在系统里根本不存在，谁在跟进、进行到哪一步都没有记录。
+#
+# 工单**归属那个学生**（tickets.user_id 是学生），不只是为了好看：
+# 学生端只会列出自己的工单，归属写成管理员的话，这件事在当事人那边
+# 压根不存在，他看到回复也无从追问，等于白记一笔。
+#
+# 第一条消息按「学生说的话」入库（sender_id 是学生、sender_role 是 user）：
+# 这样学生端的会话视图不需要任何特殊分支。若按管理员的身份写进去，
+# 学生打开看到的是一屏管理员自问自答，且未读计数会一直错着 ——
+# 他自己发的话被算成「对方发来的新消息」。
+@bp.route('/api/admin/user/<int:user_id>/ticket', methods=['POST'])
+@roles_required(ROLE_SUPER)
+def api_admin_create_ticket_for(user_id):
+    """管理员替指定学生发起工单，正文以该学生的名义入库。"""
+    data = request.get_json(silent=True) or {}
+    subject = (data.get('subject') or '').strip()
+    body = (data.get('body') or '').strip()
+    if not (2 <= len(subject) <= TICKET_SUBJECT_MAX):
+        return jsonify({'code': 400, 'msg': '标题需为 2-%s 个字' % TICKET_SUBJECT_MAX}), 400
+    if not (2 <= len(body) <= TICKET_BODY_MAX):
+        return jsonify({'code': 400, 'msg': '内容需为 2-%s 个字' % TICKET_BODY_MAX}), 400
+
+    conn = get_db()
+    try:
+        target = conn.execute(
+            'SELECT id, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
+        if target is None:
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        if target['status'] == STATUS_CLOSED:
+            # 注销账号登不进来、也打不开学生端，发给他的工单永远不会被读到。
+            # 留在队列里只会占着位置，看着像有人一直没处理。
+            return jsonify({'code': 400, 'msg': '该账号已注销，无法接收工单'}), 400
+        open_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM tickets WHERE user_id = ? AND status = 'open'",
+            (user_id,)).fetchone()['c']
+        if open_count >= TICKET_MAX_OPEN:
+            # 沿用同一个上限。代发这条路绕开了「学生自己发」那道限流，
+            # 就得在这里补上，否则它变成一条把管理队列刷满的近路。
+            return jsonify({'code': 429,
+                            'msg': '该学生已有 %s 个进行中的工单，请等处理完再代发'
+                                   % TICKET_MAX_OPEN}), 429
+        cursor = conn.execute(
+            "INSERT INTO tickets (user_id, subject, status) VALUES (?, ?, 'open')",
+            (user_id, subject))
+        tid = cursor.lastrowid
+        conn.execute('''
+            INSERT INTO ticket_messages (ticket_id, sender_id, sender_role, body)
+            VALUES (?, ?, ?, ?)
+        ''', (tid, user_id, ROLE_USER, body))
+        conn.commit()
+    finally:
+        conn.close()
+    audit_action('create_ticket_for',
+                 '代发工单 #%s 归属 #%s/%s 标题=%s'
+                 % (tid, user_id, target['nickname'], subject))
+    logger.info('代发工单 #%s 归属=%s 代发人=%s 标题=%s ip=%s',
+                tid, target['nickname'], g.user['nickname'], subject, client_ip())
+    return jsonify({'code': 0, 'msg': '工单已为该学生提交', 'id': tid})
 
 
 

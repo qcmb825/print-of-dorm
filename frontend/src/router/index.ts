@@ -5,9 +5,9 @@ declare module 'vue-router' {
   interface RouteMeta {
     /** 需要登录 */
     auth?: boolean
-    /** 需要管理员或超管 */
+    /** 需要管理员 */
     staff?: boolean
-    /** 只有超管能进 */
+    /** 只对默认管理员开放的页面 */
     super?: boolean
     /** 未登录才能进（登录页） */
     guest?: boolean
@@ -109,6 +109,15 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (!auth.ready) await auth.bootstrap()
 
+  // 站点根路径按角色分流。路由表里 '' 那条 redirect 会**先于守卫**把 '/' 解析成 '/upload'，
+  // 所以这里只能认 redirectedFrom —— 写 `to.path === '/'` 是一句永远不执行的死代码
+  // （原先就是这么写的，表现是管理员点品牌 logo 掉进学生端；类型检查和一个「点五下」
+  // 的动作都看不出来，因为第五下直接切换视图、根本没发生导航）。
+  // 直接点进 /upload 的管理员**不拦**：学生端顶栏本来就给他留了「管理控制台」入口。
+  if (to.path === '/upload' && to.redirectedFrom && auth.isLoggedIn && auth.isStaff) {
+    return '/staff/orders'
+  }
+
   if (to.meta.guest) {
     if (auth.isLoggedIn) return auth.isStaff ? '/staff/orders' : '/upload'
     return true
@@ -116,8 +125,8 @@ router.beforeEach(async (to) => {
   if (to.meta.auth && !auth.isLoggedIn) {
     return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } }
   }
-  // 学生进不了管理端；管理员进非超管页也拦掉
+  // 学生进不了管理端；管理端里那几页只对默认管理员开放的也一并拦掉
   if (to.meta.staff && !auth.isStaff) return '/upload'
-  if (to.meta.super && !auth.isSuper) return '/staff/orders'
+  if (to.meta.super && !auth.advancedAllowed) return '/staff/orders'
   return true
 })

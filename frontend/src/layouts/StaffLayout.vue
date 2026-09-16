@@ -9,10 +9,11 @@ import {
   MessageSquare,
   Package,
   Printer,
+  ShieldCheck,
   Users,
 } from '@lucide/vue'
-import { NDrawer, NDrawerContent } from 'naive-ui'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { NDrawer, NDrawerContent, useMessage } from 'naive-ui'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
@@ -21,12 +22,19 @@ import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 const announcement = useAnnouncementStore()
+const message = useMessage()
 
 const drawerOpen = ref(false)
 
-/** 账号管理只有超管能做，普通管理员看不到入口（后端也会再挡一次）。 */
+/** 账号管理对**所有管理员**开放。
+ *
+ *  普通管理员也看得到这份名单（服务端已经把默认管理员那一行滤掉了），
+ *  只是看不到密码、也没有任何改动入口 —— 那些入口在高级视图里。
+ *  这里原本写的是 show: auth.isSuper，而对外角色早就收敛成 admin 和 user 两种，
+ *  那个判断永远为假，于是整栏入口静默消失。用户看到的就是「新版界面少了一栏」。 */
 const navItems = computed(() =>
   [
     { to: '/staff/orders', label: '订单台', icon: Package, show: true },
@@ -34,9 +42,58 @@ const navItems = computed(() =>
     { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck, show: true },
     { to: '/staff/tickets', label: '工单处理', icon: MessageSquare, show: true },
     { to: '/staff/announcements', label: '公告管理', icon: Megaphone, show: true },
-    { to: '/staff/users', label: '账号管理', icon: Users, show: auth.isSuper },
+    { to: '/staff/users', label: '账号管理', icon: Users, show: true },
   ].filter((item) => item.show),
 )
+
+/** 高级视图的隐藏入口：连点品牌图标 5 次。
+ *
+ *  为什么用这种入口：它既不该被误触，也不该在界面上留任何痕迹 ——
+ *  摆一个按钮出来，等于告诉所有人「这里还藏着个高级视图」。
+ *
+ *  五下必须**连续**（每两下间隔不超过 CLICK_GAP）：否则一天里分五次点 logo 回首页，
+ *  也会把高级视图打开，而当事人根本不知道发生了这件事。
+ *  入口没有任何提示和动画，这也正意味着写错了不会有人来报错。 */
+const CLICK_TARGET = 5
+const CLICK_GAP = 700
+let brandClicks = 0
+let brandTimer: number | undefined
+
+function onBrandClick(event: MouseEvent): void {
+  // 一下都不放行 —— 以前写的是「点满五下才拦」，于是前四下照旧跳首页：
+  // 导航一完成 StaffLayout 就卸载了，计数跟着归零，人手几乎点不到第五下，
+  // 中途还会莫名其妙被弹去首页（浏览器里真点过一次才看见）。
+  // 所以改成全拦，要不要走、走去哪都由这里自己定。
+  // 只能在**捕获**阶段拦 —— RouterLink 自己的 click 处理跑在目标阶段。
+  // 副作用是窄屏抽屉里那句「点一下收起抽屉」也拦掉了，抽屉改在下面的超时分支里收。
+  event.preventDefault()
+  event.stopPropagation()
+
+  window.clearTimeout(brandTimer)
+  brandClicks += 1
+  if (brandClicks >= CLICK_TARGET) {
+    brandClicks = 0
+    if (!auth.toggleAdvanced()) return
+    // 没资格的人连点五下什么都不给（连提示都不给）：一句「你没有更多视图」
+    // 等于承认这里有个按权限开放的东西，反倒把入口卖了。
+    message.success(auth.advanced ? '已切换到高级视图' : '已切回普通视图')
+    return
+  }
+  // 还没点满：先等一小会儿再当普通点击处理。要是不等就立刻跳走，
+  // 后面几下的落点就变成了新页面 —— 入口等于只有一只手能摸到。
+  brandTimer = window.setTimeout(() => {
+    brandClicks = 0
+    drawerOpen.value = false
+    // 回「首页」交给路由守卫按角色分流：管理员的首页是控制台，学生才去下单页。
+    void router.push('/')
+  }, CLICK_GAP)
+}
+
+/** 高级视图提示条上的退出按钮走同一条路。 */
+function exitAdvanced(): void {
+  auth.toggleAdvanced()
+}
+
 
 const currentPath = computed(() => route.path)
 const currentTitle = computed(() => (route.meta.title as string | undefined) ?? '管理控制台')
@@ -52,7 +109,9 @@ onMounted(() => {
       class="sticky top-0 hidden h-screen w-[236px] shrink-0 flex-col border-r lg:flex"
       style="border-color: var(--border); background-color: color-mix(in srgb, var(--card) 60%, transparent)"
     >
-      <div class="px-5 py-5">
+      <!-- 品牌图标上挂着高级视图的隐藏入口（连点 5 次，见 onBrandClick）。
+           .capture 是必须的：要在 RouterLink 自己处理之前决定这一下要不要放行。 -->
+      <div class="px-5 py-5" @click.capture="onBrandClick">
         <BrandMark />
       </div>
       <nav class="flex flex-col gap-1 px-3" aria-label="管理导航">
@@ -75,6 +134,24 @@ onMounted(() => {
       <!-- 这里原本还有一个主题切换按钮。主题系统本身留着（tokens.css 的 .dark、
            theme/naive.ts 都还在用），拆掉的只是这个入口 —— 深色由系统偏好决定。
            账号区现在整行都是它，所以允许收缩（min-w-0）。 -->
+      <!-- 高级视图开着的时候给一条可见的提示。不给提示的话，管理员会分不清
+           自己看到的界面是不是别人也这样 —— 而这两个界面恰恰是不同的。
+           退出按钮只对已经打开的人可见，所以它不算泄露入口。 -->
+      <div
+        v-if="auth.advanced"
+        class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]"
+        style="
+          border-color: var(--accent-tint-border);
+          background-color: var(--accent-tint-soft);
+          color: var(--primary);
+        "
+      >
+        <ShieldCheck :size="14" aria-hidden="true" />
+        <span class="flex-1 font-semibold leading-tight">高级视图已开启</span>
+        <button type="button" class="font-semibold underline" @click="exitAdvanced">
+          退出
+        </button>
+      </div>
       <div
         class="mt-auto flex items-center gap-1 border-t px-3 py-3"
         style="border-color: var(--border)"
@@ -93,6 +170,14 @@ onMounted(() => {
       >
         <NDrawer v-model:show="drawerOpen" :width="248" placement="left">
           <NDrawerContent :native-scrollbar="false" body-content-style="padding: 0">
+            <!-- 窄屏也要有那个隐藏入口：管理员同样会拿手机用。
+                 抽屉里原本没有品牌图标，这里补一个，两套布局的入口就都在同一处。
+                 这里刻意没有「点一下收起抽屉」：捕获阶段已经 stopPropagation，写了也不会执行，
+                 而且连点期间抽屉必须留着 —— 收起来就等于第一下把自己的后续点击关掉了。
+                 收抽屉在 onBrandClick 的超时分支里做。 -->
+            <div class="px-5 py-4" @click.capture="onBrandClick">
+              <BrandMark />
+            </div>
             <div class="flex flex-col gap-1 px-3 py-2">
               <RouterLink
                 v-for="item in navItems"
@@ -128,6 +213,18 @@ onMounted(() => {
           <span class="font-heading text-[15px] font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
+          <!-- 窄屏没有侧栏那条提示带，所以把标识收成一颗图标 —— 点它就退出。 -->
+          <button
+            v-if="auth.advanced"
+            type="button"
+            class="grid size-9 place-items-center rounded-lg"
+            style="color: var(--primary)"
+            title="退出高级视图"
+            aria-label="退出高级视图"
+            @click="exitAdvanced"
+          >
+            <ShieldCheck :size="18" />
+          </button>
           <UserMenu />
         </div>
       </header>

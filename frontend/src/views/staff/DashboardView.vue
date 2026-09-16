@@ -204,9 +204,6 @@ onMounted(load)
             暂无账号数据
           </p>
         </div>
-        <p class="mt-3 text-[11px] text-ink-4">
-          管理员视角下超管账号不计入统计，因此这里的总数可能小于实际账号数。
-        </p>
       </section>
     </template>
   </div>

@@ -256,7 +256,7 @@ onMounted(async () => {
             <Printer :size="18" />
           </span>
           <span class="flex flex-col leading-none">
-            <span class="font-heading text-[15px] font-bold">小猫娘打印服务</span>
+            <span class="font-heading text-[15px] font-bold">猫娘打印服务</span>
             <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
           </span>
         </span>
@@ -416,7 +416,7 @@ onMounted(async () => {
       </div>
 
       <p class="mt-4 text-center text-[11px] text-ink-4">
-        管理员账号由超管在后台开通，注册一律为普通用户。
+        管理员账号由管理端开通，注册一律为普通用户。
       </p>
       <!-- 这里曾经还有一个「换个界面」链接。全站已经锁死新版（app.py 的
            UI_SWITCH_ENABLED），点过去也只会回到同一套外壳，留着反而像是坏了。 -->

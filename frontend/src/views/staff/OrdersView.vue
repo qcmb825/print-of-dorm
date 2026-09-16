@@ -46,8 +46,14 @@ const DONE: OrderStatus = '已取件'
 const auth = useAuthStore()
 const message = useMessage()
 
-/** 权限判定依据当前登录账号，直接从 store 取，避免布局再往下传一层 props。 */
-const isSuper = computed(() => auth.isSuper)
+/** 权限判定依据当前登录账号，直接从 store 取，避免布局再往下传一层 props。
+ *
+ *  看的是 advancedAllowed（默认管理员），**不是** role === 'super'：
+ *  对外角色已经收敛成 admin / user 两种，那个字符串永远不会出现，
+ *  写出来的分支只会静默失效（界面上就是「别人接的单碰不得」）。
+ *  这里不用 advanced（高级视图开关）：开关只决定界面多显示什么，
+ *  而这里判的是权限 —— 关掉高级视图的人仍然是默认管理员，照样能代别人计费。 */
+const isDefaultAdmin = computed(() => auth.advancedAllowed)
 const currentUserId = computed(() => auth.user?.id ?? 0)
 
 const AUTO_REFRESH_MS = 10_000
@@ -110,13 +116,19 @@ async function load(silent = false): Promise<void> {
   }
 }
 
-/** 接单人本人或超管可以释放；超管或本人接的单可以改状态 —— 与后端判定保持一致。 */
+/** 接单人本人（或默认管理员）可以释放、下载 —— 与后端判定保持一致。 */
 function canRelease(order: Order): boolean {
-  return order.claimed_by !== null && (isSuper.value || order.claimed_by === currentUserId.value)
+  return (
+    order.claimed_by !== null &&
+    (isDefaultAdmin.value || order.claimed_by === currentUserId.value)
+  )
 }
 
 function canDownload(order: Order): boolean {
-  return order.claimed_by !== null && (isSuper.value || order.claimed_by === currentUserId.value)
+  return (
+    order.claimed_by !== null &&
+    (isDefaultAdmin.value || order.claimed_by === currentUserId.value)
+  )
 }
 
 /** 改状态按钮点不动的原因；null 表示可以点。分支与后端 `api_update_status` 一一对应。 */
@@ -133,10 +145,10 @@ function canChangeStatus(order: Order): boolean {
   return statusBlockReason(order) === null
 }
 
-/** 这一单归不归自己管（是自己接的，或者自己是超管）—— 管的是「按不按得动」。
+/** 这一单归不归自己管（是自己接的，或者自己是默认管理员）—— 管的是「按不按得动」。
  *  未接单时 `claimed_by` 是 null，而 `currentUserId` 是个数字，自然对不上。 */
 function canReachOrder(order: Order): boolean {
-  return isSuper.value || order.claimed_by === currentUserId.value
+  return isDefaultAdmin.value || order.claimed_by === currentUserId.value
 }
 
 /** 计费按钮点不动的原因；null 表示可以点。
@@ -156,7 +168,7 @@ function canPrice(order: Order): boolean {
 /* ---------- 计费 ----------
  *  顺序是**先接单、后计费**：金额是按文件本身算出来的（几页、黑白还是彩色、
  *  单面还是双面），没接过单就没人打开过那份文件，只能对着文件名猜价钱。
- *  接单人就是看过文件的人，所以计费权限也只给接单人（超管不受限）。
+ *  接单人就是看过文件的人，所以计费权限也只给接单人（默认管理员不受限）。
  *  这里的每一条都跟后端 `api_price_order` 的分支一一对应。 */
 
 const priceOrder = ref<Order | null>(null)
@@ -472,7 +484,7 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="订单台" subtitle="接单后即可改状态、下载文件；超管可操作任意订单">
+    <PageHeader title="订单台" subtitle="接单后即可改状态、下载文件">
       <template #actions>
         <span class="flex items-center gap-2">
           <NSwitch v-model:value="autoRefresh" size="small" />

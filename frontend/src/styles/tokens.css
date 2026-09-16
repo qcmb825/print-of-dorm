@@ -68,13 +68,16 @@
   --status-unpriced: #7e22ce;
   --status-unpriced-bg: #f3e8ff;
 
-  /* 角色：普通用户 / 管理员 / 超级管理员 */
+  /* 角色：普通用户 / 管理员。
+   * --role-super 保留着，是给「角色」字段的第三种取值兜底用的。
+   * 它不能只靠一句注释声明「不会有第三行」—— 真漏出一行的时候，
+   * 颜色不同就是最显眼的记号。所以这里直接指向 admin 那一对，让它肉眼不可区分。 */
   --role-user: #0e7490;
   --role-user-bg: #ecfeff;
   --role-admin: #8a6d00;
   --role-admin-bg: #fef9c3;
-  --role-super: #a21caf;
-  --role-super-bg: #fae8ff;
+  --role-super: var(--role-admin);
+  --role-super-bg: var(--role-admin-bg);
 
   --ok: #15803d;
   --err: #b91c1c;
@@ -198,8 +201,9 @@
   --role-user-bg: #00f0ff1a;
   --role-admin: #ffd000;
   --role-admin-bg: #ffd0001f;
-  --role-super: #e879f9;
-  --role-super-bg: #e879f91f;
+  /* 同浅色那套：跟 admin 完全一致，不靠颜色区分。 */
+  --role-super: var(--role-admin);
+  --role-super-bg: var(--role-admin-bg);
 
   --ok: #4ade80;
   --err: #f87171;

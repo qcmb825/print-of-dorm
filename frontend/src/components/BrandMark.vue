@@ -19,7 +19,7 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
       <Printer :size="18" />
     </span>
     <span v-if="!compact" class="flex flex-col leading-none">
-      <span class="font-heading text-[15px] font-bold tracking-tight">小猫娘打印服务</span>
+      <span class="font-heading text-[15px] font-bold tracking-tight">猫娘打印服务</span>
       <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
     </span>
   </RouterLink>

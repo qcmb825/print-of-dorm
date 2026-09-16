@@ -18,7 +18,7 @@ const navItems = computed(() => [
   { to: '/upload', label: '下单打印', icon: Upload },
   { to: '/my-orders', label: '我的订单', icon: ClipboardList },
   { to: '/tickets', label: '问题反馈', icon: MessageSquare },
-  // 管理员/超管也会走到学生端（比如自己下单测试），给他们一条回控制台的入口
+  // 管理员也会走到学生端（比如自己下单测试），给他们一条回控制台的入口
   ...(auth.isStaff ? [{ to: '/staff/orders', label: '管理控制台', icon: LayoutDashboard }] : []),
 ])
 
