@@ -83,7 +83,7 @@ def log_startup_summary():
     比如 .env 改了却不生效，看一眼这里基本就明白了。
     """
     logger.info('=' * 62)
-    logger.info('打印服务 —— 启动')
+    logger.info('小猫娘打印服务 —— 启动')
     logger.info('  数据文件 : %s', DATABASE_PATH)
     logger.info('  上传目录 : %s', UPLOAD_FOLDER)
     logger.info('  日志目录 : %s', LOG_DIR)

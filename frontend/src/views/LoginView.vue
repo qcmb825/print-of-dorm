@@ -235,8 +235,8 @@ onMounted(async () => {
             <Printer :size="18" />
           </span>
           <span class="flex flex-col leading-none">
-            <span class="font-heading text-[15px] font-bold">宿舍打印</span>
-            <span class="tech-label mt-0.5 text-ink-4">Dorm Print</span>
+            <span class="font-heading text-[15px] font-bold">小猫娘打印服务</span>
+            <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
           </span>
         </span>
         <ThemeToggle />

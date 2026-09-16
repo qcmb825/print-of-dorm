@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>打印服务</title>
+    <title>小猫娘打印服务</title>
     <!-- 图标。缺了这条，浏览器每次整页加载都会额外去要 /favicon.ico，拿到 404
          并被打成 WARNING 记进访问日志 —— 那个级别是留给参数错/未登录/越权的，
          不该被缺图标刷屏。
@@ -1316,7 +1316,7 @@
             const side = el('aside', { class: 'auth-side', 'aria-hidden': 'true' });
             side.appendChild(el('img', { src: SAKURA_ILLUSTRATION_URL, alt: '' }));
             side.appendChild(el('div', { class: 'auth-side-text' }, [
-                el('p', { class: 'as-brand', text: '打印服务' }),
+                el('p', { class: 'as-brand', text: '小猫娘打印服务' }),
                 el('p', { class: 'as-sub', text: '冲破二次元的墙壁' }),
             ]));
             card.appendChild(side);
@@ -1717,7 +1717,7 @@
             }
 
             const bar = el('div', { class: 'topbar' });
-            bar.appendChild(el('h1', { text: '🖨️ 打印服务' }));
+            bar.appendChild(el('h1', { text: '🖨️ 小猫娘打印服务' }));
             // 徽章的角色值走 publicRole()：服务端的 /api/me 只回 user / admin 两种，
             // 这里再兜一层底 —— 万一以后哪个接口漏出了意外的角色值，
             // 界面也只会显示「管理员」，而不是老老实实把那个词印在屏幕上。

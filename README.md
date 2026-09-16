@@ -1,9 +1,9 @@
 <div align="center">
 
 <!-- 头图配色跟着设计令牌走：黄 #D4A017 → 青 #008FA6，改版后不再是原来的靛蓝 -->
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:D4A017,100:008FA6&height=190&section=header&text=%E6%89%93%E5%8D%B0%E4%BD%9C%E4%B8%9A%E7%AE%A1%E7%90%86%E7%B3%BB%E7%BB%9F&fontSize=44&fontColor=ffffff&desc=Print%20of%20Dorm%20%C2%B7%20%E6%8F%90%E4%BA%A4%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8E%A5%E5%8D%95%E5%A4%84%E7%90%86&descAlign=50&descAlignY=72&fontAlignY=42" width="100%" alt="打印作业管理系统" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:D4A017,100:008FA6&height=190&section=header&text=%E5%B0%8F%E7%8C%AB%E5%A8%98%E6%89%93%E5%8D%B0%E6%9C%8D%E5%8A%A1&fontSize=44&fontColor=ffffff&desc=Neko%20Print%20%C2%B7%20%E6%8F%90%E4%BA%A4%E4%BB%BB%E5%8A%A1%EF%BC%8C%E6%8E%A5%E5%8D%95%E5%A4%84%E7%90%86&descAlign=50&descAlignY=72&fontAlignY=42" width="100%" alt="小猫娘打印服务" />
 
-一个轻量的 **打印作业管理系统**：提交打印任务、接单处理、完成取件全流程在一个网页里跑完。
+一个轻量的 **小猫娘打印服务**：提交打印任务、接单处理、完成取件全流程在一个网页里跑完。
 纯 Web 界面，不需要安装客户端。
 
 <br />
@@ -67,7 +67,7 @@
 
 ## 📖 项目简介
 
-一个轻量的**打印作业管理系统**，把「提交任务 → 接单处理 → 完成取件」这条流程搬到网页上：
+一个轻量的**小猫娘打印服务**，把「提交任务 → 接单处理 → 完成取件」这条流程搬到网页上：
 
 - **普通用户**：选文件 → 选黑白/彩色、单面/双面 → 留个备注 → 提交。提交后能随时看到任务卡在哪一步，还会拿到一个取件码。
 - **管理员**：看到所有待接单的任务，**先到先得地接单**，处理完点一下把状态推到「可取了」。在此之上还能发布公告、查看数据看板、处理用户工单。

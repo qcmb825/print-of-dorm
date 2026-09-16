@@ -1,4 +1,4 @@
-# 打印服务：运行依赖
+# 小猫娘打印服务：运行依赖
 # Python 3.9 以上就能跑（我开发、部署用的都是 3.11）
 # 安装：pip install -r requirements.txt
 #

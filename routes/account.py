@@ -28,7 +28,7 @@ bp = Blueprint('account', __name__)
 # 探活接口，对应 Java 那边的 /hello
 @bp.route('/hello')
 def hello():
-    return '打印服务已启动！'
+    return '小猫娘打印服务已启动！'
 
 
 
