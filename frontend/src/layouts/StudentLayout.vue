@@ -82,7 +82,14 @@ onMounted(() => {
     </main>
 
     <!-- 底部标签栏：窄屏用，与上面横向导航在 md 断点交接。
-         列数跟着导航项走，管理员会多一条"管理控制台" -->
+         列数跟着导航项走，管理员会多一条"管理控制台"
+
+         这一栏的字只有 11px，是全站最小的一档，所以两态都得按小字的 4.5:1 来选色：
+         激活态原来读 --primary(#d4a017)，在页面底上只有 2.26:1；未激活态原来读
+         --text-quaternary(40% 黑，等效 #9c9c9c)只有 2.61:1。这里换成 --accent-text
+         （5.20:1）与 --text-tertiary（等效 #6e6e6e，4.84:1）。
+         这一栏没有色条/下划线，激活态本来就只靠颜色区分，因此必须真的过 AA。
+         上面那排横向导航不同：它的文字是 --foreground，本来就合格，不动。 -->
     <nav
       class="fixed inset-x-0 bottom-0 z-20 grid border-t backdrop-blur-xl md:hidden"
       :style="{
@@ -98,7 +105,11 @@ onMounted(() => {
         :key="item.to"
         :to="item.to"
         class="flex flex-col items-center gap-1 py-2.5 no-underline"
-        :style="currentPath === item.to ? { color: 'var(--primary)' } : { color: 'var(--text-quaternary)' }"
+        :style="
+          currentPath === item.to
+            ? { color: 'var(--accent-text)' }
+            : { color: 'var(--text-tertiary)' }
+        "
       >
         <component :is="item.icon" :size="19" />
         <!-- w-full + truncate 是给「管理员看学生端」那种情形兜底的：

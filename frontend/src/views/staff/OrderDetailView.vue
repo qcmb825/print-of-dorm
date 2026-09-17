@@ -154,7 +154,8 @@ async function download(): Promise<void> {
   if (!item) return
   downloading.value = true
   try {
-    await staffOrderApi.download(item.id, orderFileLabel(item))
+    // 同订单台：带上文件大小，让下载超时按文件估（预设单为 null，交给下游兜底）。
+    await staffOrderApi.download(item.id, orderFileLabel(item), item.file_size ?? undefined)
     // 下载本身也会写一条留痕，所以拉一遍让时间线跟上 ——
     // 否则「我刚下载过」这件事要刷新才看得到，像没记上。
     await load()

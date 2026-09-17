@@ -11,7 +11,7 @@
  *  小文件走单请求直传；大文件切 8MB 分片。原因见 utils/chunkedUpload.ts 顶部的注释。
  *  预设那条路根本没有文件，所以和分片上传完全不搭界。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   CircleCheck,
   FileText,
@@ -38,7 +38,7 @@ import {
   type UploadFileInfo,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { orderApi, printOptionsApi } from '@/api/endpoints'
+import { chunkApi, orderApi, printOptionsApi } from '@/api/endpoints'
 import type { ChunkSession, PaperType, PrintPreset } from '@/api/types'
 import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
@@ -68,6 +68,8 @@ const uploadedBytes = ref(0)
 const totalBytes = ref(0)
 /** 服务端还留着的未完成上传，进页面时提醒一句 */
 const pending = ref<ChunkSession[]>([])
+/** 当前分片会话的 upload_id，组件卸载时若会话仍未完成就调 cancel 释放额度 */
+const activeChunkUploadId = ref<string | null>(null)
 /** 服务端给的启用中预设与纸张 */
 const presets = ref<PrintPreset[]>([])
 const paperTypes = ref<PaperType[]>([])
@@ -141,6 +143,25 @@ async function refreshPending(): Promise<void> {
   pending.value = await pendingUploads()
 }
 
+/** 放弃某一份未完成的上传，腾出额度 */
+async function cancelSession(uploadId: string): Promise<void> {
+  try {
+    await chunkApi.cancel(uploadId)
+    if (activeChunkUploadId.value === uploadId) activeChunkUploadId.value = null
+    message.success('已放弃该上传，额度已释放')
+    await refreshPending()
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '取消失败，请稍后重试')
+  }
+}
+
+/** 组件卸载时：若分片会话仍在进行就取消它，避免残留占用额度 */
+onBeforeUnmount(() => {
+  if (activeChunkUploadId.value) {
+    void chunkApi.cancel(activeChunkUploadId.value).catch(() => {})
+  }
+})
+
 function reset(): void {
   fileList.value = []
   remark.value = ''
@@ -191,15 +212,29 @@ async function submit(): Promise<void> {
     const file = selectedFile.value
     if (!file) return
     totalBytes.value = file.size
-    const data = await uploadFile(file, common, (state) => {
-      progress.value = state.percent
-      uploadedBytes.value = state.uploaded
-    })
+    const data = await uploadFile(
+      file,
+      common,
+      (state) => {
+        progress.value = state.percent
+        uploadedBytes.value = state.uploaded
+      },
+      (uploadId) => {
+        activeChunkUploadId.value = uploadId
+      },
+    )
+    activeChunkUploadId.value = null
     receipt.value = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
     reset()
     message.success('下单成功，请记住取件码')
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '提交失败，请稍后重试')
+    if (error instanceof ApiError && error.status === 429) {
+      // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
+      void refreshPending()
+      message.error('额度已满，请先放弃一份未完成的上传')
+    } else {
+      message.error(error instanceof ApiError ? error.message : '提交失败，请稍后重试')
+    }
   } finally {
     submitting.value = false
     // 不管成没成，服务端那边的会话状态都变了（成功则清掉，失败则留下一份半成品），
@@ -264,11 +299,10 @@ onMounted(async () => {
       </section>
     </Transition>
 
-    <!-- 未完成的大文件上传：浏览器不给 JS 读本地文件内容，所以没办法自动接着传，
-         只能告诉用户「重新选同一个文件就行」。服务端按文件名 + 大小认得出是哪一份，
-         已经收到的分片不会白传。 -->
+    <!-- 未完成的大文件上传：列出全部，每条给「放弃」入口 -->
     <section
-      v-if="pending.length"
+      v-for="session in pending"
+      :key="session.upload_id"
       class="panel mb-4 flex items-start gap-3 p-3.5"
       role="status"
     >
@@ -281,14 +315,26 @@ onMounted(async () => {
       </span>
       <div class="min-w-0 flex-1">
         <p class="truncate text-[13px] font-semibold">
-          《{{ pending[0].filename }}》上次没传完
+          《{{ session.filename }}》
+          <span v-if="session.resumed" class="text-primary">（续传）</span>
         </p>
         <p class="mt-0.5 text-[12px] text-ink-3">
-          已收到 {{ pending[0].received_count }}/
-          {{ pending[0].total_chunks }} 片，重新选中同一个文件即可接着传，
-          传过的部分不用重来。
+          {{ prettySize(session.size) }} · {{ session.received_count }}/
+          {{ session.total_chunks }} 片
+          · 剩余 {{ session.expires_in < 60 ? session.expires_in + ' 秒' : Math.ceil(session.expires_in / 60) + ' 分钟' }}
         </p>
+        <NProgress
+          v-if="session.total_chunks > 0"
+          :percentage="Math.round((session.received_count / session.total_chunks) * 100)"
+          :height="4"
+          :border-radius="2"
+          :show-indicator="false"
+          class="mt-2"
+        />
       </div>
+      <NButton size="small" @click="cancelSession(session.upload_id)" :disabled="submitting">
+        放弃这次上传
+      </NButton>
     </section>
 
     <div class="panel p-4 sm:p-5">

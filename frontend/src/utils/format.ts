@@ -177,11 +177,15 @@ export function priceLabel(price: number | null | undefined): string {
  *  校验规则是后端 config.PRICE_RE 的镜像，永远以后端为准；
  *  这里只负责在按提交之前拦住一眼就能看出的错，少跑一趟网络。
  *  注意返回的是**字符串**：金额全程按十进制文本传，不经过 float 转一道 ——
- *  转了就轮到 0.1+0.2 那类误差来接管了。 */
+ *  转了就轮到 0.1+0.2 那类误差来接管了。
+ *
+ *  上限对齐后端的 config.PRICE_MAX_YUAN（= 99999.99）：PRICE_RE 本身是 6 位整数
+ *  正则，只管位数不管大小，超过上限那一步由 utils.parse_price 里的显式比较挡下。
+ *  这里照着做同一件事 —— 只收窄正则会跟后端分叉（例如 "099999" 后端收、前端拒）。 */
 export function normalizePrice(input: string): string | null {
   const text = input.trim().replace(/^¥/, '')
   if (!/^\d{1,6}(\.\d{1,2})?$/.test(text)) return null
   const amount = Number(text)
-  if (!(amount > 0)) return null
+  if (!(amount > 0) || amount > 99999.99) return null
   return text
 }

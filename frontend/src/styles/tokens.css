@@ -36,6 +36,22 @@
   --muted-foreground: #71717a;
   --accent: #c49102;
   --accent-foreground: #000000;
+  /* 强调色**当文字用**时的深度。（注意它不是「铺在 accent 底上的前景色」，
+   * 那是 --accent-foreground。）
+   *
+   * 浅色下 --primary(#d4a017) 和 --accent(#c49102) 都只够做色块与色条：铺在
+   * --muted(#f4f4f4) 上分别只有 2.16:1 / 2.58:1，13px 的侧栏激活项、11px 的底部
+   * 标签栏文字都读不清（WCAG AA 小字要 4.5:1）。但这两支都不能直接压深：
+   * --primary 同时还当背景用（.nav-link::before 的色条、焦点轮廓、换场扫描线、
+   * 排行榜的条形），改了会把色块一起改掉；--accent 是通用强调色（还挂在 Tailwind
+   * 的 --color-accent 上），为了一个「当文字用」的场景压低它，等于顺手改了调色板。
+   * 所以这件事单独给一支令牌。
+   *
+   * #866400 跟 #d4a017 同属约 44° 的金黄色相，不是随手抓的暗黄。往深里走两档后：
+   * --muted 上 4.98:1、页面底 #f9f9f9 上 5.20:1、.panel 卡面（80% 白的 --card 叠在
+   * #f9f9f9 上 ≈ #fefefe）5.43:1、accent-tint-soft 上 4.82:1、accent-tint 上 5.03:1。
+   * 小字（≥4.5:1）和大字（≥3:1）都在 AA 之上，浅色下看着仍然是「金」而不是「棕」。 */
+  --accent-text: #866400;
   --border: #e2e2e2;
   --border-subtle: #00000014;
   --input: #e2e2e2;
@@ -170,6 +186,11 @@
   --muted-foreground: #a1a1aa;
   --accent: #ffe600;
   --accent-foreground: #000000;
+  /* 深色下 --primary 的 #ffd000 铺在任何深色底上都远超 AA（#27272a 上 10.1:1、
+   * #050505 上 13.9:1），文字直接沿用它就够了，不需要另造一个更深的值。
+   * 这里刻意取 --primary 而不是 --accent：改动前读 --primary 的那几处（侧栏激活项、
+   * KPI 数字）在深色下的渲染因此与改动前**逐像素一致**，深色端一个字都没变。 */
+  --accent-text: var(--primary);
   --border: #ffffff1a;
   --border-subtle: #ffffff0d;
   --input: #ffffff1a;

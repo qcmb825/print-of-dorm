@@ -160,7 +160,9 @@ export const staffOrderApi = {
    *  首次计费会顺带把单从「待计费」推到「待打印」（后端一个原子 UPDATE 完成）。 */
   price: (id: number, price: string) =>
     post<{ code: number; msg: string; price: number }>(`/api/order/${id}/price`, { price }),
-  download: (id: number, filename: string) => download(`/api/order/${id}/download`, filename),
+  /** 下载订单文件。sizeBytes 用于计算超时：大文件在慢链路上 30 秒会被掐断。 */
+  download: (id: number, filename: string, sizeBytes?: number) =>
+    download(`/api/order/${id}/download`, filename, sizeBytes),
 
   /* ---- 凭取件码核对取件（柜台那一步）----
    *

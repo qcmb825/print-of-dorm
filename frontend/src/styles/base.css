@@ -181,7 +181,12 @@
      因为纸已经过机了）。
 
      做成一个牌子而不是单纯加粗：颜色上下两套主题都由令牌给，
-     组件里不写死色值，深色偏好下不会变成一块看不清的深黄。 */
+     组件里不写死色值，深色偏好下不会变成一块看不清的深黄。
+
+     文字色走 --accent-text 而不是 --accent：牌子上的字只有 13px，
+     --accent(#c49102) 铺在 accent-tint 上只有 2.61:1，够不上小字的 4.5:1；
+     --accent-text 在同一个底上是 5.03:1。边框（accent-tint-border）仍是
+     原色相的淡黄，它只是描边、不承载信息，不需要为对比度让路。 */
   .spec-chip {
     display: inline-flex;
     align-items: baseline;
@@ -189,7 +194,7 @@
     border: 1px solid var(--accent-tint-border);
     border-radius: 4px;
     background-color: var(--accent-tint);
-    color: var(--accent);
+    color: var(--accent-text);
     font-family: var(--stack-mono);
     font-size: 13px;
     font-weight: 700;

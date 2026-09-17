@@ -48,9 +48,9 @@ export async function uploadFile(
   file: File,
   options: UploadOptions,
   onProgress: ProgressHandler,
+  onSessionCreated?: (uploadId: string) => void,
 ): Promise<UploadResponse> {
   if (file.size > MAX_UPLOAD_BYTES) {
-    // 提前拦一道，省掉一次注定失败的上传。服务端的 413 仍在，那才是真正的边界。
     throw new ApiError(
       `文件太大，单个文件不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
       413,
@@ -66,16 +66,19 @@ export async function uploadFile(
     return data
   }
 
-  return uploadChunked(file, options, onProgress)
+  return uploadChunked(file, options, onProgress, onSessionCreated)
 }
 
 async function uploadChunked(
   file: File,
   options: UploadOptions,
   onProgress: ProgressHandler,
+  onSessionCreated?: (uploadId: string) => void,
 ): Promise<UploadResponse> {
   // 1. 开会话。同名同大小会拿回上次那份（resumed），它的 received 就是续传的起点。
   const session: ChunkSession = await chunkApi.init(file.name, file.size)
+  // 通知组件会话已建立，组件以此追踪 active upload_id，卸载时若仍未完成就清理
+  onSessionCreated?.(session.upload_id)
   const { upload_id: uploadId, chunk_size: chunkSize, total_chunks: totalChunks } = session
   const received = new Set(session.received ?? [])
 

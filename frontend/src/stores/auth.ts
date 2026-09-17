@@ -68,12 +68,23 @@ export const useAuthStore = defineStore('auth', () => {
     return true
   }
 
-  /** 会话失效（后端返回 401）时立刻清空本地状态，路由守卫会把页面送回登录页。 */
-  setUnauthorizedHandler(() => {
+  /** 会话失效（后端返回 401）时立刻清空本地状态，并跳转到登录页。
+   *
+   *  路由守卫只在「导航触发」时执行，无法响应静默轮询/定时请求里的 401。
+   *  这里自己跳转，并带上 redirect 让用户登录后回到原页面。
+   *  已在登录页时不再跳转，避免无限重定向。 */
+  setUnauthorizedHandler(async () => {
     user.value = null
     // 只清内存里的开关，不动 sessionStorage：同一个人重新登录还能接着用，
     // 换个人登录时 restoreAdvanced() 会按他的资格把开关压回去。
     advanced.value = false
+    // 动态导入路由实例，避免 client.ts ↔ stores/auth.ts 循环依赖。
+    // 此时 router/index.ts 已初始化完成（auth store 是守卫里首次 use 的，
+    // 在 router.afterEach 之前就已经存在），懒导入只为了突破编译时的循环引用。
+    const { router } = await import('@/router')
+    const currentPath = router.currentRoute.value.fullPath
+    if (currentPath === '/login') return
+    await router.replace({ name: 'login', query: { redirect: currentPath } })
   })
 
   /** 启动握手：未登录时后端返回 401，这里当正常分支处理，不当错误。 */

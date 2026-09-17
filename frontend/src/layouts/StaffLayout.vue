@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 管理端布局：桌面用左侧固定导航，窄屏收进抽屉（管理员也可能拿手机用）。 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ClipboardCheck,
   LayoutDashboard,
@@ -114,6 +114,20 @@ const activeNav = computed(() => {
   return navItems.value.some((item) => item.to === parent) ? parent : path
 })
 
+/** 导航成功就清掉品牌连点定时器：连点 logo 1-4 下之后立刻点侧栏导航，
+ *  那个 700ms 的 setTimeout 并不会因为换了页就失效 —— 到点仍会把用户拽回首页。
+ *  这里用路由变化当作「导航成功」的信号，侧栏、抽屉、程序化跳转都能覆盖到。 */
+watch(currentPath, () => {
+  window.clearTimeout(brandTimer)
+  brandTimer = undefined
+})
+
+/** 卸载时再清一道：定时器到点会 push('/')，组件都没了还留着它，
+ *  等于给一个已经不存在的页面留了一次跳转。 */
+onBeforeUnmount(() => {
+  window.clearTimeout(brandTimer)
+})
+
 const currentTitle = computed(() => (route.meta.title as string | undefined) ?? '管理控制台')
 
 onMounted(() => {
@@ -132,6 +146,11 @@ onMounted(() => {
       <div class="px-5 py-5" @click.capture="onBrandClick">
         <BrandMark />
       </div>
+      <!-- 导航一项的文字：激活态走 --accent-text 而不是 --primary ——
+           --primary 是给色条/色块用的，#d4a017 铺在 --muted 上只有 2.16:1，
+           13px 读不清。左边那根色条（.nav-link--active::before）仍是 --primary，
+           所以激活态本来就不止颜色一条线索，这里换的只是「文字」这一层。
+           未激活态用 --text-tertiary（60% 黑，等效 #6e6e6e，在 --muted 上 4.77:1）。 -->
       <nav class="flex flex-col gap-1 px-3" aria-label="管理导航">
         <RouterLink
           v-for="item in navItems"
@@ -141,7 +160,7 @@ onMounted(() => {
           :class="activeNav === item.to && 'nav-link--active'"
           :style="
             activeNav === item.to
-              ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
+              ? { backgroundColor: 'var(--muted)', color: 'var(--accent-text)' }
               : { color: 'var(--text-tertiary)' }
           "
         >
@@ -154,14 +173,16 @@ onMounted(() => {
            账号区现在整行都是它，所以允许收缩（min-w-0）。 -->
       <!-- 高级视图开着的时候给一条可见的提示。不给提示的话，管理员会分不清
            自己看到的界面是不是别人也这样 —— 而这两个界面恰恰是不同的。
-           退出按钮只对已经打开的人可见，所以它不算泄露入口。 -->
+           退出按钮只对已经打开的人可见，所以它不算泄露入口。
+           文字同样走 --accent-text：这行只有 11px，铺在 accent-tint-soft 上
+           --primary 只有 2.09:1，而小字要 4.5:1（--accent-text 在同底上 4.82:1）。 -->
       <div
         v-if="auth.advanced"
         class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]"
         style="
           border-color: var(--accent-tint-border);
           background-color: var(--accent-tint-soft);
-          color: var(--primary);
+          color: var(--accent-text);
         "
       >
         <ShieldCheck :size="14" aria-hidden="true" />
@@ -196,6 +217,7 @@ onMounted(() => {
             <div class="px-5 py-4" @click.capture="onBrandClick">
               <BrandMark />
             </div>
+            <!-- 窄屏抽屉里的导航跟侧栏同一套配色，理由见上面侧栏那处注释。 -->
             <div class="flex flex-col gap-1 px-3 py-2">
               <RouterLink
                 v-for="item in navItems"
@@ -205,7 +227,7 @@ onMounted(() => {
                 :class="activeNav === item.to && 'nav-link--active'"
                 :style="
                   activeNav === item.to
-                    ? { backgroundColor: 'var(--muted)', color: 'var(--primary)' }
+                    ? { backgroundColor: 'var(--muted)', color: 'var(--accent-text)' }
                     : { color: 'var(--text-tertiary)' }
                 "
                 @click="drawerOpen = false"

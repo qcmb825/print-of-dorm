@@ -112,7 +112,12 @@ const AUTO_REFRESH_MS = 10_000
 /** 宽屏表格各列宽之和。11 列加起来比容器（max-w-[1400px]）还宽，不给 scroll-x 的话
  *  NDataTable 会把表格直接撑出容器，而外层是 overflow-hidden —— 末尾那几列会被
  *  裁掉，连横向滚动都够不着（「详情」那颗按钮就是最先消失的那个）。
- *  **改任何一列的宽度时，这个数字要跟着改。** */
+ *  **改任何一列的宽度时，这个数字要跟着改。**
+ *
+ *  卡片断点从 900px 提到 1024px，与侧栏的 lg 断点、账号管理页对齐：900–1100px
+ *  这一段本来仍走表格，只能靠 NDataTable 内层容器自动横滚 —— 11 列挤在不到
+ *  1000px 的宽度里，连「取件码 / 费用」都要左右拖才看得到，还不如卡片列表。
+ *  `:scroll-x` 依旧显式声明（它就是表格这一侧的横滚契约，与账号管理页同一口径）。 */
 const ORDER_TABLE_MIN_WIDTH = 1474
 
 const orders = ref<Order[]>([])
@@ -124,6 +129,10 @@ const scope = ref<'pool' | 'mine' | 'all'>('pool')
 const loading = ref(true)
 const autoRefresh = ref(true)
 const busyId = ref<number | null>(null)
+
+/** 请求序号闸门：只接受最后一次发起请求的响应，避免慢响应覆盖新数据
+ *  （刚撤回的单「复活」、刚改的状态看似回退）。 */
+let requestSeq = 0
 
 /* ---------- 检索与筛选 ----------
  *  关键词、打印服务分组、隐藏已取件这三个都交给服务端去筛。
@@ -152,7 +161,7 @@ const presets = ref<PrintPreset[]>([])
  *  跳走再跳回来会把后面的列表翻页和筛选全重置掉。 */
 const pickupOpen = ref(false)
 
-const isNarrow = useMediaQuery('(max-width: 900px)')
+const isNarrow = useMediaQuery('(max-width: 1024px)')
 
 const scopeOptions = [
   { label: '待接单池', value: 'pool' },
@@ -227,6 +236,10 @@ const poolSummary = computed(() => ({
 
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
+  // 本次请求的序号：回来时若已有更新的请求发出，就丢弃这份响应。
+  // 轮询（10s）与用户操作触发的刷新会并发，先发的慢响应后到会覆盖新数据
+  // （刚撤回的单"复活"、刚改的状态看似回退）。
+  const mySeq = ++requestSeq
   try {
     const data = await staffOrderApi.list({
       page: page.value,
@@ -239,14 +252,22 @@ async function load(silent = false): Promise<void> {
       preset: presetFilter.value || undefined,
       exclude_done: excludeDone.value ? '1' : undefined,
     })
+    if (mySeq !== requestSeq) return
     orders.value = data.orders
     total.value = data.total
   } catch (error) {
-    if (!silent) message.error(error instanceof ApiError ? error.message : '加载订单失败')
+    // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
+    // 会让管理员以为刚刷出来的列表是坏的。
+    if (!silent && mySeq === requestSeq)
+      message.error(error instanceof ApiError ? error.message : '加载订单失败')
   } finally {
-    loading.value = false
-    // 搜索框的转圈跟着请求走：防抖等待期间转，请求一回来就停。
-    keywordPending.value = false
+    // loading / 转圈状态也只由最后一次请求收尾：被丢弃的旧响应提前灭掉它，
+    // 会让列表在真正的新数据到达前先「亮一下」。
+    if (mySeq === requestSeq) {
+      loading.value = false
+      // 搜索框的转圈跟着请求走：防抖等待期间转，请求一回来就停。
+      keywordPending.value = false
+    }
   }
 }
 
@@ -405,6 +426,8 @@ async function changeStatus(order: Order, next: OrderStatus): Promise<void> {
 
 async function download(order: Order): Promise<void> {
   try {
+    // 这里不传文件大小：列表接口的 Order 类型里没有 file_size（只有详情接口才回），
+    // 所以走 client 里那条兜底超时；详情页那边才是按真实大小估的。
     await staffOrderApi.download(order.id, orderFileLabel(order))
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '下载失败')
@@ -901,7 +924,7 @@ onBeforeUnmount(() => {
           取件核对
         </NButton>
         <span class="flex items-center gap-2">
-          <NSwitch v-model:value="autoRefresh" size="small" />
+          <NSwitch v-model:value="autoRefresh" size="small" aria-label="自动刷新" />
           <span class="tech-label text-ink-3">自动刷新 10s</span>
         </span>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -926,6 +949,7 @@ onBeforeUnmount(() => {
         size="small"
         class="!w-[132px]"
         :consistent-menu-width="false"
+        aria-label="范围筛选"
         @update:value="
           (value: 'pool' | 'mine' | 'all') => {
             scope = value
@@ -939,6 +963,7 @@ onBeforeUnmount(() => {
         size="small"
         class="!w-[128px]"
         :consistent-menu-width="false"
+        aria-label="状态筛选"
         @update:value="onStatusChange"
       />
       <NSelect
@@ -947,6 +972,7 @@ onBeforeUnmount(() => {
         size="small"
         class="!w-[180px]"
         :consistent-menu-width="false"
+        aria-label="打印服务筛选"
         @update:value="
           (value: string) => {
             presetFilter = value

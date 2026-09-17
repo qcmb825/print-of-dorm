@@ -593,13 +593,14 @@ onMounted(load)
       <template #actions>
         <span v-if="advanced" class="flex items-center gap-2">
           <NSwitch v-model:value="withPassword" size="small" @update:value="load()" />
-          <span
+          <button
+            type="button"
             class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3"
             @click="toggleWithPassword"
           >
             <Eye :size="12" />
             显示明文密码
-          </span>
+          </button>
         </span>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -618,6 +619,7 @@ onMounted(load)
         size="small"
         class="!w-[128px]"
         :consistent-menu-width="false"
+        aria-label="角色筛选"
       />
       <span v-if="advanced" class="flex items-center gap-2">
         <NSwitch v-model:value="includeClosed" size="small" @update:value="load()" />
@@ -747,6 +749,7 @@ onMounted(load)
             show-password-on="click"
             :maxlength="64"
             placeholder="8-64 位，同时包含字母和数字"
+            autocomplete="new-password"
           />
         </template>
 

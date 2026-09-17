@@ -212,9 +212,24 @@ export async function putRaw<T>(
   return response.data
 }
 
-/** 以 blob 取回文件再触发浏览器下载 —— 走 axios 才有统一的错误处理。 */
-export async function download(url: string, filename: string): Promise<void> {
-  const response = await http.get<Blob>(url, { responseType: 'blob' })
+/** 以 blob 取回文件再触发浏览器下载 -- 走 axios 才有统一的错误处理。
+ *
+ *  @param sizeBytes 文件预期大小（字节）。用于计算超时：按 300KB/s 的保守速率
+ *  估算下载耗时，加 50% 余量，上限 10 分钟。不传则用 5 分钟兜底。
+ *  大文件在慢链路上 30 秒会被 axios 默认超时掐断，已收字节作废，重试必然再失败，
+ *  所以上传那两路（upload/putRaw）已经显式写了 timeout: 0，下载不能沿用默认值。 */
+export async function download(
+  url: string,
+  filename: string,
+  sizeBytes?: number,
+): Promise<void> {
+  const timeout = sizeBytes
+    ? Math.min(
+        Math.ceil((sizeBytes / 307_200) * 1.5 * 1000),
+        600_000,
+      )
+    : 300_000
+  const response = await http.get<Blob>(url, { responseType: 'blob', timeout })
   const objectUrl = URL.createObjectURL(response.data)
   try {
     const anchor = document.createElement('a')

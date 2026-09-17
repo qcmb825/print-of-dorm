@@ -28,6 +28,10 @@ const loading = ref(true)
 const refreshMs = 20_000
 const visibility = useDocumentVisibility()
 
+/** 请求序号闸门：只接受最后一次发起请求的响应，避免慢响应覆盖新数据
+ *  （刚撤回的单「复活」、刚改的状态看似回退）。 */
+let requestSeq = 0
+
 const summary = computed(() => ({
   // 「待计费」也算进行中：学生那边这单同样还没结束（正等管理员报价），
   // 不算进任何一格的话，刚提交完订单的学生会看到「进行中 0」而以为没提交上。
@@ -46,13 +50,19 @@ const spent = computed(() =>
 
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
+  const mySeq = ++requestSeq
   try {
     const data = await orderApi.mine()
+    // 只接受最后一次请求的响应：防止旧响应覆盖新数据
+    if (mySeq !== requestSeq) return
     orders.value = data.orders
   } catch (error) {
-    if (!silent) notify.error(error instanceof ApiError ? error.message : '加载订单失败')
+    // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
+    // 会让用户以为刚刷出来的列表是坏的。
+    if (!silent && mySeq === requestSeq)
+      notify.error(error instanceof ApiError ? error.message : '加载订单失败')
   } finally {
-    loading.value = false
+    if (mySeq === requestSeq) loading.value = false
   }
 }
 
