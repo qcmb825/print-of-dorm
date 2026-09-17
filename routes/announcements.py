@@ -11,7 +11,7 @@ from config import (
     ROLE_SUPER,
     logger,
 )
-from db import get_db
+from db import db_conn
 from security import client_ip
 
 bp = Blueprint('announce', __name__)
@@ -59,8 +59,7 @@ def _parse_announcement(data):
 @login_required
 def api_announcement():
     """前台读当前生效的公告，没有就返回 null，前端据此隐藏公告栏。"""
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('''
             SELECT id, content, font_family, font_size, font_color,
                    datetime(update_time, 'localtime') AS update_time
@@ -68,8 +67,6 @@ def api_announcement():
             WHERE is_active = 1
             ORDER BY id DESC LIMIT 1
         ''').fetchone()
-    finally:
-        conn.close()
     return jsonify({'code': 0, 'announcement': dict(row) if row else None})
 
 
@@ -84,8 +81,7 @@ def api_announcements():
     混成一个接口、再按角色裁剪字段，很容易改着改着就把管理用的字段漏给普通用户，
     分开写成两条查询虽然啰嗦一点，但多看几眼就能确认各给各的。
     """
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = conn.execute('''
             SELECT a.id, a.content, a.font_family, a.font_size, a.font_color, a.is_active,
                    datetime(a.update_time, 'localtime') AS update_time,
@@ -95,8 +91,6 @@ def api_announcements():
             ORDER BY a.id DESC
             LIMIT 50
         ''').fetchall()
-    finally:
-        conn.close()
     return jsonify({'code': 0, 'announcements': [dict(r) for r in rows]})
 
 
@@ -105,8 +99,7 @@ def api_announcements():
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_announcements():
     """公告列表，管理端可看，含已停用的历史公告，方便编辑和重新启用。"""
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = conn.execute('''
             SELECT a.id, a.content, a.font_family, a.font_size, a.font_color, a.is_active,
                    datetime(a.update_time, 'localtime') AS update_time,
@@ -116,8 +109,6 @@ def api_admin_announcements():
             ORDER BY a.is_active DESC, a.id DESC
             LIMIT 50
         ''').fetchall()
-    finally:
-        conn.close()
     return jsonify({'code': 0, 'announcements': [dict(r) for r in rows]})
 
 
@@ -129,8 +120,7 @@ def api_admin_create_announcement():
     payload, error = _parse_announcement(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         conn.execute('UPDATE announcements SET is_active = 0 WHERE is_active = 1')
         cursor = conn.execute('''
             INSERT INTO announcements (content, font_family, font_size, font_color, is_active, created_by)
@@ -139,8 +129,6 @@ def api_admin_create_announcement():
               payload['font_color'], g.user['id']))
         conn.commit()
         new_id = cursor.lastrowid
-    finally:
-        conn.close()
     logger.info('发布公告 #%s 操作人=%s(%s) 字号=%s 颜色=%s ip=%s',
                 new_id, g.user['nickname'], g.user['role'],
                 payload['font_size'], payload['font_color'], client_ip())
@@ -155,8 +143,7 @@ def api_admin_update_announcement(aid):
     payload, error = _parse_announcement(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if conn.execute('SELECT 1 FROM announcements WHERE id = ?', (aid,)).fetchone() is None:
             return jsonify({'code': 404, 'msg': '公告不存在'}), 404
         conn.execute('''
@@ -167,8 +154,6 @@ def api_admin_update_announcement(aid):
         ''', (payload['content'], payload['font_family'], payload['font_size'],
               payload['font_color'], aid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('修改公告 #%s 操作人=%s(%s) ip=%s',
                 aid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '公告已更新'})
@@ -181,8 +166,7 @@ def api_admin_toggle_announcement(aid):
     """启用 / 停用公告，启用一条时会先停用其它生效中的，保证只有一条悬浮。"""
     data = request.get_json(silent=True) or {}
     active = bool(data.get('active'))
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if conn.execute('SELECT 1 FROM announcements WHERE id = ?', (aid,)).fetchone() is None:
             return jsonify({'code': 404, 'msg': '公告不存在'}), 404
         if active:
@@ -190,8 +174,6 @@ def api_admin_toggle_announcement(aid):
         conn.execute('UPDATE announcements SET is_active = ? WHERE id = ?',
                      (1 if active else 0, aid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('%s公告 #%s 操作人=%s(%s) ip=%s',
                 '启用' if active else '停用', aid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '已启用' if active else '已停用'})
@@ -201,14 +183,11 @@ def api_admin_toggle_announcement(aid):
 @bp.route('/api/admin/announcements/<int:aid>', methods=['DELETE'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_delete_announcement(aid):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if conn.execute('SELECT 1 FROM announcements WHERE id = ?', (aid,)).fetchone() is None:
             return jsonify({'code': 404, 'msg': '公告不存在'}), 404
         conn.execute('DELETE FROM announcements WHERE id = ?', (aid,))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('删除公告 #%s 操作人=%s(%s) ip=%s',
                 aid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '公告已删除'})

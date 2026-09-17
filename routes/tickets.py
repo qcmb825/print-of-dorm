@@ -15,8 +15,8 @@ from config import (
     logger,
     public_role,
 )
-from db import get_db
-from security import actor_label, audit_action, client_ip, hit_limit, security_event
+from db import db_conn
+from security import actor_label, audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import display_name, positive_int
 
 bp = Blueprint('tickets', __name__)
@@ -63,8 +63,7 @@ def api_tickets():
     """
     staff = _is_staff(g.user)
     status = (request.args.get('status') or '').strip()
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if staff:
             where, params = '', []
             if status in TICKET_STATUSES:
@@ -100,8 +99,6 @@ def api_tickets():
                 WHERE t.user_id = ?
                 ORDER BY t.update_time DESC, t.id DESC
             ''', (g.user['id'],)).fetchall()
-    finally:
-        conn.close()
 
     tickets = [dict(r) for r in rows]
     # 管理端的列表里才有 owner_nickname（用户看的是自己的工单，没必要显示是谁的）。
@@ -133,8 +130,7 @@ def api_create_ticket():
     if not (2 <= len(body) <= TICKET_BODY_MAX):
         return jsonify({'code': 400, 'msg': '内容需为 2-%s 个字' % TICKET_BODY_MAX}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         open_count = conn.execute(
             "SELECT COUNT(*) AS c FROM tickets WHERE user_id = ? AND status = 'open'",
             (g.user['id'],)).fetchone()['c']
@@ -151,8 +147,6 @@ def api_create_ticket():
             VALUES (?, ?, ?, ?)
         ''', (tid, g.user['id'], g.user['role'], body))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('新工单 #%s 发起人=%s 标题=%s ip=%s',
                 tid, g.user['nickname'], subject, client_ip())
     return jsonify({'code': 0, 'msg': '工单已提交，请等待管理员回复', 'id': tid})
@@ -185,8 +179,7 @@ def api_admin_create_ticket_for(user_id):
     if not (2 <= len(body) <= TICKET_BODY_MAX):
         return jsonify({'code': 400, 'msg': '内容需为 2-%s 个字' % TICKET_BODY_MAX}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         target = conn.execute(
             'SELECT id, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
@@ -213,8 +206,6 @@ def api_admin_create_ticket_for(user_id):
             VALUES (?, ?, ?, ?)
         ''', (tid, user_id, ROLE_USER, body))
         conn.commit()
-    finally:
-        conn.close()
     audit_action('create_ticket_for',
                  '代发工单 #%s 归属 #%s/%s 标题=%s'
                  % (tid, user_id, target['nickname'], subject))
@@ -229,8 +220,7 @@ def api_admin_create_ticket_for(user_id):
 def api_ticket_detail(tid):
     """读工单详情和全部消息，顺便把自己这一侧的已读时间推进到现在。"""
     staff = _is_staff(g.user)
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         ticket = conn.execute('SELECT * FROM tickets WHERE id = ?', (tid,)).fetchone()
         if ticket is None:
             return jsonify({'code': 404, 'msg': '工单不存在'}), 404
@@ -250,8 +240,6 @@ def api_ticket_detail(tid):
             _MESSAGE_SELECT + ' WHERE m.ticket_id = ? ORDER BY m.id', (tid,)).fetchall()
         owner = conn.execute('SELECT nickname, status FROM users WHERE id = ?',
                              (ticket['user_id'],)).fetchone()
-    finally:
-        conn.close()
 
     # 每条消息都带上发送者的角色，前端靠它区分「用户」和「客服」两方气泡。
     # 角色口径和昵称标注都在 _serialize_messages 里统一处理。
@@ -287,8 +275,7 @@ def api_ticket_reply(tid):
     if not (1 <= len(body) <= TICKET_BODY_MAX):
         return jsonify({'code': 400, 'msg': '回复内容需为 1-%s 个字' % TICKET_BODY_MAX}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         ticket = conn.execute('SELECT * FROM tickets WHERE id = ?', (tid,)).fetchone()
         if ticket is None:
             return jsonify({'code': 404, 'msg': '工单不存在'}), 404
@@ -313,8 +300,6 @@ def api_ticket_reply(tid):
             WHERE id = ?
         ''', (g.user['id'], 0 if staff else 1, 1 if staff else 0, tid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('工单 #%s 收到回复 回复人=%s(%s) ip=%s',
                 tid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '已发送'})
@@ -331,8 +316,7 @@ def api_ticket_status(tid):
     if new_status not in TICKET_STATUSES:
         return jsonify({'code': 400, 'msg': '状态不合法'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         ticket = conn.execute('SELECT * FROM tickets WHERE id = ?', (tid,)).fetchone()
         if ticket is None:
             return jsonify({'code': 404, 'msg': '工单不存在'}), 404
@@ -343,8 +327,6 @@ def api_ticket_status(tid):
         conn.execute('UPDATE tickets SET status = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?',
                      (new_status, tid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('工单 #%s 状态「%s」->「%s」 操作人=%s(%s) ip=%s',
                 tid, ticket['status'], new_status, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0,
@@ -380,16 +362,15 @@ def api_ticket_messages_since(tid):
     if hit_limit('ticketpoll:%s' % g.user['id'], POLL_MAX_IN_WINDOW, POLL_WINDOW_SECONDS):
         # 前端对这个 429 是静默忽略的（下个周期接着来），所以这里留痕比返回它更重要：
         # 正常界面碰不到这条线，一旦刷出来就是有人在写脚本。
-        security_event('ticket_poll_rate_limited',
-                       '账号 %s 在 %s 秒内轮询工单消息超过 %s 次'
-                       % (g.user['nickname'], POLL_WINDOW_SECONDS, POLL_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '请求过于频繁，请稍后再试'}), 429
+        return rate_limited('ticket_poll_rate_limited',
+                            '账号 %s 在 %s 秒内轮询工单消息超过 %s 次'
+                            % (g.user['nickname'], POLL_WINDOW_SECONDS, POLL_MAX_IN_WINDOW),
+                            '请求过于频繁，请稍后再试')
 
     since_id = positive_int(request.args.get('since_id'), 0)
     staff = _is_staff(g.user)
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         ticket = conn.execute(
             'SELECT id, user_id, status FROM tickets WHERE id = ?', (tid,)).fetchone()
         if ticket is None:
@@ -409,8 +390,6 @@ def api_ticket_messages_since(tid):
             conn.execute(
                 'UPDATE tickets SET %s = CURRENT_TIMESTAMP WHERE id = ?' % column, (tid,))
             conn.commit()
-    finally:
-        conn.close()
 
     messages = _serialize_messages(rows)
     return jsonify({

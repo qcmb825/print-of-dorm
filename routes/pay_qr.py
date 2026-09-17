@@ -28,7 +28,7 @@ from flask import Blueprint, g, jsonify, request, send_file
 
 from config import (PAY_QR_EXTENSIONS, PAY_QR_FOLDER, PAY_QR_MAX_BYTES, ROLE_ADMIN,
                     ROLE_SUPER, logger)
-from db import get_db
+from db import db_conn
 from auth import roles_required
 from security import actor_label, client_ip, security_event
 
@@ -147,19 +147,17 @@ def upload_pay_qr():
         logger.exception('收款码：写文件失败（name=%s）', new_filename)
         return jsonify({'code': 1, 'msg': '保存失败，请稍后重试'}), 500
 
-    conn = get_db()
-    try:
-        row = conn.execute('SELECT pay_qr_file FROM users WHERE id = ?', (g.user['id'],)).fetchone()
-        old_filename = row['pay_qr_file'] if row else None
-        conn.execute('UPDATE users SET pay_qr_file = ? WHERE id = ?', (new_filename, g.user['id']))
-        conn.commit()
-    except sqlite3.Error:
-        # 库没写进去，刚落盘的那张图就是孤儿，必须自己收拾掉
-        logger.exception('收款码：写库失败，回滚已落盘的文件（name=%s）', new_filename)
-        _remove_qr_file(new_filename)
-        return jsonify({'code': 1, 'msg': '保存失败，请稍后重试'}), 500
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            row = conn.execute('SELECT pay_qr_file FROM users WHERE id = ?', (g.user['id'],)).fetchone()
+            old_filename = row['pay_qr_file'] if row else None
+            conn.execute('UPDATE users SET pay_qr_file = ? WHERE id = ?', (new_filename, g.user['id']))
+            conn.commit()
+        except sqlite3.Error:
+            # 库没写进去，刚落盘的那张图就是孤儿，必须自己收拾掉
+            logger.exception('收款码：写库失败，回滚已落盘的文件（name=%s）', new_filename)
+            _remove_qr_file(new_filename)
+            return jsonify({'code': 1, 'msg': '保存失败，请稍后重试'}), 500
 
     # 到这一步库里已经是新文件名了，旧图才允许删
     if old_filename and old_filename != new_filename:
@@ -174,17 +172,15 @@ def upload_pay_qr():
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def delete_pay_qr():
     """删掉本人收款码。删完之后邮件里就不带图了（文案会换成「向管理员付款」）。"""
-    conn = get_db()
-    try:
-        row = conn.execute('SELECT pay_qr_file FROM users WHERE id = ?', (g.user['id'],)).fetchone()
-        old_filename = row['pay_qr_file'] if row else None
-        conn.execute('UPDATE users SET pay_qr_file = NULL WHERE id = ?', (g.user['id'],))
-        conn.commit()
-    except sqlite3.Error:
-        logger.exception('收款码：删除时写库失败')
-        return jsonify({'code': 1, 'msg': '删除失败，请稍后重试'}), 500
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            row = conn.execute('SELECT pay_qr_file FROM users WHERE id = ?', (g.user['id'],)).fetchone()
+            old_filename = row['pay_qr_file'] if row else None
+            conn.execute('UPDATE users SET pay_qr_file = NULL WHERE id = ?', (g.user['id'],))
+            conn.commit()
+        except sqlite3.Error:
+            logger.exception('收款码：删除时写库失败')
+            return jsonify({'code': 1, 'msg': '删除失败，请稍后重试'}), 500
 
     _remove_qr_file(old_filename)
     logger.info('收款码：%s 已删除 ip=%s', actor_label(), client_ip())

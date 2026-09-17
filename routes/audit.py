@@ -19,9 +19,9 @@ from flask import Blueprint, g, jsonify, request
 from auth import roles_required
 from config import (AUDIT_APPROVED, AUDIT_PENDING, AUDIT_REJECTED, AUDIT_REVIEW_MAX,
                     AUDIT_STATUS_LABELS, AUDIT_STATUSES, ROLE_ADMIN, ROLE_SUPER, logger)
-from db import get_db
+from db import db_conn
 from identity import RosterUnavailable, lookup, normalize_name
-from security import audit_action, client_ip, hit_limit, security_event
+from security import audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import display_name, validate_audit_request
 
 bp = Blueprint('audit', __name__)
@@ -53,8 +53,8 @@ def api_audit_submit():
         return jsonify({'code': 400, 'msg': error}), 400
 
     if hit_limit('audit:' + client_ip(), SUBMIT_MAX_IN_WINDOW, SUBMIT_WINDOW_SECONDS):
-        security_event('audit_request_rate_limited', '同一 IP 反复提交身份审核申请')
-        return jsonify({'code': 429, 'msg': '申请提交过于频繁，请稍后再试'}), 429
+        return rate_limited('audit_request_rate_limited', '同一 IP 反复提交身份审核申请',
+                            '申请提交过于频繁，请稍后再试')
 
     # 先看这个学号现在是什么情况。已经能和名单对齐的人不该占用一条申请记录 ——
     # 那不是「多一条待办」，而是让管理员去看一个本来不需要他看的东西。
@@ -73,34 +73,32 @@ def api_audit_submit():
         # 或者名字恰好对得上。指明这一点比回一句「已有记录」有用得多。
         return jsonify({'code': 409, 'msg': '你的信息可以直接注册，无需提交申请'}), 409
 
-    conn = get_db()
-    try:
-        existing = conn.execute(
-            'SELECT status FROM audit_requests WHERE student_id = ?',
-            (payload['student_id'],)).fetchone()
-        if existing is not None:
-            # 一个学号只留一条记录（库里那个唯一索引也兜着这一条）。
-            # 至于为什么不让重新提交：申请回答的是「我能不能注册」，
-            # 同一个人不存在第二种答案，反复提交只会让管理员对着同一件事核对很多遍。
-            # 驳回后确实需要重来的情形，管理员直接把那条改成「已通过」就行。
-            label = AUDIT_STATUS_LABELS.get(existing['status'], existing['status'])
-            return jsonify({'code': 409,
-                            'msg': '该学号已有一条申请记录（%s），不能重复提交' % label}), 409
-        cursor = conn.execute('''
-            INSERT INTO audit_requests (student_id, real_name, contact_type, contact, note)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (payload['student_id'], payload['real_name'], payload['contact_type'],
-              payload['contact'], payload['note']))
-        conn.commit()
-        rid = cursor.lastrowid
-    except sqlite3.IntegrityError:
-        # 并发：两个请求同时越过了上面那句 SELECT，由唯一索引兜住第二个。
-        # 这不是故障，是索引在正常工作，所以记 INFO 不记 WARNING。
-        conn.rollback()
-        logger.info('并发的重复申请被唯一索引拦下：学号=%s', payload['student_id'])
-        return jsonify({'code': 409, 'msg': '该学号已有一条申请记录，不能重复提交'}), 409
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            existing = conn.execute(
+                'SELECT status FROM audit_requests WHERE student_id = ?',
+                (payload['student_id'],)).fetchone()
+            if existing is not None:
+                # 一个学号只留一条记录（库里那个唯一索引也兜着这一条）。
+                # 至于为什么不让重新提交：申请回答的是「我能不能注册」，
+                # 同一个人不存在第二种答案，反复提交只会让管理员对着同一件事核对很多遍。
+                # 驳回后确实需要重来的情形，管理员直接把那条改成「已通过」就行。
+                label = AUDIT_STATUS_LABELS.get(existing['status'], existing['status'])
+                return jsonify({'code': 409,
+                                'msg': '该学号已有一条申请记录（%s），不能重复提交' % label}), 409
+            cursor = conn.execute('''
+                INSERT INTO audit_requests (student_id, real_name, contact_type, contact, note)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (payload['student_id'], payload['real_name'], payload['contact_type'],
+                  payload['contact'], payload['note']))
+            conn.commit()
+            rid = cursor.lastrowid
+        except sqlite3.IntegrityError:
+            # 并发：两个请求同时越过了上面那句 SELECT，由唯一索引兜住第二个。
+            # 这不是故障，是索引在正常工作，所以记 INFO 不记 WARNING。
+            conn.rollback()
+            logger.info('并发的重复申请被唯一索引拦下：学号=%s', payload['student_id'])
+            return jsonify({'code': 409, 'msg': '该学号已有一条申请记录，不能重复提交'}), 409
 
     # 联系方式刻意不写进日志：日志是最容易被整包拷走、发给别人排错的东西
     # （README 里那段拒绝把管理员密码写进日志的理由，对这里同样成立）。
@@ -126,11 +124,10 @@ def api_audit_status():
         return jsonify({'code': 400, 'msg': '请填写学号和申请时留下的联系方式'}), 400
 
     if hit_limit('auditquery:' + client_ip(), QUERY_MAX_IN_WINDOW, QUERY_WINDOW_SECONDS):
-        security_event('audit_query_rate_limited', '同一 IP 反复查询身份审核进度')
-        return jsonify({'code': 429, 'msg': '查询过于频繁，请稍后再试'}), 429
+        return rate_limited('audit_query_rate_limited', '同一 IP 反复查询身份审核进度',
+                            '查询过于频繁，请稍后再试')
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('''
             SELECT status, review_note, contact_type, contact,
                    datetime(create_time, 'localtime') AS create_time,
@@ -138,8 +135,6 @@ def api_audit_status():
             FROM audit_requests
             WHERE student_id = ? AND contact = ?
         ''', (student_id, contact)).fetchone()
-    finally:
-        conn.close()
 
     if row is None:
         # 「学号不存在」和「联系方式对不上」合并成同一句：
@@ -161,8 +156,7 @@ def api_audit_status():
 def api_admin_audit_list():
     """申请列表，默认只看待审核的 —— 这是个待办队列，不是档案库。"""
     status = (request.args.get('status') or AUDIT_PENDING).strip()
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         where, params = '', []
         if status in AUDIT_STATUSES:
             where, params = 'WHERE r.status = ?', [status]
@@ -181,8 +175,6 @@ def api_admin_audit_list():
         # 一条一条去 COUNT 的话，列表刷新一次就是三趟查询。
         counts = dict(conn.execute(
             'SELECT status, COUNT(*) FROM audit_requests GROUP BY status').fetchall())
-    finally:
-        conn.close()
 
     items = [dict(r) for r in rows]
     for item in items:
@@ -222,8 +214,7 @@ def api_admin_audit_review(rid):
         return jsonify({'code': 400, 'msg': '驳回时请填写理由，申请人会看到它'}), 400
 
     new_status = AUDIT_APPROVED if action == 'approve' else AUDIT_REJECTED
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('SELECT * FROM audit_requests WHERE id = ?', (rid,)).fetchone()
         if row is None:
             return jsonify({'code': 404, 'msg': '申请不存在'}), 404
@@ -233,8 +224,6 @@ def api_admin_audit_review(rid):
              WHERE id = ?
         ''', (new_status, note or None, g.user['id'], rid))
         conn.commit()
-    finally:
-        conn.close()
 
     logger.info('身份审核 #%s 学号=%s 结论=%s 处理人=%s(%s) ip=%s',
                 rid, row['student_id'], AUDIT_STATUS_LABELS[new_status],

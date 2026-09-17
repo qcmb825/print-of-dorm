@@ -14,7 +14,7 @@ from flask import Blueprint, g, jsonify, request
 from auth import login_required, roles_required
 from config import (PAPER_NAME_MAX, PAPER_REMARK_MAX, PRESET_CONTENT_MAX, PRESET_CONTENT_MIN,
                     ROLE_ADMIN, ROLE_SUPER, logger)
-from db import find_paper_type, find_preset, get_db
+from db import db_conn, find_paper_type, find_preset
 from security import audit_action, client_ip
 
 bp = Blueprint('order_options', __name__)
@@ -89,8 +89,7 @@ def api_print_options():
     只发启用中的：停用的项不该出现在学生的下拉框里。管理端要看全部，
     那有它自己的 /api/admin/* 接口。
     """
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         presets = conn.execute('''
             SELECT id, content, datetime(update_time, 'localtime') AS update_time
             FROM print_presets
@@ -103,8 +102,6 @@ def api_print_options():
             WHERE is_active = 1
             ORDER BY id ASC
         ''').fetchall()
-    finally:
-        conn.close()
     return jsonify({
         'code': 0,
         'presets': [dict(row) for row in presets],
@@ -119,8 +116,7 @@ def api_print_options():
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_print_presets():
     """预设台账，含已停用的，方便改回来。"""
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # used_count 是给「删不删」这道判断用的：预设删掉之后，
         # 历史订单里那句话还在（存的是快照），但「当初是哪一条」就断了。
         # 不显示这个数字，管理员只能在删完之后才发现自己没有回头路。
@@ -141,8 +137,6 @@ def api_admin_print_presets():
             ORDER BY p.is_active DESC, p.id DESC
             LIMIT 100
         ''').fetchall()
-    finally:
-        conn.close()
     return jsonify({'code': 0, 'presets': [dict(row) for row in rows]})
 
 
@@ -153,16 +147,13 @@ def api_admin_create_print_preset():
     payload, error = _parse_preset(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         cursor = conn.execute('''
             INSERT INTO print_presets (content, is_active, created_by)
             VALUES (?, 1, ?)
         ''', (payload['content'], g.user['id']))
         conn.commit()
         new_id = cursor.lastrowid
-    finally:
-        conn.close()
     logger.info('新建预设打印服务 #%s 操作人=%s(%s) ip=%s',
                 new_id, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '预设已创建', 'id': new_id})
@@ -180,8 +171,7 @@ def api_admin_update_print_preset(pid):
     payload, error = _parse_preset(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if find_preset(conn, pid) is None:
             return jsonify({'code': 404, 'msg': '预设不存在'}), 404
         conn.execute('''
@@ -189,8 +179,6 @@ def api_admin_update_print_preset(pid):
             WHERE id = ?
         ''', (payload['content'], pid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('修改预设打印服务 #%s 操作人=%s(%s) ip=%s',
                 pid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '预设已更新'})
@@ -203,15 +191,12 @@ def api_admin_toggle_print_preset(pid):
     """启用 / 停用。停用只是不再出现在学生的可选项里，记录和引用都保留。"""
     data = request.get_json(silent=True) or {}
     active = bool(data.get('active'))
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if find_preset(conn, pid) is None:
             return jsonify({'code': 404, 'msg': '预设不存在'}), 404
         conn.execute('UPDATE print_presets SET is_active = ?, update_time = CURRENT_TIMESTAMP '
                      'WHERE id = ?', (1 if active else 0, pid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('%s预设打印服务 #%s 操作人=%s(%s) ip=%s',
                 '启用' if active else '停用', pid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '已启用' if active else '已停用'})
@@ -227,15 +212,12 @@ def api_admin_delete_print_preset(pid):
     不会因为这条被删掉而变成空白。真要说损失，只有「这一单当初用的是哪条预设」
     里的那个 id 再也点不开，而那句话本身还在订单里摆着。
     """
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = find_preset(conn, pid)
         if row is None:
             return jsonify({'code': 404, 'msg': '预设不存在'}), 404
         conn.execute('DELETE FROM print_presets WHERE id = ?', (pid,))
         conn.commit()
-    finally:
-        conn.close()
     # 删除是破坏性动作，走审计留痕（同一句里不放预设正文：那是可能很长的中文，
     # 审计日志里要的是一眼能看懂的「谁删了哪一条」）。
     audit_action('delete_print_preset', '删除预设打印服务 #%s' % pid)
@@ -250,8 +232,7 @@ def api_admin_delete_print_preset(pid):
 @bp.route('/api/admin/paper-types')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_paper_types():
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # 同预设：used_count 让「删除」这个动作在点下去之前就有分量。
         rows = conn.execute('''
             SELECT t.id, t.name, t.remark, t.is_active,
@@ -264,8 +245,6 @@ def api_admin_paper_types():
             ORDER BY t.is_active DESC, t.id ASC
             LIMIT 100
         ''').fetchall()
-    finally:
-        conn.close()
     return jsonify({'code': 0, 'paper_types': [dict(row) for row in rows]})
 
 
@@ -292,8 +271,7 @@ def api_admin_create_paper_type():
     payload, error = _parse_paper(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if _name_taken(conn, payload['name']):
             # 409 而不是 400：这不是「填错了」，是「跟已有的撞了」，
             # 前端据此可以把冲突说得更具体。
@@ -304,8 +282,6 @@ def api_admin_create_paper_type():
         ''', (payload['name'], payload['remark'], g.user['id']))
         conn.commit()
         new_id = cursor.lastrowid
-    finally:
-        conn.close()
     logger.info('新建纸张类型 #%s 名称=%s 操作人=%s(%s) ip=%s',
                 new_id, payload['name'], g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '纸张类型已创建', 'id': new_id})
@@ -318,8 +294,7 @@ def api_admin_update_paper_type(tid):
     payload, error = _parse_paper(request.get_json(silent=True) or {})
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if find_paper_type(conn, tid) is None:
             return jsonify({'code': 404, 'msg': '纸张类型不存在'}), 404
         if _name_taken(conn, payload['name'], exclude_id=tid):
@@ -329,8 +304,6 @@ def api_admin_update_paper_type(tid):
             WHERE id = ?
         ''', (payload['name'], payload['remark'], tid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('修改纸张类型 #%s 名称=%s 操作人=%s(%s) ip=%s',
                 tid, payload['name'], g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '纸张类型已更新'})
@@ -342,15 +315,12 @@ def api_admin_update_paper_type(tid):
 def api_admin_toggle_paper_type(tid):
     data = request.get_json(silent=True) or {}
     active = bool(data.get('active'))
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         if find_paper_type(conn, tid) is None:
             return jsonify({'code': 404, 'msg': '纸张类型不存在'}), 404
         conn.execute('UPDATE paper_types SET is_active = ?, update_time = CURRENT_TIMESTAMP '
                      'WHERE id = ?', (1 if active else 0, tid))
         conn.commit()
-    finally:
-        conn.close()
     logger.info('%s纸张类型 #%s 操作人=%s(%s) ip=%s',
                 '启用' if active else '停用', tid, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '已启用' if active else '已停用'})
@@ -366,15 +336,12 @@ def api_admin_delete_paper_type(tid):
     删掉之后老订单照样显示得出当时用的是什么纸。真要拦住，就得先扫一遍整张订单表，
     而换来的只是一句「不能删」，管理员最后还是得先去停用，等于多绕一步。
     """
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = find_paper_type(conn, tid)
         if row is None:
             return jsonify({'code': 404, 'msg': '纸张类型不存在'}), 404
         conn.execute('DELETE FROM paper_types WHERE id = ?', (tid,))
         conn.commit()
-    finally:
-        conn.close()
     audit_action('delete_paper_type', '删除纸张类型 #%s' % tid)
     logger.info('删除纸张类型 #%s 操作人=%s(%s) ip=%s',
                 tid, g.user['nickname'], g.user['role'], client_ip())

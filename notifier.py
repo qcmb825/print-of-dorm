@@ -30,7 +30,7 @@ import time
 
 from config import (CLAIM_ALERT_ENABLED, CLAIM_ALERT_INTERVAL, CLAIM_ALERT_MAX_AGE_HOURS,
                     CLAIM_ALERT_MINUTES, CLAIM_ALERT_RETRY_BACKOFF, ST_UNPRICED, logger)
-from db import get_db
+from db import db_conn
 from mail import alert_recipients, compose_body, compose_subject, is_configured, send_mail
 
 # 线程只拉起一次。（app.py 的 __main__ 里调一次就够，加这个锁是为了
@@ -109,18 +109,16 @@ def _release_claims(order_ids):
     claimed_by 仍然为空才撤回。中途有人接了单的话，标记留着更好 —— 那单
     已经有人管了，本来也不需要再提醒。
     """
-    conn = get_db()
-    try:
-        for order_id in order_ids:
-            conn.execute('UPDATE orders SET claim_alert_time = NULL '
-                         'WHERE id = ? AND claimed_by IS NULL', (order_id,))
-        conn.commit()
-    except Exception:
-        # 这里失败意味着那些单要等到下一轮才可能被重新选中（如果它们的
-        # claim_alert_time 没撤掉，就是永远不再提醒）。声音要大一点。
-        logger.exception('未接单提醒：撤回提醒标记失败，涉及的订单 %s 本轮不会再提醒', order_ids)
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            for order_id in order_ids:
+                conn.execute('UPDATE orders SET claim_alert_time = NULL '
+                             'WHERE id = ? AND claimed_by IS NULL', (order_id,))
+            conn.commit()
+        except Exception:
+            # 这里失败意味着那些单要等到下一轮才可能被重新选中（如果它们的
+            # claim_alert_time 没撤掉，就是永远不再提醒）。声音要大一点。
+            logger.exception('未接单提醒：撤回提醒标记失败，涉及的订单 %s 本轮不会再提醒', order_ids)
 
 
 def scan_once():
@@ -131,8 +129,7 @@ def scan_once():
     """
     global _next_retry_at
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = _pending_orders(conn)
         if not rows:
             return 0
@@ -141,8 +138,6 @@ def scan_once():
         # 看到的是一批已经占好的行，不会再挑中它们。
         claimed = [row for row in rows if _claim(conn, row['id'])]
         conn.commit()
-    finally:
-        conn.close()
 
     if not claimed:
         return 0
@@ -152,14 +147,12 @@ def scan_once():
 
     # 收件人在发信这一刻现算：管理员可能刚改了联系方式、刚被停用，
     # 缓存一份名单只会让通知发到一个已经不该收信的地方。
-    conn = get_db()
-    try:
-        recipients = alert_recipients(conn)
-    except Exception:
-        logger.exception('未接单提醒：解析收件人失败')
-        recipients = []
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            recipients = alert_recipients(conn)
+        except Exception:
+            logger.exception('未接单提醒：解析收件人失败')
+            recipients = []
 
     if send_mail(subject, compose_body(claimed, total), recipients, label='未接单提醒'):
         return total

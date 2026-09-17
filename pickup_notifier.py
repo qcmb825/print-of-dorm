@@ -42,7 +42,7 @@ from config import (CONTACT_LABELS, PAY_QR_FALLBACK_IMAGE, PAY_QR_FOLDER, PICKUP
                     PICKUP_NOTIFY_ENABLED, PICKUP_NOTIFY_INTERVAL,
                     PICKUP_NOTIFY_MAX_AGE_HOURS, PICKUP_NOTIFY_RETRY_BACKOFF,
                     ST_READY, logger)
-from db import get_db
+from db import db_conn
 from mail import (PAY_QR_CID, alert_recipients, compose_manual_body, compose_manual_subject,
                   compose_pickup_body, compose_pickup_html, compose_pickup_subject,
                   contact_mailbox, is_configured, send_mail, user_mailbox)
@@ -113,18 +113,16 @@ def _release(order_ids):
 
     仍然是 ST_READY 才撤：学生已经取走了的话，标记留着更好 —— 那单不需要再通知。
     """
-    conn = get_db()
-    try:
-        for order_id in order_ids:
-            conn.execute('UPDATE orders SET ready_notify_time = NULL '
-                         'WHERE id = ? AND status = ?', (order_id, ST_READY))
-        conn.commit()
-    except Exception:
-        # 这里失败意味着那些单要等到下一轮才可能被重新选中（如果凭证没撤掉，
-        # 就是永远不再通知）。声音要大一点。
-        logger.exception('取件提醒：撤回提醒标记失败，涉及的订单 %s 本轮不会再通知', order_ids)
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            for order_id in order_ids:
+                conn.execute('UPDATE orders SET ready_notify_time = NULL '
+                             'WHERE id = ? AND status = ?', (order_id, ST_READY))
+            conn.commit()
+        except Exception:
+            # 这里失败意味着那些单要等到下一轮才可能被重新选中（如果凭证没撤掉，
+            # 就是永远不再通知）。声音要大一点。
+            logger.exception('取件提醒：撤回提醒标记失败，涉及的订单 %s 本轮不会再通知', order_ids)
 
 
 def _pay_qr_path(conn, claimed_by):
@@ -233,8 +231,7 @@ def scan_once():
     failed = []
     sent = 0
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = _pending_orders(conn)
         if not rows:
             return 0
@@ -264,8 +261,6 @@ def scan_once():
 
         if manual:
             failed.extend(_notify_claimers(conn, manual))
-    finally:
-        conn.close()
 
     if failed:
         _release(failed)

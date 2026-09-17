@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import AUDIT_APPROVED, AUDIT_PENDING, ROSTER_DB_PATH, logger
-from db import get_db
+from db import db_conn
 from security import security_event
 
 
@@ -213,12 +213,9 @@ def check_registration(student_id, real_name):
                           '如果是本人改过名、或名单有误，可以提交身份审核申请', False)
 
     # 名单里没这个学号。机器到此为止，只能看有没有人已经人工核过。
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute(
             'SELECT status FROM audit_requests WHERE student_id = ?', (student_id,)).fetchone()
-    finally:
-        conn.close()
 
     if row is None:
         return GateResult(False, GATE_NOT_IN_ROSTER,
