@@ -2,6 +2,7 @@
 
 import re
 import uuid
+import zipfile
 import secrets
 
 from config import (
@@ -19,9 +20,11 @@ from config import (
     PRICE_RE,
     QQ_RE,
     REALNAME_RE,
+    ST_DONE,
     STATUS_CLOSED,
     STUDENT_ID_RE,
     WECHAT_RE,
+    logger,
 )
 
 
@@ -30,6 +33,103 @@ from config import (
 def allowed_file(filename):
     """按白名单校验扩展名，避免上传可执行文件。"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# 文件头（魔数）对照表：扩展名 -> (开头必须出现的字节, 写给人看的格式名)。
+#
+# 只认「文件开头就是它」，不做「前 N 字节里找一找」的宽松匹配 ——
+# 宽松匹配等于把绕过成本压到「在第 100 字节里塞一段魔数」。
+_FILE_SIGNATURES = {
+    'pdf': (b'%PDF-', 'PDF'),
+    'png': (b'\x89PNG\r\n\x1a\n', 'PNG'),
+    # JPEG 的 SOI 标记本身只有 FF D8 两字节，但紧跟其后的 JFIF/EXIF 段一律以 FF 开头，
+    # 所以真实文件的前三字节是 FF D8 FF。只认两字节的话，
+    # 一个恰好以 FF D8 开头的其它容器也会被当成图片。
+    'jpg': (b'\xff\xd8\xff', 'JPEG'),
+    'jpeg': (b'\xff\xd8\xff', 'JPEG'),
+    # .doc 是 OLE2 复合文档（Word 97-2003 和同期的 Excel / PowerPoint 共用一个容器格式），
+    # 文件头是固定的这 8 个字节。有一类「.doc」其实是 RTF 文本流（部分导出工具这么干），
+    # 会被这一关挡住；真碰上了应该往表里补 {\rtf，而不是把校验放宽成「不校验」。
+    'doc': (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1', 'OLE2 复合文档'),
+    # .docx 是 OOXML 的 zip 包，本地文件头固定以 PK\x03\x04 开头。
+    'docx': (b'PK\x03\x04', 'ZIP'),
+}
+
+# 反解压炸弹的两个阈值，给得刻意宽松：正常的 docx 里图片、字体本来就压不动，
+# 声明的解压总量和原文件差不多；能把这两个数同时顶爆的只有刻意做出来的包。
+# 一份 50MB 上限的文档声明解压出 300MB 已经很离谱；文本 XML 正常能压十几倍，
+# 200 倍的压缩比远超这个量级。
+_ZIP_MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
+_ZIP_MAX_RATIO = 200
+
+# 回给用户的话。里面不放任何内部细节（期望的魔数是什么、包里声明了多少字节都不能说）：
+# 那等于把「怎么绕过这一关」直接告诉对方，而这些话是要显示给学生看的。
+_SIGNATURE_MISMATCH_HINT = '文件内容与扩展名不符，请确认没有改名后上传'
+_BROKEN_ZIP_HINT = '这个文件内容异常或已损坏，请重新导出后再上传'
+
+
+def _zip_archive_error(path):
+    """把 zip 包（.docx）当成「像不像解压炸弹」看一眼，可疑返回错误信息，正常返回 None。
+
+    只查中央目录里**声明**的大小，不真的解压：解压就等于让攻击者拿几十 KB 的上传量
+    换我们这边几百 MB 的内存和磁盘 —— 那正是要躲开的事情。
+    代价是它挡不住「声明值造假」的老练对手：这是一道便宜的筛子，不是保险，
+    真正把关的地方在别处（打开文件的是接单人自己的机器）。
+
+    读中央目录的代价是一次目录读，不会把整个文件读进内存。
+    """
+    try:
+        with zipfile.ZipFile(path) as archive:
+            infos = archive.infolist()
+    except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError):
+        # 扩展名说是 zip 包，却连目录都读不出来：要么文件坏了，要么是改名来的。
+        return _BROKEN_ZIP_HINT
+    raw_total = sum(info.file_size for info in infos)
+    packed_total = sum(info.compress_size for info in infos)
+    if raw_total > _ZIP_MAX_UNCOMPRESSED_BYTES or (
+            packed_total > 0 and raw_total / packed_total > _ZIP_MAX_RATIO):
+        logger.warning('上传的 Office 文档像解压炸弹，已拒绝：声明解压 %s 字节 / 压缩包 %s 字节',
+                       raw_total, packed_total)
+        return _BROKEN_ZIP_HINT
+    return None
+
+
+
+def content_signature_error(path, ext):
+    """按扩展名核对文件头，返回要回给用户的错误信息；对得上（或判定不了）返回 None。
+
+    为什么光有扩展名白名单不够 —— 白名单管的是文件名，里面的字节它一个都不管：
+    把 .exe 改名成 .pdf 一样能过。而这份文件是**接单人必然会打开**的
+    （不打出来就没法完成这一单），等于把「名不副实」的东西直接送到别人的机器上。
+    系统管不了对方装没装杀软，至少要把这个最廉价的信号挡在门口。
+
+    只读开头那几个字节。单文件上限 50MB，为了看 8 个字节把整个文件读进内存，
+    等于给每个上传请求凭空加一份 50MB 的内存占用，被刷几下就能把进程顶爆。
+
+    ext 不在对照表里时放行：白名单之外的扩展名在更早的关卡就该被拒了，
+    漏到这里说明白名单新加了扩展名而对照表没跟上 —— 那种情况下不校验比拦错强，
+    拦错的表现是「正常文件突然传不上来」，而且没人知道是为什么。
+    """
+    entry = _FILE_SIGNATURES.get((ext or '').lower())
+    if entry is None:
+        return None
+    expected, kind = entry
+    try:
+        with open(path, 'rb') as fp:
+            head = fp.read(len(expected))
+    except OSError:
+        # 读不到就当作「判定不了」放行，不在这里编一个错误：这个函数只回答「像不像」，
+        # 读不了盘的异常留给后面如实报（那时候才知道该说「服务器问题」还是「文件问题」）。
+        return None
+    if head != expected:
+        # 日志里不带路径：沿项目惯例，服务器绝对路径不出现在任何对外文本里，
+        # 而这条 warning 只给运维看，知道是哪个扩展名、头几个字节是什么就够了。
+        logger.warning('上传文件内容与扩展名不符：扩展名=%s 期望=%s 实际文件头=%r',
+                       ext, kind, head)
+        return _SIGNATURE_MISMATCH_HINT
+    if (ext or '').lower() == 'docx':
+        return _zip_archive_error(path)
+    return None
 
 
 
@@ -81,9 +181,15 @@ def generate_pickup_code(conn, length=4):
     """生成不重复的数字取件码。"""
     for _ in range(50):
         code = ''.join(secrets.choice('0123456789') for _ in range(length))
-        if conn.execute('SELECT 1 FROM orders WHERE pickup_code = ?', (code,)).fetchone() is None:
+        if conn.execute(
+            'SELECT 1 FROM orders WHERE pickup_code = ? AND status <> ?',
+            (code, ST_DONE),
+        ).fetchone() is None:
             return code
     # 数字码极端冲突时退化成短码，保证下单不被卡住
+    logger.warning(
+        '取件码空间紧张：50 次随机数字码全部冲突，已回退为 uuid 前缀取件码（形态变化）'
+    )
     return uuid.uuid4().hex[:6].upper()
 
 

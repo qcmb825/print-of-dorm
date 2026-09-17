@@ -21,12 +21,13 @@
           meta.json      会话元数据（一次写入，之后只读）
           p000000        分片 0，写完后由 .tmp 原子改名而来
           p000001
-        <upload_id>.merging   正在合并；合并结束（成功或失败）即整目录删除
+        <upload_id>.lock   合并锁（文件）。O_CREAT|O_EXCL 抢占；
+                           持有者结束后删除；超过 MERGE_LOCK_STALE_SECONDS
+                           的残锁会被下一次提交接管
 
-分片文件先写成随机名的临时文件、再 os.replace 成 p000000，是为了**原子性**：
-如果直接往 p000000 里写，写到一半断线就会留下一个「看起来存在、其实不完整」的
-分片，续传时服务端会以为这片已经传完，最后合并出一个损坏的文件。
-这种错误只在慢网络下偶发，排查起来极其折磨人，所以从一开始就堵死。
+会话目录在合并期间原地不动，不再改名。.lock 是文件，不会被
+_UPLOAD_ID_RE（只认 <upload_id>）当成会话，也不会被 _cleanup_stale
+（只处理目录）当作会话目录清理。
 
 meta.json 里记着 user_id，所有操作都要比对，别人的 upload_id 猜到了也用不了。
 """
@@ -48,14 +49,15 @@ from config import (
     UPLOAD_FOLDER,
     logger,
 )
-from security import client_ip, hit_limit, security_event
-from db import get_db
-from utils import allowed_file, parse_copies
+from security import client_ip, hit_limit, rate_limited, security_event
+from db import db_conn
+from utils import allowed_file, content_signature_error, parse_copies
 
 from .orders import (
     UPLOAD_MAX_IN_WINDOW,
     UPLOAD_WINDOW_SECONDS,
     create_order_from_saved_file,
+    quota_rejection,
     resolve_print_options,
 )
 
@@ -82,6 +84,11 @@ INIT_MAX_IN_WINDOW = 30
 PART_MAX_IN_WINDOW = 240
 INIT_WINDOW_SECONDS = 60
 PART_WINDOW_SECONDS = 60
+
+# 合并锁多久算「持有者已经不在了」。正常合并 50MB 顶多几十秒，
+# 取一小时是「任何还活着的合并都不可能这么久」的保守上界：
+# 超过它的锁一定是崩溃留下的残骸，允许下一次提交直接接管。
+MERGE_LOCK_STALE_SECONDS = 3600
 
 CHUNK_ROOT = os.path.join(UPLOAD_FOLDER, '.chunks')
 
@@ -112,6 +119,89 @@ def _expected_part_size(meta, index):
 
 def _session_dir(upload_id):
     return os.path.join(CHUNK_ROOT, upload_id)
+
+
+def _lock_path(upload_id):
+    """合并锁在磁盘上的位置。
+
+    刻意用「会话 id + .lock」这个独立文件，而不是把会话目录本身搬走：
+    搬目录当锁，等于把「锁被占着」和「数据不在了」变成同一件事，
+    而这两件事必须分得开 —— 抢不到锁的人不该看到、更不该碰到别人的数据。
+    """
+    return os.path.join(CHUNK_ROOT, upload_id + '.lock')
+
+
+def _merge_lock_is_stale(lock_path):
+    """锁是不是「持有者早就不在了」的残锁。
+
+    只有时间这一个判据：正常合并 50MB 顶多几十秒，超过 MERGE_LOCK_STALE_SECONDS
+    还没放掉的锁，持有它的进程一定已经不在了（被 kill、断电、容器重启）。
+    读不到 mtime 时返回 False —— 宁可多挡一次提交，也不去抢一把可能还活着的锁。
+    """
+    try:
+        return time.time() - os.path.getmtime(lock_path) >= MERGE_LOCK_STALE_SECONDS
+    except OSError:
+        return False
+
+
+def _try_create_lock(lock_path):
+    """独占创建锁文件。成功返回 True，已被占用返回 False。
+
+    其它 OSError（权限、磁盘满）原样抛出：创建锁失败和「别人正在合并」
+    是两件完全不同的事，混成一句话会让运维拿着并发问题去查磁盘。
+
+    为什么用 O_CREAT|O_EXCL 而不是「先 os.path.exists 再动手」：
+    后者的两半之间隔着一段窗口，两个请求可以双双通过检查再一起动手，
+    而独占创建在内核里就是原子的，只有一个能成功。
+    """
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        # 内容只为人排查（谁、什么时候拿的锁），写不进去不影响抢占结果
+        os.write(fd, ('%s %s' % (os.getpid(), int(time.time()))).encode('ascii'))
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+    return True
+
+
+def _acquire_merge_lock(upload_id):
+    """抢「合并权」，返回 (lock_path, busy)。busy 为真表示别人正在合并。
+
+    被挡住之后还要分辨一次：是「有人正在合并」（如实回 409），
+    还是「上次崩溃留下的残锁」（必须能自愈）。残锁放着不管的话，
+    这份上传会被永久挡在「正在处理中」外面，只能等 24 小时过期、
+    或者用户自己取消重传 —— 那等于把一次崩溃的成本转嫁给用户。
+    """
+    lock_path = _lock_path(upload_id)
+    if _try_create_lock(lock_path):
+        return lock_path, False
+    if not _merge_lock_is_stale(lock_path):
+        return None, True
+    logger.warning('发现过期的合并锁，接管 upload_id=%s: %s', upload_id, lock_path)
+    try:
+        os.remove(lock_path)
+    except OSError:
+        return None, True
+    if _try_create_lock(lock_path):
+        return lock_path, False
+    # 清掉残锁和重新创建之间被人抢先，属于正常竞争，照实回「正在处理中」
+    return None, True
+
+
+def _release_merge_lock(lock_path):
+    """放锁。
+
+    删不掉只记 warning：锁会留到过期后被下一次提交接管，期间这份上传一直
+    提示「正在处理中」——不理想，但已经完成的这次合并不受影响。
+    """
+    try:
+        os.remove(lock_path)
+    except OSError:
+        logger.warning('删除合并锁失败，这份上传在锁过期前会一直提示「正在处理中」: %s', lock_path)
 
 
 def _read_meta(session_dir):
@@ -179,6 +269,31 @@ def _cleanup_stale(reason):
     return removed
 
 
+def _session_bytes(session_dir):
+    """一个会话目录此刻实际占了多少字节。
+
+    按目录里的**实际字节**数，不按 meta 里声明的大小：声明值是客户端送来的，
+    而这里要回答的是「盘已经被占掉多少」，在传到一半的会话上这两个数差得很远
+    —— 按声明值算的话，一个几乎没开始传的会话会被当成已经占满了额度。
+
+    会话目录是平铺的（meta.json + p000000…，外加中断留下的临时文件），
+    扫一层就够。扫不动（会话刚被别的请求清掉）就按 0 算，
+    它本来也已经不占盘了。
+    """
+    total = 0
+    try:
+        with os.scandir(session_dir) as entries:
+            for entry in entries:
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        return 0
+    return total
+
+
+
 def _pending_of_user(user_id):
     """列出这个账号还没传完的会话（按创建时间倒序）。"""
     result = []
@@ -189,8 +304,9 @@ def _pending_of_user(user_id):
     except OSError:
         return result
     for name in names:
-        # 名字必须是合法 upload_id：正在合并的 <id>.merging 目录里同样有 meta.json，
-        # 不过滤的话会把一份正在处理的上传当成「未完成」推给前端。
+        # 名字必须是合法 upload_id：合并锁是 <id>.lock（带点号，这个正则认不出来），
+        # 不过滤的话会把它当成一份未完成的会话推给前端。合并期间会话目录本身
+        # 原地不动，所以「正在合并」的那份仍然会出现在这个列表里 —— 这正是想要的。
         if not _UPLOAD_ID_RE.match(name):
             continue
         meta = _read_meta(os.path.join(CHUNK_ROOT, name))
@@ -271,10 +387,10 @@ def api_chunk_init():
     然后按片往 /api/upload/chunked/<upload_id>/<index> 上传。
     """
     if hit_limit('chunkinit:%s' % g.user['id'], INIT_MAX_IN_WINDOW, INIT_WINDOW_SECONDS):
-        security_event('chunk_init_rate_limited',
-                       '账号 %s 在 %s 秒内开启了超过 %s 次分片上传'
-                       % (g.user['nickname'], INIT_WINDOW_SECONDS, INIT_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '上传太频繁了，稍等一会儿再试'}), 429
+        return rate_limited('chunk_init_rate_limited',
+                            '账号 %s 在 %s 秒内开启了超过 %s 次分片上传'
+                            % (g.user['nickname'], INIT_WINDOW_SECONDS, INIT_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
 
     _cleanup_stale('init')
 
@@ -331,6 +447,20 @@ def api_chunk_init():
             'msg': '你还有 %s 份没传完的文件，请先把它们传完或取消，再来上传新的'
                    % len(pending)
         }), 429
+
+    # 上面那条挡的是会话**数量**，挡不住「三份都是 50MB」—— 而分片恰恰是
+    # 这个系统里唯一能把大文件写进磁盘的路（单片直传有 MAX_CONTENT_LENGTH 顶着，
+    # 分片是合法地绕开它）。所以按字节再拦一道，和直传共用同一个上限。
+    # 已经在传的会话按实际字节算，新会话按声明大小算（它还没落盘）。
+    #
+    # 分片 PUT 时不再查一遍：一次会话的总量在 init 就已经按 size 全算进来了
+    # （每片的期望大小在 PUT 里逐个核对、合并时还要复核），中途涨不出这个数。
+    # 放在「续传」分支之后也是有意的：续传不会新占额度，
+    # 把人挡在这里只会让他完不成、额度也退不掉。
+    in_flight = sum(_session_bytes(_session_dir(uid)) for uid, _meta in pending)
+    quota_error = quota_rejection(in_flight + size)
+    if quota_error is not None:
+        return quota_error
 
     total_chunks = (size + CHUNK_SIZE - 1) // CHUNK_SIZE
     upload_id = secrets.token_urlsafe(18)
@@ -399,10 +529,10 @@ def api_chunk_put(upload_id, index):
     这时回一个错误只会让前端以为传丢了、再重试——白折腾一圈。
     """
     if hit_limit('chunkpart:%s' % g.user['id'], PART_MAX_IN_WINDOW, PART_WINDOW_SECONDS):
-        security_event('chunk_part_rate_limited',
-                       '账号 %s 在 %s 秒内上传超过 %s 个分片'
-                       % (g.user['nickname'], PART_WINDOW_SECONDS, PART_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '上传太频繁了，稍等一会儿再试'}), 429
+        return rate_limited('chunk_part_rate_limited',
+                            '账号 %s 在 %s 秒内上传超过 %s 个分片'
+                            % (g.user['nickname'], PART_WINDOW_SECONDS, PART_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
 
     session_dir, meta, failure = _load_session(upload_id)
     if failure is not None:
@@ -456,7 +586,7 @@ def api_chunk_put(upload_id, index):
             raise ValueError('实际收到 %s 字节，期望 %s 字节' % (written, expected))
         # 只有确认写全了才改名成正式分片名，这一步是原子的
         os.replace(tmp_path, part_path)
-    except Exception:
+    except ValueError:
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -465,6 +595,24 @@ def api_chunk_put(upload_id, index):
         logger.warning('分片上传失败 upload_id=%s 第 %s 片：写入 %s 字节 / 期望 %s 字节 ip=%s',
                        upload_id, index, written, expected, client_ip())
         return jsonify({'code': 1, 'msg': '分片上传失败，请重试'}), 400
+    except OSError:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        logger.exception('分片写入失败 upload_id=%s 第 %s 片 ip=%s',
+                         upload_id, index, client_ip())
+        return jsonify({'code': 1, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        logger.exception('分片写入失败 upload_id=%s 第 %s 片 ip=%s',
+                         upload_id, index, client_ip())
+        return jsonify({'code': 1, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
 
     return jsonify({
         'code': 0,
@@ -480,10 +628,10 @@ def api_chunk_complete(upload_id):
     # 分片请求不计入上传频控（一次上传本来就有好几片），但「下单」这件事要计，
     # 而且和单片直传共用同一个计数器：不管走哪条路，一分钟能下多少单是同一个额度。
     if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
-        security_event('upload_rate_limited',
-                       '账号 %s 在 %s 秒内提交超过 %s 次上传'
-                       % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '上传太频繁了，稍等一会儿再试'}), 429
+        return rate_limited('upload_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次上传'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
 
     session_dir, meta, failure = _load_session(upload_id)
     if failure is not None:
@@ -505,36 +653,38 @@ def api_chunk_complete(upload_id):
     copies, error = parse_copies(data.get('copies'))
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    options_conn = get_db()
-    try:
+    with db_conn() as options_conn:
         paper, error = resolve_print_options(options_conn, data)
-    finally:
-        options_conn.close()
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    # 用「把整个会话目录改名」当互斥锁：同一份上传被点两次提交（或者前端超时重试），
-    # 只有一个请求能改成功，另一个立刻失败退出。改名是原子操作，比拿锁文件可靠，
-    # 也不会留下需要超时回收的锁。
-    merging_dir = session_dir + '.merging'
-    if os.path.exists(merging_dir):
-        # 上次合并中途进程被杀，留下的残骸。它一定是垃圾（合并结果要么已经落库、
-        # 要么已经删掉），所以直接清掉再抢锁。
-        shutil.rmtree(merging_dir, ignore_errors=True)
+    # 抢合并权。
+    #
+    # 原先的写法是「把整个会话目录改名成 <id>.merging」来当锁：发现 .merging
+    # 存在就把它 rmtree 掉，理由是「那一定是上次被杀留下的残骸」。两个人同时点
+    # 提交（或前端超时重试）时，后到的那一方会先删掉前一方正在读的目录，再发现
+    # 会话目录已经不在了 —— 结果两边都失败，而用户传了半天的分片一条不剩。
+    # 改名本身确实是原子的，问题出在它前面那句「先清掉残骸」。
+    #
+    # 锁文件把「占住位置」和「动数据」拆成了两件事：抢不到的人只拿到一个 409，
+    # 碰不到别人的任何数据；会话目录也不再中途消失，进程被杀不会留下残骸。
     try:
-        os.replace(session_dir, merging_dir)
-    except OSError:
-        logger.warning('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
+        lock_path, busy = _acquire_merge_lock(upload_id)
+    except OSError as exc:
+        logger.exception('创建合并锁失败 upload_id=%s：%s', upload_id, exc)
+        return jsonify({'code': 1, 'msg': '服务器暂时无法处理这份上传，请稍后重试'}), 500
+    if busy:
+        # 重复提交是常见操作（双击、超时重试），不是攻击，记 INFO
+        logger.info('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
         return jsonify({'code': 409, 'msg': '这份上传正在处理中，请勿重复提交'}), 409
 
     ext = meta['filename'].rsplit('.', 1)[1].lower()
     final_path = os.path.join(UPLOAD_FOLDER, '%s.%s' % (uuid.uuid4().hex, ext))
     try:
-        received = set(_received_indexes(merging_dir))
+        received = set(_received_indexes(session_dir))
         missing = [i for i in range(meta['total_chunks']) if i not in received]
         if missing:
-            # 把目录改回去，用户接着把那几片传完就行，不用从头开始
-            os.replace(merging_dir, session_dir)
+            # 会话目录原地没动过，用户把那几片补上再提交就行，不用从头开始
             return jsonify({
                 'code': 1,
                 'msg': '还有 %s 个分片没有收到，请继续上传' % len(missing),
@@ -543,7 +693,7 @@ def api_chunk_complete(upload_id):
 
         with open(final_path, 'wb') as out:
             for index in range(meta['total_chunks']):
-                part_path = os.path.join(merging_dir, _part_name(index))
+                part_path = os.path.join(session_dir, _part_name(index))
                 # 每片的大小都要对得上 —— 前面收分片时已经查过一遍，
                 # 这里再查是因为「文件被别人动过」和「磁盘写满」都只会在这一刻暴露。
                 actual = os.path.getsize(part_path)
@@ -556,6 +706,22 @@ def api_chunk_complete(upload_id):
         merged_size = os.path.getsize(final_path)
         if merged_size != meta['size']:
             raise ValueError('合并后 %s 字节，声明的是 %s 字节' % (merged_size, meta['size']))
+
+        # 内容校验只能放在这一刻：init 时手上只有文件名和声明的大小，
+        # 里面装的是什么字节，要到分片拼成一个完整文件之后才看得到。
+        content_error = content_signature_error(final_path, ext)
+        if content_error is not None:
+            security_event('upload_content_mismatch',
+                           '分片上传 upload_id=%s 文件「%s」的内容与扩展名 %s 不符'
+                           % (upload_id, meta['filename'][:80], ext))
+            # 整份丢掉，会话目录也一起清：这份文件里有问题的字节是接单人**必然会打开**的，
+            # 留一份在盘上等人点开，正是要防的那件事；而同样的内容再合并一次也不会变得合规。
+            try:
+                os.remove(final_path)
+            except OSError:
+                logger.warning('清理内容校验失败的合并文件失败: %s', final_path)
+            shutil.rmtree(session_dir, ignore_errors=True)
+            return jsonify({'code': 1, 'msg': content_error}), 400
 
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——取件码重摇、失败清理都只有一份实现。
@@ -570,11 +736,15 @@ def api_chunk_complete(upload_id):
                 logger.warning('清理合并失败的文件失败: %s', final_path)
         logger.exception('分片合并失败 upload_id=%s 文件=%s 用户=%s ip=%s',
                          upload_id, meta['filename'], g.user['nickname'], client_ip())
+        # 分片仍然清掉：失败的会话本来就已经不可用（分片可能被读坏了），
+        # 让用户重传比留个再也合不上的残骸更干净。与改动前同一口径。
+        shutil.rmtree(session_dir, ignore_errors=True)
         return jsonify({'code': 1, 'msg': '文件合并失败，请重新上传'}), 500
+    else:
+        # 分片已经在合并结果里了，留着没有意义
+        shutil.rmtree(session_dir, ignore_errors=True)
     finally:
-        # 分片已经在合并结果里了，留着没有意义。成功失败都清掉：
-        # 失败的会话本来就已经不可用（分片可能被读坏了），让用户重传比留个残骸更干净。
-        shutil.rmtree(merging_dir, ignore_errors=True)
+        _release_merge_lock(lock_path)
 
     logger.info('分片上传完成（合并 -> 订单 #%s）upload_id=%s 用户=%s 文件=%s 大小=%sKB '
                 '共 %s 片 取件码=%s ip=%s',
@@ -599,7 +769,18 @@ def api_chunk_cancel(upload_id):
     session_dir, meta, failure = _load_session(upload_id)
     if failure is not None:
         return failure
+    lock_path = _lock_path(upload_id)
+    if os.path.exists(lock_path) and not _merge_lock_is_stale(lock_path):
+        # 合并正在进行的那几秒里取消，等于把目录从合并过程脚下抽走。
+        # 等一下就好，所以给 409 而不是硬删。
+        return jsonify({'code': 409, 'msg': '这份上传正在处理中，请稍后再取消'}), 409
     shutil.rmtree(session_dir, ignore_errors=True)
+    # 锁文件顺手清掉：它还可能是崩溃留下的残锁，而「取消」正是用户遇到
+    # 「一直提示正在处理中」时唯一的自救入口 —— 不清的话他就卡在这儿了。
+    try:
+        os.remove(lock_path)
+    except OSError:
+        pass
     logger.info('用户取消分片上传 upload_id=%s 用户=%s 文件=%s ip=%s',
                 upload_id, g.user['nickname'], meta.get('filename'), client_ip())
     return jsonify({'code': 0, 'msg': '已取消这份上传'})

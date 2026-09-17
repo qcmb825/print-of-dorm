@@ -39,10 +39,11 @@ from config import (
     public_role,
     public_role_label,
 )
-from db import find_paper_type, find_preset, get_db, insert_order_row, log_order_event
+from db import (db_conn, find_paper_type, find_preset, get_db, insert_order_row,
+                log_order_event)
 from mail import contact_mailbox
-from security import audit_action, client_ip, hit_limit, security_event
-from utils import (allowed_file, display_name, mask_nickname,
+from security import audit_action, client_ip, hit_limit, rate_limited, security_event
+from utils import (allowed_file, content_signature_error, display_name, mask_nickname,
                    parse_copies, parse_price, positive_int)
 
 bp = Blueprint('orders', __name__)
@@ -53,6 +54,89 @@ bp = Blueprint('orders', __name__)
 # 数字给得比较宽松，正常一口气传十几份材料也碰不到它。
 UPLOAD_WINDOW_SECONDS = 60
 UPLOAD_MAX_IN_WINDOW = 20
+
+# 每账号「在盘总量」上限：还没被接单的订单文件 + 未完成分片会话已占的字节，合计不得超过它。
+#
+# 为什么频控之外还要这一个 —— 频控限的是「多快」，不限制「一共写进去了多少」：
+# 20 次/分钟 × 单文件上限 50MB，就是 1GB/分钟的持续写入量，挂一晚上足够写满一块盘；
+# 而盘满的后果不只是上传失败，SQLite 连写日志都写不下去，全站跟着不可用。
+# 换成按「还没处理掉的量」设限之后，这个数就直接等于「一个人最坏能占住多少盘」，
+# 运维可以拿它算容量；用户那边也有明确的解法（等接单 / 撤单 / 放弃上传），
+# 而不是只能干等一个「稍后再试」。
+#
+# 取 500MB 的量级：正常用户同时压在手里的未处理文件也就一两份材料（≤100MB），
+# 离它还远；对刷盘的人则是一堵必须先把旧的清掉才能过的墙，
+# 不像速率限制那样「停一会儿再刷」就能继续堆。
+QUOTA_MAX_BYTES = 500 * 1024 * 1024
+
+
+def pending_disk_bytes(user_id):
+    """这个账号「还没被接单的订单文件」在盘上占了多少字节。
+
+    只算未接单的：接了单的文件马上要打出来、被取走，属于正常周转；
+    会一直堆下去的只有「下了单、没人接」这一档。
+    口径和撤回订单完全一致（claimed_by IS NULL 且不是已取件），因为能被撤回的单
+    正是能被反复重下、反复占盘的那批；两个口径一旦不一致，就会出现
+    「撤回按钮亮着、配额却认为这些单不该算」这种自相矛盾。
+
+    文件已经不在盘上的（运维清理、误删）按 0 算：它本来就不占空间，
+    不能因为库里还留着一条记录就把人挡在门外。
+    """
+    with db_conn() as conn:
+        rows = conn.execute(
+            'SELECT file_path FROM orders WHERE user_id = ? AND claimed_by IS NULL AND status <> ?',
+            (user_id, ST_DONE)).fetchall()
+    total = 0
+    for row in rows:
+        if not row['file_path']:
+            continue  # 预设服务下的单没有文件（file_path 是空串）
+        try:
+            total += os.path.getsize(row['file_path'])
+        except OSError:
+            continue
+    return total
+
+
+
+def quota_rejection(extra_bytes=0):
+    """在盘总量（订单文件 + extra_bytes）超过上限就返回 (响应, 429)，没超返回 None。
+
+    extra_bytes 是「这次请求马上要追加的量」：直传是刚落盘那份文件的大小，
+    分片 init 是客户端声明的大小。拒绝时说的话、留的痕都在这里出一份 ——
+    两处各写一套的话，同一件事会有两种说法（一边说「文件太大」一边说「配额满了」），
+    用户照着哪一种都做不对，运维查日志也要多认一套关键词。
+
+    只回「拒绝响应还是 None」这一种形状：调用方在两条分支上取到的东西必须一样，
+    否则会出现「拒绝时返回的是 200」这种只在配额满的时候才发作的错，
+    平时测不出来。
+
+    这是**软上限**：检查和落盘之间没有锁，几个请求同时进来可以一起挤过边界，
+    最坏多占「并发数 × 单文件上限」。它要解决的是「不让刷盘的人长期堆下去」，
+    不是精确到字节的账 —— 要做到精确就得把上传路径串行化，
+    那个代价比边界上多占几十 MB 大得多。
+    """
+    try:
+        used = pending_disk_bytes(g.user['id']) + max(0, int(extra_bytes or 0))
+    except sqlite3.Error:
+        # 读不出用量就不拦。额度是防护，不是功能本身：不能因为它把上传整体变成 500，
+        # 而分片那条路本来一次库都不查，在这里抛出去连 JSON 都不是。
+        # 真到了库读不出来的地步，后面落库那一步会如实报错，不差这一道。
+        logger.warning('查在盘总量失败，本次不做配额判断：账号 %s', g.user['id'])
+        return None
+    if used <= QUOTA_MAX_BYTES:
+        return None
+    limit_mb = QUOTA_MAX_BYTES // (1024 * 1024)
+    # 单独留一条安全事件：正常用户碰不到这个上限，撞上它的多半是在刷盘，
+    # 而这类「缓慢但持续」的写盘不会触发任何速率告警，只能靠这条发现。
+    security_event('upload_quota_exceeded',
+                   '账号 %s 在盘总量 %sMB 超过每账号 %sMB 上限（未接单订单文件 + 未完成分片）'
+                   % (g.user['nickname'], used // (1024 * 1024), limit_mb))
+    return jsonify({
+        'code': 429,
+        'msg': '你存在服务器上、还没处理的文件已占满配额（每账号 %sMB）。'
+               '请等已有订单被接单，或撤回旧订单 / 放弃没传完的上传，再来上传'
+               % limit_mb,
+    }), 429
 
 
 def log_event(order_id, action, detail='', conn=None):
@@ -379,10 +463,10 @@ def resolve_print_options(conn, data):
 def api_upload():
     # 频控放在最前面：还没碰磁盘就把它拦掉，被刷的时候连文件都不会落盘
     if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
-        security_event('upload_rate_limited',
-                       '账号 %s 在 %s 秒内提交超过 %s 次上传'
-                       % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '上传太频繁了，稍等一会儿再试'}), 429
+        return rate_limited('upload_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次上传'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
 
     # 先收文件和参数，缺参数返回 400 而不是 500
     file = request.files.get('file')
@@ -401,11 +485,8 @@ def api_upload():
         return jsonify({'code': 400, 'msg': error}), 400
 
     # 纸张要查库，所以放后面一起做，别为了早而早把校验顺序搞得七零八落
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         paper, error = resolve_print_options(conn, request.form)
-    finally:
-        conn.close()
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
@@ -425,6 +506,12 @@ def api_upload():
     save_path = os.path.join(UPLOAD_FOLDER, new_filename)
 
     try:
+        # 动磁盘之前先按「在盘总量」拦一道。已经超额的人连文件都不该落盘：
+        # 等到写完再说，等于拿磁盘替被拒绝的请求付一遍代价（刷盘的正是这种人）。
+        quota_error = quota_rejection()
+        if quota_error is not None:
+            return quota_error
+
         file.save(save_path)
         file_size = os.path.getsize(save_path)
         if file_size == 0:
@@ -432,9 +519,37 @@ def api_upload():
             # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
             os.remove(save_path)
             return jsonify({'code': 1, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
+
+        # 扩展名白名单只约束了文件名，证明不了里面装的是什么 ——
+        # 而这份文件接单人一定会打开，改名过来的可执行体不能靠「他没双击」来防。
+        content_error = content_signature_error(save_path, ext)
+        if content_error is not None:
+            os.remove(save_path)
+            security_event('upload_content_mismatch',
+                           '文件「%s」的内容与扩展名 %s 不符' % (original_name[:80], ext))
+            return jsonify({'code': 1, 'msg': content_error}), 400
+
+        # 落盘后按真实大小再核一次：请求体里这份文件多大，事前拿不到准数
+        # （multipart 的 Content-Length 是整个请求的大小，不是文件的）。
+        # 只做上面那道检查的话，卡在边界上的人每传一次就能多占一份文件、永远挤得过。
+        quota_error = quota_rejection(file_size)
+        if quota_error is not None:
+            os.remove(save_path)
+            return quota_error
+
         order_id, pickup_code = create_order_from_saved_file(
             original_name, save_path, color, duplex, remark, copies, paper)
     except Exception:
+        # 落盘之后任何一步失败都不能把文件留在盘上：这些文件没有任何订单引用，
+        # 也没有哪个清理任务会碰到它们（清理只认订单），只会一直堆着；
+        # 上传频控允许一分钟 20 次，刷起来很快就不是「几个残留」的量级。
+        # create_order_from_saved_file 失败时自己已经删过一次，这里判存在再删，
+        # 重复走到也不会出问题；删不掉只记 warning —— 它不该盖住上面那个真正的错误。
+        if os.path.exists(save_path):
+            try:
+                os.remove(save_path)
+            except OSError:
+                logger.warning('清理上传失败的文件失败: %s', save_path)
         logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 1, 'msg': '上传失败，请稍后重试'}), 500
@@ -468,10 +583,10 @@ def api_create_preset_order():
     # 频控和上传共用一个计数器：不管走哪条路，一分钟能下多少单是同一个额度。
     # 分成两个计数器的话，两边各刷一半就等于额度翻倍。
     if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
-        security_event('preset_order_rate_limited',
-                       '账号 %s 在 %s 秒内提交超过 %s 次下单'
-                       % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW))
-        return jsonify({'code': 429, 'msg': '提交太频繁了，稍等一会儿再试'}), 429
+        return rate_limited('preset_order_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次下单'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '提交太频繁了，稍等一会儿再试')
 
     if request.files:
         # 用了预设服务就不能再传文件。带文件来的一律拒掉，
@@ -493,24 +608,22 @@ def api_create_preset_order():
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    conn = get_db()
-    try:
-        preset = find_preset(conn, preset_id)
-        if preset is None:
-            return jsonify({'code': 400, 'msg': '这个预设服务不存在了，刷新页面重新选择'}), 400
-        if preset['is_active'] != 1:
-            # 页面打开着、管理员刚好把它停用了。明确说清楚，别让学生以为是系统坏了。
-            return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，刷新页面重新选择'}), 400
-        paper, error = resolve_print_options(conn, data)
-        if error:
-            return jsonify({'code': 400, 'msg': error}), 400
-        order_id, pickup_code = create_preset_order(preset, copies, paper, color, duplex, remark)
-    except Exception:
-        logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
-                         g.user['nickname'], preset_id, client_ip())
-        return jsonify({'code': 1, 'msg': '下单失败，请稍后重试'}), 500
-    finally:
-        conn.close()
+    with db_conn() as conn:
+        try:
+            preset = find_preset(conn, preset_id)
+            if preset is None:
+                return jsonify({'code': 400, 'msg': '这个预设服务不存在了，刷新页面重新选择'}), 400
+            if preset['is_active'] != 1:
+                # 页面打开着、管理员刚好把它停用了。明确说清楚，别让学生以为是系统坏了。
+                return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，刷新页面重新选择'}), 400
+            paper, error = resolve_print_options(conn, data)
+            if error:
+                return jsonify({'code': 400, 'msg': error}), 400
+            order_id, pickup_code = create_preset_order(preset, copies, paper, color, duplex, remark)
+        except Exception:
+            logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
+                             g.user['nickname'], preset_id, client_ip())
+            return jsonify({'code': 1, 'msg': '下单失败，请稍后重试'}), 500
 
     logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies,
@@ -582,8 +695,7 @@ def api_orders():
         params.append(int(preset))
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # COUNT 也要带上 owner 那份 JOIN —— 筛选条件现在就用到它了（按昵称 / 姓名 /
         # 宿舍 / 联系方式搜）。只给下面取行的语句加 JOIN 的话，一搜索就是
         # sqlite3.OperationalError: no such column: owner.nickname，
@@ -593,8 +705,6 @@ def api_orders():
         rows = conn.execute(
             _ORDER_SELECT + where_sql + ' ORDER BY o.id DESC LIMIT ? OFFSET ?',
             (*params, size, (page - 1) * size)).fetchall()
-    finally:
-        conn.close()
 
     orders = decorate_orders(rows, g.user['id'], g.user['role'] == ROLE_SUPER)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
@@ -614,8 +724,7 @@ def api_orders():
 @bp.route('/api/order/<int:order_id>/detail')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_order_detail(order_id):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('''
             SELECT o.id, o.filename, o.file_path, o.color_type, o.duplex, o.remark,
                    o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
@@ -681,8 +790,6 @@ def api_order_detail(order_id):
             WHERE l.order_id = ?
             ORDER BY l.id DESC
         ''', (order_id,)).fetchall()
-    finally:
-        conn.close()
 
     logs = []
     for item in log_rows:
@@ -726,8 +833,7 @@ def api_price_order(order_id):
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute(
             'SELECT status, price, claimed_by FROM orders WHERE id = ?', (order_id,)).fetchone()
         if row is None:
@@ -748,39 +854,82 @@ def api_price_order(order_id):
                            % (order_id, row['claimed_by']))
             return jsonify({'code': 403, 'msg': '这单是别人接的，只有接单人能给它计费'}), 403
 
+        # 归属写法按角色分两套：普通管理员只能给自己接的单定价，超管可以代改
+        # （与上面那处 403 判断同一口径）。两套都要求「确实有人接着」——
+        # 单子退回待接单池之后，不该再有人往它上面填金额。
+        #
+        # 为什么这些条件必须进 WHERE、而不能只留在上面的 if 里：
+        # 接单与释放**都不改 status**（各自看 :645 与 :698），所以「换了个接单人」
+        # 在状态上完全看不出来 —— 这正是原来看不见的那个缺口。而改价那条 UPDATE
+        # 原本连状态都不带，中间被人推成「已取件」也照样写得进去。
+        # 检查与写入之间那个空隙里发生的事，写入语句是看不见的；
+        # 把条件交给数据库，这一句本身就是原子判断。
+        if g.user['role'] == ROLE_SUPER:
+            owner_clause, owner_args = 'claimed_by IS NOT NULL', ()
+        else:
+            owner_clause, owner_args = 'claimed_by = ?', (g.user['id'],)
+
         if row['status'] == ST_UNPRICED:
             # 两个管理员同时打开这单是正常的。条件写进 WHERE，让数据库来判谁先到，
             # 而不是「先 SELECT 判一下、再 UPDATE」—— 那中间有个空隙，
             # 两个人会双双通过检查，后写的把先写的金额直接盖掉。
-            cursor = conn.execute('''
-                UPDATE orders
-                SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP,
-                    status = ?, update_time = CURRENT_TIMESTAMP
-                WHERE id = ? AND status = ?
-            ''', (amount, g.user['id'], ST_PENDING, order_id, ST_UNPRICED))
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return jsonify({'code': 409, 'msg': '这单刚被别人计过费了，刷新看看'}), 409
+            cursor = conn.execute(
+                'UPDATE orders '
+                'SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP, '
+                '    status = ?, update_time = CURRENT_TIMESTAMP '
+                'WHERE id = ? AND status = ? AND ' + owner_clause,
+                (amount, g.user['id'], ST_PENDING, order_id, ST_UNPRICED) + owner_args)
             action, reply = 'price_order', f'已计费 {amount:.2f} 元，可以开始打印了'
             log_action = ORDER_LOG_PRICE
             log_detail = f'核定金额 {amount:.2f} 元，订单进入「{ST_PENDING}」'
         else:
-            conn.execute('''
-                UPDATE orders
-                SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP,
-                    update_time = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (amount, g.user['id'], order_id))
+            # 改价要多对上两个值才认：
+            #   状态 —— 否则可能改到一张在这中间被推成「已取件」的单上，
+            #          而「事后改一笔已经结清的钱」正是这条接口最该挡住的事；
+            #   原价 —— 否则并发改价就是 last-write-wins，而留痕里那句
+            #          「从多少改成多少」记的是我们读到的旧值，那个值
+            #          可能压根没在库里存在过。
+            # 对不上就 rowcount=0，走下面统一的分支如实回话。
+            cursor = conn.execute(
+                'UPDATE orders '
+                'SET price = ?, priced_by = ?, price_time = CURRENT_TIMESTAMP, '
+                '    update_time = CURRENT_TIMESTAMP '
+                'WHERE id = ? AND status = ? AND price IS ? AND ' + owner_clause,
+                (amount, g.user['id'], order_id, row['status'], row['price']) + owner_args)
             action, reply = 'reprice_order', f'金额已改为 {amount:.2f} 元'
             log_action = ORDER_LOG_REPRICE
             # 把「从多少改成多少」写进留痕：改价次数多了以后，只有最终金额
             # 根本看不出中间被改过几回，而标错一位数是常事（30 打成 300）。
             log_detail = ('金额 %.2f 元 → %.2f 元' % (row['price'], amount)
                           if row['price'] is not None else f'核定金额 {amount:.2f} 元')
+
+        if cursor.rowcount == 0:
+            # 条件没命中，说明这单在我们读它之后被人动过。回滚后重新看一眼，
+            # 把「到底为什么没改成」如实说出来 —— 笼统回一句「操作失败」的话，
+            # 管理员只会对着同一件事反复重试，而这单的问题并不在他手上。
+            conn.rollback()
+            latest = conn.execute(
+                'SELECT status, claimed_by FROM orders WHERE id = ?', (order_id,)).fetchone()
+            if latest is None:
+                return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+            if latest['status'] == ST_DONE:
+                return jsonify({'code': 400, 'msg': '订单已取件，不能再改金额'}), 400
+            if latest['claimed_by'] is None:
+                return jsonify({'code': 400, 'msg': '这单已经退回待接单池，请先接单再定价'}), 400
+            if latest['claimed_by'] != g.user['id'] and g.user['role'] != ROLE_SUPER:
+                other = conn.execute('SELECT nickname FROM users WHERE id = ?',
+                                     (latest['claimed_by'],)).fetchone()
+                name = other['nickname'] if other else '其他账户'
+                security_event('price_denied',
+                               '订单 #%s 的接单人 uid=%s，操作人试图代为计费'
+                               % (order_id, latest['claimed_by']))
+                return jsonify({'code': 403,
+                                'msg': f'这单刚被「{name}」接取，只有接单人能给它定价'}), 403
+            if row['status'] == ST_UNPRICED and latest['status'] != ST_UNPRICED:
+                return jsonify({'code': 409, 'msg': '这单刚被别人计过费了，刷新看看'}), 409
+            return jsonify({'code': 409, 'msg': '这单刚被别人改过金额，刷新看看最新价'}), 409
         log_event(order_id, log_action, log_detail, conn=conn)
         conn.commit()
-    finally:
-        conn.close()
 
     audit_action(action,
                  '订单 #%s 金额 %s -> %.2f 元，状态=%s'
@@ -804,8 +953,7 @@ def api_price_order(order_id):
 @bp.route('/api/order/<int:order_id>/claim', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_claim_order(order_id):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         cursor = conn.execute('''
             UPDATE orders SET claimed_by = ?, claim_time = CURRENT_TIMESTAMP
             WHERE id = ? AND claimed_by IS NULL AND status <> ?
@@ -829,8 +977,6 @@ def api_claim_order(order_id):
             return jsonify({'code': 409, 'msg': f'手慢了，该订单已被「{name}」接取'}), 409
         log_event(order_id, ORDER_LOG_CLAIM, '从待接单池接取', conn=conn)
         conn.commit()
-    finally:
-        conn.close()
     logger.info('订单 #%s 被 %s(%s) 接取 ip=%s',
                 order_id, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '接单成功'})
@@ -845,8 +991,7 @@ def api_claim_order(order_id):
 @bp.route('/api/order/<int:order_id>/release', methods=['POST'])
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_release_order(order_id):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('SELECT claimed_by, status FROM orders WHERE id = ?', (order_id,)).fetchone()
         if row is None:
             return jsonify({'code': 404, 'msg': '订单不存在'}), 404
@@ -874,8 +1019,6 @@ def api_release_order(order_id):
             detail = '释放了「%s」接的单，退回待接单池' % name
         log_event(order_id, ORDER_LOG_RELEASE, detail, conn=conn)
         conn.commit()
-    finally:
-        conn.close()
     logger.info('订单 #%s 被 %s(%s) 释放，原接单人 uid=%s ip=%s',
                 order_id, g.user['nickname'], g.user['role'], row['claimed_by'], client_ip())
     return jsonify({'code': 0, 'msg': '已释放订单'})
@@ -893,8 +1036,7 @@ def api_release_order(order_id):
 @bp.route('/api/order/<int:order_id>/withdraw', methods=['POST'])
 @login_required
 def api_withdraw_order(order_id):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute(
             'SELECT user_id, claimed_by, status, filename, file_path FROM orders WHERE id = ?',
             (order_id,)).fetchone()
@@ -930,8 +1072,6 @@ def api_withdraw_order(order_id):
                                       if row['filename'] else '（预设服务，无文件）'),
                   conn=conn)
         conn.commit()
-    finally:
-        conn.close()
 
     # 数据库那边确认删掉了才动文件。万一删文件失败，留下的只是一个没人引用的孤儿文件；
     # 反过来先删文件的话，就会出现「订单还在、文件没了」——接单人一点开就是 404。
@@ -966,8 +1106,7 @@ def api_update_status(order_id):
             'msg': '状态不合法，可选：' + '、'.join(ORDER_STATUSES_MANUAL)
         }), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('SELECT claimed_by, status FROM orders WHERE id = ?', (order_id,)).fetchone()
         if row is None:
             logger.info('改状态失败：订单 #%s 不存在，操作人=%s', order_id, g.user['nickname'])
@@ -996,8 +1135,6 @@ def api_update_status(order_id):
         log_event(order_id, ORDER_LOG_STATUS,
                   '「%s」→「%s」' % (row['status'], new_status), conn=conn)
         conn.commit()
-    finally:
-        conn.close()
 
     logger.info('订单 #%s 状态「%s」->「%s」 操作人=%s(%s) ip=%s',
                 order_id, row['status'], new_status, g.user['nickname'], g.user['role'], client_ip())
@@ -1023,8 +1160,7 @@ def api_lookup_pickup():
         return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
     placeholders = ','.join('?' * len(codes))
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # 候选码有两个（补过零的那种）时优先挑还没取件的那个：『0012』和『12』
         # 在库里可能真是两笔不同的单，而柜台要的显然是还没被取走的那一笔。
         rows = conn.execute(
@@ -1041,8 +1177,6 @@ def api_lookup_pickup():
                 (order['user_id'],)).fetchone()
             order['owner_real_name'] = owner['real_name'] if owner else None
             order['owner_student_id'] = owner['student_id'] if owner else None
-    finally:
-        conn.close()
 
     if order is None:
         return jsonify({'code': 404, 'msg': '没找到这个取件码，核对一下再试'}), 404
@@ -1058,8 +1192,7 @@ def api_confirm_pickup():
         return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
     placeholders = ','.join('?' * len(codes))
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # 条件写进 UPDATE 而不是先查后写：两个人同时点「确认取件」时，
         # 只有第一条能改到行，第二条 rowcount = 0 —— 这正是我们要的效果，
         # 同一份件不能交给两个人。状态只认「可取了」：
@@ -1105,8 +1238,6 @@ def api_confirm_pickup():
         # 取件不额外发信：学生本人就在柜台前面等着拿纸，
         # 再给他发一封「你的件已被取走」只是骚扰（可取件那封信才是真正有用的那封）。
         conn.commit()
-    finally:
-        conn.close()
 
     logger.info('订单 #%s 凭取件码确认取件 操作人=%s(%s) ip=%s',
                 row['id'], g.user['nickname'], g.user['role'], client_ip())
@@ -1145,8 +1276,7 @@ def api_set_order_preset_group(order_id):
         if group_id < 1:
             return jsonify({'code': 400, 'msg': '要归入的打印服务不合法'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute(
             'SELECT preset_group_id, preset_id FROM orders WHERE id = ?', (order_id,)).fetchone()
         if row is None:
@@ -1171,8 +1301,6 @@ def api_set_order_preset_group(order_id):
             detail = '归入打印服务「%s」' % new_name
         log_event(order_id, ORDER_LOG_GROUP, detail, conn=conn)
         conn.commit()
-    finally:
-        conn.close()
 
     logger.info('订单 #%s 归入打印服务 #%s（原 #%s） 操作人=%s(%s) ip=%s',
                 order_id, group_id, old_key, g.user['nickname'], g.user['role'], client_ip())
@@ -1189,8 +1317,7 @@ def api_set_order_preset_group(order_id):
 @bp.route('/api/my-orders')
 @login_required
 def api_my_orders():
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = conn.execute('''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
                    o.claimed_by, o.price,
@@ -1205,8 +1332,6 @@ def api_my_orders():
             WHERE o.user_id = ?
             ORDER BY o.id DESC
         ''', (g.user['id'],)).fetchall()
-    finally:
-        conn.close()
     orders = []
     for row in rows:
         item = dict(row)
@@ -1233,8 +1358,7 @@ def api_my_stats():
     「几条 SQL 之间口径对不上」这种最难查的毛病。
     """
     uid = g.user['id']
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         rows = conn.execute('''
             SELECT o.status, o.color_type, o.duplex, o.price,
                    date(o.create_time, 'localtime') AS d
@@ -1244,8 +1368,6 @@ def api_my_stats():
         # 趣味数字：全站累计收到多少单。它回答的是「这个服务有多忙」，
         # 不涉及谁是谁、谁打了什么 —— 属于可以公开给所有登录用户的那一类数据。
         site_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
-    finally:
-        conn.close()
 
     mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0, 'unpriced': 0, 'spent': 0.0}
     by_color = {'black': 0, 'color': 0}
@@ -1338,8 +1460,7 @@ def api_board():
     # create_time 存的是 UTC，拿 UTC 日期比会让 UTC+8 早上 8 点前的「今天」算成昨天。
     RECENT = " AND date(o.create_time, 'localtime') >= date('now', 'localtime', '-29 days')"
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         def rank_top(extra, limit=10):
             """取榜首。JOIN 而不是 LEFT JOIN —— 这一列数的是「人」，
             没有归属的订单（账号被删、单还留着）不属于任何一个人，不该占榜上一个位置。
@@ -1421,8 +1542,6 @@ def api_board():
             (uid,)).fetchone()['c'])
         me_all = my_standing('', conn.execute(
             'SELECT COUNT(*) AS c FROM orders WHERE user_id = ?', (uid,)).fetchone()['c'])
-    finally:
-        conn.close()
 
     def board_row(index, row):
         is_me = row['user_id'] == uid
@@ -1481,13 +1600,10 @@ def api_board():
 @bp.route('/api/order/<int:order_id>/download')
 @login_required
 def api_download(order_id):
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute(
             'SELECT filename, file_path, claimed_by FROM orders WHERE id = ?', (order_id,)
         ).fetchone()
-    finally:
-        conn.close()
     if row is None:
         return jsonify({'code': 404, 'msg': '订单不存在'}), 404
 
