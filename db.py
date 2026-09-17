@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +27,33 @@ def get_db():
     conn = sqlite3.connect(DATABASE_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+
+@contextmanager
+def db_conn():
+    """开一个连接，退出时**只做 close()** —— 不 commit，也不 rollback。
+
+    它存在的唯一理由是收掉「conn = get_db() / try / finally conn.close()」
+    这层关闭样板。事务边界仍然归调用方：调用方原来在哪 commit、在哪 rollback
+    一个字都不用动，从 try/finally 换成 with 就是纯粹的等价替换。
+
+    ⚠️ 为什么不能图省事写成 `with get_db() as conn:` ——
+    sqlite3.Connection 自己也实现了上下文管理协议，但它的语义是**事务**：
+    `with conn:` 退出时成功就 commit、抛异常就 rollback，而且**不关连接**。
+    写成那样等于同时做错两件事：把「谁负责提交」悄悄从调用方挪到了这里
+    （调用方自己那句 commit 还在，于是提交时机变了），连接则被漏着没人关。
+    这个坑之所以危险，是因为那行代码看起来几乎一样 ——
+    读代码的人会以为自己在「用 with 管理资源」，实际拿到的是完全另一种东西。
+
+    所以这里必须自己用 contextlib.contextmanager 写，函数体就是
+    try: yield conn / finally: conn.close()，够用，也仅此而已。
+    """
+    conn = get_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 
@@ -167,7 +195,10 @@ def find_paper_type(conn, paper_type_id):
 #            下单选的预设天然就是它自己的分组，一行迁移都不需要。
 #            不回填老订单同样是有意的：分组这件事得有人看过文件才能定，
 #            按文件名猜一遍只会把错的归类固化进库里，而且看不出来。
-SCHEMA_VERSION = '12'
+# v12 -> v13：users 新增 session_epoch（会话吊销用）。
+#            会话里存一份登录时的 epoch，改密码/登出时 +1，对不上就让旧 Cookie 失效。
+#            全新库写进 DDL，老库走 PRAGMA + ALTER 幂等补列。
+SCHEMA_VERSION = '13'
 
 
 
@@ -221,13 +252,20 @@ def _migrate_release_unique_names(cursor, current_version):
     row = cursor.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
     ).fetchone()
-    # 版本号是主判据：已经是 v4 及以上的库，结构上早就换成部分唯一索引了，直接跳过。
-    # 下面那句 DDL 检查是兜底 —— 很老的库可能压根没有版本记录，那时只能看表结构本
-    # 身判断有没有迁过，顺带让这个函数重复执行也安全。
-    if _migration_version(current_version) >= 4:
-        return None
+    # 结构检查优先于版本号：版本号只是记录，可能和实际结构不一致
+    # （上次迁移建好新表后、更新版本号前被杀）。
+    # 结构不合时要无条件重建，不管版本号是多少。
     if row is None or 'UNIQUE' not in (row[0] or '').upper():
+        # 结构已经符合要求（列级 UNIQUE 不在了），什么都不用做。
+        # 这条路上版本号不参与判断 —— 结构才是唯一判据；current_version 留在
+        # 签名里，只是为了和另一个迁移函数保持同一种调用形式。
         return None
+
+    # 清理上次中断留下的半成品。DDL 不参与事务，Python sqlite3 会把建表
+    # 即时提交，于是进程若在上一轮死于 CREATE TABLE 与 DROP TABLE 之间，
+    # 重启后 users_new 仍存在 → 这句 CREATE TABLE 会报 "table already exists"，
+    # 迁移永久失败、服务起不来。DROP IF EXISTS 把这个半成品清掉，再重建才安全。
+    cursor.execute('DROP TABLE IF EXISTS users_new')
 
     # 复制文件前先把当前事务落盘。SQLite 的改动是先写日志再回放主文件的，
     # 事务还没提交时直接复制主文件，可能拷到一个「少了刚那几步 ALTER」的中间态。
@@ -251,17 +289,25 @@ def _migrate_release_unique_names(cursor, current_version):
             create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             last_login TIMESTAMP,
             contact_type TEXT,
-            contact TEXT
+            contact TEXT,
+            pay_qr_file TEXT,
+            session_epoch INTEGER NOT NULL DEFAULT 0
         )
     ''')
     # id 也一起拷过去：orders.user_id / claimed_by、tickets.user_id 都是按 id 关联的，
     # 换了 id 就等于把历史订单和工单的归属全打乱。
+    # 这里的列名必须和上面的 CREATE TABLE 一一对应，且要覆盖 init_database 里
+    # 所有靠 ALTER TABLE 补出来的列 —— 重建换的是整张表，没列进来的列直接就没了。
+    # 那些列在本函数执行前刚被补上（值都是空的），丢掉的当次启动就会让
+    # 「no such column: pay_qr_file / session_epoch」冒出来，得等下次重启才补回来。
     cursor.execute('''
         INSERT INTO users_new
             (id, nickname, real_name, student_id, dorm, password_hash, password_enc,
-             role, status, create_time, last_login, contact_type, contact)
+             role, status, create_time, last_login, contact_type, contact,
+             pay_qr_file, session_epoch)
         SELECT id, nickname, real_name, student_id, dorm, password_hash, password_enc,
-               role, status, create_time, last_login, contact_type, contact
+               role, status, create_time, last_login, contact_type, contact,
+               pay_qr_file, session_epoch
         FROM users
     ''')
     cursor.execute('DROP TABLE users')
@@ -308,8 +354,7 @@ def init_database():
       全新库（schema_meta 刚建出来，orders 表还不存在）才执行那句 DROP，实际是空动作；
       已有标记就只做 CREATE IF NOT EXISTS，不再清空数据。
     """
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         cursor = conn.cursor()
         cursor.execute('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)')
         row = cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
@@ -344,7 +389,8 @@ def init_database():
                 role TEXT NOT NULL DEFAULT 'user',
                 status TEXT NOT NULL DEFAULT 'active',
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_login TIMESTAMP
+                last_login TIMESTAMP,
+                session_epoch INTEGER NOT NULL DEFAULT 0
             )
         ''')
         cursor.execute('''
@@ -405,11 +451,14 @@ def init_database():
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_pickup_live '
             "ON orders(pickup_code) WHERE status <> '%s' AND pickup_code IS NOT NULL" % ST_DONE
         )
+        _pickup_index_ok = True
         try:
             cursor.execute(live_index_sql)
         except sqlite3.IntegrityError:
+            _pickup_index_ok = False
             logger.error('取件码唯一索引没建成：还没取件的订单里存在重复的取件码，'
                          '请先处理这些重复数据；本次仍会继续启动，但取件码暂时不能保证唯一')
+            logger.error('!!! 迁移未完成：取件码唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
 
         # 这轮新增联系方式，给已有的 users 表补两列。
         # CREATE TABLE IF NOT EXISTS 对已存在的表没有任何改动，老库只能靠 ALTER TABLE；
@@ -425,6 +474,11 @@ def init_database():
         # 「他传了一张我们找不到的图」变成同一件事。
         if 'pay_qr_file' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN pay_qr_file TEXT')
+
+        # 会话吊销用：会话里存一份登录时的 epoch，改密码/登出时 +1，
+        # 对不上就让旧 Cookie 失效。幂等补列，跟 contact_type 同一套路。
+        if 'session_epoch' not in user_columns:
+            cursor.execute('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0')
 
         # 计费三列，同一个套路：全新库靠上面的 CREATE TABLE 就带上了，
         # 老库这里补。price 存的是「元」，最多两位小数，可空 ——
@@ -675,13 +729,14 @@ def init_database():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
 
-        cursor.execute(
-            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
-            (SCHEMA_VERSION,),
-        )
+        if _pickup_index_ok:
+            cursor.execute(
+                "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
+                (SCHEMA_VERSION,),
+            )
+        else:
+            logger.error('取件码唯一索引未建成，本次不推进版本号（迁移未完成）')
         conn.commit()
-    finally:
-        conn.close()
 
 
 
@@ -733,8 +788,7 @@ def seed_super_admin():
     dorm = os.getenv('SUPER_ADMIN_DORM', '').strip()
     password = os.getenv('SUPER_ADMIN_PASSWORD', '').strip()
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # 账号已经在了就直接返回。这一步必须排在检查密码之前：
         # 密码只在「第一次建这个账号」时用得上，老部署重启时不该因为
         # 后来把 SUPER_ADMIN_PASSWORD 删了、或者改短了而起不来。
@@ -782,5 +836,3 @@ def seed_super_admin():
             logger.error('内置管理账号创建失败：昵称「%s」/ 学号「%s」已被占用，'
                          '请修改 .env 中的 SUPER_ADMIN_* 配置（昵称和学号都是唯一字段，'
                          '多个账号不能同时留空学号）', nickname, student_id)
-    finally:
-        conn.close()
