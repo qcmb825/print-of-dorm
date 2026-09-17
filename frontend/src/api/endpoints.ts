@@ -20,6 +20,7 @@ import type {
   OrderListResponse,
   OrderStatus,
   PaperTypeListResponse,
+  PickupLookupResponse,
   PresetOrderRequest,
   PrintOptionsResponse,
   PrintPresetListResponse,
@@ -129,8 +130,23 @@ export const chunkApi = {
 
 /* 订单：管理端 */
 export const staffOrderApi = {
-  list: (params: { page: number; size: number; status?: string; scope?: string }) =>
-    get<OrderListResponse>('/api/orders', params),
+  list: (params: {
+    page: number
+    size: number
+    status?: string
+    scope?: string
+    /** 关键词。一个框搜完：取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
+     *
+     *  订单号和学号在服务端走**精确相等**（搜「12」要的是第 12 单，而不是
+     *  #12、#120 一起上来），其余是模糊匹配 —— 匹配方式由服务端定，前端不要
+     *  在本地再筛一道：本地筛会跟分页打架，这一页没有不等于全库没有。 */
+    q?: string
+    /** 按打印服务分组筛选。传 ORDER_PRESET_FILTER_NONE（'none'）表示「什么都没归」；
+     *  不传 = 不按服务筛。里面是**字符串**，服务端自己转整数。 */
+    preset?: string
+    /** '1' = 隐藏已取件。不传就是老行为（都显示）。 */
+    exclude_done?: string
+  }) => get<OrderListResponse>('/api/orders', params),
   /** 订单详情：完整字段 + 操作留痕时间线。
    *  单开一条接口而不是往列表里塞：详情要顺手 stat 一下文件、再取一串留痕，
    *  塞进列表就变成每页 20 次磁盘调用 + 一次 N+1 查询（见后端 api_order_detail）。 */
@@ -145,6 +161,35 @@ export const staffOrderApi = {
   price: (id: number, price: string) =>
     post<{ code: number; msg: string; price: number }>(`/api/order/${id}/price`, { price }),
   download: (id: number, filename: string) => download(`/api/order/${id}/download`, filename),
+
+  /* ---- 凭取件码核对取件（柜台那一步）----
+   *
+   *  为什么单开两条接口，而不是复用「改成已取件」那颗按钮：
+   *  ① 柜台核对只认「可取了」。改状态那个接口是给订单台推进流程用的，
+   *     允许从「打印中」直接跳到「已取件」；而柜台拿到一个码、发现这单
+   *     还在待打印，要的是被拦下来，不是把状态一把推到底 —— 纸都还没出来。
+   *  ② 权限不一样：改状态是「只有接单人（或默认管理员）能动」，而柜台交件的人
+   *     常常**不是**接单人（接单那个在里屋打印）。卡在这里的话，
+   *     最该用这个功能的那个人反而用不了。服务端的留痕会写明「这是代谁交接的」。 */
+
+  /** 按取件码取一单，用于柜台核对。一位数、两位数都收，客户端不用补零
+   *  （服务端会顺带试 4 位那一份）。找不到回 404。 */
+  lookupPickup: (code: string) => get<PickupLookupResponse>('/api/order/pickup', { code }),
+  /** 确认取件：把这一单置为「已取件」。只对「可取了」的单生效，
+   *  其余情况服务端回 409 并说明卡在哪一步（已取走 / 还没计费 / 还没到那一步）。 */
+  confirmPickup: (code: string) =>
+    post<{ code: number; msg: string; order_id: number }>('/api/order/pickup', { code }),
+  /** 把订单归入某条打印服务分组（传 null = 取消归类）。
+   *
+   *  这是「同一份文件的单子凑到一起」的另一半：下单时选了预设的单天然就在自己
+   *  那一组里，而这个接口是给「没选预设、自己传了同一份表格」的订单补归类用的。 */
+  setPresetGroup: (id: number, presetId: number | null) =>
+    put<{
+      code: number
+      msg: string
+      preset_group_id: number | null
+      preset_group_content: string | null
+    }>(`/api/order/${id}/preset-group`, { preset_id: presetId }),
 }
 
 /* 账号管理：管理端

@@ -176,6 +176,27 @@
     text-transform: uppercase;
   }
 
+  /* 「几份」这个数字。打印员是照着它干活的，而它原来只是规格列第二行里的
+     半截小字，扫视一整屏订单时很容易整个略过（拿错份数比拿错文件更麻烦，
+     因为纸已经过机了）。
+
+     做成一个牌子而不是单纯加粗：颜色上下两套主题都由令牌给，
+     组件里不写死色值，深色偏好下不会变成一块看不清的深黄。 */
+  .spec-chip {
+    display: inline-flex;
+    align-items: baseline;
+    padding: 1px 5px;
+    border: 1px solid var(--accent-tint-border);
+    border-radius: 4px;
+    background-color: var(--accent-tint);
+    color: var(--accent);
+    font-family: var(--stack-mono);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+
   .grid-lines {
     background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px),
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);

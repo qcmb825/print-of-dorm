@@ -155,7 +155,19 @@ def find_paper_type(conn, paper_type_id):
 #            而 PAY_QR_FOLDER 下并没有那个文件，只会把「没配置」伪装成「配置坏了」。
 #            ready_notify_time 的语义和 claim_alert_time 完全一样：
 #            **NULL = 这笔单还没发过可取件提醒**，同样刻意不回填老订单。
-SCHEMA_VERSION = '11'
+# v11 -> v12：orders 新增 preset_group_id（管理员把它归到哪条打印服务分组）。
+#            纯加列，不重建表，也不回填。
+#            为什么不直接写 preset_id 而要单开一列：preset_id 的含义是
+#            「下单时选了这条预设」（这类单没有文件，preset_content 就是它的全部内容）；
+#            而这里要表达的是「这一单的文件其实属于某条服务」—— 学生没选预设、
+#            自己传了同一份表格，管理员看了实物把它归进去。
+#            两者混用会出一个说不清的状态：一列既表示「用了预设」又表示「被归类」，
+#            同一个值有时候有文件、有时候没有。分开存之后，
+#            **读的时候用 COALESCE(preset_group_id, preset_id) 当分组键**，
+#            下单选的预设天然就是它自己的分组，一行迁移都不需要。
+#            不回填老订单同样是有意的：分组这件事得有人看过文件才能定，
+#            按文件名猜一遍只会把错的归类固化进库里，而且看不出来。
+SCHEMA_VERSION = '12'
 
 
 
@@ -355,6 +367,7 @@ def init_database():
                 price_time TIMESTAMP,
                 preset_id INTEGER,
                 preset_content TEXT,
+                preset_group_id INTEGER,
                 copies INTEGER,
                 paper_type_id INTEGER,
                 paper_name TEXT,
@@ -366,6 +379,12 @@ def init_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_claimed ON orders(claimed_by)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)')
+        # 按服务分组筛选走的是 COALESCE(preset_group_id, preset_id)，
+        # 索引只能挂在其中一个列上，所以这里建在 preset_group_id 上 ——
+        # 它是分类时可写、也是绝大多数单子为空的那一列。
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_orders_preset_group ON orders(preset_group_id)'
+        )
         # 「还没计费的单」是每次开台都要查一遍的队列，单独建个索引。
         # 写成部分索引：只盖住待计费的那些行，表里堆到几万条订单以后它依然很小。
         # 值取自 ST_UNPRICED 而不是手打的字符串，改常量时这里跟着一起变。
@@ -461,6 +480,11 @@ def init_database():
         # 学生永远收不到取件码，而日志上看不出任何异常。
         if 'ready_notify_time' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN ready_notify_time TIMESTAMP')
+
+        # 管理员归类的目标预设。语义见文件顶部 v11 -> v12 那段：
+        # 它和 preset_id 是两件事，读的时候用 COALESCE 合起来当分组键。
+        if 'preset_group_id' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN preset_group_id INTEGER')
 
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。

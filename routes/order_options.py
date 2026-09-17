@@ -124,12 +124,18 @@ def api_admin_print_presets():
         # used_count 是给「删不删」这道判断用的：预设删掉之后，
         # 历史订单里那句话还在（存的是快照），但「当初是哪一条」就断了。
         # 不显示这个数字，管理员只能在删完之后才发现自己没有回头路。
+        #
+        # 统计口径是 COALESCE(preset_group_id, preset_id)，也就是「这一组里有多少单」：
+        # 管理员手动归入的文件单也算。只数 preset_id 的话会出现「刚把 5 单归进去，
+        # 台账上还写着『还没有人用过』」—— 那句话不报错，只是假的，
+        # 而它会直接把人推向「删掉吧，反正没人用」。
         rows = conn.execute('''
             SELECT p.id, p.content, p.is_active,
                    datetime(p.create_time, 'localtime') AS create_time,
                    datetime(p.update_time, 'localtime') AS update_time,
                    u.nickname AS author,
-                   (SELECT COUNT(*) FROM orders o WHERE o.preset_id = p.id) AS used_count
+                   (SELECT COUNT(*) FROM orders o
+                     WHERE COALESCE(o.preset_group_id, o.preset_id) = p.id) AS used_count
             FROM print_presets p
             LEFT JOIN users u ON u.id = p.created_by
             ORDER BY p.is_active DESC, p.id DESC

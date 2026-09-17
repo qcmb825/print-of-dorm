@@ -1,5 +1,7 @@
+import { CONTACT_LABELS } from '@/api/types'
 import type {
   ColorType,
+  ContactType,
   Duplex,
   OrderLogAction,
   OrderStatus,
@@ -76,6 +78,23 @@ export function paperLabel(name: string | null | undefined): string {
   return name
 }
 
+/** 下单人的联系方式，拼成一行：`QQ 号 12345678` / `微信号 zhang*`。
+ *
+ *  没填时回一个短横而不是空串：空串会让这一行塔掉，管理员看不出到底是
+ *  「他没填」还是「模板没渲染出来」，而这两种情况的处理完全不同。
+ *
+ *  这里同时服务订单台和柜台的取件核对弹窗 —— 两处各写一遍的话，
+ *  哪天改成「微信联系」这种说法，只会改到其中一处，
+ *  而两屏上看到的不一致没人会发现（都不报错）。 */
+export function contactLabel(
+  contactType: ContactType | null | undefined,
+  contact: string | null | undefined,
+): string {
+  if (!contact) return '—'
+  const kind = contactType ? CONTACT_LABELS[contactType] : ''
+  return kind ? `${kind} ${contact}` : contact
+}
+
 /** 这一单是不是预设单（用预设打印服务下的、没有文件的那种）。
  *
  *  判据用 preset_content 而不是 preset_id：预设被删掉之后 id 就没意义了，
@@ -117,6 +136,13 @@ export const LOG_ACTION_COLOR: Record<OrderLogAction, string> = {
   status: 'var(--info)',
   withdraw: 'var(--err)',
   download: 'var(--ok)',
+  /* 取件用「完成」色：它是这一单的终点，跟 download（同样表示「已经交付」）
+     归一类。与 status 那个信息色分开是有意的 —— 时间线上要能一眼看出
+     「柜台核对过码才交的件」和「管理员随手把状态改成已取件」是两回事。 */
+  pickup: 'var(--ok)',
+  /* 归类是整理台账的动作，不改变订单本身的进度，所以取中性的三级文字色：
+     它出现在时间线上时不该比「计费」「接单」更显眼。 */
+  group: 'var(--text-tertiary)',
 }
 
 /** 文件大小。打印店的场景里没人关心它是 12.3 KB 还是 12.4 KB，

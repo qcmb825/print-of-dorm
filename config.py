@@ -336,11 +336,13 @@ ORDER_LOG_REPRICE = 'reprice'    # 改价（计过一次之后再改）
 ORDER_LOG_STATUS = 'status'      # 手动改状态
 ORDER_LOG_WITHDRAW = 'withdraw'  # 下单人自己撤回
 ORDER_LOG_DOWNLOAD = 'download'  # 下载了订单文件
+ORDER_LOG_PICKUP = 'pickup'      # 凭取件码确认取件（柜台核对那一步）
+ORDER_LOG_GROUP = 'group'        # 管理员把订单归入某条打印服务分组（不是下单时选的预设）
 
 ORDER_LOG_ACTIONS = (
     ORDER_LOG_CREATE, ORDER_LOG_CLAIM, ORDER_LOG_RELEASE,
     ORDER_LOG_PRICE, ORDER_LOG_REPRICE, ORDER_LOG_STATUS,
-    ORDER_LOG_WITHDRAW, ORDER_LOG_DOWNLOAD,
+    ORDER_LOG_WITHDRAW, ORDER_LOG_DOWNLOAD, ORDER_LOG_PICKUP, ORDER_LOG_GROUP,
 )
 
 # 动作的中文名由**服务端**给（响应里带 action_label），前端只管拿来显示。
@@ -355,10 +357,25 @@ ORDER_LOG_LABELS = {
     ORDER_LOG_STATUS: '修改状态',
     ORDER_LOG_WITHDRAW: '撤回订单',
     ORDER_LOG_DOWNLOAD: '下载文件',
+    # 取件和改状态分开说：柜台那位可能不是接单人，「这单是被人凭码取走的」
+    # 和「有人在下拉框里把状态改成了已取件」是两件事，时间线上要分得清。
+    ORDER_LOG_PICKUP: '取件',
+    ORDER_LOG_GROUP: '归入服务',
 }
 
 # detail 是给人看的一句话，不是给程序解析的字段，所以卡个长度就够了。
 ORDER_LOG_DETAIL_MAX = 200
+
+# ---- 订单台检索 ----
+# 搜索框的输入长度上限。这不是防注入（查询全部走参数绑定），
+# 而是挡住「往输入框里贴一整段文本」这种手滑，同时让 LIKE 的扫描量可控。
+# 取件码 4 位、昵称/姓名/宿舍都很短，64 个字足够放下任何一个人的信息。
+ORDER_SEARCH_MAX = 64
+
+# 「按打印服务筛选」里代表「什么都没归」的取值。
+# 用字符串而不是 0 或 -1：前端把它当**下拉框的选项值**用，
+# 而这个值要能一眼看出是「一个特殊选项」而不是「某条 id 为 0 的预设」。
+ORDER_PRESET_FILTER_NONE = 'none'
 
 # 计费金额
 # 上限给得比现实高得多（够打印几千页），目的只是挡住手滑多打几个零和恶意超长数字。

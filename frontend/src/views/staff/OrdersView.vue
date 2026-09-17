@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /** 订单台：待接单池 / 我接的单 / 全部，支持状态筛选、分页、接单释放改状态、计费、下载文件。
  *  窄屏切换成卡片列表 —— 表格在手机上没法用，但管理员确实会拿手机接单。 */
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useDocumentVisibility, useIntervalFn, useMediaQuery } from '@vueuse/core'
 import {
   CircleDollarSign,
   Download,
+  FolderPlus,
   Info,
   Inbox,
   Lock,
   Package,
   RefreshCw,
+  ScanLine,
   Unlock,
 } from '@lucide/vue'
 import {
@@ -31,15 +33,24 @@ import {
   type DropdownOption,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { staffOrderApi } from '@/api/endpoints'
-import { CONTACT_LABELS, ORDER_STATUSES, ORDER_STATUSES_MANUAL, type Order, type OrderStatus } from '@/api/types'
+import { staffOrderApi, staffPrintOptionsApi } from '@/api/endpoints'
+import {
+  ORDER_PRESET_FILTER_NONE,
+  ORDER_STATUSES,
+  ORDER_STATUSES_MANUAL,
+  type Order,
+  type OrderStatus,
+  type PrintPreset,
+} from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
+import PickupCheckDialog from '@/components/PickupCheckDialog.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   COLOR_TYPE_LABEL,
   DUPLEX_LABEL,
+  contactLabel,
   copiesLabel,
   normalizePrice,
   orderFileLabel,
@@ -59,16 +70,6 @@ const DONE: OrderStatus = '已取件'
 /** 可取了。它同时是「学生到底收没收到提醒」这件事唯一有意义的位置 ——
  *  取件邮件只在进入这个状态时发一次。 */
 const READY: OrderStatus = '可取了'
-
-/** 下单人的联系方式，拼成一行：`QQ 号 12345678` / `微信号 zhang*`。
- *
- *  没填时回一个短横而不是空串：空串会让这一行塔掉，管理员看不出到底是
- *  「他没填」还是「模板没渲染出来」，而这两种情况的处理完全不同。 */
-function contactLabel(order: Order): string {
-  if (!order.owner_contact) return '—'
-  const kind = order.owner_contact_type ? CONTACT_LABELS[order.owner_contact_type] : ''
-  return kind ? `${kind} ${order.owner_contact}` : order.owner_contact
-}
 
 /** 需人工通知：已经可取件了，但这位学生推不出邮箱，邮件那一路发不出去。
  *
@@ -108,6 +109,12 @@ const currentUserId = computed(() => auth.user?.id ?? 0)
 
 const AUTO_REFRESH_MS = 10_000
 
+/** 宽屏表格各列宽之和。11 列加起来比容器（max-w-[1400px]）还宽，不给 scroll-x 的话
+ *  NDataTable 会把表格直接撑出容器，而外层是 overflow-hidden —— 末尾那几列会被
+ *  裁掉，连横向滚动都够不着（「详情」那颗按钮就是最先消失的那个）。
+ *  **改任何一列的宽度时，这个数字要跟着改。** */
+const ORDER_TABLE_MIN_WIDTH = 1474
+
 const orders = ref<Order[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -117,6 +124,33 @@ const scope = ref<'pool' | 'mine' | 'all'>('pool')
 const loading = ref(true)
 const autoRefresh = ref(true)
 const busyId = ref<number | null>(null)
+
+/* ---------- 检索与筛选 ----------
+ *  关键词、打印服务分组、隐藏已取件这三个都交给服务端去筛。
+ *  页面上一共才 20 条，在前端再筛一道看着很便宜，但它会跟分页打架：
+ *  筛选掉半页之后剩下的条数对不上 total，翻到第二页会出现「怎么又有了」
+ *  ——而正确答案全在库里，不在手上这一页里。 */
+const keyword = ref('')
+const presetFilter = ref<string>('')
+/** 默认隐藏已取件。打印员看的是「还有哪些活没干完」，而已取件是终态、
+ *  还是个累计数，混在里面只会把真正待办的几单顶到下一页去。
+ *  要看历史时把它关掉就行，开关就在筛选栏里，不用去改默认值。 */
+const excludeDone = ref(true)
+
+/** 搜索框防抖。每敲一个字发一次请求的话，输「20220101」要打 8 个包，
+ *  而列表本身还有 10 秒一轮的自动刷新在发包；柜台那台机子未必快。 */
+const KEYWORD_DEBOUNCE_MS = 300
+const keywordPending = ref(false)
+let keywordTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 打印服务下拉的候选项。特地取**管理端**那份名单（含已停用项）：
+ *  一条预设停用之后，早就归在它下面的老单不会跟着消失，
+ *  而这份下拉恰恰是拿来找这些老单的。只给启用项就会把它们变成搜不到的单。 */
+const presets = ref<PrintPreset[]>([])
+
+/** 取件核对弹窗。它是个二级窗口、不是路由页：柜台交件时手不能离开这一屏，
+ *  跳走再跳回来会把后面的列表翻页和筛选全重置掉。 */
+const pickupOpen = ref(false)
 
 const isNarrow = useMediaQuery('(max-width: 900px)')
 
@@ -139,6 +173,49 @@ const statusDropdownOptions: DropdownOption[] = ORDER_STATUSES_MANUAL.map((item)
   key: item,
 }))
 
+/** 预设内容是一整句话，塞进下拉框必须截断；但截断之后好几条会长得一模一样
+ *  （都是「打印学生证复印件……」），所以悬停要看得到全文。
+ *
+ *  已停用的要加个尾巴：它们照样能选（老单归在下面），但得让人知道自己选的
+ *  是一条已经下线的服务，而不是它又被启用了。 */
+function presetOptionLabel(preset: PrintPreset, max = 16): string {
+  const text = preset.content.replace(/\s+/g, ' ').trim()
+  const short = text.length > max ? `${text.slice(0, max)}…` : text
+  return preset.is_active === 0 ? `${short}（已停用）` : short
+}
+
+/** 筛选栏的打印服务下拉。前两项是「不过滤」和「什么都没归」，都不是某条预设的 id，
+ *  所以值一律当字符串传 —— 'none' 这个哨兵值两边各写一份字面量，
+ *  改一处漏一处不会报错，只会让「未归类」静默变成「全部订单」。 */
+const presetOptions = computed(() => [
+  { label: '全部打印服务', value: '' },
+  { label: '未归类', value: ORDER_PRESET_FILTER_NONE },
+  ...presets.value.map((preset) => ({
+    label: presetOptionLabel(preset),
+    value: String(preset.id),
+  })),
+])
+
+/** 这一单被归到了哪条服务（下单选预设的也算，服务端用 COALESCE 合成同一个键）。
+ *  null = 真没归。模板里判「要不要显示分组名」就看它。 */
+function hasGroup(order: Order): boolean {
+  return order.preset_group_id !== null && order.preset_group_id !== undefined
+}
+
+/** 「改分组」下拉里的选项。已经归过的那一条才给「取消归类」：
+ *  没归过的单上显示这个，等于邀请人去取消一个不存在的东西。 */
+function groupDropdownOptions(order: Order): DropdownOption[] {
+  const options: DropdownOption[] = presets.value.map((preset) => ({
+    label: presetOptionLabel(preset, 20),
+    key: String(preset.id),
+  }))
+  if (hasGroup(order)) {
+    options.push({ type: 'divider', key: 'group-divider' })
+    options.push({ label: '取消归类', key: ORDER_PRESET_FILTER_NONE })
+  }
+  return options
+}
+
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
 
 const poolSummary = computed(() => ({
@@ -156,6 +233,11 @@ async function load(silent = false): Promise<void> {
       size: size.value,
       status: status.value || undefined,
       scope: scope.value,
+      // 空串一律转 undefined：服务端对空关键词会跳过那一段 WHERE，
+      // 但把 '' 明明白白发过去，就是在说「我在按一个空模式搜」。
+      q: keyword.value.trim() || undefined,
+      preset: presetFilter.value || undefined,
+      exclude_done: excludeDone.value ? '1' : undefined,
     })
     orders.value = data.orders
     total.value = data.total
@@ -163,6 +245,8 @@ async function load(silent = false): Promise<void> {
     if (!silent) message.error(error instanceof ApiError ? error.message : '加载订单失败')
   } finally {
     loading.value = false
+    // 搜索框的转圈跟着请求走：防抖等待期间转，请求一回来就停。
+    keywordPending.value = false
   }
 }
 
@@ -392,8 +476,11 @@ const columns = computed<DataTableColumns<Order>>(() => [
         // 而昵称本来就是自填的），出事了得有个能直接喊到人的号码。
         h(
           'div',
-          { class: 'truncate text-[11px] opacity-60', title: contactLabel(row) },
-          contactLabel(row),
+          {
+            class: 'truncate text-[11px] opacity-60',
+            title: contactLabel(row.owner_contact_type, row.owner_contact),
+          },
+          contactLabel(row.owner_contact_type, row.owner_contact),
         ),
         // 「需人工通知」只在取件那一步有意义，所以它和联系方式同列。
         needsManualNotify(row)
@@ -411,50 +498,95 @@ const columns = computed<DataTableColumns<Order>>(() => [
       ]),
   },
   {
-    // 规格两行：第一行颜色/单双面，第二行份数/纸张。
-    // 挤成一行的话这一列要 200px 出头，而「份数」正是打印的人最先要看的东西，
-    // 放在第二行反而更抓眼。
-    // 份数用 copiesLabel 而不是 `copies ?? 1` —— 本次升级前的老订单是 null，
+    // 规格两行，但两行不再等价：第一行是「拿错就会出事」的两项（几份、单双面），
+    // 第二行才是颜色和纸张。
+    //
+    // 原来的写法把份数塞在第二行末尾、11px 小字，扫视一整屏订单时整行略过去
+    // 是常事 —— 而拿错份数比拿错文件更难收拾，纸已经过机了。所以份数做成
+    // .spec-chip 的牌子，单双面提到加粗 13px。
+    // 份数用 copiesLabel 而不是 `copies ?? 1`：本次升级前的老订单是 null，
     // 显示成「1 份」等于替它们编了一个没人记得的数字。
     title: '规格',
     key: 'spec',
-    width: 132,
+    width: 150,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
-        h(
-          'div',
-          { class: 'truncate text-[12px] opacity-80' },
-          `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} / ${
-            row.duplex ? DUPLEX_LABEL[row.duplex] : '单面'
-          }`,
-        ),
+        h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
+          h('span', { class: 'spec-chip tnum' }, copiesLabel(row.copies)),
+          h(
+            'span',
+            { class: 'truncate text-[13px] font-semibold' },
+            row.duplex ? DUPLEX_LABEL[row.duplex] : '单面',
+          ),
+        ]),
         h(
           'div',
           {
-            class: 'truncate text-[11px] opacity-60',
+            class: 'mt-0.5 truncate text-[11px] opacity-60',
             title: row.paper_remark ?? undefined,
           },
-          `${copiesLabel(row.copies)} · ${paperLabel(row.paper_name)}`,
+          `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} · ${paperLabel(row.paper_name)}`,
         ),
       ]),
   },
   {
-    // 预设单。它没有文件名，也不该在「备注」里找说明 —— 那句话是这项服务本身。
-    // 用单独一列而不是塞进规格：它比规格长得多，挤进去会把列宽撑坏。
+    // 打印服务。两种单在这一列碰头，显示的文案却不一样：
+    //  · 下单时就选了预设的单（preset_id 有值）显示 preset_content ——
+    //    那是**下单那一刻的快照**，学生当初选的就是这句话；
+    //  · 事后被管理员归进来的单（没选预设、自己传了同一份表）显示
+    //    preset_group_content —— 那是这条预设的**现值**。
+    // 两者混用会让预设改名后这一列的显示来回跳，所以按 preset_id 分流。
+    //
+    // 右边那颗图标按钮就是「把自传文件的单归进某个预设集合」的入口，
+    // 对所有管理员开放（后端同一个口径：它只改一个展示用的分组，
+    // 不碰金额、不碰状态）。
     title: '打印服务',
     key: 'preset',
-    width: 168,
-    render: (row) =>
-      row.preset_content
-        ? h(
-            'span',
-            {
-              class: 'block truncate text-[12px] opacity-80',
-              title: row.preset_content,
-            },
-            row.preset_content,
-          )
-        : h('span', { class: 'text-[12px] opacity-40' }, '—'),
+    width: 200,
+    render: (row) => {
+      const label =
+        row.preset_id !== null && row.preset_id !== undefined
+          ? (row.preset_content ?? row.preset_group_content ?? null)
+          : (row.preset_group_content ?? null)
+      const noPresets = presets.value.length === 0
+      return h('div', { class: 'flex min-w-0 items-center gap-1' }, [
+        label
+          ? h('span', { class: 'truncate text-[12px] opacity-80', title: label }, label)
+          : h('span', { class: 'text-[12px] opacity-40' }, '—'),
+        h(
+          NDropdown,
+          {
+            options: groupDropdownOptions(row),
+            trigger: 'click',
+            disabled: busyId.value === row.id || noPresets,
+            onSelect: (key: string) => void setGroup(row, key),
+          },
+          {
+            // #trigger（这里是 default 插槽）**必须恰好一个子节点** ——
+            // 把 v-if 塞进来，条件不成立时插槽为空，Naive UI 会当面抛
+            // slot[trigger] should have exactly one child。要条件渲染就把
+            // v-if 提到 NDropdown 本身上。
+            default: () =>
+              h(
+                NButton,
+                {
+                  size: 'tiny',
+                  quaternary: true,
+                  circle: true,
+                  type: hasGroup(row) ? 'primary' : 'default',
+                  disabled: busyId.value === row.id || noPresets,
+                  title: noPresets
+                    ? '打印服务名单没取到，去「打印服务」页看看是不是一条都没有'
+                    : hasGroup(row)
+                      ? '改分组 / 取消归类'
+                      : '把这一单归入某条打印服务，按服务筛选时就能和同一批单一起看到',
+                },
+                { icon: () => h(FolderPlus, { size: 13 }) },
+              ),
+          },
+        ),
+      ])
+    },
   },
   {
     title: '备注',
@@ -608,6 +740,118 @@ function onFilterChange(): void {
   void load()
 }
 
+/** 关键词框的输入回调。只负责重新计时，真正的请求在防抖到点后发出。 */
+function onKeywordInput(): void {
+  keywordPending.value = true
+  if (keywordTimer !== null) clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => {
+    keywordTimer = null
+    onFilterChange()
+  }, KEYWORD_DEBOUNCE_MS)
+}
+
+/** 回车立即搜，不等防抖那 300ms：敲完一串学号再按回车就是一个「现在就查」的
+ *  动作，再等一瞬反而像卡了一下。 */
+function onKeywordEnter(): void {
+  if (keywordTimer !== null) {
+    clearTimeout(keywordTimer)
+    keywordTimer = null
+  }
+  onFilterChange()
+}
+
+/** 状态筛选。多一道把手：选了「已取件」而「隐藏已取件」还开着时列表必然为空，
+ *  后端把两条条件按交集处理是对的（隐藏不该反过来盖掉状态筛选），
+ *  但那会让界面看上去像数据丢了。替用户把开关关掉 —— 开关就摆在旁边，
+ *  他看得见它动了，比时着列表发懵强。 */
+function onStatusChange(value: string): void {
+  status.value = value
+  if (value === DONE) excludeDone.value = false
+  onFilterChange()
+}
+
+function onExcludeDoneChange(value: boolean): void {
+  excludeDone.value = value
+  onFilterChange()
+}
+
+/** 这一屏上到底有几个筛子开着？决定空列表要不要给「清除筛选」。
+ *
+ *  跟各自的**默认值**比，不是跟「空」比 —— 这几个控件的默认值本身就不是空
+ *  （scope 是 pool、隐藏已取件是开），只有跟默认值比才知道用户到底动没动过。 */
+const hasFilter = computed(
+  () =>
+    keyword.value.trim() !== '' ||
+    presetFilter.value !== '' ||
+    status.value !== '' ||
+    scope.value !== 'pool' ||
+    !excludeDone.value,
+)
+
+const emptyText = computed(() =>
+  hasFilter.value
+    ? '没有匹配的订单，换个条件或清除筛选试试'
+    : scope.value === 'pool'
+      ? '待接单池是空的，都处理完了'
+      : '没有符合条件的订单',
+)
+
+/** 清掉这一屏所有筛子，回到「待接单池 + 隐藏已取件」的默认视角。 */
+function resetFilters(): void {
+  if (keywordTimer !== null) {
+    clearTimeout(keywordTimer)
+    keywordTimer = null
+  }
+  keyword.value = ''
+  presetFilter.value = ''
+  status.value = ''
+  scope.value = 'pool'
+  excludeDone.value = true
+  onFilterChange()
+}
+
+/** 拿打印服务名单。它只服务两个下拉框（筛选、归类），拿不到时这两个框空着
+ *  就是全部影响 —— 接单、计费、改状态、下载都不依赖它，所以这里不弹错误、
+ *  也不把整页拦下来。真拿不到的话管理器打开下拉时会看到空名单，
+ *  比一进页面就被一个红条拦住好。 */
+async function loadPresets(): Promise<void> {
+  try {
+    const data = await staffPrintOptionsApi.presets()
+    presets.value = data.presets
+  } catch {
+    presets.value = []
+  }
+}
+
+/** 把这一单归入某条打印服务，或者（传 'none'）取消归类。
+ *
+ *  key 是下拉框给的字符串：预设 id 是数字，'none' 是个哨兵 —— 不在前端
+ *  自己转一遍再发，因为「取消归类」到底用什么值表示是后端的约定。 */
+async function setGroup(order: Order, key: string): Promise<void> {
+  const target = key === ORDER_PRESET_FILTER_NONE ? null : Number(key)
+  busyId.value = order.id
+  try {
+    // 后端已经把三种结果（已归入 / 已取消 / 本来就在这一组里）各自写好了一句话，
+    // 直接用它的 —— 在前端再编一句就可能跟服务端的口径对不上。
+    const res = await staffOrderApi.setPresetGroup(order.id, target)
+    message.success(res.msg)
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '归类失败')
+    // 404「这条打印服务不存在（可能刚被删掉）」这类要重新拿一份名单，
+    // 否则那个已消失的选项会一直赖在下拉框里。
+    await loadPresets()
+  } finally {
+    busyId.value = null
+  }
+}
+
+/** 取件核对窗口交了一单。不用等下一次轮询：柜台这边刚把纸递出去，
+ *  屏幕上那一行还写着「可取了」的话，下一个人来取件时很容易看错行。 */
+function onPickupDone(): void {
+  void load(true)
+}
+
 /* 自动刷新：页面不可见时暂停，避免后台标签页空转 */
 const visibility = useDocumentVisibility()
 const { pause, resume } = useIntervalFn(() => void load(true), AUTO_REFRESH_MS, { immediate: false })
@@ -631,8 +875,17 @@ watch(autoRefresh, (enabled) => {
 })
 
 onMounted(async () => {
-  await load()
+  // 两份清单并行取：打印服务名单不是首屏必要数据，串行等它只会
+  // 把订单列表的出来时间往后拖。
+  await Promise.all([load(), loadPresets()])
   if (autoRefresh.value) resume()
+})
+
+// 防抖计时器必须随组件一起收掉：否则离开这一页之后它到点还会发一次
+// 请求，而那些请求属于一个已经不存在的页面（自动刷新用的是 useIntervalFn，
+// 它自己会随作用域停，这个裸 setTimeout 不会）。
+onBeforeUnmount(() => {
+  if (keywordTimer !== null) clearTimeout(keywordTimer)
 })
 </script>
 
@@ -640,6 +893,13 @@ onMounted(async () => {
   <div class="mx-auto max-w-[1400px]">
     <PageHeader title="订单台" subtitle="接单后即可改状态、下载文件">
       <template #actions>
+        <!-- 取件核对是柜台最常用的那个动作，所以它是主按钮（这一排里唯一的实心按钮）。
+             它是个弹窗而不是路由页：交件时手不能离开这一屏，跳走再跳回来会把
+             后面的列表翻页和筛选全部重置掉。 -->
+        <NButton size="small" type="primary" class="!font-bold" @click="pickupOpen = true">
+          <template #icon><ScanLine :size="15" /></template>
+          取件核对
+        </NButton>
         <span class="flex items-center gap-2">
           <NSwitch v-model:value="autoRefresh" size="small" />
           <span class="tech-label text-ink-3">自动刷新 10s</span>
@@ -679,13 +939,47 @@ onMounted(async () => {
         size="small"
         class="!w-[128px]"
         :consistent-menu-width="false"
+        @update:value="onStatusChange"
+      />
+      <NSelect
+        :value="presetFilter"
+        :options="presetOptions"
+        size="small"
+        class="!w-[180px]"
+        :consistent-menu-width="false"
         @update:value="
           (value: string) => {
-            status = value
+            presetFilter = value
             onFilterChange()
           }
         "
       />
+      <NInput
+        v-model:value="keyword"
+        size="small"
+        class="!w-[280px]"
+        placeholder="搜取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式"
+        clearable
+        :loading="keywordPending"
+        @update:value="onKeywordInput"
+        @keydown.enter="onKeywordEnter"
+      >
+        <template #prefix><Search :size="14" /></template>
+      </NInput>
+      <!-- 开关的点击处理挂在**文字**上，不是挂在这一圈包裹元素上。
+           挂外层的话：点开关本身会先后触发两次 —— 开关自己发 update:value，
+           紧接着 click 冒泡到外层又翻一次，两次抵消，结果就是「点了没反应」。
+           分开写之后，点文字翻 ref、点开关走它自己的事件，各自只生效一次。 -->
+      <span class="flex items-center gap-1.5">
+        <NSwitch :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
+        <span
+          class="tech-label cursor-pointer text-ink-3"
+          title="已取件是终态、也是累计数，看活件时它只会把待办的几单顶到下一页"
+          @click="onExcludeDoneChange(!excludeDone)"
+        >
+          隐藏已取件
+        </span>
+      </span>
       <span class="tech-label ml-auto text-ink-4">共 {{ total }} 条</span>
     </div>
 
@@ -695,8 +989,14 @@ onMounted(async () => {
       </div>
 
       <div v-else-if="!orders.length" class="grid place-items-center py-14">
-        <NEmpty :description="scope === 'pool' ? '待接单池是空的，都处理完了' : '没有符合条件的订单'">
+        <NEmpty :description="emptyText">
           <template #icon><Inbox :size="32" /></template>
+          <!-- 筛出一片空的时候得给条退路：这一屏上同时开着五个筛子
+               （范围、状态、打印服务、关键词、隐藏已取件），挨个去关
+               很容易漏掉一个，而漏掉的那个恰恰就是把单子藏起来的那个。 -->
+          <template v-if="hasFilter" #extra>
+            <NButton size="small" quaternary @click="resetFilters">清除筛选条件</NButton>
+          </template>
         </NEmpty>
       </div>
 
@@ -707,6 +1007,7 @@ onMounted(async () => {
         :data="orders"
         :bordered="false"
         :single-line="false"
+        :scroll-x="ORDER_TABLE_MIN_WIDTH"
         size="small"
         :row-key="(row: Order) => row.id"
       />
@@ -747,7 +1048,7 @@ onMounted(async () => {
             <span>{{ order.owner_nickname ?? '（已注销）' }} · {{ order.owner_dorm ?? '—' }}</span>
             <!-- 联系方式单独一格而不是拼到上面那句里：拼在一起，窄屏上先被挤掉的
                  恰恰是它，而这行里最要紧的就是它（找不到人时昵称和宿舍都白搭）。 -->
-            <span class="truncate">{{ contactLabel(order) }}</span>
+            <span class="truncate">{{ contactLabel(order.owner_contact_type, order.owner_contact) }}</span>
             <span class="tnum">取件码 {{ pickupCodeLabel(order.pickup_code) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
@@ -766,13 +1067,13 @@ onMounted(async () => {
 
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
                完全看不到「几份、什么纸」，这两样恰恰是他最需要知道的。
-               这里和宽屏那两行取同一组助函数，口径必须一样。 -->
-          <p class="mt-2 flex flex-wrap items-center gap-x-3 text-[12px] text-ink-3">
-            <span>
-              {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
-              / {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
+               口径与宽屏那两行完全一致：份数是牌子、单双面加粗，颜色和纸张退到后面。 -->
+          <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-3">
+            <span class="spec-chip tnum">{{ copiesLabel(order.copies) }}</span>
+            <span class="text-[13px] font-semibold text-ink">
+              {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             </span>
-            <span class="tnum">{{ copiesLabel(order.copies) }}</span>
+            <span>{{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}</span>
             <span :title="order.paper_remark ?? undefined">{{ paperLabel(order.paper_name) }}</span>
           </p>
 
@@ -780,6 +1081,13 @@ onMounted(async () => {
           <p v-if="order.preset_content" class="mt-2 text-[12px] leading-5">
             <span class="text-ink-4">预设</span>
             <span class="ml-1.5 text-ink-3">{{ order.preset_content }}</span>
+          </p>
+
+          <!-- 事后被归入的服务分组。下单选了预设的单不显示这一行：它上面「预设」
+               那一句就是它的服务，同一件事写两遍会让人以为是两回事。 -->
+          <p v-if="!order.preset_id && order.preset_group_content" class="mt-2 text-[12px] leading-5">
+            <span class="text-ink-4">服务分组</span>
+            <span class="ml-1.5 text-ink-3">{{ order.preset_group_content }}</span>
           </p>
 
           <!-- 备注：学生的打印要求（「只打第 3 页」这类）。宽屏在表格里有单独一列，
@@ -866,6 +1174,22 @@ onMounted(async () => {
               <template #icon><Download :size="12" /></template>
               下载
             </NButton>
+
+            <!-- 「归入服务」。放这里而不是宽屏那张表的位置一致 ——
+                 两套渲染得给到同一件事，否则窄屏能点、宽屏不能，看着像抽风。
+                 名单没取到就不显示它：空下拉框比没有按钮更让人困惑。 -->
+            <NDropdown
+              v-if="presets.length"
+              :options="groupDropdownOptions(order)"
+              trigger="click"
+              :disabled="busyId === order.id"
+              @select="(key: string) => setGroup(order, key)"
+            >
+              <NButton size="tiny" quaternary :disabled="busyId === order.id">
+                <template #icon><FolderPlus :size="12" /></template>
+                {{ hasGroup(order) ? '改分组' : '归入服务' }}
+              </NButton>
+            </NDropdown>
           </div>
         </li>
       </TransitionGroup>
@@ -963,5 +1287,9 @@ onMounted(async () => {
         </div>
       </template>
     </NModal>
+
+    <!-- 取件核对二级窗口。@done 里去刷一下列表：刚交出去的那一单在本地还是
+         「可取了」，不刷的话下一个人来取件时很容易看错行。 -->
+    <PickupCheckDialog v-model:show="pickupOpen" @done="onPickupDone" />
   </div>
 </template>

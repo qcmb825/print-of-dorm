@@ -14,12 +14,16 @@ from config import (
     ORDER_LOG_CLAIM,
     ORDER_LOG_CREATE,
     ORDER_LOG_DOWNLOAD,
+    ORDER_LOG_GROUP,
     ORDER_LOG_LABELS,
+    ORDER_LOG_PICKUP,
     ORDER_LOG_PRICE,
     ORDER_LOG_RELEASE,
     ORDER_LOG_REPRICE,
     ORDER_LOG_STATUS,
     ORDER_LOG_WITHDRAW,
+    ORDER_PRESET_FILTER_NONE,
+    ORDER_SEARCH_MAX,
     ORDER_STATUSES,
     ORDER_STATUSES_MANUAL,
     ORDER_STATUSES_QUEUE,
@@ -74,6 +78,149 @@ def log_event(order_id, action, detail='', conn=None):
     finally:
         if short is not None:
             short.close()
+
+
+# ---- 订单列表的公共 SQL ----
+#
+# 「订单台列表」和「凭取件码核对」要的是同一批字段。两份 SELECT 各写一遍的话，
+# 以后加一个字段（比如这次的 preset_group_id）只会改到其中一处，
+# 另一处静默少一个键 —— 前端类型是手写的，少键不报错，只是那一格永远空着。
+#
+# 拼成两段：_ORDER_FROM 只要订单表和下单人（筛选条件只用到这两张），
+# 接单人 / 定价人 / 分组名是纯展示，只有真正取行的语句才需要。
+_ORDER_FROM = '''
+    FROM orders o
+    LEFT JOIN users owner ON owner.id = o.user_id
+'''
+
+_ORDER_SELECT = '''
+    SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
+           o.user_id, o.claimed_by, o.price,
+           o.preset_id, o.preset_content, o.copies,
+           o.paper_type_id, o.paper_name, o.paper_remark,
+           COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
+           pg.content AS preset_group_content,
+           datetime(o.create_time, 'localtime') AS create_time,
+           datetime(o.update_time, 'localtime') AS update_time,
+           datetime(o.claim_time, 'localtime') AS claim_time,
+           datetime(o.price_time, 'localtime') AS price_time,
+           owner.nickname AS owner_nickname, owner.dorm AS owner_dorm, owner.status AS owner_status,
+           owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
+           claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
+           pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
+    FROM orders o
+    LEFT JOIN users owner ON owner.id = o.user_id
+    LEFT JOIN users claimer ON claimer.id = o.claimed_by
+    LEFT JOIN users pricer ON pricer.id = o.priced_by
+    LEFT JOIN print_presets pg ON pg.id = COALESCE(o.preset_group_id, o.preset_id)
+'''
+
+
+def decorate_orders(rows, my_id, is_super):
+    """把若干行订单补成响应体（列表和按码核对共用同一份填充逻辑）。"""
+    orders = []
+    for row in rows:
+        item = dict(row)
+        item['is_mine'] = item['claimed_by'] == my_id
+        # 能不能改状态由服务端按角色判定，这里只负责把结果算成一个布尔值
+        item['can_manage'] = is_super or item['is_mine']
+        # 已注销的账号在名字后面标一下。订单是按 user_id 关联的，关联本身没变，
+        # 但注销会把昵称释放出去、可能被新人顶用，不标就分不清这单是谁下的。
+        # owner_status 是「算这个标记用的原料」，拼完就 pop 掉，不让它混进响应体 ——
+        # 前端要的只是展示用的名字，多给一个字段就等于多一处要跟着改的地方。
+        item['owner_nickname'] = display_name(item['owner_nickname'], item.pop('owner_status', None))
+        item['claimer_nickname'] = display_name(item['claimer_nickname'], item.pop('claimer_status', None))
+        item['pricer_nickname'] = display_name(item['pricer_nickname'], item.pop('pricer_status', None))
+        # owner_contact_type / owner_contact 是给「联系不上就手动喊人」用的：
+        # 取件提醒发不出去的那一档（学生填的是微信号，没有邮箱可发），
+        # 订单台会把这个单标出来，而管理员光看昵称和宿舍是找不到人的。
+        # 这两个字段只在这一条管理端接口上给，学生自己的 /api/my-orders 不给 ——
+        # 那边他自己知道自己的联系方式，多回一份没有用处、只是多一个外泄面。
+        #
+        # 「推不推得出邮箱」由服务端算，前端不镜像这套规则：镜像的代价是必然漂移 ——
+        # QQ_RE / EMAIL_RE 哪天改一个字，前端那份不会跟着改，
+        # 界面就会标出「需人工通知」而邮件其实发得出去（或者反过来），
+        # 而且两边都不报错。判定直接用发信那一路的同一函数，只有一份规则。
+        item['owner_mailbox_missing'] = contact_mailbox(
+            item['owner_contact_type'], item['owner_contact'])[0] is None
+        orders.append(item)
+    return orders
+
+
+def _like_param(text):
+    """把关键词包成 LIKE 的 %关键词% 模式，并转义通配符。
+
+    不转义的话，搜「张_」会把「张一」「张二」全捞回来（_ 在 LIKE 里是「任意一个字符」），
+    搜一个「%」更是直接匹配所有订单。用户看到的是「搜索没用」，
+    而这类「好心地匹配了更多东西」的行为不报错，只让人觉得结果不准。
+    """
+    escaped = text.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return '%' + escaped + '%'
+
+
+def _pickup_codes(raw):
+    """把柜台输入的取件码归一成几个候选值。
+
+    取件码是 4 位数字，界面上也补零显示成 4 位，但人报号码时习惯省前导零
+    （「12 号」而不是「0012」）。所以纯数字且不足 4 位时，把补零那一份也算上 ——
+    只认原样的话，柜台会碰到「明明是这个码，却显示找不到」，而且没法解释。
+    极端冲突时退化成 6 位短码（含字母），那种走原样匹配。
+    """
+    # JSON 里这个字段可能是数字（前端传的是字符串，但不保证）——
+    # 先 str() 一下，别让 .strip() 在 int 上直接 AttributeError（那就是一个 500）。
+    text = str(raw if raw is not None else '').strip()
+    # 超过 16 个字就不是取件码了（最长也就 6 位），不要拿它去查库
+    if not text or len(text) > 16:
+        return []
+    codes = [text]
+    if text.isdigit() and len(text) < 4:
+        codes.append(text.zfill(4))
+    return codes
+
+
+def _pickup_conflict_response(conn, codes):
+    """取件没改到任何行时的诊断响应：码不存在、还是状态不对。
+
+    逐档说清差在哪一步，别笼统回一句「不能取件」—— 柜台要的是
+    「现在能不能给他」以及「不能的话让他等什么」。
+    """
+    placeholders = ','.join('?' * len(codes))
+    found = conn.execute(
+        "SELECT id, status, datetime(update_time, 'localtime') AS update_time "
+        'FROM orders WHERE pickup_code IN (%s) ORDER BY id DESC' % placeholders,
+        codes).fetchall()
+    if not found:
+        return jsonify({'code': 404, 'msg': '没找到这个取件码，核对一下再试'}), 404
+    live = [item for item in found if item['status'] != ST_DONE]
+    if not live:
+        return jsonify({
+            'code': 409,
+            'msg': '这一单已经取走了（%s）' % (found[0]['update_time'] or '具体时间不详'),
+        }), 409
+    current = live[0]
+    if current['status'] == ST_UNPRICED:
+        return jsonify({
+            'code': 409,
+            'msg': '订单 #%s 还没计费，先在订单台计费' % current['id'],
+        }), 409
+    return jsonify({
+        'code': 409,
+        'msg': '订单 #%s 现在是「%s」，还没到可取件那一步' % (current['id'], current['status']),
+    }), 409
+
+
+def _preset_label(conn, preset_id):
+    """取预设正文，用来写留痕。取不到（已删除）时给一句能认出来的说明。"""
+    if preset_id is None:
+        return None
+    row = find_preset(conn, preset_id)
+    if row is None:
+        return '已删除的打印服务 #%s' % preset_id
+    # 正文最长 300 字，而留痕整体只有 200 字的上限（db.log_order_event 里截）——
+    # 不先截一刀的话，后面那句「归入打印服务「…」」会被从尾巴上剃掉，
+    # 变成一句没有结尾的话。
+    content = (row['content'] or '').strip().replace('\n', ' ')
+    return (content[:40] + '…') if len(content) > 40 else content
 
 
 def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies, paper=None):
@@ -376,7 +523,8 @@ def api_create_preset_order():
     })
 
 
-# 订单列表，管理端可看，支持分页、状态筛选、范围筛选
+# 订单列表，管理端可看，支持分页、状态筛选、范围筛选，以及关键词检索 /
+# 「按打印服务分组筛选」/ 「隐藏已取件」。
 @bp.route('/api/orders')
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_orders():
@@ -384,73 +532,71 @@ def api_orders():
     size = positive_int(request.args.get('size'), 20, maximum=100)
     status = (request.args.get('status') or '').strip()
     scope = (request.args.get('scope') or 'all').strip()
+    # 关键词一个字都没填时不要拼进 WHERE：空模式 '%' 匹配所有行，结果看着一样，
+    # 但白让 SQLite 扫一遍全表。
+    keyword = (request.args.get('q') or '').strip()[:ORDER_SEARCH_MAX]
+    preset = (request.args.get('preset') or '').strip()
+    hide_done = request.args.get('exclude_done') == '1'
 
     where, params = [], []
     if status in ORDER_STATUSES:
         where.append('o.status = ?')
         params.append(status)
+    # 「隐藏已取件」和上面那个单状态筛选是两回事，两个一起传时按交集处理 ——
+    # 反过来若让隐藏覆盖掉状态筛选，就会变成「点了『只看可取件』却看到待打印」。
+    # 已取件是终态、也是个累计数，看活件时它只是噪声，所以默认隐藏。
+    if hide_done:
+        where.append('o.status <> ?')
+        params.append(ST_DONE)
     if scope == 'pool':      # 待接单池，还没人接
         where.append('o.claimed_by IS NULL')
     elif scope == 'mine':    # 我接的单
         where.append('o.claimed_by = ?')
         params.append(g.user['id'])
+    if keyword:
+        # 一个框搜所有能认出「是哪一单」的字段。分成几个框让人自己选，
+        # 柜台就得先想「这个信息属于哪一类」—— 而站在柜台前的人手里
+        # 可能只有一句「我那个表还没好吗」。
+        #
+        # 订单号走**精确相等**而不是 LIKE：搜「12」时想要的是第 12 单，
+        # 而不是 #12、#120、#1212 一起上来（号码是给人念的，不是片段）。
+        # 学号同理。
+        like = _like_param(keyword)
+        where.append(
+            "(o.pickup_code LIKE ? ESCAPE '\\' OR o.filename LIKE ? ESCAPE '\\'"
+            " OR CAST(o.id AS TEXT) = ?"
+            " OR owner.nickname LIKE ? ESCAPE '\\' OR owner.real_name LIKE ? ESCAPE '\\'"
+            " OR owner.student_id = ?"
+            " OR owner.dorm LIKE ? ESCAPE '\\' OR owner.contact LIKE ? ESCAPE '\\')"
+        )
+        params.extend([like, like, keyword, like, like, keyword, like, like])
+    # 按打印服务分组筛选：分组键是 COALESCE(preset_group_id, preset_id) ——
+    # 下单时选了预设的单天然就是它自己的分组，而管理员另归过类的那几单（比如
+    # 没选预设、自己传了同一份表格的同学）按 preset_group_id 落进来，
+    # 两边于是能一起看到。这也是这个需求里「同一文件的订单」那一条。
+    group_key = 'COALESCE(o.preset_group_id, o.preset_id)'
+    if preset == ORDER_PRESET_FILTER_NONE:
+        where.append(group_key + ' IS NULL')
+    elif preset.isdigit():
+        where.append(group_key + ' = ?')
+        params.append(int(preset))
     where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
 
     conn = get_db()
     try:
-        total = conn.execute(f'SELECT COUNT(*) AS c FROM orders o {where_sql}', params).fetchone()['c']
-        rows = conn.execute(f'''
-            SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
-                   o.user_id, o.claimed_by, o.price,
-                   o.preset_id, o.preset_content, o.copies,
-                   o.paper_type_id, o.paper_name, o.paper_remark,
-                   datetime(o.create_time, 'localtime') AS create_time,
-                   datetime(o.update_time, 'localtime') AS update_time,
-                   datetime(o.claim_time, 'localtime') AS claim_time,
-                   datetime(o.price_time, 'localtime') AS price_time,
-                   owner.nickname AS owner_nickname, owner.dorm AS owner_dorm, owner.status AS owner_status,
-                   owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
-                   claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
-                   pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
-            FROM orders o
-            LEFT JOIN users owner ON owner.id = o.user_id
-            LEFT JOIN users claimer ON claimer.id = o.claimed_by
-            LEFT JOIN users pricer ON pricer.id = o.priced_by
-            {where_sql}
-            ORDER BY o.id DESC
-            LIMIT ? OFFSET ?
-        ''', (*params, size, (page - 1) * size)).fetchall()
+        # COUNT 也要带上 owner 那份 JOIN —— 筛选条件现在就用到它了（按昵称 / 姓名 /
+        # 宿舍 / 联系方式搜）。只给下面取行的语句加 JOIN 的话，一搜索就是
+        # sqlite3.OperationalError: no such column: owner.nickname，
+        # 而「列表正常、一搜索就 500」这种症状很难第一时间联想到 JOIN 上。
+        total = conn.execute(
+            'SELECT COUNT(*) AS c ' + _ORDER_FROM + where_sql, params).fetchone()['c']
+        rows = conn.execute(
+            _ORDER_SELECT + where_sql + ' ORDER BY o.id DESC LIMIT ? OFFSET ?',
+            (*params, size, (page - 1) * size)).fetchall()
     finally:
         conn.close()
 
-    my_id = g.user['id']
-    is_super = g.user['role'] == ROLE_SUPER
-    orders = []
-    for row in rows:
-        item = dict(row)
-        item['is_mine'] = item['claimed_by'] == my_id
-        # 能不能改状态由服务端按角色判定，这里只负责把结果算成一个布尔值
-        item['can_manage'] = is_super or item['is_mine']
-        # 已注销的账号在名字后面标一下。订单是按 user_id 关联的，关联本身没变，
-        # 但注销会把昵称释放出去、可能被新人顶用，不标就分不清这单是谁下的。
-        # owner_status 是「算这个标记用的原料」，拼完就 pop 掉，不让它混进响应体 ——
-        # 前端要的只是展示用的名字，多给一个字段就等于多一处要跟着改的地方。
-        item['owner_nickname'] = display_name(item['owner_nickname'], item.pop('owner_status', None))
-        item['claimer_nickname'] = display_name(item['claimer_nickname'], item.pop('claimer_status', None))
-        item['pricer_nickname'] = display_name(item['pricer_nickname'], item.pop('pricer_status', None))
-        # owner_contact_type / owner_contact 是给「联系不上就手动喊人」用的：
-        # 取件提醒发不出去的那一档（学生填的是微信号，没有邮箱可发），
-        # 订单台会把这个单标出来，而管理员光看昵称和宿舍是找不到人的。
-        # 这两个字段只在这一条管理端接口上给，学生自己的 /api/my-orders 不给 ——
-        # 那边他自己知道自己的联系方式，多回一份没有用处、只是多一个外泄面。
-        #
-        # 「推不推得出邮箱」由服务端算，前端不镜像这套规则：镜像的代价是必然漂移 ——
-        # QQ_RE / EMAIL_RE 哪天改一个字，前端那份不会跟着改，
-        # 界面就会标出「需人工通知」而邮件其实发得出去（或者反过来），
-        # 而且两边都不报错。判定直接用发信那一路的同一函数，只有一份规则。
-        item['owner_mailbox_missing'] = contact_mailbox(
-            item['owner_contact_type'], item['owner_contact'])[0] is None
-        orders.append(item)
+    orders = decorate_orders(rows, g.user['id'], g.user['role'] == ROLE_SUPER)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
 
 
@@ -475,6 +621,8 @@ def api_order_detail(order_id):
                    o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
+                   COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
+                   pg.content AS preset_group_content,
                    datetime(o.create_time, 'localtime') AS create_time,
                    datetime(o.update_time, 'localtime') AS update_time,
                    datetime(o.claim_time, 'localtime') AS claim_time,
@@ -489,6 +637,7 @@ def api_order_detail(order_id):
             LEFT JOIN users owner ON owner.id = o.user_id
             LEFT JOIN users claimer ON claimer.id = o.claimed_by
             LEFT JOIN users pricer ON pricer.id = o.priced_by
+            LEFT JOIN print_presets pg ON pg.id = COALESCE(o.preset_group_id, o.preset_id)
             WHERE o.id = ?
         ''', (order_id,)).fetchone()
         if row is None:
@@ -853,6 +1002,186 @@ def api_update_status(order_id):
     logger.info('订单 #%s 状态「%s」->「%s」 操作人=%s(%s) ip=%s',
                 order_id, row['status'], new_status, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': f'订单 {order_id} 已更新为「{new_status}」'})
+
+
+# ---- 柜台取件：凭取件码核对、确认取件 ----
+#
+# 为什么单独给两条接口，而不是让柜台那人在列表里翻出那一单再改状态：
+# 学生站在面前报的是**取件码**，不是订单号。走列表要先搜索、再在一堆同名学生里
+# 认出是哪一行、再点开下拉框选「已取件」—— 三个人排队的时候很容易点错行，
+# 而这里点错行的后果是把别人的件交出去，学生拿走之后基本追不回来。
+# 这条路径只有「输入码 → 看一眼 → 点取件」三步。
+#
+# GET 只读、POST 落库，不合成一个「查到即取件」的接口：核对是**可能不做**的
+# （一看就是自己的单，直接取），而取件必须是一次明确的写操作 ——
+# 把两者绑在一起，任何一次手滑的查询都会真的把件交出去。
+@bp.route('/api/order/pickup')
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_lookup_pickup():
+    codes = _pickup_codes(request.args.get('code'))
+    if not codes:
+        return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
+    placeholders = ','.join('?' * len(codes))
+
+    conn = get_db()
+    try:
+        # 候选码有两个（补过零的那种）时优先挑还没取件的那个：『0012』和『12』
+        # 在库里可能真是两笔不同的单，而柜台要的显然是还没被取走的那一笔。
+        rows = conn.execute(
+            _ORDER_SELECT + ' WHERE o.pickup_code IN (%s)' % placeholders +
+            ' ORDER BY (o.status = ?) ASC, o.id DESC', (*codes, ST_DONE)).fetchall()
+        order = decorate_orders(rows[:1], g.user['id'], g.user['role'] == ROLE_SUPER)[0] \
+            if rows else None
+        if order is not None:
+            # 姓名和学号只在这一条接口上给：柜台要核对的是「来的人是不是这一单的主人」，
+            # 而昵称是用户自填的，凭它认不出人。列表那边不给（一页 20 条就等于
+            # 一份花名册），这里只查一条、而且人已经站在柜台前了。
+            owner = conn.execute(
+                'SELECT real_name, student_id FROM users WHERE id = ?',
+                (order['user_id'],)).fetchone()
+            order['owner_real_name'] = owner['real_name'] if owner else None
+            order['owner_student_id'] = owner['student_id'] if owner else None
+    finally:
+        conn.close()
+
+    if order is None:
+        return jsonify({'code': 404, 'msg': '没找到这个取件码，核对一下再试'}), 404
+    return jsonify({'code': 0, 'order': order})
+
+
+@bp.route('/api/order/pickup', methods=['POST'])
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_confirm_pickup():
+    data = request.get_json(silent=True) or {}
+    codes = _pickup_codes(data.get('code') or request.form.get('code'))
+    if not codes:
+        return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
+    placeholders = ','.join('?' * len(codes))
+
+    conn = get_db()
+    try:
+        # 条件写进 UPDATE 而不是先查后写：两个人同时点「确认取件」时，
+        # 只有第一条能改到行，第二条 rowcount = 0 —— 这正是我们要的效果，
+        # 同一份件不能交给两个人。状态只认「可取了」：
+        # 打印中的单被柜台取走，等于纸还没出来就记账说已经给过了。
+        #
+        # 参数顺序要跟问号一一对上：SET 的那个问号在最前面，然后是 IN 里的一串，
+        # 最后才是状态条件。写成 (*codes, ST_DONE, ST_READY) 的话
+        # 状态列会被赋成用户输入的取件码文本（UPDATE 照样成功、rowcount 也是 1），
+        # 然后下面按「已取件」再查就查不到，当场 500 —— 这个坑已经踩过一次。
+        cursor = conn.execute(
+            'UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP '
+            'WHERE pickup_code IN (%s) AND status = ?' % placeholders,
+            (ST_DONE, *codes, ST_READY))
+        if cursor.rowcount != 1:
+            conn.rollback()
+            # 一次改动不止一行：说明这个输入同时命中了不止一张还在流程里的单
+            # （「12」和「0012」都是活单，只会来自手工改过的老库）。
+            # 这种码不能替人做决定，退回订单台让他自己看。
+            if cursor.rowcount > 1:
+                security_event('pickup_code_ambiguous',
+                               '取件码 %s 同时命中 %s 张订单' % (codes[0], cursor.rowcount))
+                return jsonify({
+                    'code': 409,
+                    'msg': '这个取件码对上了不止一单，请到订单台手动处理',
+                }), 409
+            return _pickup_conflict_response(conn, codes)
+
+        row = conn.execute(
+            'SELECT id, claimed_by FROM orders WHERE pickup_code IN (%s) AND status = ?'
+            % placeholders, (*codes, ST_DONE)).fetchone()
+        # 谁把件交出去的也要写清楚：柜台这人常常不是接单人（接单的人可能在里屋打印）。
+        # 留痕里记下「这是代某人交接的」，事后对不上账时才知道去找谁。
+        claimer = None
+        if row['claimed_by']:
+            claimer = conn.execute(
+                'SELECT nickname, status FROM users WHERE id = ?', (row['claimed_by'],)).fetchone()
+        if claimer is not None and row['claimed_by'] != g.user['id']:
+            detail = '凭取件码确认取件，代为交接「%s」接的单' % display_name(
+                claimer['nickname'], claimer['status'])
+        else:
+            detail = '凭取件码确认取件'
+        log_event(row['id'], ORDER_LOG_PICKUP, detail, conn=conn)
+        # 取件不额外发信：学生本人就在柜台前面等着拿纸，
+        # 再给他发一封「你的件已被取走」只是骚扰（可取件那封信才是真正有用的那封）。
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info('订单 #%s 凭取件码确认取件 操作人=%s(%s) ip=%s',
+                row['id'], g.user['nickname'], g.user['role'], client_ip())
+    return jsonify({
+        'code': 0,
+        'msg': '订单 #%s 已标记为「已取件」' % row['id'],
+        'order_id': row['id'],
+    })
+
+
+# 把订单归入某条打印服务分组（或取消归类）。
+#
+# 为什么需要这个动作：预设打印服务是「一段说明」，学生选了它就不用传文件。
+# 但同一项服务（比如班里统一收上来的那份表）总有人不选预设、直接把文件传上来 ——
+# 这些单和预设单打的是同一份东西，却因为下单方式不同散落在列表各处。
+# 让管理员把它们归到同一组，按服务筛选时就能一起看到、一起处理。
+#
+# 落在 preset_group_id 上而不是直接改 preset_id，理由见 db.py 文件顶部
+# v11 -> v12 那段（一句话：preset_id 的含义是「下单时选了预设」，混用会做出
+# 一列同时表示两件事的字段）。读完用 COALESCE 合起来当分组键，两边一起筛。
+#
+# 不限制给默认管理员：这和维护纸张 / 预设是同一类事 —— 打印员自己最清楚
+# 哪几单是同一项活，而且它只改一个展示用的分组，不碰金额、不碰状态。
+@bp.route('/api/order/<int:order_id>/preset-group', methods=['PUT'])
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_set_order_preset_group(order_id):
+    data = request.get_json(silent=True) or {}
+    raw = data.get('preset_id')
+    if raw in (None, '', ORDER_PRESET_FILTER_NONE):
+        group_id = None
+    else:
+        try:
+            group_id = int(raw)
+        except (TypeError, ValueError):
+            group_id = 0
+        if group_id < 1:
+            return jsonify({'code': 400, 'msg': '要归入的打印服务不合法'}), 400
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            'SELECT preset_group_id, preset_id FROM orders WHERE id = ?', (order_id,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+        if group_id is not None and find_preset(conn, group_id) is None:
+            return jsonify({'code': 404, 'msg': '这条打印服务不存在（可能刚被删掉）'}), 404
+
+        old_key = row['preset_group_id'] if row['preset_group_id'] is not None else row['preset_id']
+        if old_key == group_id:
+            # 新旧一样就不写空 UPDATE：留痕里多一条「归入 A」而实际什么都没变，
+            # 时间线上会多出一条和上一模一样的记录，以后翻账时只会让人怀疑中间漏了什么。
+            return jsonify({'code': 0, 'msg': '这一单已经在这一组里了', 'preset_group_id': group_id})
+
+        conn.execute(
+            'UPDATE orders SET preset_group_id = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?',
+            (group_id, order_id))
+        old_name = _preset_label(conn, old_key)
+        new_name = _preset_label(conn, group_id)
+        if group_id is None:
+            detail = '取消服务分组（原「%s」）' % (old_name or '没归过类')
+        else:
+            detail = '归入打印服务「%s」' % new_name
+        log_event(order_id, ORDER_LOG_GROUP, detail, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    logger.info('订单 #%s 归入打印服务 #%s（原 #%s） 操作人=%s(%s) ip=%s',
+                order_id, group_id, old_key, g.user['nickname'], g.user['role'], client_ip())
+    return jsonify({
+        'code': 0,
+        'msg': '已取消归类' if group_id is None else '已归入该打印服务',
+        'preset_group_id': group_id,
+        'preset_group_content': new_name,
+    })
 
 
 

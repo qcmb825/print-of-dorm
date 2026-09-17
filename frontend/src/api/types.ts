@@ -27,6 +27,12 @@ export const ORDER_STATUSES: OrderStatus[] = ['待计费', '待打印', '打印�
  *  而前端会照旧把那个金额显示出来，没人看得出它其实还没被确认。 */
 export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '可取了', '已取件']
 
+/** 「按打印服务筛选」里代表「什么都没归」的那个取值。
+ *
+ *  与后端 config.ORDER_PRESET_FILTER_NONE 对齐 —— 两边各写一个字面量，
+ *  改一处漏一处不会报错，只会让「未归类」那一项静默变成「全部订单」。 */
+export const ORDER_PRESET_FILTER_NONE = 'none'
+
 export type ColorType = 'black' | 'color'
 export type Duplex = 'single' | 'double'
 
@@ -162,6 +168,22 @@ export interface Order {
   /** 下单那一刻的纸张名。管理员随时能改名，所以订单显示的是这个快照，不是纸张表的现值。 */
   paper_name?: string | null
   paper_remark?: string | null
+
+  /** 管理员把这单归到了哪条打印服务分组。
+   *
+   *  **和 preset_id 不是一回事**：preset_id 的含义是「下单时选了这条预设」，
+   *  这一单本身就是那句话；而 preset_group_id 是「事后被人归进来的一单」（比如
+   *  班里统一收表，有人没选预设、直接把文件传上来了）。两种单打的是同一份东西，
+   *  所以按服务筛选时要把它们算在一起，但显示上必须分得清谁有文件、谁没有。 */
+  preset_group_id?: number | null
+  /** 分组名。服务端按 COALESCE(preset_group_id, preset_id) 取的那条预设的**现值**，
+   *  和 preset_content 那个下单快照不同 —— 服务改名后这里会跟着变。 */
+  preset_group_content?: string | null
+  /** 下单人姓名 / 学号。**只有「凭取件码核对」那一条接口返回**：
+   *  柜台要拿它确认来的人是不是本人。订单列表一页 20 条，不给这个
+   *  （那是一份花名册，不是柜台核对）。 */
+  owner_real_name?: string | null
+  owner_student_id?: string | null
 }
 
 export interface OrderListResponse extends ApiEnvelope {
@@ -192,6 +214,11 @@ export type OrderLogAction =
   | 'status'
   | 'withdraw'
   | 'download'
+  /** 凭取件码确认取件。和 'status' 分开是有意的：时间线上要能看出
+   *  「柜台核对过码才交的件」和「管理员随手把状态改成已取件」是两回事。 */
+  | 'pickup'
+  /** 管理员把这一单归入某条打印服务分组（不是下单时选的预设）。 */
+  | 'group'
 
 /** 一条订单操作记录。actor_* 是**动作发生当时**的身份 ——
  *  事后拿 users.role 反推的话，历史记录会跟着账号现状一起变。 */
@@ -253,6 +280,24 @@ export interface OrderDetail {
   paper_type_id: number | null
   paper_name: string | null
   paper_remark: string | null
+  /** 归入的打印服务分组（含义见 Order.preset_group_id）；null = 没归类 */
+  preset_group_id?: number | null
+  /** 分组名（服务端取的是这条预设的现值） */
+  preset_group_content?: string | null
+}
+
+/** 凭取件码核对的响应。就是列表那一行订单，外加两个只在柜台核对时给的字段。
+ *
+ *  单独起一个类型而不是复用 Order：这样 owner_real_name / owner_student_id
+ *  在这条接口上就是**必有**的，界面上不用写一堆 `?? '—'` 去兜底
+ *  ——而列表接口那边它们本来就不存在，写成可选才诚实。 */
+export interface PickupOrder extends Order {
+  owner_real_name: string | null
+  owner_student_id: string | null
+}
+
+export interface PickupLookupResponse extends ApiEnvelope {
+  order: PickupOrder
 }
 
 export interface OrderDetailResponse extends ApiEnvelope {
