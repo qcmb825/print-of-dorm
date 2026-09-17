@@ -42,6 +42,26 @@ export const authApi = {
     post<MeResponse>('/api/login', { identifier, password }),
   register: (payload: Record<string, unknown>) => post<MeResponse>('/api/register', payload),
   logout: () => post<{ code: number; msg: string }>('/api/logout'),
+
+  /* 微信收款码：每个管理员只管自己那一张。谁接的单，学生就付给谁，
+     所以邮件里嵌的必须是接单人自己的码，不是全局一张。
+
+     服务端这三个接口都是 ROLE_ADMIN 起步。前端把入口藏起来只是省得普通人
+     点进来碰一鼻子灰，真正把关的始终是服务端。 */
+  payQr: {
+    /** 上传或替换。multipart，字段名固定是 file。 */
+    upload: (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return upload<{ code: number; msg: string; pay_qr_version?: string }>('/api/me/pay-qr', form)
+    },
+    remove: () => del<{ code: number; msg: string }>('/api/me/pay-qr'),
+    /** 预览地址。必须带上版本号（落盘文件名）做缓存标识 ——
+     *  不带的后果是换完码浏览器还在放旧图，看着像上传没生效。
+     *  这不是 XHR，走的是浏览器的图片加载，所以不经过 client.ts，
+     *  也就不需要 CSRF 令牌（它是个纯 GET 读接口）。 */
+    url: (version?: string) => `/api/me/pay-qr?v=${encodeURIComponent(version || '')}`,
+  },
 }
 
 /* 订单：学生端 */

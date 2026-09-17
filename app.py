@@ -50,6 +50,7 @@ from config import (
 from db import ensure_database_directory, get_db, init_database, seed_super_admin
 from mail import mask_address
 from notifier import start_claim_watcher
+from pickup_notifier import start_pickup_watcher
 from security import actor_label, client_ip, ensure_csrf_token, security_event
 
 from routes import register_blueprints
@@ -183,7 +184,7 @@ def load_current_user():
     try:
         row = conn.execute('''
             SELECT id, nickname, real_name, student_id, dorm, contact_type, contact,
-                   role, status, create_time, last_login
+                   pay_qr_file, role, status, create_time, last_login
             FROM users WHERE id = ?
         ''', (uid,)).fetchone()
     finally:
@@ -599,10 +600,15 @@ def start_server(host, port):
 
 
 if __name__ == '__main__':
-    # 未接单提醒的守护线程在这里拉起，**不放模块级**：
-    # 放模块级的话，任何一次 import app 都会顺带把它点着，
+    # 两个邮件提醒的守护线程都在这里拉起，**不放模块级**：
+    # 放模块级的话，任何一次 import app 都会顺带把它们点着，
     # 而测试脚本、排查工具都会 import 它，里面的练习订单完全可能真的触发发信。
     # 放在这里，就只有「真的被当服务跑起来」时才会有提醒 ——
     # 这也正是这个项目实际的部署方式（python app.py）。
+    #
+    # 两条线程的职责不重叠：claim-alert 催管理员「有人下单了快去接」，
+    # pickup-notify 通知学生「你的单子好了来取」。它们各自扫各自的凭证列
+    # （claim_alert_time / ready_notify_time），互不影响。
     start_claim_watcher()
+    start_pickup_watcher()
     start_server(os.getenv('HOST', '0.0.0.0'), env_int('PORT', 8080))

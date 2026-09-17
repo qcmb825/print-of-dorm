@@ -36,6 +36,7 @@ from config import (
     public_role_label,
 )
 from db import find_paper_type, find_preset, get_db, insert_order_row, log_order_event
+from mail import contact_mailbox
 from security import audit_action, client_ip, hit_limit, security_event
 from utils import (allowed_file, display_name, mask_nickname,
                    parse_copies, parse_price, positive_int)
@@ -408,6 +409,7 @@ def api_orders():
                    datetime(o.claim_time, 'localtime') AS claim_time,
                    datetime(o.price_time, 'localtime') AS price_time,
                    owner.nickname AS owner_nickname, owner.dorm AS owner_dorm, owner.status AS owner_status,
+                   owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
                    claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
                    pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
             FROM orders o
@@ -436,6 +438,18 @@ def api_orders():
         item['owner_nickname'] = display_name(item['owner_nickname'], item.pop('owner_status', None))
         item['claimer_nickname'] = display_name(item['claimer_nickname'], item.pop('claimer_status', None))
         item['pricer_nickname'] = display_name(item['pricer_nickname'], item.pop('pricer_status', None))
+        # owner_contact_type / owner_contact 是给「联系不上就手动喊人」用的：
+        # 取件提醒发不出去的那一档（学生填的是微信号，没有邮箱可发），
+        # 订单台会把这个单标出来，而管理员光看昵称和宿舍是找不到人的。
+        # 这两个字段只在这一条管理端接口上给，学生自己的 /api/my-orders 不给 ——
+        # 那边他自己知道自己的联系方式，多回一份没有用处、只是多一个外泄面。
+        #
+        # 「推不推得出邮箱」由服务端算，前端不镜像这套规则：镜像的代价是必然漂移 ——
+        # QQ_RE / EMAIL_RE 哪天改一个字，前端那份不会跟着改，
+        # 界面就会标出「需人工通知」而邮件其实发得出去（或者反过来），
+        # 而且两边都不报错。判定直接用发信那一路的同一函数，只有一份规则。
+        item['owner_mailbox_missing'] = contact_mailbox(
+            item['owner_contact_type'], item['owner_contact'])[0] is None
         orders.append(item)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
 
@@ -468,6 +482,7 @@ def api_order_detail(order_id):
                    owner.nickname AS owner_nickname, owner.real_name AS owner_real_name,
                    owner.student_id AS owner_student_id, owner.dorm AS owner_dorm,
                    owner.status AS owner_status,
+                   owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
                    claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
                    pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
             FROM orders o

@@ -143,7 +143,19 @@ def find_paper_type(conn, paper_type_id):
 #          这些单以后就再也不会被提醒了 —— 而且从数据上看不出发生过什么。
 #          留空则会走正常流程，但受 CLAIM_ALERT_MAX_AGE_HOURS 限制，
 #          老单本来也不会被翻出来补发。
-SCHEMA_VERSION = '10'
+# v10 -> v11：users 新增 pay_qr_file（该管理员收款码的**文件名**），
+#            orders 新增 ready_notify_time（「可取件邮件提醒」的发信凭证列）。
+#            两个都是纯加列，没有重建表。
+#            pay_qr_file 存文件名而不是绝对路径：目录由 config.PAY_QR_FOLDER 决定，
+#            哪天要换盘或改目录名，改一行配置就行；存绝对路径的话，
+#            改配置那一刻全站的收款码会集体失联，而且是静默失联 ——
+#            邮件里那块图变成空白，页面上也没有任何提示。
+#            NULL 的含义是「这个人还没传过自己的码」，此时邮件走兜底图。
+#            据此刻意不给现有管理员补一个默认文件名：那等于宣称他传过，
+#            而 PAY_QR_FOLDER 下并没有那个文件，只会把「没配置」伪装成「配置坏了」。
+#            ready_notify_time 的语义和 claim_alert_time 完全一样：
+#            **NULL = 这笔单还没发过可取件提醒**，同样刻意不回填老订单。
+SCHEMA_VERSION = '11'
 
 
 
@@ -347,7 +359,8 @@ def init_database():
                 paper_type_id INTEGER,
                 paper_name TEXT,
                 paper_remark TEXT,
-                claim_alert_time TIMESTAMP
+                claim_alert_time TIMESTAMP,
+                ready_notify_time TIMESTAMP
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -386,6 +399,12 @@ def init_database():
             cursor.execute('ALTER TABLE users ADD COLUMN contact_type TEXT')
         if 'contact' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN contact TEXT')
+
+        # 收款码文件名。空值 = 这个人还没传过，别处一律当成「没有」处理，
+        # 不要回落到某个共用的默认文件名 —— 那会让「他没传」和
+        # 「他传了一张我们找不到的图」变成同一件事。
+        if 'pay_qr_file' not in user_columns:
+            cursor.execute('ALTER TABLE users ADD COLUMN pay_qr_file TEXT')
 
         # 计费三列，同一个套路：全新库靠上面的 CREATE TABLE 就带上了，
         # 老库这里补。price 存的是「元」，最多两位小数，可空 ——
@@ -433,6 +452,15 @@ def init_database():
         # 结果就是同一笔单被提醒两遍。详见 notifier.py 的模块注释。
         if 'claim_alert_time' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN claim_alert_time TIMESTAMP')
+
+        # 可取件提醒的发信凭证，用法和上一列一模一样（NULL = 还没提醒过，
+        # 谁先把 NULL 改成时间戳谁负责发信）。
+        # 和 claim_alert_time 分成两列而不是共用一列：两封信的收件人、
+        # 触发条件、失败退避策略都不一样，挤在一列里的话，
+        # 「未接单提醒发过了」会连带把「可取件提醒」判成已发送 ——
+        # 学生永远收不到取件码，而日志上看不出任何异常。
+        if 'ready_notify_time' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN ready_notify_time TIMESTAMP')
 
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。

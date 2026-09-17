@@ -73,6 +73,12 @@ def api_me():
     # 叫这个名字是有意的：它描述的是界面，不是身份；光看响应体，
     # 能看出的只是「这个账号的界面多一个开关」。
     user['advanced'] = (real_role == ROLE_SUPER)
+    # 收款码只向外说「有没有」和「是哪一版」。版本就是落盘文件名，前端拿它给
+    # <img> 当缓存标识 —— 不这么做的话，管理员刚换完码，浏览器还在放旧的，
+    # 他会以为上传没生效，然后反复上传。
+    pay_qr_file = user.pop('pay_qr_file', None)
+    user['has_pay_qr'] = bool(pay_qr_file)
+    user['pay_qr_version'] = pay_qr_file or ''
     return jsonify({'code': 0, 'csrf': token, 'user': user})
 
 
@@ -249,6 +255,10 @@ def api_login():
         'role': public_role(row['role']), 'role_label': public_role_label(row['role']),
         # 和 /api/me 保持同一个口径：这个字段决定侧边栏那个入口要不要绑上。
         'advanced': (row['role'] == ROLE_SUPER),
+        # 收款码的口径也必须和 /api/me 一模一样，否则「登录进来」和「刷新一下」
+        # 会得到两个不同的界面（一个显示已传码、一个显示未传）。
+        'has_pay_qr': bool(row['pay_qr_file']),
+        'pay_qr_version': row['pay_qr_file'] or '',
     }})
 
 

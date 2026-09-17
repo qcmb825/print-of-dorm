@@ -161,7 +161,7 @@ def scan_once():
     finally:
         conn.close()
 
-    if send_mail(subject, compose_body(claimed, total), recipients):
+    if send_mail(subject, compose_body(claimed, total), recipients, label='未接单提醒'):
         return total
 
     # 没发出去 —— 凭证撤回，并进入退避，避免 SMTP 挂着的时候每轮都捶一次。

@@ -5,25 +5,34 @@
  *  侧栏可用宽度只有 182px 左右，塞不下「头像 + 全名 + 角色标签 + 箭头」，硬塞就会
  *  溢出到侧栏外面去，所以这里换成堆叠而不是靠截断硬挤。
  */
-import { computed, h } from 'vue'
-import { ChevronDown, LogOut } from '@lucide/vue'
-import { NButton, NDropdown } from 'naive-ui'
+import { computed, h, ref } from 'vue'
+import { ChevronDown, LogOut, QrCode } from '@lucide/vue'
+import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
 import { useRouter } from 'vue-router'
+import PayQrDialog from '@/components/PayQrDialog.vue'
 import RoleTag from '@/components/RoleTag.vue'
 import { confirmAction } from '@/composables/feedback'
 import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(defineProps<{ stacked?: boolean }>(), { stacked: false })
 
+// 根节点是两个（下拉 + 收款码弹窗），所以 attrs 没法自动继承，得自己转。
+// 不写这一句的话，StaffLayout 里那个 class="min-w-0 flex-1" 会被丢掉，
+// 同时控制台会告一状「Extraneous non-props attributes」——
+// 丢了 flex-1，侧栏顶部的账号按钮就不再撑满宽度了。
+defineOptions({ inheritAttrs: false })
+
 const auth = useAuthStore()
 const router = useRouter()
 
+const showPayQr = ref(false)
+
 const initial = computed(() => auth.displayName.slice(0, 1).toUpperCase() || '?')
 
-const options = [
+const options = computed<DropdownOption[]>(() => [
   {
     key: 'header',
-    type: 'render' as const,
+    type: 'render',
     render: () =>
       h('div', { class: 'px-3 py-2' }, [
         h('div', { class: 'text-[13px] font-bold' }, auth.user?.real_name || auth.displayName),
@@ -34,7 +43,13 @@ const options = [
         ),
       ]),
   },
-  { key: 'divider', type: 'divider' as const },
+  { key: 'divider', type: 'divider' },
+  // 收款码入口只给管理员。学生不需要收款（他是付钱的那一边），
+  // 而且服务端三个接口都是 ROLE_ADMIN 起步 —— 这里藏着只是省得他点进去碰一鼻子灰。
+  // 用 isStaff 而不是 role === 'super'：后者在响应里永远拿不到，会是死分支。
+  ...(auth.isStaff
+    ? [{ key: 'pay-qr', label: '我的收款码', icon: () => h(QrCode, { size: 15 }) }]
+    : []),
   // 这里曾经还有一个「换个界面」—— 全站已经锁死新版了（app.py 的 UI_SWITCH_ENABLED），
   // 留着入口只会把用户送去一个打不开的经典版，所以连同它的图标一起拆了。
   {
@@ -42,9 +57,13 @@ const options = [
     label: '退出登录',
     icon: () => h(LogOut, { size: 15 }),
   },
-]
+])
 
 async function onSelect(key: string): Promise<void> {
+  if (key === 'pay-qr') {
+    showPayQr.value = true
+    return
+  }
   if (key !== 'logout') return
   const ok = await confirmAction({
     title: '退出登录',
@@ -58,7 +77,13 @@ async function onSelect(key: string): Promise<void> {
 </script>
 
 <template>
-  <NDropdown :options="options" trigger="click" placement="bottom-end" @select="onSelect">
+  <NDropdown
+    v-bind="$attrs"
+    :options="options"
+    trigger="click"
+    placement="bottom-end"
+    @select="onSelect"
+  >
     <!-- 堆叠模式要能放下两行，所以要覆盖 Naive 的固定高度，并把内容靠左对齐 -->
     <NButton
       quaternary
@@ -104,4 +129,8 @@ async function onSelect(key: string): Promise<void> {
       </span>
     </NButton>
   </NDropdown>
+
+  <!-- 弹窗和下拉平级：NDropdown 的默认插槽是 trigger，Naive 要求它恰好一个子节点，
+       把弹窗塞进去就会变成两个，直接报 slot[trigger] should have exactly one child。 -->
+  <PayQrDialog v-model:show="showPayQr" />
 </template>

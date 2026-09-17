@@ -32,7 +32,7 @@ import {
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
-import { ORDER_STATUSES, ORDER_STATUSES_MANUAL, type Order, type OrderStatus } from '@/api/types'
+import { CONTACT_LABELS, ORDER_STATUSES, ORDER_STATUSES_MANUAL, type Order, type OrderStatus } from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -55,6 +55,35 @@ const WAIT_PRICE: OrderStatus = '待计费'
 
 /** 已取件。取件时钱是当面结清的，所以这个是金额的终点，改价一路挡到这里为止。 */
 const DONE: OrderStatus = '已取件'
+
+/** 可取了。它同时是「学生到底收没收到提醒」这件事唯一有意义的位置 ——
+ *  取件邮件只在进入这个状态时发一次。 */
+const READY: OrderStatus = '可取了'
+
+/** 下单人的联系方式，拼成一行：`QQ 号 12345678` / `微信号 zhang*`。
+ *
+ *  没填时回一个短横而不是空串：空串会让这一行塔掉，管理员看不出到底是
+ *  「他没填」还是「模板没渲染出来」，而这两种情况的处理完全不同。 */
+function contactLabel(order: Order): string {
+  if (!order.owner_contact) return '—'
+  const kind = order.owner_contact_type ? CONTACT_LABELS[order.owner_contact_type] : ''
+  return kind ? `${kind} ${order.owner_contact}` : order.owner_contact
+}
+
+/** 需人工通知：已经可取件了，但这位学生推不出邮箱，邮件那一路发不出去。
+ *
+ *  判定用的是后端给的 owner_mailbox_missing，**不在这里重写一遍 QQ_RE** ——
+ *  那套规则改一个字，本地这份不会跟着改，界面就会开始说谎，而且不报错。
+ *  条件里的「可取了」不能省：别的状态还没走到发通知那一步，
+ *  提前挂个标签等于催管理员去做一件现在还不该做的事。 */
+function needsManualNotify(order: Order): boolean {
+  return order.status === READY && order.owner_mailbox_missing === true
+}
+
+/** 「需人工通知」标签的样式。用 --warn 系列而不是借某个状态色：
+ *  状态色跟着订单状态走，哪天有人调了「待计费」的颜色，这个标签会莫名其妙跟着变。 */
+const NOTIFY_BADGE_STYLE =
+  'color: var(--warn); background-color: var(--warn-tint); border-color: var(--warn-tint-border)'
 
 const auth = useAuthStore()
 const message = useMessage()
@@ -352,11 +381,33 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '下单人',
     key: 'owner_nickname',
-    width: 132,
+    // 从 132 放到 150：多了一行联系方式。邮箱地址是最长的那种，
+    // 150 仍然要 truncate，但至少有 title 可以悬停看全。
+    width: 150,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
         h('div', { class: 'truncate text-[13px]' }, row.owner_nickname ?? '（账号已注销）'),
         h('div', { class: 'truncate text-[11px] opacity-60' }, row.owner_dorm ?? '—'),
+        // 联系方式：名字和宿舍都定位不到人（宿舍楼里几十号人，
+        // 而昵称本来就是自填的），出事了得有个能直接喊到人的号码。
+        h(
+          'div',
+          { class: 'truncate text-[11px] opacity-60', title: contactLabel(row) },
+          contactLabel(row),
+        ),
+        // 「需人工通知」只在取件那一步有意义，所以它和联系方式同列。
+        needsManualNotify(row)
+          ? h(
+              'span',
+              {
+                class:
+                  'mt-1 inline-flex items-center rounded-full border px-1.5 py-[1px] text-[10px] font-bold whitespace-nowrap',
+                style: NOTIFY_BADGE_STYLE,
+                title: '这位学生推不出邮箱（填的是微信、或者没填），取件邮件发不出去，需要你手动联系他',
+              },
+              '需人工通知',
+            )
+          : null,
       ]),
   },
   {
@@ -694,9 +745,24 @@ onMounted(async () => {
 
           <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-3">
             <span>{{ order.owner_nickname ?? '（已注销）' }} · {{ order.owner_dorm ?? '—' }}</span>
+            <!-- 联系方式单独一格而不是拼到上面那句里：拼在一起，窄屏上先被挤掉的
+                 恰恰是它，而这行里最要紧的就是它（找不到人时昵称和宿舍都白搭）。 -->
+            <span class="truncate">{{ contactLabel(order) }}</span>
             <span class="tnum">取件码 {{ pickupCodeLabel(order.pickup_code) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
+
+          <!-- 邮件发不出去的那一档。宽屏在表格里是个小标签，窄屏得把原因一并写出来：
+               手机上只看到「需人工通知」四个字，没人知道是要自己去通知什么。 -->
+          <p v-if="needsManualNotify(order)" class="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] leading-5">
+            <span
+              class="inline-flex items-center rounded-full border px-1.5 py-[1px] text-[10px] font-bold whitespace-nowrap"
+              :style="NOTIFY_BADGE_STYLE"
+            >
+              需人工通知
+            </span>
+            <span class="text-ink-3">没有可用邮箱，取件邮件发不出去，麻烦手动联系一下</span>
+          </p>
 
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
                完全看不到「几份、什么纸」，这两样恰恰是他最需要知道的。

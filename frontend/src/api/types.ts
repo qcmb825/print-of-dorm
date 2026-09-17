@@ -86,6 +86,17 @@ export interface User {
    *  正是为了不在界面上留下第三种角色名，它才单独存在。
    *  它只决定**界面**给不给你入口，能不能调那些接口始终由服务端说了算。 */
   advanced?: boolean
+  /** 有没有上传过微信收款码。
+   *
+   *  没上传只是「取件邮件里不带收款码图」，不影响开关 ——
+   *  邮件文案会换成「请到取件点向管理员付款」，而不是发一封破图的信。 */
+  has_pay_qr?: boolean
+  /** 收款码的版本号（就是服务端的落盘文件名）。
+   *
+   *  它唯一的用途是给 <img> 当缓存标识：不带着它的话，管理员刚换完码，
+   *  浏览器还在放旧图，他会以为上传没生效，然后反复上传。
+   *  空串 = 没上传。别拿它去拼文件路径，它只在 /api/me/pay-qr?v= 这一个位置有用。 */
+  pay_qr_version?: string
 }
 
 export interface MeResponse extends ApiEnvelope {
@@ -113,6 +124,19 @@ export interface Order {
   price_time?: string | null
   owner_nickname?: string | null
   owner_dorm?: string | null
+  /** 下单人的联系方式，**仅管理端列表与详情返回**。
+   *
+   *  给管理员手动喊人用的：取件邮件发不出去的那一档（学生填的是微信号），
+   *  订单台会标出来，光看昵称和宿舍是找不到人的。
+   *  学生自己的 /api/my-orders 不会有这两个字段。 */
+  owner_contact_type?: ContactType | null
+  owner_contact?: string | null
+  /** 这个下单人的联系方式**推不出邮箱**，取件邮件发不出去，只能人工喊。
+   *
+   *  由服务端算（用的就是发信那一路的判定函数），前端不镜像那套正则 ——
+   *  镜像必然漂移，而且漂了不报错，只是界面上的标签开始说谎。
+   *  界面上只在状态是「可取了」时才展示它：别的状态本来也没到发通知那一步。 */
+  owner_mailbox_missing?: boolean
   claimer_nickname?: string | null
   /** 计费人昵称，仅管理端列表返回 */
   pricer_nickname?: string | null
@@ -199,6 +223,11 @@ export interface OrderDetail {
   owner_real_name: string | null
   owner_student_id: string | null
   owner_dorm: string | null
+  /** 下单人的联系方式（含义同 Order 上那两个字段）。
+   *  详情页也要给：管理员点进详情，多半就是为了联系这个学生，
+   *  让他为了一个微信号再退回去翻列表，等于白点一次。 */
+  owner_contact_type: ContactType | null
+  owner_contact: string | null
   claimed_by: number | null
   claimer_nickname: string | null
   price: number | null

@@ -231,6 +231,40 @@ UPLOAD_FOLDER = resolve_path(
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
+# ---- 收款码（每个管理员一份）----
+# 取件通知邮件里要带上收款码，让学生当场扫码付款。而**收款的人不一样**：
+# 谁接的单谁收钱，所以每个人的码必须分开存，不能全站共用一张 ——
+# 共用一张的话，A 接单、钱进 B 的账户，对账时谁也说不清这笔是谁的。
+#
+# 为什么单独开一个子目录而不是塞进 UPLOAD_FOLDER：
+# 那个目录装的是订单附件，生命周期跟着订单走（撤回订单会删文件、清理备份会整目录处理）。
+# 收款码是长期资产，混进去早晚被顺手清掉，而且是**静默**清掉 ——
+# 邮件里那张图会变成一块空白，没人会注意到。
+PAY_QR_FOLDER = resolve_path(
+    os.getenv('PAY_QR_FOLDER', '').strip() or os.path.join(DATA_DIR, 'pay_qr')
+)
+
+os.makedirs(PAY_QR_FOLDER, exist_ok=True)
+
+
+# 只收这几种图片。收款码是给人扫的，转成 webp 或者收 PDF 都会让部分手机扫不出来，
+# 所以不做格式转换、也不放宽白名单。
+PAY_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
+
+# 单张收款码大小上限。它是一张手机截图，正常几百 KB；给到 2MB 已经绰绰有余，
+# 而这个上限直接决定邮件附件大小 —— 邮件里还有正文，别把学生的收件箱顶爆。
+PAY_QR_MAX_BYTES = max(64 * 1024, env_int('PAY_QR_MAX_BYTES', 2 * 1024 * 1024))
+
+
+# 兜底收款码：接单人没传自己的码、内置管理员也没传时，用这一张。
+# 留住它是为了让「还没人上传过」这件事不表现为邮件缺图 ——
+# 部署时把默认管理员那张码丢成 data/pay_qr/default.png 就能立刻跑起来。
+PAY_QR_FALLBACK_IMAGE = resolve_path(
+    os.getenv('PAY_QR_FALLBACK_IMAGE', '').strip()
+    or os.path.join(PAY_QR_FOLDER, 'default.png')
+)
+
+
 # 单文件大小上限。Flask 的 MAX_CONTENT_LENGTH 和分片上传那一侧的服务端校验
 # 都从这里取值 —— 同一个数只写一遍，才不会出现「框架按 50MB 拦，
 # 业务代码按 100MB 放行」这种口径打架的情况。
@@ -441,6 +475,15 @@ QQ_RE = re.compile(r'^[1-9]\d{4,11}$')  # 5-12 位数字，不以 0 开头
 EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
 
+# 订单规格的两个枚举。库里存的是英文（black / single），中文一律过这两张表。
+# 以前只有前端有一份（frontend/src/utils/format.ts），因为后端从来不把它们
+# 直接展示给人 —— 取件邮件是第一个例外，没有这两张表，一封中文邮件里就会
+# 夹着「black · single」两个英文单词。加后端这份时记得两边取值保持一致。
+COLOR_TYPE_LABELS = {'black': '黑白', 'color': '彩色'}
+
+DUPLEX_LABELS = {'single': '单面', 'double': '双面'}
+
+
 # 工单（站内信）状态和长度限制
 TICKET_OPEN = 'open'
 
@@ -527,6 +570,42 @@ CLAIM_ALERT_RETRY_BACKOFF = max(30, env_int('CLAIM_ALERT_RETRY_BACKOFF', 300))
 CLAIM_ALERT_MAX_ITEMS = max(1, env_int('CLAIM_ALERT_MAX_ITEMS', 20))
 
 
+# ---- 可取件提醒（邮件）----
+# 上面那封是催管理员的（没人接单），这一封是通知**学生**的：
+# 单子打完、状态改成「可取了」时，给下单人发一封邮件，
+# 标题里带上取件码，正文里带收款码 —— 学生不用再回网页查，看到邮件就能来取。
+#
+# 为什么也做成「后台线程扫描」而不是在改状态那个请求里直接发：
+# 改状态是管理员点一下按钮，而 SMTP 握手最慢能到 SMTP_TIMEOUT 秒。
+# 同步发信等于让管理员每次点「改状态」都陪着等一次网络往返，
+# 而且 waitress 只有 8 个线程 —— 几个管理员同时改状态就能把整个站点卡住。
+# 落库和发信分开之后，改状态永远是毫秒级的，发不出去也不影响订单本身。
+PICKUP_NOTIFY_ENABLED = env_bool('PICKUP_NOTIFY_ENABLED', True)
+
+# 扫描间隔（秒）。默认 30，比未接单提醒（60 秒）密一倍：
+# 那个是「催人干活」，晚一分钟无所谓；这个是学生已经付了钱、站在打印机旁边等，
+# 通知慢一拍他就得多跑一趟。30 秒是「够快」和「别白烧数据库」之间的折中。
+PICKUP_NOTIFY_INTERVAL = max(10, env_int('PICKUP_NOTIFY_INTERVAL', 30))
+
+# 发信失败后的退避秒数，理由同 CLAIM_ALERT_RETRY_BACKOFF。
+PICKUP_NOTIFY_RETRY_BACKOFF = max(30, env_int('PICKUP_NOTIFY_RETRY_BACKOFF', 300))
+
+# 只处理「最近多少小时内变成可取件」的单，默认 24。
+# 这道闸是**升级兜底**，不是业务规则：本次升级之前就停在「可取了」的历史订单
+# 一律没有发信凭证（新列是 NULL），不加限制的话，服务一启动就会把积压的老单
+# 全部翻出来补发一遍 —— 收件人早就把东西取走了，突然收到一封「您的订单可取件」，
+# 那是纯粹的骚扰邮件。这边和 CLAIM_ALERT_MAX_AGE_HOURS 是同一个道理，
+# 也同样是**不回填历史数据**：回填等于把「没提醒过」记成「提醒过了」，
+# 以后从数据上再也看不出发生过什么。
+PICKUP_NOTIFY_MAX_AGE_HOURS = max(1, env_int('PICKUP_NOTIFY_MAX_AGE_HOURS', 24))
+
+
+# 取件地址。邮件里要写清去哪儿拿，而这个词只有在本地生活过的人才说得准，
+# 不是能猜出来的配置，所以留一个环境变量，默认值按当前取件点填。
+# 地址会变（换宿舍楼、换桌子），写死在代码里意味着每次搬家都得改代码重新部署。
+PICKUP_ADDRESS = os.getenv('PICKUP_ADDRESS', '2号北201').strip()
+
+
 # ---- SMTP（发信）----
 # 不配 SMTP_HOST 就不启用未接单提醒，启动时记一条 info —— 这个功能的开关
 # 实际上就是「有没有配发信服务器」，再多一个开关只会多一种配错的方式。
@@ -570,6 +649,19 @@ QQ_MAIL_SUFFIX = '@qq.com'
 # 发信超时（秒）。外网 SMTP 握手慢的时候不少，给短了会把能成功的信掐掉；
 # 给长了又会把守护线程卡住 —— 卡住的是它自己，不影响请求处理，但仍然别太久。
 SMTP_TIMEOUT = max(3, env_int('SMTP_TIMEOUT', 15))
+
+
+# ---- QQ 机器人（LLOneBot / OneBot v11）----
+# bot 是**另一个进程**，而且跑在另一台机器上（境内）：QQ 客户端 + LLOneBot 必须在
+# 一起，后端留在美国。它靠出站 HTTPS 调 /api/bot/*，见 memoryandtest/QQbot对接大纲.md。
+#
+# 它不能复用浏览器的 session + CSRF（没有浏览器，也接不住令牌轮换），
+# 所以另开一条通道：请求头带 Authorization: Bearer <BOT_TOKEN> 即视为通过。
+#
+# **留空 = 整组 /api/bot/* 返回 503**，不是「不校验」。
+# 「没配就不校验」是最危险的一种默认值：.env 漏一行、键名拼错一个字母，
+# 写接口就对着全网敞开，而所有日志看起来都正常。
+BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
 
 
 # 密钥

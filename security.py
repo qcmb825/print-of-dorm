@@ -35,6 +35,11 @@ def actor_label():
     """
     if not has_request_context():
         return 'system'
+    if g.get('bot'):
+        # QQ bot 走 BOT_TOKEN 这条专用通道，没有用户身份。
+        # 日志里要能一眼把它和「浏览器没登录」区分开：都是没有用户的行，
+        # 但一个是访客、一个是服务器，排查时看错方向就白查了。
+        return 'bot'
     who = g.get('user')
     if not who:
         return '匿名'

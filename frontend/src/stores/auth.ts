@@ -110,6 +110,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** 收款码换过（上传或删除）之后更新本地状态。
+   *
+   *  改这两个字段就够了，**不重新拉一遍 /api/me**：那要多一次往返，
+   *  而且会把 user 整个换掉 —— 界面上所有读 user 的地方都会跟着重渲染一次，
+   *  看起来就是打开收款码弹窗顺手闪了一下。
+   *  传空串表示删掉了。 */
+  function setPayQr(version: string): void {
+    if (!user.value) return
+    user.value.has_pay_qr = Boolean(version)
+    user.value.pay_qr_version = version
+  }
+
   return {
     user,
     ready,
@@ -124,5 +136,6 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     register,
     logout,
+    setPayQr,
   }
 })

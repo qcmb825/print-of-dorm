@@ -7,8 +7,16 @@
 邮箱是个人信息，而日志恰恰是最容易被整包拷走、发给别人排错的东西 ——
 和密码、完整文件路径是同一个道理，没有理由对它例外。
 """
-from config import (ALERT_MAIL_TO, QQ_MAIL_SUFFIX, QQ_RE, ROLE_ADMIN, ROLE_SUPER,
+from config import (ALERT_MAIL_TO, EMAIL_RE, QQ_MAIL_SUFFIX, QQ_RE, ROLE_ADMIN, ROLE_SUPER,
                     STATUS_ACTIVE, logger)
+
+
+# 推不出收件地址的原因。一律用短标识而不是中文句子：
+# 调用方要按它分流（记不同的日志、给订单页挂不同的标记），
+# 用中文句子的话，改一个标点就会让那个分支静默失效 —— 而且不报错。
+NO_MAILBOX_EMPTY = 'no_contact'      # 压根没填联系方式
+NO_MAILBOX_WECHAT = 'wechat'         # 填的是微信号：微信收不到邮件，这条路走不通
+NO_MAILBOX_INVALID = 'invalid'       # 填了，但拼不出一个像样的地址
 
 
 def mask_address(address):
@@ -39,6 +47,59 @@ def qq_mailbox(contact):
     return contact + QQ_MAIL_SUFFIX
 
 
+def contact_mailbox(contact_type, contact):
+    """一个账号自己的收件地址：返回 (邮箱, 推不出来的原因)。
+
+    成功时第二个值是一空串；失败时第一个值是 None。两个都返回，
+    是因为「为什么发不了」这件事调用方必须分得清：
+    没填联系方式要催用户补，填了微信号是**根本没法发**（该转人工通知），
+    而填错了是用户自己填错 —— 三种情况在管理端的处理方式完全不同，
+    只返回一个 None 的话，界面只能笼统地说「无法通知」。
+
+    微信号推不出邮箱：微信不从邮件系统收信，这不是「暂时没有实现」，
+    而是这条路本来就不通。所以这里不猜「微信号 + @qq.com」之类的东西 ——
+    猜出来的地址会真的发出去，然后被对方服务商退信，
+    而我们只会看到一句 550，跟「对方拒收」长得一模一样。
+    """
+    contact_type = (contact_type or '').strip()
+    contact = (contact or '').strip()
+    if not contact_type or not contact:
+        return None, NO_MAILBOX_EMPTY
+    if contact_type == 'qq':
+        mailbox = qq_mailbox(contact)
+        return (mailbox, '') if mailbox else (None, NO_MAILBOX_INVALID)
+    if contact_type == 'email':
+        # 同样再判一次形状。库里这个值过过注册校验，但地址是一条**推导**出来的东西，
+        # 和 qq_mailbox 里那段是同一个理由：推错了只会被退信，不会在本站报错。
+        return (contact, '') if EMAIL_RE.match(contact) else (None, NO_MAILBOX_INVALID)
+    if contact_type == 'wechat':
+        return None, NO_MAILBOX_WECHAT
+    # 理论上到不了这里（CONTACT_TYPES 就那三种），但库里的值可能来自
+    # 更早的版本或人工改库。当成「推不出来」而不是抛异常：
+    # 这是一个通知功能，为了一个脏字段把整条提醒线程搞挂不划算。
+    return None, NO_MAILBOX_INVALID
+
+
+def user_mailbox(row):
+    """把一行 users 记录翻成收件地址，返回值和 contact_mailbox 一样。
+
+    存在的意义是让调用方不必记住「联系方式在这两个列里」——
+    列名散落在各个调用点，改名时总会漏掉一处，而漏掉的地方不报错。
+    """
+    if row is None:
+        return None, NO_MAILBOX_EMPTY
+    # Row 工厂出来的对象用下标取，sqlite3.Row 没有 get()
+    try:
+        contact_type = row['contact_type']
+    except (IndexError, KeyError):
+        contact_type = None
+    try:
+        contact = row['contact']
+    except (IndexError, KeyError):
+        contact = None
+    return contact_mailbox(contact_type, contact)
+
+
 def admin_mailboxes(conn):
     """把「启用中的管理员」翻译成邮箱地址列表。
 
@@ -61,13 +122,12 @@ def admin_mailboxes(conn):
     ''', (ROLE_ADMIN, ROLE_SUPER, STATUS_ACTIVE)).fetchall()
     addresses = []
     for row in rows:
-        if row['contact_type'] == 'email':
-            if row['contact']:
-                addresses.append(row['contact'].strip())
-        elif row['contact_type'] == 'qq':
-            mailbox = qq_mailbox(row['contact'])
-            if mailbox:
-                addresses.append(mailbox)
+        # 复用 user_mailbox，而不是在这里再写一遍 if 联系方式的判断：
+        # 这两处只要各写一套，早晚会出现「管理员汇总信发得出去、
+        # 学生提醒信说发不了」这种同一件事两个结论的矛盾。
+        mailbox, _ = user_mailbox(row)
+        if mailbox:
+            addresses.append(mailbox)
     return addresses
 
 

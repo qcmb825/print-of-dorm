@@ -10,6 +10,8 @@ from . import upload_chunks
 # audit 这个名字容易和「审计日志」(audit_action) 混起来，这里指的是
 # 「身份审核」—— 学号不在名单上时的人工通道，见 routes/audit.py 开头。
 from . import audit
+# pay_qr 是「管理员自己的收款二维码」：上传 / 删除 / 预览，见 routes/pay_qr.py 开头。
+from . import pay_qr
 
 BLUEPRINTS = (
     account.bp,
@@ -20,6 +22,7 @@ BLUEPRINTS = (
     tickets.bp,
     audit.bp,
     order_options.bp,
+    pay_qr.bp,
 )
 
 
