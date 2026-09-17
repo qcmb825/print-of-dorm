@@ -379,12 +379,13 @@ def init_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_claimed ON orders(claimed_by)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)')
-        # 按服务分组筛选走的是 COALESCE(preset_group_id, preset_id)，
-        # 索引只能挂在其中一个列上，所以这里建在 preset_group_id 上 ——
-        # 它是分类时可写、也是绝大多数单子为空的那一列。
-        cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_orders_preset_group ON orders(preset_group_id)'
-        )
+        # idx_orders_preset_group 刻意不写在这一段里 —— 这一段整体跑在下面「补列」之前，
+        # 老库的 orders 表那时还没有 preset_group_id，建索引会当场报
+        # no such column: preset_group_id，启动直接挂；而全新库因为上面那句
+        # CREATE TABLE 就带上了这一列，在这儿建是成功的。
+        # 于是「全新库一切正常、老库一升级就起不来」—— 测试脚本每次都重建临时库，
+        # 恰好永远走全新库那条路，最需要测的升级路径反而一次都没跑到。
+        # 所以它在下面补完 preset_group_id 那一列之后才建。
         # 「还没计费的单」是每次开台都要查一遍的队列，单独建个索引。
         # 写成部分索引：只盖住待计费的那些行，表里堆到几万条订单以后它依然很小。
         # 值取自 ST_UNPRICED 而不是手打的字符串，改常量时这里跟着一起变。
@@ -485,6 +486,15 @@ def init_database():
         # 它和 preset_id 是两件事，读的时候用 COALESCE 合起来当分组键。
         if 'preset_group_id' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN preset_group_id INTEGER')
+
+        # 按服务分组筛选走的是 COALESCE(preset_group_id, preset_id)，
+        # 索引只能挂在其中一个列上，所以建在 preset_group_id 上 ——
+        # 它是分类时可写、也是绝大多数单子为空的那一列。
+        # 必须排在上面那句 ALTER 之后，原因见前面 idx_orders_status 那段的注释：
+        # 老库的这一列是到这儿才出现的，建索引放早了就是「老库一升级就起不来」。
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_orders_preset_group ON orders(preset_group_id)'
+        )
 
         # 补列必须在重建表之前：重建时要连这两列一起拷过去，
         # 老库里要是还没这两列，拷贝那一步会直接报「no such column」。
