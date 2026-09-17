@@ -8,7 +8,7 @@ from auth import roles_required
 from config import (ROLE_ADMIN, ROLE_LABELS, ROLE_SUPER, ROLE_USER,
                     STATUS_ACTIVE, STATUS_CLOSED, STATUS_DISABLED,
                     ST_UNPRICED, logger, public_role, public_role_label)
-from db import get_db
+from db import db_conn
 from security import (audit_action, client_ip, decrypt_password, make_password_records,
                       security_event)
 from utils import display_name, password_error, validate_identity_fields
@@ -41,8 +41,7 @@ def api_admin_users():
     # 默认藏起来只是因为「已经走的人」没必要天天占着一屏地方。
     include_closed = request.args.get('include_closed') in ('1', 'true', 'yes')
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         # 条件一段段攒起来再拼，而不是按角色写死两种 where：
         # 以后想加「只看某状态」「按昵称搜索」，都只是往列表里多 append 一句。
         # 片段全是代码里写死的常量，值一律走 ? 占位符，所以照样没有注入口子。
@@ -76,8 +75,6 @@ def api_admin_users():
         closed_total = conn.execute(
             'SELECT COUNT(*) AS c FROM users WHERE ' + ' AND '.join(closed_conds),
             closed_params).fetchone()['c']
-    finally:
-        conn.close()
 
     users = []
     for row in rows:
@@ -118,8 +115,7 @@ def api_admin_set_role(user_id):
     if user_id == g.user['id']:
         return jsonify({'code': 400, 'msg': '不能修改自己的角色'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         target = conn.execute('SELECT role, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
@@ -134,8 +130,6 @@ def api_admin_set_role(user_id):
             return jsonify({'code': 403, 'msg': '该账号已注销，无需再调整角色'}), 403
         conn.execute('UPDATE users SET role = ? WHERE id = ?', (new_role, user_id))
         conn.commit()
-    finally:
-        conn.close()
     # 提权 / 降权是权限体系的核心动作，必须审计留痕，还要记清改前改后
     audit_action('change_role',
                  '目标 #%s/%s %s -> %s' % (user_id, target['nickname'], target['role'], new_role))
@@ -157,8 +151,7 @@ def api_admin_set_status(user_id):
     if user_id == g.user['id']:
         return jsonify({'code': 400, 'msg': '不能禁用自己的账号'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         target = conn.execute('SELECT role, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
@@ -172,8 +165,6 @@ def api_admin_set_status(user_id):
             return jsonify({'code': 403, 'msg': '该账号已注销，无法恢复'}), 403
         conn.execute('UPDATE users SET status = ? WHERE id = ?', (new_status, user_id))
         conn.commit()
-    finally:
-        conn.close()
     audit_action('change_status',
                  '目标 #%s/%s 状态 %s -> %s' % (user_id, target['nickname'], target['status'], new_status))
     return jsonify({'code': 0, 'msg': '已启用' if new_status == STATUS_ACTIVE else '已禁用'})
@@ -197,8 +188,7 @@ def api_admin_close_user(user_id):
     if user_id == g.user['id']:
         return jsonify({'code': 400, 'msg': '不能注销自己的账号'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         target = conn.execute(
             'SELECT role, nickname, status FROM users WHERE id = ?', (user_id,)).fetchone()
         if target is None:
@@ -210,8 +200,6 @@ def api_admin_close_user(user_id):
             return jsonify({'code': 400, 'msg': '该账号已经是注销状态'}), 400
         conn.execute('UPDATE users SET status = ? WHERE id = ?', (STATUS_CLOSED, user_id))
         conn.commit()
-    finally:
-        conn.close()
     # 注销是个不常发生但很重的动作，要记清对象和当时的状态
     audit_action('close_account',
                  '注销账号 #%s/%s，状态 %s -> closed，订单与工单全部保留'
@@ -242,50 +230,48 @@ def api_admin_set_profile(user_id):
     if fields is None:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    conn = get_db()
-    try:
-        target = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
-        if target is None:
-            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
-        if target['status'] == STATUS_CLOSED:
-            # 注销账号的资料没有意义：人已经登不进来，而它的昵称/学号
-            # 早就让给别人了，改它只会撞上唯一索引。
-            return jsonify({'code': 403, 'msg': '该账号已注销，如需修改请先恢复'}), 403
+    with db_conn() as conn:
+        try:
+            target = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+            if target is None:
+                return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+            if target['status'] == STATUS_CLOSED:
+                # 注销账号的资料没有意义：人已经登不进来，而它的昵称/学号
+                # 早就让给别人了，改它只会撞上唯一索引。
+                return jsonify({'code': 403, 'msg': '该账号已注销，如需修改请先恢复'}), 403
 
-        # 昵称和学号是全表仅有的两个「唯一」字段，改之前得先看有没有人占着。
-        # 这里的条件要和数据库里那两条部分唯一索引**一字不差**地对上：
-        # 只跟「还没注销」的账号比，还要把自己排除掉（不然改谁都撞自己）。
-        # 两边口径不一致是最难受的失败形态 —— 代码说能用，改下去却撞索引报 500。
-        for column, label in (('nickname', '昵称'), ('student_id', '学号')):
-            if fields[column] == target[column]:
-                continue
-            owner = conn.execute(
-                'SELECT id, nickname FROM users'
-                f' WHERE {column} = ? AND status != ? AND id != ? LIMIT 1',
-                (fields[column], STATUS_CLOSED, user_id)).fetchone()
-            if owner is not None:
-                return jsonify({
-                    'code': 409,
-                    'msg': '%s「%s」已被账号 %s（#%s）占用'
-                           % (label, fields[column], owner['nickname'], owner['id']),
-                }), 409
+            # 昵称和学号是全表仅有的两个「唯一」字段，改之前得先看有没有人占着。
+            # 这里的条件要和数据库里那两条部分唯一索引**一字不差**地对上：
+            # 只跟「还没注销」的账号比，还要把自己排除掉（不然改谁都撞自己）。
+            # 两边口径不一致是最难受的失败形态 —— 代码说能用，改下去却撞索引报 500。
+            for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+                if fields[column] == target[column]:
+                    continue
+                owner = conn.execute(
+                    'SELECT id, nickname FROM users'
+                    f' WHERE {column} = ? AND status != ? AND id != ? LIMIT 1',
+                    (fields[column], STATUS_CLOSED, user_id)).fetchone()
+                if owner is not None:
+                    return jsonify({
+                        'code': 409,
+                        'msg': '%s「%s」已被账号 %s（#%s）占用'
+                               % (label, fields[column], owner['nickname'], owner['id']),
+                    }), 409
 
-        conn.execute('''
-            UPDATE users
-               SET nickname = ?, real_name = ?, student_id = ?, dorm = ?,
-                   contact_type = ?, contact = ?
-             WHERE id = ?
-        ''', (fields['nickname'], fields['real_name'], fields['student_id'], fields['dorm'],
-              fields['contact_type'], fields['contact'], user_id))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        # 上面查重到这句 UPDATE 之间还有一点缝（两个人同时改同一个昵称）。
-        # 让它撞在这里并回一句人话，比抛 500 强：唯一索引是最后一道防线，不是唯一一道。
-        conn.rollback()
-        logger.warning('改资料撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
-        return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
-    finally:
-        conn.close()
+            conn.execute('''
+                UPDATE users
+                   SET nickname = ?, real_name = ?, student_id = ?, dorm = ?,
+                       contact_type = ?, contact = ?
+                 WHERE id = ?
+            ''', (fields['nickname'], fields['real_name'], fields['student_id'], fields['dorm'],
+                  fields['contact_type'], fields['contact'], user_id))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            # 上面查重到这句 UPDATE 之间还有一点缝（两个人同时改同一个昵称）。
+            # 让它撞在这里并回一句人话，比抛 500 强：唯一索引是最后一道防线，不是唯一一道。
+            conn.rollback()
+            logger.warning('改资料撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
+            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
 
     # 审计要记「哪个字段从什么改成了什么」。只列真的变了的字段：
     # 全量列一遍的话日志里九成是没动过的值，真去查「谁把学号改了」反而得一行行看。
@@ -324,8 +310,7 @@ def api_admin_reset_password(user_id):
     if not new_password:
         return jsonify({'code': 400, 'msg': '请填写新密码'}), 400
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         target = conn.execute(
             'SELECT id, nickname, student_id, status FROM users WHERE id = ?',
             (user_id,)).fetchone()
@@ -341,11 +326,18 @@ def api_admin_reset_password(user_id):
         if error:
             return jsonify({'code': 400, 'msg': error}), 400
         password_hash, password_enc = make_password_records(new_password)
-        conn.execute('UPDATE users SET password_hash = ?, password_enc = ? WHERE id = ?',
+        # 顺手把 session_epoch + 1，让这个账号已经发出的登录态全部作废。
+        # 重置密码的场景有两种，两种都需要这一手：
+        #   1) 本人在线、管理员给他换个新密码 —— 他那台机器上的旧 Cookie 必须马上不能用，
+        #      否则新密码形同虚设，谁还留着旧登录态谁就照样进得来；
+        #   2) 密码是被人偷走、事后才发现 —— 光改密码只挡住了「下次登录」，
+        #      小偷手里那条已经生效的登录态还能一直用到会话到期为止。
+        # 和 app.load_current_user 的 epoch 比对是配套的：库里这个数一变，
+        # 所有旧 Cookie 下一个请求就对不上，只能用新密码重新登录。
+        conn.execute('UPDATE users SET password_hash = ?, password_enc = ?, '
+                     'session_epoch = session_epoch + 1 WHERE id = ?',
                      (password_hash, password_enc, user_id))
         conn.commit()
-    finally:
-        conn.close()
     audit_action('reset_password', '目标 #%s/%s' % (user_id, target['nickname']))
     logger.info('管理员重置账号密码 #%s/%s ip=%s', user_id, target['nickname'], client_ip())
     return jsonify({'code': 0, 'msg': '密码已重置，请把新密码转告本人'})
@@ -366,44 +358,42 @@ def api_admin_reset_password(user_id):
 @roles_required(ROLE_SUPER)
 def api_admin_restore_user(user_id):
     """恢复已注销账号。昵称或学号被别人占了就整体拒绝，不做任何自动改名。"""
-    conn = get_db()
-    try:
-        target = conn.execute(
-            'SELECT id, nickname, real_name, student_id, status FROM users WHERE id = ?',
-            (user_id,)).fetchone()
-        if target is None:
-            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
-        # 和注销那侧对称：注销「已经注销的账号」返回 400，恢复「没注销的账号」也返回 400。
-        # 这里不用 409 —— 它不是并发冲突，是这个动作本身不适用。
-        if target['status'] != STATUS_CLOSED:
-            return jsonify({'code': 400, 'msg': '该账号没有注销，无需恢复'}), 400
+    with db_conn() as conn:
+        try:
+            target = conn.execute(
+                'SELECT id, nickname, real_name, student_id, status FROM users WHERE id = ?',
+                (user_id,)).fetchone()
+            if target is None:
+                return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+            # 和注销那侧对称：注销「已经注销的账号」返回 400，恢复「没注销的账号」也返回 400。
+            # 这里不用 409 —— 它不是并发冲突，是这个动作本身不适用。
+            if target['status'] != STATUS_CLOSED:
+                return jsonify({'code': 400, 'msg': '该账号没有注销，无需恢复'}), 400
 
-        conflicts = []
-        for column, label in (('nickname', '昵称'), ('student_id', '学号')):
-            owner = conn.execute(
-                'SELECT id, nickname FROM users WHERE %s = ? AND status != ? LIMIT 1' % column,
-                (target[column], STATUS_CLOSED)).fetchone()
-            if owner is not None:
-                conflicts.append({'label': label, 'value': target[column],
-                                  'owner_id': owner['id'],
-                                  'owner_nickname': owner['nickname']})
-        if conflicts:
-            # 冲突项结构化地回给前端，不拼进 msg 里：前端要逐条列出来，
-            # 还要让操作者能直接点进那个占用的账号去看 —— 都靠这些字段。
-            return jsonify({
-                'code': 409,
-                'msg': '昵称或学号已被其他账号占用，无法恢复',
-                'conflicts': conflicts,
-            }), 409
+            conflicts = []
+            for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+                owner = conn.execute(
+                    'SELECT id, nickname FROM users WHERE %s = ? AND status != ? LIMIT 1' % column,
+                    (target[column], STATUS_CLOSED)).fetchone()
+                if owner is not None:
+                    conflicts.append({'label': label, 'value': target[column],
+                                      'owner_id': owner['id'],
+                                      'owner_nickname': owner['nickname']})
+            if conflicts:
+                # 冲突项结构化地回给前端，不拼进 msg 里：前端要逐条列出来，
+                # 还要让操作者能直接点进那个占用的账号去看 —— 都靠这些字段。
+                return jsonify({
+                    'code': 409,
+                    'msg': '昵称或学号已被其他账号占用，无法恢复',
+                    'conflicts': conflicts,
+                }), 409
 
-        conn.execute('UPDATE users SET status = ? WHERE id = ?', (STATUS_ACTIVE, user_id))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.rollback()
-        logger.warning('恢复账号撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
-        return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
-    finally:
-        conn.close()
+            conn.execute('UPDATE users SET status = ? WHERE id = ?', (STATUS_ACTIVE, user_id))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            logger.warning('恢复账号撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
+            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
     audit_action('restore_account',
                  '恢复账号 #%s/%s（状态 closed -> active）' % (user_id, target['nickname']))
     logger.info('恢复账号 #%s/%s ip=%s', user_id, target['nickname'], client_ip())
@@ -459,8 +449,7 @@ def api_admin_stats():
             out.append(item)
         return out
 
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         users_total = conn.execute(
             'SELECT COUNT(*) AS c FROM users WHERE 1 = 1' + account_filter,
             account_params).fetchone()['c']
@@ -594,8 +583,6 @@ def api_admin_stats():
             WHERE 1 = 1{rank_filter}
             GROUP BY o.claimed_by ORDER BY count DESC LIMIT 5
         '''.format(rank_filter=rank_filter), rank_params).fetchall()
-    finally:
-        conn.close()
 
     # 日粒度：SQL 只会返回「有单的那些天」，缺的日子根本不在结果里。
     # 所以要按日期跟区间自己补齐序列，否则柱子会挤在一起，

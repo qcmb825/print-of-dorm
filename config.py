@@ -47,11 +47,48 @@ def env_bool(name, default=False):
 
 
 
+# env_int 解析失败时攒下的告警，等日志通道建好之后再补进日志文件。
+#
+# 为什么不就地记日志：env_int 在本模块很靠前的位置就被调用（LOG_MAX_BYTES、
+# LOG_BACKUP_COUNT 那两行），那时下面的 logger 还没建出来，直接引它是 NameError，
+# 而这一崩是在模块加载阶段，整个服务都起不来 —— 一个「提醒你配置写错了」的功能
+# 反倒成了最严重的那个故障。
+_env_int_warnings = []
+
+
+def _warn_env_int(name, raw, default):
+    """报告某个整数型环境变量没解析成功。
+
+    这类问题（PORT=808O 把零敲成字母 O、LOGIN_MAX_FAILS= 留空、顺手写了 '5次'）
+    以前是完全无声的：程序拿着默认值继续跑，看起来一切正常，只是行为和人想的不一样。
+    等到有人来问「为什么改了 PORT 没生效」时，现场已经什么都不剩了，所以必须留一句话。
+
+    默认值也一并报出来，是因为「回退到了什么」才是真正需要知道的那半个信息：
+    只说「PORT 不合法」，看日志的人还是不知道服务实际听在哪个端口上。
+    """
+    message = ('环境变量 %s 的值 %r 解析不成整数，已回退到默认值 %s（请检查 .env：'
+               '常见是把数字 0 写成了字母 O、带了单位，或者值整个留空了）'
+               % (name, raw, default))
+    target = globals().get('logger')  # 见上面那段说明：这里可能还没有日志对象
+    if target is not None:
+        target.warning(message)
+        return
+    _env_int_warnings.append(message)
+    # 这一句跑在下面那个「把 stdout/stderr 转成 UTF-8」的循环之前，极少数终端编码
+    # 容不下中文，会直接抛 UnicodeEncodeError。这里是配置解析路径，警告打不出来没关系，
+    # 但绝不能因为打不出来就把服务拦在启动阶段 —— 那就成了「提醒你配置错了」比配置错本身还严重。
+    try:
+        print(message, file=sys.stderr)
+    except (UnicodeEncodeError, OSError, ValueError):
+        pass
+
+
 def env_int(name, default):
-    """读整数型环境变量，值不合法就用默认值。"""
+    """读整数型环境变量，值不合法就用默认值，并留一条 warning。"""
     try:
         return int(os.getenv(name, str(default)).strip())
     except (TypeError, ValueError):
+        _warn_env_int(name, os.getenv(name), default)
         return default
 
 
@@ -178,6 +215,15 @@ _root_logger.addHandler(_file_handler('other.log', level=logging.WARNING))
 
 if LOG_TO_CONSOLE:
     _root_logger.addHandler(_console_handler())
+
+
+# 把 logger 建好之前攒下的那批告警补进日志文件（控制台当时已经打过一句了）。
+# 只写在控制台是不行的：.env 写错这件事最常见的暴露方式是「事后翻日志对不上」，
+# 而控制台那段滚屏早就没了。
+for _message in _env_int_warnings:
+    logger.warning('%s', _message)
+
+_env_int_warnings.clear()
 
 
 

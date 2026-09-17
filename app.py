@@ -10,7 +10,6 @@ from pathlib import Path
 from flask import (Flask, abort, g, jsonify, make_response, render_template,
                    request, send_from_directory, session)
 from flask_cors import CORS
-from waitress import serve
 
 from config import (
     ALERT_MAIL_TO,
@@ -47,11 +46,11 @@ from config import (
     env_int,
     logger,
 )
-from db import ensure_database_directory, get_db, init_database, seed_super_admin
+from db import db_conn, ensure_database_directory, init_database, seed_super_admin
 from mail import mask_address
 from notifier import start_claim_watcher
 from pickup_notifier import start_pickup_watcher
-from security import actor_label, client_ip, ensure_csrf_token, security_event
+from security import actor_label, client_ip, ensure_csrf_token, sanitize_log, security_event
 
 from routes import register_blueprints
 
@@ -177,23 +176,42 @@ def csrf_protect():
 def load_current_user():
     """每个请求开头把当前登录用户放进 g.user，后面的视图直接用。"""
     g.user = None
+    # 静态资源（CSS / JS / 字体 / 图片，Vue 产物也在 /static/app 下）不需要登录态：
+    # 它们和请求者是谁毫无关系，模板和前端也不靠 g.user 渲染。
+    # 而这里每命中一次就是「开一个连接 + 一次 SELECT users」——
+    # 登录状态下刷新一次页面要拉几十个静态文件，等于白跑几十次查库，全是浪费。
+    # 认前缀而不是逐条列路径：static 下的文件会随前端构建变来变去，
+    # 白名单式的写法迟早漏掉新类型（漏掉不报错，只是每次都多查一次库，没人会发现）。
+    if request.path.startswith('/static/'):
+        return
     uid = session.get('uid')
     if not uid:
         return
-    conn = get_db()
-    try:
+    with db_conn() as conn:
         row = conn.execute('''
             SELECT id, nickname, real_name, student_id, dorm, contact_type, contact,
-                   pay_qr_file, role, status, create_time, last_login
+                   pay_qr_file, role, status, create_time, last_login, session_epoch
             FROM users WHERE id = ?
         ''', (uid,)).fetchone()
-    finally:
-        conn.close()
     if row is None or row['status'] != STATUS_ACTIVE:
         session.clear()  # 账号被注销、被禁用之后，已登录的 Cookie 立刻失效
         logger.info('会话已失效：uid=%s 账号不存在、已禁用或已注销 ip=%s', uid, client_ip())
         return
-    g.user = dict(row)
+    # 会话里那份 epoch 是「登录那一刻」从库里抄下来的快照，和库里现在的值对不上，
+    # 就说明这条 Cookie 已经被吊销了：本人登出、管理员重置密码都会把库里的值 +1。
+    # 必须这么反向验，因为登录态整个存在客户端 Cookie 里，服务端没有一份可以删掉的会话表。
+    # 缺失（session.get 拿到 None）同样按失效处理：这一手之前发出的 Cookie 根本没有这个字段，
+    # 顺带就把跨越这次升级的老登录态清干净了，不用另外写一段迁移。
+    if session.get('epoch') != row['session_epoch']:
+        session.clear()
+        logger.info('会话已失效：uid=%s 登录态已被吊销（改密码或退出登录） ip=%s', uid, client_ip())
+        return
+    who = dict(row)
+    # session_epoch 只是服务端记账用的，留在库里比对即可。
+    # 不把它 pop 掉的话，它会跟着 g.user 一路进 /api/me 的响应体 ——
+    # 多出一个谁也没要求过、前端也用不上的字段，等于悄悄改了对外接口。
+    who.pop('session_epoch', None)
+    g.user = who
 
 
 
@@ -242,6 +260,12 @@ def log_request(resp):
             actor_label(),
             (request.headers.get('User-Agent') or '-')[:120],
         )
+        # 整行过一遍转义再落盘：路径（含被解码的 %0A）、query string、UA、反向代理
+        # 传来的 X-Forwarded-For 全是外部可控的，任何一个没转义，一条请求就能在
+        # access.log 里伪造出若干行看着像真的记录。放在拼完之后统一做，
+        # 而不是逐个变量挑着转 —— 以后这行再加字段（比如 referer），也不会漏掉。
+        # 日志分级不动：转义只改内容，不改这条记录该记成 ERROR 还是 WARNING。
+        message = sanitize_log(message)
         if resp.status_code >= 500:
             access_logger.error(message)
         elif resp.status_code >= 400:
@@ -273,6 +297,16 @@ UI_CHOICES = (UI_CLASSIC, UI_VUE)
 # 做成常量而不是「把代码删掉」：删掉之后想找回经典版就得翻提交历史，
 # 而这里改一行 True 就全回来了（classic 的那条分支和模板都还在，没动）。
 # 顺带看清楚了锁的到底是什么 —— 锁的是「选择」，不是「代码」。
+#
+# ⚠️ 这一行改 True 之前，先补上下面这些缺口。经典版最后一次跟进新功能是在
+#    计费与身份审核之前，所以它现在不认识：
+#      · 计费 —— 订单从「待计费」开始、由接单人填金额。老界面里既没有这一档
+#        状态、也没有填金额的入口，放出来就是「订单一进来就卡在那儿」；
+#      · 身份审核 —— 学号不在名单上时的人工放行通道，老界面的登录页没有入口；
+#      · 预设打印 / 纸张规格、大文件分片上传 —— 学生端看不到这两条路；
+#      · 账号管理页仍会平铺渲染全站明文密码（新版那边这一列默认关、退出
+#        高级视图即清空）。
+#    改开关不会有任何报错，这些缺口会直接暴露给用户 —— 所以别只改这一个布尔值。
 UI_SWITCH_ENABLED = False
 
 # 界面选择存在这个独立 Cookie 里，刻意不用 Flask 的 session。
@@ -574,19 +608,38 @@ def start_server(host, port):
         report_bind_failure(exc, host, port, reason, hints)
         sys.exit(1)
 
+    # waitress 能不能用，在真正开服务器之前就定下来，而且**必须放在下面那个 try 之外**：
+    # 那个 try 顺带接住了 SystemExit（werkzeug 绑定失败时就是直接 sys.exit(1) 退出的），
+    # 把这里的退出放进去会被它接住，然后按「端口在启动瞬间被抢占」报一遍 ——
+    # 一个「没装 waitress」的问题，日志上却写着端口，排查方向当场就被带偏了。
+    serve = None
+    if not DEBUG_MODE:
+        try:
+            # 局部导入，不放到文件顶部：waitress 是生产环境才需要的依赖，
+            # 调试模式或本地改代码时不该因为没装它就 import 失败。
+            from waitress import serve
+        except ImportError:
+            # 这里以前是「回退到 Flask 内置服务器」，那条路其实是死的：
+            # 文件顶部原本还有一句同样的 from waitress import serve，
+            # 真没装 waitress 时模块加载阶段就已经抛 ModuleNotFoundError 了，
+            # 根本走不到这个 except。现在顶部那句去掉，这条分支才第一次真的会被执行，
+            # 于是得认真对待它 —— 内置服务器是给本地调试用的（单线程、无并发保护），
+            # 在非调试模式下悄悄拿它顶生产流量，会比启动即失败更糟：
+            # 服务看着是活的，只是慢、连接会排队、超时和 502 会随机出现，
+            # 排查时还没人想得到真正的原因是「跑的根本不是 waitress」。
+            # 所以这里明确退出，让部署的人立刻看到该装什么。
+            logger.error('未安装 waitress。生产模式必须用它启动（Flask 内置服务器'
+                         '单线程、无并发保护，不能承载实际流量），'
+                         '请执行：pip install waitress（或 pip install -r requirements.txt）')
+            sys.exit(1)
+
     try:
         if DEBUG_MODE:
             logger.info('使用 Flask 开发服务器启动（调试模式开启）：http://%s:%s', host, port)
             _run_dev_server(host, port)
         else:
-            try:
-                from waitress import serve
-            except ImportError:
-                logger.warning('未安装 waitress，已回退到 Flask 内置服务器；生产环境请执行 pip install waitress')
-                _run_dev_server(host, port)
-            else:
-                logger.info('使用 waitress 生产服务器启动：http://%s:%s（8 线程）', host, port)
-                serve(app, host=host, port=port, threads=8)
+            logger.info('使用 waitress 生产服务器启动：http://%s:%s（8 线程）', host, port)
+            serve(app, host=host, port=port, threads=8)
     except (OSError, SystemExit) as exc:
         # 自检通过、真正绑定时仍然失败：属于极小概率的竞争（自检释放端口到服务器绑定
         # 之间被别的程序抢走），这种情况没什么好办法，如实报出来就行。

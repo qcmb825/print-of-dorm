@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
+    <!-- ⚠️ 这是经典版界面，**当前路由不到**：app.py 里 UI_SWITCH_ENABLED = False，
+         全站只跑新版（frontend/src/）。保留它只是留一条退路。
+         把开关改成 True 之前，先读 app.py 里那一段「复活前必须先补上」的清单：
+         这个单文件模板不认识计费（待计费 → 接单人填金额）、身份审核、预设打印 /
+         纸张规格、大文件分片上传，账号管理页还会平铺渲染全站明文密码。
+         改开关不会有任何报错，缺口会直接暴露给用户。 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>小猫娘打印服务</title>

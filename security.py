@@ -3,7 +3,7 @@
 import time
 import secrets
 from cryptography.fernet import InvalidToken
-from flask import g, has_request_context, request, session
+from flask import g, has_request_context, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import FERNET, LOGIN_LOCK_SECONDS, LOGIN_MAX_FAILS, env_bool, logger, security_logger
@@ -47,13 +47,51 @@ def actor_label():
 
 
 
+def sanitize_log(value):
+    """把要写进日志的动态值里的控制字符转成可见的转义写法。
+
+    为什么非做不可：query string、路径、UA、昵称、学号这些都是外部输入，而它们进日志之前
+    会先被 URL 解码 / 表单解码，%0A、%0D、%09 各自变成真换行和制表符。日志是按行读的，
+    一条请求里塞几个 %0A，就能在 access.log / security.log 里凭空造出好几行
+    看起来完全正常的记录（比如伪造一条「某 IP 登录失败」）—— 事后翻日志的人
+    没有任何办法分辨哪几行是真的。安全日志尤其经不起这个：它就一个文件的体量，
+    伪造进去的假线索足够把真正的线索盖掉。
+
+    只动控制字符，不截断、不改写别的字符，所以日志原有的 key=value 结构
+    （包括调用方自己用 %s 拼出来的中文字段）保持不变；信息一点没少，
+    只是换成了 \n 这种一眼能看出「这里有人塞了换行」的写法。
+    """
+    if value is None:
+        return '-'
+    text = value if isinstance(value, str) else str(value)
+    pieces = []
+    for ch in text:
+        if ch == '\n':
+            pieces.append('\\n')
+        elif ch == '\r':
+            pieces.append('\\r')
+        elif ch == '\t':
+            pieces.append('\\t')
+        elif ch < ' ' or ch == '\x7f':  # 其余不可打印字符（含垂直制表、退格）统一走 \xNN
+            pieces.append('\\x%02x' % ord(ch))
+        else:
+            pieces.append(ch)
+    return ''.join(pieces)
+
+
+
 def security_event(event, detail=''):
     """安全事件的统一出口，写 security.log。
 
     单独放一个文件是为了让可疑行为不被海量业务日志淹没，以后要接告警或者做审计，盯这一个文件就够。
+
+    event 与 detail 里的动态部分一律过 sanitize_log：调用方有二十几处，要求每一处自己记得
+    转义是不现实的（漏一处就等于没做），放这里收口最稳。
     """
     try:
-        security_logger.warning('event=%s ip=%s user=%s %s', event, client_ip(), actor_label(), detail)
+        security_logger.warning('event=%s ip=%s user=%s %s', sanitize_log(event),
+                                sanitize_log(client_ip()), sanitize_log(actor_label()),
+                                sanitize_log(detail))
     except Exception:
         # 记日志只是辅助，不能因为写不进去把主流程搞崩；也不能悄悄吞掉，
         # 所以用 logger.exception 把错误本身记下来。
@@ -66,9 +104,12 @@ def audit_action(action, detail=''):
 
     注销也记账，而且记的是「注销」而不是「删除」——
     数据一条没少，说成删除会让后来翻日志的人以为得去备份里找。
+    detail 里常带昵称等用户自己起的内容，同样要转义，理由见 sanitize_log。
     """
     try:
-        security_logger.info('audit=%s ip=%s user=%s %s', action, client_ip(), actor_label(), detail)
+        security_logger.info('audit=%s ip=%s user=%s %s', sanitize_log(action),
+                             sanitize_log(client_ip()), sanitize_log(actor_label()),
+                             sanitize_log(detail))
     except Exception:
         logger.exception('写审计日志失败 action=%s', action)
 
@@ -189,3 +230,21 @@ def hit_limit(key, limit, window_seconds):
             if all(now - ts >= window_seconds for ts in stamps):
                 _hits.pop(k, None)
     return len(recent) > limit
+
+
+
+def rate_limited(event, detail, msg):
+    """限流撞线之后的统一动作：记一条安全事件，再回一个 code=429。
+
+    调用方仍然自己判 hit_limit(...)：键名、阈值、窗口是各接口自己的口径
+    （按账号、按 IP、按分片片数），收进这里只会变成一个参数更多的中转函数，
+    还会把「哪个接口用哪把尺子」藏到看不见的地方。
+    真正收掉的是后面那两步 ——「写 security_event + 回 429」。
+    原先每个调用点各写一遍，漏掉 security_event 的那一处不会有任何报错，
+    只是那类刷量再也不会出现在安全日志里；而安全日志正是为它们准备的
+    （见 security_event 的说明），所以宁可让这两步永远绑在一起。
+
+    返回的是完整的 (响应, 429)，调用方直接 `return rate_limited(...)` 即可。
+    """
+    security_event(event, detail)
+    return jsonify({'code': 429, 'msg': msg}), 429
