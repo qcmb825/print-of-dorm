@@ -16,8 +16,9 @@
  *  heading：管理端用 lg（30/44），学生端用 md（20/30）。手机屏幕高度有限，
  *  44px 标题会占掉近 1/6 屏高，而学生端以手机为主。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useClock } from '@/composables/clock'
 
 const props = defineProps<{
   title: string
@@ -32,30 +33,9 @@ const headingClass = computed(() =>
   props.heading === 'md' ? 'text-xl sm:text-3xl' : 'text-3xl sm:text-4xl',
 )
 
-/** 同步时钟：整页唯一"每秒都在变"的东西，也是把"文档"读成"电子文档"最省力的一处 ——
- *  纸上不会有正在走的秒。
- *  两个约束：① 它是本机真实时间，不是编出来的读数；② aria-hidden 且不进 title，
- *  屏幕阅读器不会被一段每秒变化的文本反复打断（真要知道时间的人看系统时钟，
- *  而这里的作用是"这块屏在跑"）。 */
-const clock = ref('')
-let timer: number | undefined
-
-function stamp(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
-onMounted(() => {
-  clock.value = stamp()
-  timer = window.setInterval(() => {
-    clock.value = stamp()
-  }, 1000)
-})
-
-onBeforeUnmount(() => {
-  if (timer) window.clearInterval(timer)
-})
+/** 同步时钟（SYNC 字段）。它是把"文档"读成"电子文档"最省力的一处 ——
+ *  纸上不会有正在走的秒。约束与理由见 composables/clock.ts。 */
+const clock = useClock()
 </script>
 
 <template>

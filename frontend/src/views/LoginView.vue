@@ -17,6 +17,7 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import { ApiError } from '@/api/client'
+import { useClock } from '@/composables/clock'
 import { CONTACT_LABELS, type ContactType } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -58,6 +59,18 @@ const contactOptions = (Object.keys(CONTACT_LABELS) as ContactType[]).map((value
   label: CONTACT_LABELS[value],
   value,
 }))
+
+/** 品牌区那三条流程说明。编号写死在这里而不是从路由取：它们描述的是**服务流程**，
+ *  不是页面 —— 与导航栏那几项没有一一对应关系，混用会让以后改导航的人莫名背锅。 */
+const flowRows = [
+  { code: '01', label: '在线提交' },
+  { code: '02', label: '进度可查' },
+  { code: '03', label: '凭码取件' },
+]
+
+/** 面板底行的同步读数：与页面头部的 SYNC 同一件东西 —— 纸上的表单是静止的，
+ *  而这块面板在"接入"这个动作发生之前就该是活的。 */
+const clock = useClock()
 
 const loginRules: FormRules = {
   // 登录只用学号（后端也拿 STUDENT_ID_RE 卡一道）。这里不再提「昵称」：
@@ -219,26 +232,52 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="login-shell grid min-h-full place-items-center overflow-hidden px-4 py-8 sm:px-6">
+  <!-- min-h-dvh 而不是 min-h-full：min-h-full 是 min-height:100%，而它的父链上
+       （.route-stage）高度是 auto，百分比解析不出结果 —— 实测外壳只有 673px 高、
+       内容贴在顶上，下面留一大片空。dvh 直接对视口取高度，不依赖父链，
+       且移动端地址栏收放时不会像 vh 那样跳（换场覆盖层用的是同一个单位）。 -->
+  <div class="login-shell grid min-h-dvh place-items-center overflow-hidden px-4 py-8 sm:px-6">
     <div class="relative grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
-      <!-- 宽屏保留一块安静的品牌区：登录不是普通表单，先让用户确认自己到了对的服务。 -->
+      <!-- 宽屏保留一块品牌区：登录不是普通表单，先让用户确认自己到了对的服务。
+           这一版把它做成**海报**：整页只有这一处字号到 44px，配铭牌行、斜切色带、
+           刻度尺与底线读数 —— 版式学的是宣传物料那一套（大标题压在色块与刻度上），
+           与内容区那种"密排的技术文件"形成对比：**入口是海报，进去是工单**。 -->
       <section class="hidden lg:block">
-        <div class="mb-6 inline-flex items-center gap-2 border px-3 py-1.5" style="border-color: var(--accent-tint-border); background-color: var(--accent-tint)">
-          <span class="size-1.5" style="background-color: var(--secondary);" />
-          <span class="tech-label text-ink-2 text-2xs">Campus print service</span>
+        <div
+          class="flex items-center justify-between gap-4 border-b pb-1.5"
+          style="border-color: var(--border)"
+        >
+          <span class="readout">NEKO PRINT // 校园打印服务</span>
+          <span class="readout">REV 2.006</span>
         </div>
-        <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
+
+        <p class="mt-7 max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
           从文件到取件，<br />
           <span style="color: var(--accent-text)">一张单</span>就够了。
         </p>
         <p class="mt-5 max-w-sm text-base leading-7 text-ink-3">
           上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
         </p>
-        <div class="mt-8 grid max-w-md grid-cols-3 gap-3">
-          <div v-for="item in ['在线提交', '进度可查', '凭码取件']" :key="item" class="border-t pt-3" style="border-color: var(--border)">
-            <span class="tech-label text-ink-2 tech-label--cn text-xs">{{ item }}</span>
-          </div>
+
+        <!-- 三条流程说明用**字段行**排（等宽标签 + 点线引导），而不是三个格子：
+             它是"这份服务的规格表"，不是三块卖点卡片 —— 页面里的信息越像记录，
+             越不像广告。 -->
+        <div class="mt-8 grid max-w-md gap-2.5">
+          <span v-for="item in flowRows" :key="item.code" class="field">
+            <span class="field__k">{{ item.code }}</span>
+            <span class="field__lead" />
+            <span class="field__v">{{ item.label }}</span>
+          </span>
         </div>
+
+        <!-- 收尾：斜切色带 + 刻度尺 + 大号读数。海报底部那一排印刷标记。 -->
+        <div class="mt-10 flex items-end gap-5" aria-hidden="true">
+          <span class="decor-band h-10 w-36 shrink-0" />
+          <span class="ticks mb-1 flex-1" />
+        </div>
+        <!-- 只写名字，不写营业时间或取件点：那些是管理员在公告里维护的内容，
+             写死在海报上就等于抄了一份会过期的副本。 -->
+        <p class="readout-lg mt-3">NEKO PRINT SERVICE / CAMPUS</p>
       </section>
 
       <div class="w-full">
@@ -262,11 +301,20 @@ onMounted(async () => {
         </span>
       </div>
 
-      <div class="panel login-card p-5 sm:p-6">
-        <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来 -->
-        <div class="mb-4 flex items-center gap-2">
+      <!-- 表单面板做成一块**接入终端**：顶部铭牌行（编号 + 服务状态）、中部表单、
+           底部状态行（会话灯 + 同步时钟 + 页码）。三行的存在理由不是装饰 ——
+           登录页是唯一一个"什么都还没发生"的页面，它需要自己说明"这块屏在跑、
+           服务在、你接下来要做的是接入"。 -->
+      <div class="panel login-card">
+        <div
+          class="flex items-center justify-between gap-3 border-b px-5 py-2"
+          style="border-color: var(--border)"
+        >
+          <span class="readout">00 // 接入终端</span>
+          <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来。
+               它属于铭牌行：这是"终端"自己的状态，不是表单的一部分。 -->
           <span
-            class="tech-label inline-flex items-center gap-1.5 px-2 py-1 tech-label--cn text-xs"
+            class="tech-label inline-flex items-center gap-1.5 px-2 py-0.5 tech-label--cn text-xs"
             :style="{
               color: online === false ? 'var(--err)' : 'var(--secondary)',
               backgroundColor: online === false ? 'var(--err-bg)' : 'var(--role-user-bg)',
@@ -279,9 +327,9 @@ onMounted(async () => {
             />
             {{ online === null ? '正在连接' : online ? '服务在线' : '服务不可达' }}
           </span>
-          <span class="tech-label ml-auto text-ink-4 text-2xs">v2</span>
         </div>
 
+        <div class="p-5 sm:p-6">
         <h1 class="font-heading text-2xl leading-tight font-bold">
           {{ tab === 'login' ? '登录你的账号' : '注册新账号' }}
         </h1>
@@ -413,6 +461,23 @@ onMounted(async () => {
             </NForm>
           </NTabPane>
         </NTabs>
+        </div>
+
+        <!-- 面板底行：一只会话灯 + 同步时钟 + 页码范围读数。
+             登录页没有页面头部，这一行就是"这块屏在跑"的唯一证据。 -->
+        <div
+          class="flex items-center gap-3 border-t px-5 py-2"
+          style="border-color: var(--border)"
+          aria-hidden="true"
+        >
+          <span class="flex shrink-0 items-center gap-1.5">
+            <span class="status-led" />
+            <span class="readout">SESSION —</span>
+          </span>
+          <span class="ticks min-w-8 flex-1" />
+          <span class="readout shrink-0">SYNC {{ clock || '--:--:--' }}</span>
+          <span class="caret" />
+        </div>
       </div>
 
       <p class="mt-4 text-center text-xs text-ink-4">
