@@ -64,8 +64,10 @@ const shellLabel = computed(() => {
          **必须放在换场 stage 之外**：stage 在换场时会被 transform，而 transform 会给
          固定定位的后代换掉包含块，这一层就会跟着内容一起飘。
          它是 aria-hidden 且 pointer-events: none 的，不参与交互。 -->
-    <div class="decor-layer" aria-hidden="true">
-      <span class="decor-layer__grid" data-parallax style="--depth: 4px" />
+    <!-- data-guest：登录页有自己的底图（那张图纸），这一层让位。
+         **一页只能有一套底线** —— 48px 网格与图纸叠在一起就是"两层网格"那个老问题。 -->
+    <div class="decor-layer" :data-guest="shellTransitionKey === 'guest' ? '' : undefined" aria-hidden="true">
+      <span class="decor-layer__grid" data-parallax style="--depth: 9px" />
     </div>
 
     <NMessageProvider :max="3" placement="top">

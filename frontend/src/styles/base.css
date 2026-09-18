@@ -257,6 +257,11 @@
   }
 
   /* 底纹网格。inset 留出负余量，视差移动后不会露出边缘。 */
+  /* 登录页不画工作台网格：那一页有自己的图纸底图，两套线叠在一起就是"两层网格"。 */
+  .decor-layer[data-guest] .decor-layer__grid {
+    display: none;
+  }
+
   .decor-layer__grid {
     position: absolute;
     inset: -48px;
@@ -323,6 +328,100 @@
       var(--surface-sheen);
     background-size: 4px 4px, auto;
     background-position: 0 0, 0 0;
+  }
+
+  /* ══ 图纸底图（登录页）═══════════════════════════════════════════
+   * 登录页的底不做网格，做**一张图纸**：图框 + 分区刻度尺 + 一张空间站结构草图 + 标题栏。
+   * 三条取舍，都是为了让"有内容的线"不至于变成脏背景：
+   *   ① 它是**画出来的**，不是铺出来的。一张图有疏有密、有大片空白，而图案是均匀的；
+   *      均匀的东西铺满整屏必然和内容抢注意力（工作台网格那次就是这个教训）。
+   *   ② 颜色与粗细一起分主次：**铅笔墨**两档透明度（--blueprint-ink / -fine）
+   *      + 强调色只给引出编号和图框角标；粗细三档（0.75 / 1 / 2 设备像素，
+   *      全部 non-scaling-stroke —— 否则"按视口缩放"会把 2px 在大屏拉成 4px）。
+   *      单色单线宽那一版被评"线条粗细太一致不好看"。
+   *   ③ 笔画**不进内容区**：图纸是一圈"框"，所有笔画留在内容列之外的边带里
+   *      （包络怎么算见 BlueprintSheet.vue 顶部的注释）。所以文字脚下没有图纸的线，
+   *      "纹理压文字"那条红线在构图层面就不成立，而不只是靠透明度凑对比度。
+   *
+   * 它替代的是全站那层 48px 工作台网格 —— **一页只能有一套底线**，
+   * 网格和图纸叠在一起就是"两层网格"那个老问题（见 App.vue 的 data-guest）。 */
+  .blueprint {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  /* 图框：内缩一道 1px 线，四角各一小段加粗，像一张图纸的裁切边。 */
+  .blueprint__frame {
+    position: absolute;
+    inset: 14px;
+    border: 1px solid var(--blueprint-ink-fine);
+  }
+
+  /* 角标走强调色：整张图里"要被看到"的三处之一（另两处是引出编号和剖切内圈）。 */
+  .blueprint__frame::before,
+  .blueprint__frame::after {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--blueprint-accent);
+    content: '';
+  }
+
+  .blueprint__frame::before {
+    top: -1px;
+    left: -1px;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  .blueprint__frame::after {
+    right: -1px;
+    bottom: -1px;
+    border-top: 0;
+    border-left: 0;
+  }
+
+  /* 分区刻度尺：贴在纸的四条边上，比内图框再外一档（图框与纸边之间那圈）。
+     节奏与站内的 .ticks / .vticks 一致，所以它读起来是同一把尺子换了个位置。 */
+  .blueprint__zones {
+    position: absolute;
+    --tick-color: var(--blueprint-ink-fine);
+  }
+
+  .blueprint__zones--x {
+    right: 14px;
+    left: 14px;
+    height: 5px;
+  }
+
+  .blueprint__zones--y {
+    top: 14px;
+    bottom: 14px;
+    width: 5px;
+  }
+
+  /* 图纸本体：居中、按视口铺满（preserveAspectRatio=meet，所以圆还是圆，
+     不会被拉成椭圆 —— 技术图纸里最刺眼的就是比例失真）。 */
+  .blueprint__station {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 标题栏：图纸右下角那一块。字段写的都是真事（产品名与版本戳），
+     不编图纸编号、不编比例尺 —— 装饰件可以无意义，但不该是假的。 */
+  .blueprint__block {
+    position: absolute;
+    bottom: 26px;
+    left: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-left: 2px solid var(--blueprint-accent);
+    padding: 8px 12px;
   }
 
   /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
@@ -800,31 +899,6 @@
       color-mix(in srgb, var(--background) 45%, transparent) 0 1px,
       transparent 1px 8px
     );
-  }
-
-  /* ══ 目镜（认证页的同心环 + 准星 + 六边形）═════════════════════════
-   * 登录页的那件"大东西"。这一套语汇在实验/医疗设备的界面里到处都是：
-   * 同心环量的是**范围**，十字准星标的是**中心**，六边形是"样本/单元"的记号 ——
-   * 三件东西合起来说的是"这里正在核验一个对象"，而不是"这里有个徽章"。
-   *
-   * 最外那圈刻度缓慢自转（14s/一圈，约 26°/s）：静止的同心环读成徽章，
-   * 转起来才读成仪表。**只转最外圈**，中心与准星不动 —— 整个图形一起转会晃眼，
-   * 而且"准星在转"这件事在语义上是错的。
-   *
-   * 用 SVG 画而不是堆背景渐变：这些线要精确的圆心与角度，CSS 做不到，
-   * 而且 SVG 描边是矢量，任何缩放下都不糊。 */
-  .reticle__dial {
-    /* transform-box 不能省：SVG 元素默认以用户坐标系原点（0 0）为旋转中心，
-       不设 fill-box 的话这一圈会绕着画布左上角转出去。 */
-    transform-box: fill-box;
-    transform-origin: center;
-    animation: reticle-spin var(--motion-dur-dial) linear infinite;
-  }
-
-  @keyframes reticle-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   /* 数值变化：数字亮一下再退回来（配套 composables/motion.ts 的 useValueTick）。
@@ -1574,10 +1648,4 @@
     opacity: 1 !important;
   }
 
-  /* 目镜：整件撤掉自转，图形原样留着（同心环 + 准星 + 六边形本来就是一件静态图形）。
-     旋转在减少动效下是最该撤的一类 —— 它是一个"永远在动的背景物体"，
-     视线没法让它停下来。 */
-  .reticle__dial {
-    animation: none !important;
-  }
 }

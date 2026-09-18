@@ -16,6 +16,7 @@ import {
 } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
+import BlueprintSheet from '@/components/BlueprintSheet.vue'
 import { ApiError } from '@/api/client'
 import { useClock } from '@/composables/clock'
 import { CONTACT_LABELS, type ContactType } from '@/api/types'
@@ -242,12 +243,15 @@ onMounted(async () => {
 </script>
 
 <template>
+  <!-- 图纸底图：整页那么大，框住四边，内容浮在它上面。
+       它是 position:absolute 的，所以这一层容器必须是 relative（下面的 relative 不能删）。 -->
+  <BlueprintSheet />
   <!-- min-h-dvh 而不是 min-h-full：min-h-full 是 min-height:100%，而它的父链上
        （.route-stage）高度是 auto，百分比解析不出结果 —— 实测外壳只有 673px 高、
        内容贴在顶上，下面留一大片空。dvh 直接对视口取高度，不依赖父链，
        且移动端地址栏收放时不会像 vh 那样跳（换场覆盖层用的是同一个单位）。 -->
-  <div class="login-shell grid min-h-dvh place-items-center overflow-hidden px-4 py-8 sm:px-6">
-    <div class="relative grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
+  <div class="login-shell relative grid min-h-dvh place-items-center overflow-hidden px-4 py-8 sm:px-6">
+    <div class="relative z-10 grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
       <!-- 宽屏保留一块品牌区：登录不是普通表单，先让用户确认自己到了对的服务。
            这一版把它做成**核验告示**（实验/临床设备那套语汇）：一枚目镜（同心环 +
            准星 + 六边形）、一行密级铭牌、三条读数列、底部斜切色带与刻度尺。
@@ -267,52 +271,6 @@ onMounted(async () => {
         </div>
 
         <div class="mt-7">
-          <!-- 目镜。整块 aria-hidden：它是图形，不是信息（下面对应的三行读数才是）。
-               **不能与标题并排**：左栏宽约 456px，44px 的标题在「从文件到取件，」处
-               正好需要整栏的宽度，并排会让它断成"从文件到取 / 件，"这种半句换行。
-               所以竖排在标题上方 —— 它本来也更像一枚"铭牌/印章"的位置。 -->
-          <svg
-            class="mb-6 block"
-            width="132"
-            height="132"
-            viewBox="0 0 200 200"
-            fill="none"
-            aria-hidden="true"
-            data-parallax
-            style="--depth: 11px"
-          >
-            <!-- 外圈刻度盘：缓慢自转的那一圈。dasharray 划出刻度，
-                 它同时是"量程"（同心环）与"正在扫描"（转动）两件事的载体。 -->
-            <g class="reticle__dial">
-              <circle
-                cx="100"
-                cy="100"
-                r="92"
-                stroke="var(--secondary)"
-                stroke-width="1"
-                stroke-dasharray="1 7"
-                opacity="0.75"
-              />
-              <circle cx="100" cy="100" r="92" stroke="var(--secondary)" stroke-width="1" opacity="0.22" />
-            </g>
-            <!-- 内圈 + 六边形 + 准星：这三件不动。 -->
-            <circle cx="100" cy="100" r="72" stroke="var(--secondary)" stroke-width="1" opacity="0.42" />
-            <polygon
-              points="162,100 131,153.7 69,153.7 38,100 69,46.3 131,46.3"
-              stroke="var(--secondary)"
-              stroke-width="1"
-              opacity="0.6"
-            />
-            <path
-              d="M100 22v40M100 138v40M22 100h40M138 100h40"
-              stroke="var(--secondary)"
-              stroke-width="1"
-              opacity="0.45"
-            />
-            <circle cx="100" cy="100" r="9" stroke="var(--secondary)" stroke-width="1" opacity="0.8" />
-            <circle cx="100" cy="100" r="2" fill="var(--accent-text)" />
-          </svg>
-
           <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
             从文件到取件，<br />
             <span style="color: var(--accent-text)">一张单</span>就够了。
