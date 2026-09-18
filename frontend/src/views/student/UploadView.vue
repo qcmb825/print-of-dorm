@@ -263,7 +263,7 @@ onMounted(async () => {
     >
       <section
         v-if="receipt"
-        class="panel mb-4 border-primary/40 p-4 sm:p-5"
+        class="panel mb-4 border-[var(--accent-tint-border)] p-4 sm:p-5"
         role="status"
         aria-live="polite"
       >

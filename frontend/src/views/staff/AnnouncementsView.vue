@@ -280,7 +280,7 @@ onMounted(load)
             v-for="item in list"
             :key="item.id"
             class="panel p-3.5"
-            :class="item.is_active === 1 && 'border-primary/40'"
+            :class="item.is_active === 1 && 'border-[var(--accent-tint-border)]'"
           >
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">

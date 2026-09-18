@@ -288,7 +288,7 @@ onMounted(load)
               v-for="item in presets"
               :key="item.id"
               class="panel p-3.5"
-              :class="item.is_active === 1 && 'border-primary/40'"
+              :class="item.is_active === 1 && 'border-[var(--accent-tint-border)]'"
             >
               <div class="flex items-start justify-between gap-3">
                 <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
@@ -418,7 +418,7 @@ onMounted(load)
               v-for="item in papers"
               :key="item.id"
               class="panel p-3.5"
-              :class="item.is_active === 1 && 'border-primary/40'"
+              :class="item.is_active === 1 && 'border-[var(--accent-tint-border)]'"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">

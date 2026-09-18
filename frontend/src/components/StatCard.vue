@@ -17,7 +17,7 @@ withDefaults(
 <template>
   <div
     class="panel panel-raised flex flex-col gap-2 p-4 sm:p-5"
-    :class="accent && 'border-primary/40'"
+    :class="accent && 'border-[var(--accent-tint-border)]'"
   >
     <div class="flex items-center justify-between gap-2">
       <span class="tech-label text-ink-3 tech-label--cn text-xs">{{ label }}</span>

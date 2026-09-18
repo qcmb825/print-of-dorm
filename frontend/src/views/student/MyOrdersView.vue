@@ -157,7 +157,7 @@ async function withdraw(order: Order): Promise<void> {
         <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.active }}</div>
       </div>
-      <div class="panel panel-raised border-primary/40 px-3 py-2.5">
+      <div class="panel panel-raised border-[var(--accent-tint-border)] px-3 py-2.5">
         <div class="tech-label text-ink-4 tech-label--cn text-xs">可取了</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
           {{ summary.ready }}

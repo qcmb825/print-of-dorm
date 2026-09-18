@@ -145,7 +145,7 @@ onMounted(load)
 
     <template v-else-if="board">
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <div class="panel panel-raised border-primary/40 px-3 py-2.5">
+        <div class="panel panel-raised border-[var(--accent-tint-border)] px-3 py-2.5">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">待我取件</div>
           <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ mine?.ready ?? 0 }}
