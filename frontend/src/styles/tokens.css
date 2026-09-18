@@ -273,6 +273,9 @@
   --veil-mat: color-mix(in srgb, var(--foreground) 90%, var(--background));
   --veil-grid: rgb(255 255 255 / 0.06);
   --veil-hairline: rgb(255 255 255 / 0.14);
+  /* 扫描边最外那 1px 的"热核心"：整条前缘里最亮的一线。
+     幕布在两个主题下都是暗底，所以这一支也刻意不跟随主题。 */
+  --veil-edge-core: rgb(255 255 255 / 0.72);
   /* 幕布上的强调色淡档（套准线的发光、读数与代号之间的分隔线）。
    *
    * 这一支像上面两条一样**只在浅色块声明、两主题共用**，因为它脚下永远是暗幕布。
@@ -462,13 +465,13 @@
   --motion-dur-route-enter: 150ms;
   --motion-dur-route-leave: 150ms;
 
-  --motion-dur-route-shell-leave: 200ms;
+  --motion-dur-route-shell-leave: 220ms;
   --motion-dur-route-shell-enter: 250ms;
 
   /* 换场三拍：起手空拍 → 擦除面板穿过 → 遮住之后的停留。
    * 两档都必须满足「空拍 + 擦除 = 对应的 leave 时长」这个恒等式 ——
    * 面板必须恰好在 @after-leave 那一刻完全盖住屏幕，早一帧露馅、晚一帧白遮。
-   *   外壳：0 + 200 = 200 = --motion-dur-route-shell-leave
+   *   外壳：0 + 220 = 220 = --motion-dur-route-shell-leave
    *   子页：0 + 150 = 150 = --motion-dur-route-leave
    * 改了其中一个忘了另一个，换手就会从面板边缘透出来。
    *
@@ -476,8 +479,8 @@
    * 但旧页的离场曲线前 1/3 几乎不动，那段时间等于白等；而这是高频操作，
    * 点下去就得有反应。 */
   --motion-dur-route-latch: 0ms;
-  --motion-dur-route-gate: 200ms;
-  --motion-dur-route-hold: 300ms;
+  --motion-dur-route-gate: 220ms;
+  --motion-dur-route-hold: 360ms;
   --motion-dur-route-latch-inline: 0ms;
   --motion-dur-route-gate-inline: 150ms;
   /* 子页档不设停留：**场记读数只挂在外壳档**，高频导航没有演出。

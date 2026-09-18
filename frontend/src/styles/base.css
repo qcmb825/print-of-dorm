@@ -1144,10 +1144,14 @@
     right: 0;
     width: 3px;
     content: '';
+    /* 三段而不是两段：内侧 1px 暗发丝线（面板的"厚度"）→ 中间 1px 青线 → 最外
+       1px 热核心。最外那一线落在**前缘本身**上，所以板子扫过来时最先看到的是一根
+       白亮的边，后面才跟着颜色 —— 单色 3px 条看着是"贴了一条胶带"。 */
     background: linear-gradient(
       to right,
       var(--veil-hairline) 0 1px,
-      var(--scan-line, var(--secondary)) 1px 3px
+      var(--scan-line, var(--secondary)) 1px 2px,
+      var(--veil-edge-core) 2px 3px
     );
     box-shadow: 0 0 10px 0 var(--veil-accent-tint);
   }
@@ -1218,7 +1222,12 @@
     align-items: center;
     justify-content: center;
     gap: 10px;
-    padding: 0 24px;
+    /* **读数让开正中那条轴。** 套准线走 50%（那是换手的轴线），而读数原来也挂在 50% 上，
+       2px 亮线正好从字中间穿过去 —— 实测抓帧看得很清楚，是"图形压在文字上"的老毛病。
+       容器是 flex + align-items:center，所以给 padding-top 会让内容在**剩下**的高度里居中，
+       净效果就是整体下移 padding/2 = 26px：套准线在字上方，两者构成"一条基线 + 一行读数"。
+       （不能用 transform 移：容器上挂着 veil-hud-pass 的 translateY 动画，会互相顶掉。） */
+    padding: 52px 24px 0;
     overflow: hidden;
     white-space: nowrap;
     /* 同套准线：读数是打在暗幕布上的「场记板」，用 --primary（荧光黄）而不是 --accent-text。
@@ -1270,11 +1279,11 @@
     animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
   }
 
-  /* 窄屏：缝更窄、只有一行 11px 等宽字放得下，所以砍掉代号只留中文页名。
-     两段读数挤在一道缝里读不出来，那就是「用装饰冒充信息」。 */
+  /* 窄屏：一行放不下三段（代号 + 分隔线 + 中文页名），所以砍掉代号只留中文页名。
+     挤着读不出来的东西就是「用装饰冒充信息」。 */
   @media (max-width: 640px) {
     .route-veil__hud {
-      padding: 0 16px;
+      padding: 52px 16px 0;
     }
     /* 窄屏只留中文页名，字号跟着缝一起收一档（缝的下限是 32px，13px 行高放得下）。
        不能再小了 —— 它是这道缝存在的理由。 */
@@ -1443,11 +1452,15 @@
     opacity: 0;
     transform: translateY(8px);
   }
-  11% {
+  /* 满亮窗口 = 8% → 88%，占整段停留的 80%。
+     外壳档停留 360ms 时，这一段是 29ms 淡入 + 288ms 全亮 + 43ms 退场 ——
+     288ms 是"看清四个到六个汉字"的下限（400ms 更从容，但那要把整场拖到 900ms 以上）。
+     退场比入场短是有意的：退场只需要"消失得干净"，不需要被读。 */
+  8% {
     opacity: 1;
     transform: translateY(0);
   }
-  80% {
+  88% {
     opacity: 1;
     transform: translateY(0);
   }
