@@ -253,6 +253,7 @@ const CHECKS = [
   ['status-printing', 'status-printing-bg', 4.5, 'must', '「打印中」标签'],
   ['status-ready', 'status-ready-bg', 4.5, 'must', '「可取了」标签'],
   ['status-done', 'status-done-bg', 4.5, 'must', '「已取件」标签'],
+  ['status-done', 'background', 4.5, 'must', '认证回执条上的 AUTH OK（压在页底上）'],
   ['status-unpriced', 'status-unpriced-bg', 4.5, 'must', '「待计费」标签'],
   ['role-user', 'role-user-bg', 4.5, 'must', '普通用户徽章'],
   ['role-admin', 'role-admin-bg', 4.5, 'must', '管理员徽章'],

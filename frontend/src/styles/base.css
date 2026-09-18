@@ -913,48 +913,65 @@
     transition-duration: var(--motion-dur-fast);
   }
 
-  /* ══ 认证回执横幅（登录成功）═════════════════════════════════════
-   * 挂在 body 上、垂直居中在右缘。三件事值得写下来：
-   *   ① **z-index 300**：刚好压在场记幕布（100）之上、Naive 弹层（2000）之下。
-   *      登录成功后立刻是一次外壳换场，回执要在这场换场"之上"被看见 ——
-   *      否则它只是一条新页面的提示。抬到 2000 以上会盖住 Naive 的弹窗，那是功能事故。
-   *   ② **整层 pointer-events: none**：它不吃任何点击，也不可能挡住新页面上的操作。
-   *   ③ 位置在**垂直中线的右缘**：顶部 64px 是 sticky 顶栏、底部 60px 是窄屏标签栏，
-   *      中间那条空带是唯一不和 chrome 抢地方的位置。
-   * 动效只有 transform + opacity（合成属性）；进出场的时长走令牌，组件里不写裸毫秒。 */
-  .auth-banner-layer {
+  /* ══ 认证回执条（登录成功）═════════════════════════════════════
+   * 一条**贯穿屏幕的横条**，从右缘滑入，压在一切 chrome 之上
+   * （z-index 300：换场幕布 100、布局 sticky 顶栏 20、Naive 弹层 2000）。
+   *
+   * 为什么是横条而不是角标卡片：这一下发生在外壳换场期间，屏幕上正有一块擦除面板
+   * 横着切过去 —— 横贯全宽的条子和那块面板是同一套语汇（都是"截断屏幕的一道"），
+   * 角落里的小卡片在那个语境里会显得是另一个系统弹出来的。
+   *
+   * 为什么压在顶栏之上而不是贴在它下面：顶栏高度会变（公告条有无、sm 断点 56/64px），
+   * 要"贴在某条下面"就得让布局把 chrome 高度报上来 —— 为一个 2.4 秒的回执不值得。
+   * 整条 pointer-events: none，盖着也点得到下面的一切。
+   *
+   * 动效只有 opacity + transform（合成属性）；时长与曲线走令牌，组件里不写裸毫秒。 */
+  .auth-band {
     position: fixed;
-    top: 50%;
+    top: 0;
     right: 0;
-    z-index: 300;
-    padding: 16px;
-    pointer-events: none;
-    transform: translateY(-50%);
-  }
-
-  .auth-banner {
-    position: relative;
-    display: flex;
-    gap: 12px;
-    width: min(420px, calc(100vw - 32px));
-    overflow: hidden;
-    border: 1px solid var(--border);
-    /* 实底而不是半透明：它会在暗幕布上、也会在新页面的浅底上出现，
-       唯一在两个底上都读得清的，是它自带纸面。 */
-    background-color: var(--background);
-    padding: 12px 14px 14px 16px;
-  }
-
-  .auth-banner__bar {
-    position: absolute;
-    top: 12px;
-    bottom: 14px;
     left: 0;
-    width: 3px;
-    background-color: var(--status-done);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 52px;
+    padding: 0 16px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+    /* 实底而不是半透明：它既会落在暗幕布上、也会落在新页面的浅底上，
+       唯一在这两个底上都读得清的，是它自带表面。 */
+    background-color: var(--background);
+    pointer-events: none;
+    /* 进场用**挂载即播的 keyframes**，不用 <Transition> 的类。原因不是风格偏好：
+       <Transition> 的进场靠 rAF 摘掉 enter-from 那一帧，而这条回执正好出现在一次
+       外壳换场进行中（主线程在加载 chunk、换整棵树），rAF 可能被节流 ——
+       实测在后台标签页里 500ms 只有 1 帧，那时 enter-from 永远摘不掉，
+       回执会一直停在屏外。keyframes 没有这个两帧时序。 */
+    animation: auth-band-in var(--motion-dur-slow) var(--motion-ease-out);
   }
 
-  .auth-banner__drain {
+  @keyframes auth-band-in {
+    from {
+      opacity: 0;
+      transform: translate3d(100%, 0, 0);
+    }
+  }
+
+  /* 退场仍走 <Transition>：那一帧没赶上最坏只是没有退场动画，
+     元素照样会被卸掉（Vue 按计算出的时长收尾），不会像进场那样卡住。 */
+  .auth-band-leave-active {
+    transition:
+      opacity var(--motion-dur-base) var(--motion-ease-in-out),
+      transform var(--motion-dur-base) var(--motion-ease-in-out);
+  }
+
+  .auth-band-leave-to {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+
+  .auth-band__drain {
     position: absolute;
     right: 0;
     bottom: 0;
@@ -972,36 +989,6 @@
     to {
       transform: scaleX(0);
     }
-  }
-
-  /* 入场：**挂载即播的 keyframes，不用 Vue 的 Transition 类。**
-     原因不是风格偏好：<Transition> 的进场要靠 rAF 摘掉 `enter-from` 那一帧
-     （insert → 下一帧 → 换类），而这条横幅正好出现在**一次外壳换场进行中** ——
-     那时候主线程在加载 chunk、换整棵树，rAF 也可能被节流（实测在后台标签页里
-     500ms 只有 1 帧）。rAF 一停，`enter-from` 就永远摘不掉，横幅会一直停在屏外。
-     keyframes 没有这个两帧时序：元素一挂载就播，播完停在结束状态。 */
-  .auth-banner {
-    animation: auth-banner-in var(--motion-dur-slow) var(--motion-ease-out);
-  }
-
-  @keyframes auth-banner-in {
-    from {
-      opacity: 0;
-      transform: translate3d(calc(100% + 16px), 0, 0);
-    }
-  }
-
-  /* 退场仍走 <Transition>：万一那一帧没赶上，最坏也只是"没有退场动画"，
-     元素照样会被卸掉（Vue 按计算出的时长收尾），不会像进场那样卡住。 */
-  .auth-banner-leave-active {
-    transition:
-      opacity var(--motion-dur-base) var(--motion-ease-in-out),
-      transform var(--motion-dur-base) var(--motion-ease-in-out);
-  }
-
-  .auth-banner-leave-to {
-    opacity: 0;
-    transform: translate3d(calc(100% + 16px), 0, 0);
   }
 
   /* 规格标签：一条左强调边 + 极淡底。
