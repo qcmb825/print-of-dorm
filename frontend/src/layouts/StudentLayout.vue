@@ -85,18 +85,18 @@ onMounted(() => {
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
-    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
+    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-hidden px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
           data-parallax
-style="--depth: 6px"
+style="--depth: 4px"
           aria-hidden="true"
         />
         <span
           class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
           data-parallax
-style="--depth: 6px"
+style="--depth: 4px"
           aria-hidden="true"
         />
         <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
@@ -105,7 +105,7 @@ style="--depth: 6px"
         <span
           class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
           data-parallax
-style="--depth: 4px"
+style="--depth: 3px"
           aria-hidden="true"
         />
       <span
@@ -119,11 +119,16 @@ style="--depth: 20px"
       <!-- profile="inline"：这一层 stage 只包 <main> 里的页面组件，本站唯一的 fixed
            （下面那条底部标签栏）与各条 sticky 顶栏都在它之外，所以可以接回横向接入语汇。
            换场覆盖层的档位由它决定：子页档短、缝窄，外壳档（App.vue）拉满。 -->
-      <RouterView v-slot="{ Component }">
-        <RouteTransition :transition-key="currentPath" profile="inline">
-          <component :is="Component" />
-        </RouteTransition>
-      </RouterView>
+      <!-- 页面内容本体也是一层：它比纸边刻度更近、比水印更远。
+           这一层只加 transform，不动布局；站内没有任何 fixed/sticky 在 views/ 与
+           components/ 里（已核对），所以给内容加包含块是安全的。 -->
+      <div data-parallax style="--depth: 5px">
+        <RouterView v-slot="{ Component }">
+          <RouteTransition :transition-key="currentPath" profile="inline">
+            <component :is="Component" />
+          </RouteTransition>
+        </RouterView>
+      </div>
           <!-- 底部状态带：一块**状态栏**，不是一行页码装饰。
            三件事各自对上一个真实的量：状态灯对"已登录的会话"（这一整层本来就在
            路由守卫后面，能渲染出来就是活的）、编号对当前页、P.nn/NN 对导航序号。
@@ -153,7 +158,7 @@ style="--depth: 20px"
       <span
         class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)]"
         data-parallax
-style="--depth: 9px"
+style="--depth: 6px"
         aria-hidden="true"
       />
     </main>

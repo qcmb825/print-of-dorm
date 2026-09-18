@@ -210,6 +210,17 @@ const CHECKS = [
 
   // —— 强调色的「线 / 文字」一侧 ——
   ['accent-text', 'background', 4.5, 'must', '强调色当文字（侧栏激活项、指标值、取件码）'],
+  [
+    'text-primary',
+    '@blueprint',
+    4.5,
+    'must',
+    '登录页图纸底图上的正文（兜底）。真正的防线在构图上：图纸的笔画不进内容区' +
+      '（BlueprintSheet.vue 顶部算了那块包络），文字脚下本来就没有线。' +
+      '这条断言防的是"哪天有人把线画进了包络"—— 它按最不利情况算：' +
+      '常规笔画整块压在页底上。三级文字（11px 小标签）在这个最不利底上不达 4.5，' +
+      '所以**别把小字挪到图纸的线上**；构图规则破了的话，调透明度也救不回来。',
+  ],
   ['accent-text', '@panel', 4.5, 'must', '面板内的强调色文字'],
   ['accent-text', 'muted', 4.5, 'must', 'muted 底上的强调文字'],
   ['accent-text', '@tint', 4.5, 'must', 'accent-tint 底上的强调文字（图标底、spec-chip）'],
@@ -317,6 +328,10 @@ for (const [themeName, decls, fallback] of [
     else if (key === '@tint-soft') c = over(resolve('accent-tint-soft'), page)
     else if (key === '@tint-soft-muted') c = over(resolve('accent-tint-soft'), resolve('muted'))
     else if (key === '@tint-border') c = over(resolve('accent-tint-border'), page)
+    /** 登录页的图纸底图：最不利的一档是常规笔画（--blueprint-ink）压在页底上。
+     *  注意这只是**兜底**：那张图的构图规则是笔画不进内容区（见 BlueprintSheet.vue），
+     *  正常情况下文字脚下根本没有图纸的线。 */
+    else if (key === '@blueprint') c = over(resolve('blueprint-ink'), page)
     else throw new Error(`未知的背景记号：${key}`)
     if (!c) return null
     return c.a < 1 ? over(c, page) : c

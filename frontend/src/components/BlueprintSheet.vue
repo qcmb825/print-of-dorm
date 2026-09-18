@@ -28,11 +28,11 @@
 <template>
   <div class="blueprint hidden xl:block" aria-hidden="true">
     <!-- 图框与分区刻度用 DOM 画：它们必须贴真实视口，而 SVG 是按比例缩放的。 -->
-    <span class="blueprint__frame" data-parallax style="--depth: 4px" />
-    <span class="ticks blueprint__zones blueprint__zones--x top-0" data-parallax style="--depth: 4px" />
-    <span class="ticks blueprint__zones blueprint__zones--x bottom-0" data-parallax style="--depth: 4px" />
-    <span class="vticks blueprint__zones blueprint__zones--y left-0" data-parallax style="--depth: 4px" />
-    <span class="vticks blueprint__zones blueprint__zones--y right-0" data-parallax style="--depth: 4px" />
+    <span class="blueprint__frame" data-parallax style="--depth: 3px" />
+    <span class="ticks blueprint__zones blueprint__zones--x top-0" data-parallax style="--depth: 3px" />
+    <span class="ticks blueprint__zones blueprint__zones--x bottom-0" data-parallax style="--depth: 3px" />
+    <span class="vticks blueprint__zones blueprint__zones--y left-0" data-parallax style="--depth: 3px" />
+    <span class="vticks blueprint__zones blueprint__zones--y right-0" data-parallax style="--depth: 3px" />
 
     <svg
       class="blueprint__station"
@@ -40,7 +40,7 @@
       preserveAspectRatio="xMidYMid slice"
       fill="none"
       data-parallax
-      style="--depth: 15px"
+      style="--depth: 5px"
     >
       <!-- ══ 左边带：环形舱（外缘被图纸裁掉，读成"图画到纸边外"） ══ -->
       <g stroke="var(--blueprint-ink)" stroke-width="2" vector-effect="non-scaling-stroke">
@@ -52,9 +52,12 @@
         <!-- 可见的辐条：水平一根 + 45° 两根（其余都在纸外） -->
         <path d="M14 310h84M4 286l59-59M4 334l59 59" />
       </g>
-      <!-- 外缘刻度（细墨）：沿外圈右侧弧，径向 10 长 -->
+      <!-- 环上的分段/螺栓线：用 dasharray 画在**圆本身**上。
+           上一版是十来个手写坐标的短线，靠算式凑到弧上 —— 凑不准的那几条就读成
+           "浮在圆盘旁边的斜线"（用户就是这么看到的）。虚线圆没有这个问题：
+           它的每个刻度必然落在圆上，改半径也不会散。 -->
       <g stroke="var(--blueprint-ink-fine)" stroke-width="0.75" vector-effect="non-scaling-stroke">
-        <path d="M120 310h-10M111.6 262.1l-9.4 4.6M111.6 357.9l-9.4-4.6M87.2 220l-9.3 6.5M87.2 400l-9.3-6.5M50 188.8l-5.7 7.9M50 431.2l-5.7-7.9M4.3 172.1l-3.9 8.5M4.3 447.9l-3.9-8.5" />
+        <circle cx="-20" cy="310" r="130" stroke-dasharray="2 11" />
       </g>
       <!-- 左边带的竖向尺寸线 -->
       <g stroke="var(--blueprint-ink-fine)" stroke-width="0.75" vector-effect="non-scaling-stroke">
@@ -93,30 +96,62 @@
       <g stroke="var(--blueprint-ink-fine)" stroke-width="0.75" vector-effect="non-scaling-stroke">
         <path d="M240 692l45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38 45 38 45 -38" />
       </g>
-      <g stroke="var(--blueprint-ink)" stroke-width="1" vector-effect="non-scaling-stroke">
-        <!-- 补给舱：坐在桁架上的圆柱，端盖用椭圆 -->
-        <!-- 只放两个舱，且都在 SVG x<560（viewport<672）：右下那一带是表单列的
-             "学号不在名单上"链接（y≈770 起），舱体若探到 x>840 会从它背后穿过。 -->
-        <path d="M280 640h96v52h-96zM480 640h96v52h-96z" />
-        <ellipse cx="376" cy="666" rx="12" ry="26" />
-        <ellipse cx="576" cy="666" rx="12" ry="26" />
-        <path d="M312 640v52M344 640v52M512 640v52M544 640v52" stroke="var(--blueprint-ink-fine)" stroke-width="0.75" />
-        <!-- 舱体与桁架的连接件 -->
-        <path d="M328 692v14M528 692v14" stroke="var(--blueprint-ink-fine)" stroke-width="0.75" />
+      <!-- 三个补给舱。上一版是"一个矩形 + 一个椭圆"，读起来像没画完 ——
+           圆柱在图纸上靠三件事成立：**两条母线**（上下轮廓）、**看得见那一端的整椭圆**、
+           **看不见那一端的半椭圆弧**；再加贯通轴线和环肋，它才从矩形变成圆柱。
+           只放三个、且都在 SVG x<640（viewport<795）：右下那一带是表单列的
+           "学号不在名单上"链接（y≈770 起），舱体探到 x>840 会从它背后穿过。 -->
+      <g stroke="var(--blueprint-ink)" stroke-width="1.25" vector-effect="non-scaling-stroke">
+        <!-- 舱 A：z 轴圆柱，最长，端面朝右 -->
+        <path d="M280 656h92M280 692h92" />
+        <ellipse cx="372" cy="674" rx="10" ry="18" />
+        <path d="M280 656a10 18 0 0 0 0 36" />
+        <!-- 舱 B -->
+        <path d="M420 656h80M420 692h80" />
+        <ellipse cx="500" cy="674" rx="10" ry="18" />
+        <path d="M420 656a10 18 0 0 0 0 36" />
+        <!-- 舱 C：端面朝左，与 A/B 相对（图纸上两个方向都画才说明这是通用件） -->
+        <path d="M548 656h72M548 692h72" />
+        <ellipse cx="548" cy="674" rx="10" ry="18" />
+        <path d="M620 656a10 18 0 0 1 0 36" />
+      </g>
+      <g stroke="var(--blueprint-ink-fine)" stroke-width="0.75" vector-effect="non-scaling-stroke">
+        <!-- 贯通轴线（点划线）：三个舱在同一条轴上 -->
+        <path d="M266 674h368" stroke-dasharray="12 3 2 3" />
+        <!-- 环肋：每个舱两道 -->
+        <path d="M310 656v36M315 656v36M462 656v36M467 656v36M580 656v36M585 656v36" />
+        <!-- 舱面对接口 -->
+        <circle cx="342" cy="656" r="5" />
+        <circle cx="446" cy="656" r="4" />
+        <!-- 隔热毯的斜剖面带（贴在 A 的外壳上） -->
+        <path d="M292 658l12 12M302 656l14 14M314 656l14 14M326 656l14 14" />
+        <!-- C 顶上的散热鳍块 -->
+        <path d="M556 640h44v16h-44z" />
+        <path d="M566 640v16M578 640v16M590 640v16" />
+        <!-- 舱与舱之间的对接环（两条短竖线 = 一个法兰） -->
+        <path d="M398 666v16M402 666v16M522 666v16M526 666v16" />
+        <!-- 舱体到桁架的支柱 -->
+        <path d="M330 692v14M350 692v14M460 692v14M480 692v14M570 692v14M590 692v14" />
       </g>
 
       <!-- ══ 右下：剖切详图（内圈走强调色） ══ -->
       <g stroke="var(--blueprint-ink)" stroke-width="1.5" vector-effect="non-scaling-stroke">
-        <circle cx="1124" cy="740" r="36" />
+        <circle cx="1128" cy="664" r="44" />
       </g>
       <g stroke="var(--blueprint-accent)" stroke-width="1" vector-effect="non-scaling-stroke">
-        <circle cx="1124" cy="740" r="20" />
-        <path d="M1124 704v-14M1124 776v14M1088 740h-14M1160 740h14" />
+        <circle cx="1128" cy="664" r="25" />
+        <path d="M1128 620v-16M1128 708v16M1084 664h-16M1172 664h16" />
       </g>
 
       <!-- ══ 引出线与编号（编号走强调色） ══ -->
+      <!-- 引出线：四条都必须**两端接上东西**（标签 → 被标注的物件）。
+           上一版有两条是悬空的（起笔离标签五十来像素、收笔也没碰到物件），
+           在图上读起来就是"浮着的一条斜线"—— 用户报的正是左边那一条。 -->
       <g stroke="var(--blueprint-ink-fine)" stroke-width="0.75" vector-effect="non-scaling-stroke">
-        <path d="M96 216l-36-44M1120 454v-22M1104 556l-22-14M1088 706l-30-16" />
+        <path d="M46 126v64" />
+        <path d="M1108 418l16 32" />
+        <path d="M1100 526l-8 32" />
+        <path d="M1088 626l10 6" />
       </g>
       <g
         fill="var(--blueprint-accent)"
@@ -124,10 +159,10 @@
         font-size="11"
         letter-spacing="0.14em"
       >
-        <text x="10" y="122">01 RING</text>
-        <text x="1098" y="414">02</text>
-        <text x="1094" y="522">03</text>
-        <text x="1090" y="676">04</text>
+        <text x="36" y="120">01 RING</text>
+        <text x="1084" y="412">02</text>
+        <text x="1074" y="520">03</text>
+        <text x="1064" y="620">04</text>
       </g>
     </svg>
 

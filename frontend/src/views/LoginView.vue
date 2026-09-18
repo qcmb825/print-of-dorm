@@ -251,6 +251,8 @@ onMounted(async () => {
        内容贴在顶上，下面留一大片空。dvh 直接对视口取高度，不依赖父链，
        且移动端地址栏收放时不会像 vh 那样跳（换场覆盖层用的是同一个单位）。 -->
   <div class="login-shell relative grid min-h-dvh place-items-center overflow-hidden px-4 py-8 sm:px-6">
+    <!-- 两块内容板也各是一层：左栏（品牌）8px、右栏（终端面板）10px。
+         它们比图纸的纸（3）与画（5）更近，所以指针一动，纸上的图会"从板子下面滑过"。 -->
     <div class="relative z-10 grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
       <!-- 宽屏保留一块品牌区：登录不是普通表单，先让用户确认自己到了对的服务。
            这一版把它做成**核验告示**（实验/临床设备那套语汇）：一枚目镜（同心环 +
@@ -261,7 +263,7 @@ onMounted(async () => {
            配色上这里刻意让**青色当主角**（--secondary），黄色留给"动作"（登录按钮）。
            这是全站唯一一处这样分工的地方，理由写在面板顶部：认证这件事本身是
            "仪器在读数"，不是"按钮在喊"；而一旦进入业务区，动作仍然只有一种颜色。 -->
-      <section class="hidden lg:block">
+      <section class="hidden lg:block" data-parallax style="--depth: 8px">
         <div
           class="flex items-center justify-between gap-4 border-b pb-1.5"
           style="border-color: var(--border)"
@@ -342,7 +344,7 @@ onMounted(async () => {
            配色分工（全站唯一一处）：这里让青色主导（仪器/核验语汇），
            黄色只留给**动作**（登录按钮、强调数）。进到业务区仍然只有一种强调色，
            所以这条分工不会渗出去。 -->
-      <div class="panel login-card">
+      <div class="panel login-card" data-parallax style="--depth: 10px">
         <div
           class="flex items-center justify-between gap-3 border-b px-5 py-2"
           style="border-color: var(--border)"

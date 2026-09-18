@@ -288,18 +288,18 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="sheet relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+      <main class="sheet relative min-w-0 flex-1 overflow-hidden px-3 py-4 sm:px-5 sm:py-6">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
           data-parallax
-style="--depth: 6px"
+style="--depth: 4px"
           aria-hidden="true"
         />
         <span
           class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
           data-parallax
-style="--depth: 6px"
+style="--depth: 4px"
           aria-hidden="true"
         />
         <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
@@ -308,7 +308,7 @@ style="--depth: 6px"
         <span
           class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
           data-parallax
-style="--depth: 4px"
+style="--depth: 3px"
           aria-hidden="true"
         />
       <span
@@ -321,11 +321,16 @@ style="--depth: 20px"
       </span>
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
              窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
-        <RouterView v-slot="{ Component }">
-          <RouteTransition :transition-key="currentPath" profile="inline">
-            <component :is="Component" />
-          </RouteTransition>
-        </RouterView>
+        <!-- 页面内容本体也是一层：它比纸边刻度更近、比水印更远。
+             这一层只加 transform，不动布局；站内没有任何 fixed/sticky 在 views/ 与
+             components/ 里（已核对），所以给内容加包含块是安全的。 -->
+        <div data-parallax style="--depth: 5px">
+          <RouterView v-slot="{ Component }">
+            <RouteTransition :transition-key="currentPath" profile="inline">
+              <component :is="Component" />
+            </RouteTransition>
+          </RouterView>
+        </div>
             <!-- 底部状态带：与用户端同一块状态栏 —— 活的灯 + 当前栏位 + 导航序号。
            两侧共用同一件东西是有意的：它是这套界面的"外壳"，而外壳在两端应当是同一个。 -->
       <div class="mt-8 flex items-center gap-3 border-t pt-1.5" style="border-color: var(--border)">
@@ -351,7 +356,7 @@ style="--depth: 20px"
       <span
         class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)]"
         data-parallax
-style="--depth: 9px"
+style="--depth: 6px"
         aria-hidden="true"
       />
     </main>
