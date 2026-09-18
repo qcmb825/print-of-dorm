@@ -135,17 +135,13 @@ style="--depth: 20px"
            之所以把它做成这个形状：纸上的页脚是静止的（页码、版号），
            而屏幕上的页脚是**活的**（连接、进度、时间）—— 一只会呼吸的灯
            比任何纹理都更快地说明"这是一块屏"。 -->
-            <!-- 状态带**浮在视口底部**（md 起 sticky bottom-0），不随内容滚走 ——
-           它本来就是终端的状态行，功能上等于"这一屏现在是什么状态"。
-           实底不能省：它压着滚动中的内容。窄屏不粘：那里底部已经有了标签栏，
-           两条带子叠在一起只会互相打架。视差照旧（浮着也跟指针微微漂）。 -->
+            <!-- 状态带留在文档流里（随页面滚动），但**参与视差** ——
+           它与上面的内容同属"这一页的纸"，所以取同一个深度（内容层也是 5）。
+           曾经把它做成 sticky 浮在视口底部，那会压住滚动中的内容（要实底），
+           而且窄屏还要躲开固定标签栏 —— 代价大于收益，退回文档流。 -->
       <div
-        class="mt-8 flex items-center gap-3 border-t pt-1.5 md:sticky md:bottom-0"
-        style="
-          border-color: var(--border);
-          background-color: var(--background);
-          --depth: 5px;
-        "
+        class="mt-8 flex items-center gap-3 border-t pt-1.5"
+        style="border-color: var(--border); --depth: 5px"
         data-parallax
       >
         <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
