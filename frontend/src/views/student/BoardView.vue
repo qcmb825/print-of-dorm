@@ -12,7 +12,7 @@
  *  账号数、工作量分布和营业额，整条开给学生会一并漏出去。 */
 import { computed, onMounted, ref } from 'vue'
 import { Inbox, RefreshCw } from '@lucide/vue'
-import { NButton, NEmpty, NSkeleton } from 'naive-ui'
+import { NButton, NSkeleton } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { boardApi } from '@/api/endpoints'
 import type { Board, ServiceBoard } from '@/api/types'
@@ -144,22 +144,24 @@ onMounted(load)
     </div>
 
     <template v-else-if="board">
+      <!-- 四格读数：每格左缘立一条竖刻度（.gauge），读起来像仪表的读数窗。
+           pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <div class="panel panel-raised border-[var(--accent-tint-border)] px-3 py-2.5">
+        <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">待我取件</div>
           <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ mine?.ready ?? 0 }}
           </div>
         </div>
-        <div class="panel panel-raised px-3 py-2.5">
+        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
           <div class="tnum font-heading text-xl font-bold">{{ mine?.active ?? 0 }}</div>
         </div>
-        <div class="panel panel-raised px-3 py-2.5">
+        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">我的单数</div>
           <div class="tnum font-heading text-xl font-bold">{{ mine?.total ?? 0 }}</div>
         </div>
-        <div class="panel panel-raised px-3 py-2.5">
+        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">我的名次</div>
           <div class="tnum font-heading text-xl font-bold">{{ mineRankText }}</div>
         </div>
@@ -230,21 +232,28 @@ onMounted(load)
                 {{ entry.nickname }}
                 <span v-if="entry.is_me" class="tech-label ml-1 tech-label--cn text-xs" style="color: var(--accent-text)">你</span>
               </div>
-              <div class="mt-1 h-1.5 w-full overflow-hidden" style="background-color: var(--muted)">
-                <div
-                  class="h-full"
-                  :style="{ width: barWidth(entry.count), backgroundColor: 'var(--accent-text)' }"
-                />
+              <!-- 尺条：填充与轨道各画一层同相位的刻度，所以看到的是"同一把尺子
+                   被填满了多少"。纯色彩条只会让人读成"某个比例"，带刻度才读得出"多少单"。 -->
+              <div class="ruler mt-1 w-full">
+                <div class="ruler__fill" :style="{ width: barWidth(entry.count) }" />
               </div>
             </div>
             <span class="tnum font-heading shrink-0 text-sm font-bold">{{ entry.count }} 单</span>
           </li>
         </ul>
 
-        <div v-else class="grid place-items-center py-8">
-          <NEmpty description="这张榜还空着，第 1 单就是你" size="small">
-            <template #icon><Inbox :size="30" /></template>
-          </NEmpty>
+        <!-- 空态与「我的订单」同一件东西：一块被括角框住的空格 + 一行编号读数。
+             空榜不是"出错了"，是"还没有数据" —— 形状该说明的是后一件事。 -->
+        <div v-else class="grid place-items-center py-6">
+          <div class="bracket-lg w-full max-w-sm px-5 py-6 text-center" style="--bracket-arm: 20px">
+            <span class="readout">00 / NO RECORD</span>
+            <div class="mt-3 flex justify-center text-ink-4">
+              <Inbox :size="28" />
+            </div>
+            <p class="mt-3 text-sm font-semibold">这张榜还空着</p>
+            <p class="mt-1 text-xs text-ink-4">第 1 单就是你</p>
+            <span class="ticks mx-auto mt-3.5 block w-28" aria-hidden="true" />
+          </div>
         </div>
 
         <p

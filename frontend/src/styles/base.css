@@ -714,6 +714,92 @@
     );
   }
 
+  /* ══ 工单条（列表里的每一行订单）═════════════════════════════════
+   * 形状学的是**处理队列里的行**，不是卡片。三处差别，每一处都在解决一个具体问题：
+   *   ① 左缘一条状态色条（--wo-accent）：状态本来只在标签里以文字出现，
+   *      一屏订单要逐个读标签才知道谁到哪一步了；色条让它变成一眼扫得出来的。
+   *      色条是**冗余**编码（文字标签仍在），所以它不需要自己承担对比度门槛；
+   *   ② 顶上先给一行等宽读数（单号 / 时间），再给文件名 —— 读数的位置固定在右上角，
+   *      扫视时不会因为文件名长短而错位；
+   *   ③ 行与行之间靠 1px 线，而不是卡片之间的间距。一整列订单由此读成**一张表**。
+   *
+   *  ⚠ 左侧内边距必须 >= 色条宽度 + 8px：色条压在文字上的话，它就从"记号"变成了脏东西
+   *  （这条与"纹理不压文字"是同一条纪律）。 */
+  .wo {
+    position: relative;
+    border-top: 1px solid var(--border);
+    padding: 14px 0 14px 12px;
+  }
+
+  .wo__bar {
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 0;
+    width: 3px;
+    background-color: var(--wo-accent, var(--border));
+  }
+
+  /* 仪表格：给一格读数加一条左缘竖刻度。
+   * 读数落在刻度旁边才像"从仪表上读出来的"，而不是"网页里的一个数字" ——
+   * 这是这套语汇里最便宜也最见效的一件（一个 ::before，零布局影响）。
+   * 它占的是格子自己的内边距，所以**不压任何文字**：调用方要给足左侧内边距
+   * （4px 刻度 + 至少 6px 间隙），这条与"纹理不压文字"是同一条纪律。 */
+  .gauge {
+    position: relative;
+  }
+
+  .gauge::before {
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    left: 1px;
+    width: 4px;
+    content: '';
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 8px),
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 40px);
+    background-position: left top;
+    background-repeat: repeat-y;
+    background-size: 3px 100%, 4px 100%;
+  }
+
+  /* 尺条：带刻度的进度条（榜单里"谁下了多少单"那一根）。
+   * 填充与轨道各画一层**同相位**（都从各自左边缘起算、都是 8px）的竖刻度，
+   * 所以看上去是"同一把尺子被填满了多少"，而不是"一根彩条"。
+   * 填充上的刻度走 --background 的混色：浅色下是白线压在黄条上，深色下是黑线，
+   * 两个主题都不需要另给一支颜色。 */
+  .ruler {
+    height: 6px;
+    background-color: var(--muted);
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--border) 0 1px,
+      transparent 1px 8px
+    );
+  }
+
+  .ruler__fill {
+    height: 100%;
+    background-color: var(--accent-text);
+    background-image: repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--background) 45%, transparent) 0 1px,
+      transparent 1px 8px
+    );
+  }
+
+  /* 规格标签：一条左强调边 + 极淡底。
+   * 刻意**不用** clip-path 切斜角（虽然那样更像"标签"）：切面会裁掉左边这根线，
+   * 更要紧的是斜边紧贴的两端会切到字的边缘 —— 这套视觉里"图形与笔画混同"是红线，
+   * 切掉半个字是同一类问题。左强调边给到的是同样的"贴上去的一张条"的读感。 */
+  .spec {
+    border-left: 2px solid var(--spec-edge, var(--text-quaternary));
+    background-color: var(--muted);
+    padding: 2px 8px;
+  }
+
   /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
   .login-shell {
     background-image:

@@ -24,6 +24,7 @@ import {
   X,
 } from '@lucide/vue'
 import PageHeader from '@/components/PageHeader.vue'
+import StageHead from '@/components/StageHead.vue'
 import {
   NButton,
   NFormItem,
@@ -353,6 +354,9 @@ onMounted(async () => {
 
     <div class="p-4 sm:p-5">
 
+      <!-- ① 选择文件 -->
+      <StageHead code="01" title="选择文件" step="STEP 1/3" class="mb-3" />
+
       <!-- 下单方式。两个按钮而不是下拉框：这是两条完全不同的流程（一个有文件、
            一个没有），下拉框会让人以为「选了预设之后还能再补个文件」。 -->
       <NRadioGroup v-model:value="mode" :disabled="submitting" class="mb-4 flex flex-wrap gap-2">
@@ -460,7 +464,10 @@ onMounted(async () => {
         </NButton>
       </div>
 
-      <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      <!-- ② 打印参数 -->
+      <StageHead code="02" title="打印参数" step="STEP 2/3" class="mt-6 mb-3" />
+
+      <div class="grid gap-4 sm:grid-cols-2">
         <NFormItem label="打印颜色" :show-feedback="false" class="!mb-0">
           <NRadioGroup v-model:value="color" :disabled="submitting">
             <NRadioButton value="black">黑白</NRadioButton>
@@ -514,6 +521,9 @@ onMounted(async () => {
         />
       </NFormItem>
 
+      <!-- ③ 提交 -->
+      <StageHead code="03" title="提交" step="STEP 3/3" class="mt-6 mb-3" />
+
       <!-- 上传进度。进度条只在真正上传时出现（而不是一直占着位置显示 0%），
            它存在本身就意味着「有事在发生」。预设单没有文件，所以这一块不会出现
            （它被 `submitting` 关着，但预设单提交时 totalBytes 是 0，
@@ -535,7 +545,7 @@ onMounted(async () => {
         />
       </div>
 
-      <div class="mt-4 flex items-center gap-3">
+      <div class="flex items-center gap-3">
         <NButton
           type="primary"
           size="large"
