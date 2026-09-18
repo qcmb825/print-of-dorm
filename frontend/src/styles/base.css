@@ -940,6 +940,11 @@
     overflow: hidden;
     transform: translateY(-50%);
     pointer-events: none;
+    /* 这条 transition **不是给眼睛看的**（它的值在离场前后不变）：Vue 判断"离场演了多久"
+       读的是被过渡的那个根元素上的 transition-duration/delay —— 只写在子层上的话它读到 0，
+       于是当场卸载元素，这就是"回执没有出场"的全部原因。时长取两层里最长的那个
+       （数据带 300ms + 黄带的 90ms 错帧 = 390ms，这里给 400ms 兜住）。 */
+    transition: transform var(--motion-dur-band) linear;
   }
 
   .auth-band__mat {
@@ -950,7 +955,9 @@
        enter-from 那一帧，而这条回执正好出现在一次外壳换场进行中（主线程在加载
        chunk、换整棵树），rAF 可能被节流（实测后台标签页里 500ms 只有 1 帧）——
        那时 enter-from 永远摘不掉，回执会一直停在屏外。keyframes 没有这个两帧时序。 */
-    animation: auth-band-mat-in var(--motion-dur-slow) var(--motion-ease-out) both;
+    /* 不加 fill（尤其不能用 both/forwards）：动画结束后它的终值会以动画级优先
+       一直压着 transform，离场那条 transition 就再也动不了 —— 黄层会原地不动。 */
+    animation: auth-band-mat-in var(--motion-dur-band) var(--motion-ease-drawer);
   }
 
   .auth-band__strip {
@@ -970,7 +977,8 @@
     border-bottom: 1px solid var(--border);
     /* backwards 不能省：数据带比黄带晚 90ms，缺了它这 90ms 里数据带会先出现在
        落点上（屏外滑入变成"凭空出现再动一下"）。 */
-    animation: auth-band-strip-in var(--motion-dur-slow) var(--motion-ease-out) 90ms backwards;
+    animation: auth-band-strip-in var(--motion-dur-band) var(--motion-ease-drawer)
+      var(--motion-dur-band-lag) backwards;
   }
 
   @keyframes auth-band-mat-in {
@@ -989,11 +997,12 @@
      退场仍走 <Transition> 的类：那一帧没赶上最坏只是没有退场动画，
      元素照样会被卸掉（Vue 按计算出的时长收尾），不会像进场那样卡住。 */
   .auth-band-leave-active .auth-band__strip {
-    transition: transform var(--motion-dur-base) var(--motion-ease-in-out);
+    transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out);
   }
 
   .auth-band-leave-active .auth-band__mat {
-    transition: transform var(--motion-dur-base) var(--motion-ease-in-out) 90ms;
+    transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out)
+      var(--motion-dur-band-lag);
   }
 
   .auth-band-leave-to .auth-band__strip,
@@ -1018,7 +1027,9 @@
     height: 2px;
     background-color: var(--status-done);
     transform-origin: left center;
-    animation: auth-drain 2400ms linear both;
+    /* 时长从组件传进来（--auth-hold），与 composable 里那个 hold 同一份事实来源 ——
+       写死 2400ms 就会变成第二处需要同步的真相。 */
+    animation: auth-drain var(--auth-hold, 2400ms) linear both;
   }
 
   @keyframes auth-drain {

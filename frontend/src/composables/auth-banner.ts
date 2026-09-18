@@ -25,7 +25,7 @@ const receipt = ref<AuthReceipt | null>(null)
 /** 默认停留时长。够读完两行字（约 1.2s），又不至于挡着新页面干活。
  *  它是"回执"不是"通知"：不需要用户做任何事，所以到点自己退场，也没有关闭按钮 ——
  *  整层 pointer-events: none，它永远不会挡住任何点击。 */
-const DEFAULT_HOLD_MS = 2400
+export const DEFAULT_HOLD_MS = 2400
 
 let timer: number | undefined
 

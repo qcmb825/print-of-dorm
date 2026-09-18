@@ -26,7 +26,7 @@
  */
 import { computed } from 'vue'
 import { CircleCheck } from '@lucide/vue'
-import { authBanner } from '@/composables/auth-banner'
+import { DEFAULT_HOLD_MS, authBanner } from '@/composables/auth-banner'
 
 const info = computed(() => authBanner.receipt.value)
 
@@ -41,7 +41,12 @@ const stamp = computed(() => {
 <template>
   <Teleport to="body">
     <Transition name="auth-band">
-      <div v-if="authBanner.open.value && info" class="auth-band" role="status">
+      <div
+        v-if="authBanner.open.value && info"
+        class="auth-band"
+        role="status"
+        :style="{ '--auth-hold': `${DEFAULT_HOLD_MS}ms` }"
+      >
         <!-- 黄层：装饰底，**先进后出**。它比内容条厚，所以永远从上下露出 6px 边 ——
              两层不是简单的错帧，而是"一条黄色承载带 + 压在上面的一条数据带"。 -->
         <span class="auth-band__mat" aria-hidden="true" />
