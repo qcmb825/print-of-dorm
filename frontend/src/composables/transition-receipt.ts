@@ -36,7 +36,9 @@ const receipt = ref<Receipt | null>(null)
 
 /** 停留时长。event 够读完两行字（约 1.2s）又不至于挡着新页面干活；
  *  pass 只留一拍 —— 它本来就是"穿过去"，停久了就变成演出。 */
-export const EVENT_HOLD_MS = 2400
+/** 停留 1.7 秒：够读完两行字（进出场各 400/300ms，加上闪烁），
+ *  又不至于挡着新页面干活。原来 2.4 秒被反馈"稍长"。 */
+export const EVENT_HOLD_MS = 1700
 export const PASS_HOLD_MS = 380
 
 /** event 之后这段时间内，普通导航的回执要让位。

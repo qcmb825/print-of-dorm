@@ -1011,6 +1011,46 @@
     transform: translate3d(-100%, 0, 0);
   }
 
+  /* 读数文字那一块（代号 + 主文 + 补充）。单独成块是为了让闪烁只打在字上。 */
+  .receipt__ink {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* event 档停下来的那一下：字**闪一下**（一次到位、带一点回弹），模拟电子屏刷新。
+     三条纪律：
+     ① **只闪字不闪带** —— 整条带是 56×1430px 的大面积亮度摆动，那是 WCAG 2.3.1
+        与光敏性癫痫的地界；字那一块面积小三个数量级，闪一下只是"屏刷新了"的一眼。
+     ② **一次性**，不循环：常驻闪烁才是问题，标记一下不是。
+     ③ 延迟 = 进场 + 那 90ms 错帧，所以它恰好落在"字刚停稳"那一刻；
+        减少动效下由全局兜底把时长压成 0，这一下自动消失（不会变成对光敏用户的闪烁）。 */
+  .receipt[data-kind='event'] .receipt__ink {
+    animation: receipt-flicker 260ms var(--motion-ease-out)
+      calc(var(--motion-dur-band) + var(--motion-dur-band-lag)) both;
+  }
+
+  @keyframes receipt-flicker {
+    0%,
+    14% {
+      opacity: 1;
+    }
+    24% {
+      opacity: 0.2;
+    }
+    38% {
+      opacity: 1;
+    }
+    48% {
+      opacity: 0.72;
+    }
+    60%,
+    100% {
+      opacity: 1;
+    }
+  }
+
   .receipt__mark {
     display: grid;
     flex: none;

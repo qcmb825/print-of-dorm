@@ -57,11 +57,17 @@ const drainStyle = computed(() => ({
             <CircleCheck :size="15" />
           </span>
 
-          <span class="receipt__code shrink-0">{{ info.code }}</span>
-          <span class="shrink-0 font-heading text-sm font-bold">{{ info.title }}</span>
+          <!-- 读数文字包成一块：停顿那一下的闪烁**只打在字上**，不打整条带的底 ——
+               整条带闪一下是 56×1430px 的大面积亮度摆动，那是前庭与闪光敏感的地界；
+               字闪一下只是"这块屏刷新了"的一眼。 -->
+          <span class="receipt__ink">
+            <span class="receipt__code shrink-0">{{ info.code }}</span>
+            <span class="shrink-0 font-heading text-sm font-bold">{{ info.title }}</span>
 
-          <span v-if="info.detail" class="hidden min-w-0 truncate text-xs text-ink-3 sm:inline">
-            {{ info.detail }}
+            <span v-if="info.detail" class="hidden min-w-0 truncate text-xs text-ink-3 sm:inline">
+              {{ info.detail }}
+            </span>
+
           </span>
 
           <!-- "正在进入 X"只在 X 与主文不是同一个词时才出。
