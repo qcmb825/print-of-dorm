@@ -37,7 +37,16 @@ const dump = computed(() => {
 </script>
 
 <template>
-  <div class="mt-4 flex items-end gap-4 overflow-hidden select-none" aria-hidden="true">
+  <!-- 两段装饰各自成一层视差。**必须写在这里而不是调用处**：这个组件是多根模板，
+       外层写 <DecorStrip data-parallax> 不会透传进来（Vue 对多根组件不适用属性继承）。
+       深度与内容层同源：小条 5（它是这一页页脚的记号，跟内容同一张纸），
+       大组 7（尺度更大、读作稍近的一层）。 -->
+  <div
+    class="mt-4 flex items-end gap-4 overflow-hidden select-none"
+    style="--depth: 5px"
+    data-parallax
+    aria-hidden="true"
+  >
     <!-- 危险斜纹块：整套语言里唯一"有攻击性"的记号，这里只作色标。 -->
     <span class="hazard h-7 w-16 shrink-0 opacity-70" />
 
@@ -59,7 +68,12 @@ const dump = computed(() => {
        转储块这一件是"屏"的签名：纸上不会有十六进制偏移量。
        版号走自家产品名 NEKO PRINT SERVICE —— 版式学的是技术档案那套
        （密级/版号/页码/转储），名字用系统自己的，不借别的作品。 -->
-  <div class="mt-5 flex flex-wrap items-end gap-x-6 gap-y-3" aria-hidden="true">
+  <div
+    class="mt-5 flex flex-wrap items-end gap-x-6 gap-y-3"
+    style="--depth: 7px"
+    data-parallax
+    aria-hidden="true"
+  >
     <div class="data-dump w-full shrink-0 sm:w-60">
       <div v-for="line in dump" :key="line">{{ line }}</div>
     </div>
