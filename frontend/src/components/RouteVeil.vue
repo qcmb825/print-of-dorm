@@ -52,8 +52,8 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       <span class="route-veil__wipe-under" />
       <!-- 黑层。前缘那条 3px 扫描边挂在它的 ::before 上、跟着一起走。 -->
       <span class="route-veil__wipe" />
-      <!-- 版面上的字与图案：**跟着面板一起走**（同一套时长与曲线，位移按视口宽度换算）。
-           所以它们不是"浮现"出来的一层浮层，而是印在板上的内容，面板滑到位它们就在那儿。 -->
+      <!-- 读数层：一个**固定在屏幕上的版面**（中心 + 右下角两块），自己不跟面板走，
+           只在面板盖死的那一段里做一次轻微滑动 + 淡出入。 -->
       <span class="route-veil__hud">
         <span class="route-veil__read">
           <span class="hazard route-veil__hazard" />

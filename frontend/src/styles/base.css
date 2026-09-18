@@ -1097,10 +1097,9 @@
     }
   }
 
-  /* 回执占着中线的那几秒里，**覆盖层的中心读数让位** —— 但只让出中心那一块：
-     右下角的三角阵列与协议号在回执的带子之外，没有理由跟着消失
-     （它们是印在面板上的版式，不是第二条读数）。 */
-  :root[data-receipt] .route-veil__read {
+  /* 回执占着中线的那几秒里，**覆盖层的读数整层让位**。
+     两条读数说的是同一件事（都报目标页），挤在同一个位置只是噪音。 */
+  :root[data-receipt] .route-veil__hud {
     display: none;
   }
 
@@ -1373,8 +1372,7 @@
      空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
      闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
   .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe,
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under,
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__hud {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under {
     transition-delay: 0ms;
   }
 
@@ -1401,17 +1399,14 @@
       skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 印在面板上的读数：**跟着面板一起走**，没有淡入、没有位移入场。
-     上一版让它从下面浮上来 + 淡入，那让读数看着是浮在黑幕上的浮层；现在它是印在板上的字：
-     面板滑到位，它就在那儿；面板走，它跟着走。
-     位移按视口宽度换算 —— 面板的 100% 是它自己的 118vw，所以这里写 118%；两者曲线、时长
-     相同，距离成比例，于是锁在同一块表面上，任何一帧都不会互相错位。 */
+  /* 读数层：一个**固定在屏幕上的版面**，不跟面板走。
+     跟过一版（位移与面板锁相、看起来是印在板上的字），问题是那一趟横穿全屏的大位移
+     和面板绑死：读数什么时候看清、能停多久，全被面板的行程决定。现在它自己只做一次
+     轻微滑动 + 淡入淡出，长度就是停留，于是停留可以按"读一行字要多久"单独定。 */
   .route-veil__hud {
     position: absolute;
     inset: 0;
     overflow: hidden;
-    transform: translate3d(-118%, 0, 0);
-    transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
   }
 
   /* 中心读数：横竖都在正中。读数占着屏幕中心这件事，是那条 2px 套准线被删掉的原因
@@ -1423,8 +1418,11 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 0 24px;
+    gap: 16px;
+    padding: 0 32px;
+    /* 面板扫过来的那一段（出相位）里它必须是**看不见**的：它现在固定居中，
+       而那时屏幕右半边还是页面，字压上去就是"图形压在内容上"。 */
+    opacity: 0;
   }
 
   /* 警戒线：就地改写 --hazard-ink 为荧光黄 —— 面板是暗的，而 .hazard 通用那档
@@ -1433,8 +1431,8 @@
   .route-veil__hazard {
     --hazard-ink: var(--primary);
 
-    width: 132px;
-    height: 6px;
+    width: 200px;
+    height: 8px;
   }
 
   /* 英文引导行。它读起来要是一块"标签"而不是一个词，所以字距拉到 .34em；
@@ -1443,10 +1441,10 @@
      浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。 */
   .route-veil__hud-lead {
     font-family: var(--stack-mono);
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 700;
-    letter-spacing: 0.34em;
-    margin-right: -0.34em;
+    letter-spacing: 0.32em;
+    margin-right: -0.32em;
     color: var(--veil-ink-code);
   }
 
@@ -1458,15 +1456,15 @@
     flex-wrap: wrap;
     align-items: baseline;
     justify-content: center;
-    gap: 8px 14px;
+    gap: 10px 20px;
   }
 
   .route-veil__hud-title {
     font-family: var(--stack-heading);
-    font-size: 22px;
+    font-size: 36px;
     font-weight: 700;
-    letter-spacing: 0.1em;
-    margin-right: -0.1em;
+    letter-spacing: 0.12em;
+    margin-right: -0.12em;
     /* 读数是打在暗面板上的「场记板」，用 --primary（荧光黄）而不是 --accent-text：
        后者在浅色主题是深黄 #756a00，铺到暗面板上读不出来。 */
     color: var(--primary);
@@ -1474,9 +1472,9 @@
 
   .route-veil__hud-code {
     font-family: var(--stack-mono);
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 700;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.2em;
     color: var(--veil-ink-code);
   }
 
@@ -1485,15 +1483,17 @@
      换场读起来是"同一块版面上的装饰换了内容"，而不是凭空冒出一组图案。 */
   .route-veil__corner {
     position: absolute;
-    right: 24px;
-    bottom: 20px;
+    right: 32px;
+    bottom: 26px;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 10px;
+    gap: 14px;
+    opacity: 0;
   }
 
   .route-veil__corner-label {
+    font-size: 15px;
     letter-spacing: 0.22em;
     margin-right: -0.22em;
     color: var(--veil-ink-code);
@@ -1506,13 +1506,13 @@
      clip-path 在任何 DPR 下都是同一个下左三角。 */
   .route-veil__tri {
     display: grid;
-    grid-template-columns: repeat(4, 24px);
-    gap: 12px;
+    grid-template-columns: repeat(4, 40px);
+    gap: 18px;
   }
 
   .route-veil__tri > i {
-    width: 24px;
-    height: 24px;
+    width: 40px;
+    height: 40px;
     background-color: var(--primary);
     clip-path: polygon(0 100%, 0 0, 100% 100%);
   }
@@ -1521,42 +1521,58 @@
     background-color: transparent;
   }
 
-  /* 相位：与擦除面板逐条对齐（同样的时长、延迟、曲线，只是距离按视口宽度算）。 */
-  .route-veil[data-phase='out'] .route-veil__hud {
-    transform: translate3d(0, 0, 0);
+  /* 读数的进出：只在**盖死**那一段里发生 —— 时长就是停留，关键帧在 100% 处已经退干净，
+     所以面板一让开，屏幕上没有东西在往下压。方向与面板一致（进来时从左侧一丁点滑入、
+     出去时向右一丁点滑走），但幅度只有 14px：它是"轻微滑动"，不是又一次横扫。
+     三角阵列与协议号晚 6% 起步，与中心读数错开一帧，读起来是同一块版面在自检。 */
+  .route-veil[data-phase='in'] .route-veil__read {
+    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
   }
 
-  .route-veil[data-phase='in'] .route-veil__hud {
-    transform: translate3d(118%, 0, 0);
-    transition-duration: var(--veil-part);
-    transition-delay: var(--veil-hold);
+  .route-veil[data-phase='in'] .route-veil__corner {
+    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
+    animation-delay: calc(var(--veil-hold) * 0.06);
   }
 
-  /* 窄屏：页名与三角阵列各收一档。页名是这一层存在的理由，不能砍；代号掉到第二行。 */
+  /* 窄屏：同比收一档（桌面那套撑到 36px 页名 / 40px 三角，小屏放不下）。
+     页名是这一层存在的理由，不能砍；代号掉到第二行。 */
   @media (max-width: 640px) {
     .route-veil__read {
-      padding: 0 16px;
+      padding: 0 20px;
+    }
+    .route-veil__hud-lead {
+      font-size: 12px;
+      letter-spacing: 0.24em;
+      margin-right: -0.24em;
     }
     .route-veil__hud-title {
-      font-size: 18px;
+      font-size: 26px;
       letter-spacing: 0.08em;
       margin-right: -0.08em;
     }
+    .route-veil__hud-code {
+      font-size: 13px;
+      letter-spacing: 0.16em;
+    }
     .route-veil__hazard {
-      width: 96px;
-      height: 5px;
+      width: 132px;
+      height: 6px;
     }
     .route-veil__corner {
-      right: 16px;
-      bottom: 14px;
+      right: 18px;
+      bottom: 16px;
+      gap: 10px;
+    }
+    .route-veil__corner-label {
+      font-size: 12px;
     }
     .route-veil__tri {
-      grid-template-columns: repeat(4, 16px);
-      gap: 8px;
+      grid-template-columns: repeat(4, 24px);
+      gap: 12px;
     }
     .route-veil__tri > i {
-      width: 16px;
-      height: 16px;
+      width: 24px;
+      height: 24px;
     }
   }
 
@@ -1674,6 +1690,32 @@
   }
 }
 
+/* 读数的进出：一次轻微滑动 + 淡入淡出。
+ * 动画时长 = --veil-hold，所以百分比是**停留这一段内部**的切分，与面板的行程无关 ——
+ * 两档的停留长度不同，这张表对两档自动都成立。
+ * 满亮窗口 10% → 90%（占停留的 80%）：中文字的停留长度由阅读决定，要的是"绝大部分时间
+ * 都在满亮"，而不是把停留均分给进场和退场。退场比入场短是有意的 —— 退场只需要消失得干净。
+ * 位移只有 14px 且方向与面板一致（进去时从面板来的那一侧滑入、出去时继续同向滑走），
+ * 所以它是"贴上去的一张读数"，不是又一次横扫。 */
+@keyframes veil-hud-pass {
+  0% {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  10% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  90% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+}
+
 
 /* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
 @media (prefers-reduced-motion: reduce) {
@@ -1772,12 +1814,12 @@
     opacity: 0 !important;
   }
 
-  /* 读数不参与扫掠，也**必须留在原位**：它平时是印在面板上、跟着面板走的，
-     面板既然整层不出现，它就得自己站到屏幕中心去 —— 否则它要么被 display:none
-     连坐吃掉（读数是这一层唯一的信息），要么跟着一条不存在的位移被推出屏外。
-     这条 transform: none 是它与面板解耦的唯一开关。 */
-  .route-veil .route-veil__hud {
-    transform: none !important;
+  /* 读数不参与扫掠：面板整层不出现，它只是跟着整层的明暗一起到位、一起退走。
+     这里必须显式关掉动画 —— 读数在减少动效下是这一层**唯一**的信息，不能连坐吃掉。 */
+  .route-veil__read,
+  .route-veil__corner {
+    animation: none !important;
+    opacity: 1 !important;
   }
 
   /* 内容层：位移去掉，时长换成一档慢的，并且**显式把 delay 归零** ——
