@@ -219,7 +219,7 @@ onMounted(load)
       <!-- ============ 预设打印服务 ============ -->
       <section class="flex min-w-0 flex-col gap-4">
         <div class="panel p-4">
-          <h3 class="mb-3 flex items-center gap-2 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
             <component
               :is="editingPresetId === null ? Plus : Pencil"
               :size="15"
@@ -238,7 +238,7 @@ onMounted(load)
               placeholder="例：A4 黑白双面，装订成册，次日中午前可取"
             />
           </NFormItem>
-          <p class="mb-3 text-[11px] text-ink-4">
+          <p class="mb-3 text-xs text-ink-4">
             预设只有这一句话，没有名字 —— 再加一个「名称」字段，两处说法迟早会对不上。
             这句话会原样显示给学生，也会被订单存下来。
           </p>
@@ -261,9 +261,9 @@ onMounted(load)
         </div>
 
         <div>
-          <h3 class="mb-3 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 font-heading text-base font-bold">
             预设列表
-            <span class="tech-label ml-2 text-ink-4">{{ presets.length }} 项</span>
+            <span class="tech-label ml-2 text-ink-4 tech-label--cn text-xs">{{ presets.length }} 项</span>
           </h3>
 
           <div v-if="loading && !presets.length" class="flex flex-col gap-2">
@@ -291,7 +291,7 @@ onMounted(load)
               :class="item.is_active === 1 && 'border-primary/40'"
             >
               <div class="flex items-start justify-between gap-3">
-                <p class="min-w-0 flex-1 text-[13px] leading-relaxed whitespace-pre-wrap">
+                <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
                   {{ item.content }}
                 </p>
                 <NSwitch
@@ -302,7 +302,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5"
+                  class="tech-label rounded-full px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
@@ -311,7 +311,7 @@ onMounted(load)
                 >
                   {{ item.is_active === 1 ? '启用中' : '已停用' }}
                 </span>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-4">
                   #{{ item.id }} · {{ item.author ?? '系统' }} ·
                   {{ shortTime(item.update_time) }}
                 </span>
@@ -327,7 +327,7 @@ onMounted(load)
                 </NButton>
                 <!-- 用过多少单要写在删除按钮旁边，而不是藏进二次确认里：
                      点了删除才知道「这玩意儿有 87 单在用」，后退一步很尴尬。 -->
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-4">
                   {{ item.used_count ? `已被 ${item.used_count} 单使用` : '还没有人用过' }}
                 </span>
                 <NButton size="tiny" quaternary class="ml-auto" @click="removePreset(item)">
@@ -343,7 +343,7 @@ onMounted(load)
       <!-- ============ 纸张类型 ============ -->
       <section class="flex min-w-0 flex-col gap-4">
         <div class="panel p-4">
-          <h3 class="mb-3 flex items-center gap-2 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
             <component
               :is="editingPaperId === null ? Plus : Pencil"
               :size="15"
@@ -368,7 +368,7 @@ onMounted(load)
               placeholder="例：80g，只有二楼那台机能出"
             />
           </NFormItem>
-          <p class="mb-3 text-[11px] text-ink-4">
+          <p class="mb-3 text-xs text-ink-4">
             备注主要是给打印的人看的（哪台机器、多少克重）。学生端只在名称后面带一句，
             不选纸张也能下单。
           </p>
@@ -391,9 +391,9 @@ onMounted(load)
         </div>
 
         <div>
-          <h3 class="mb-3 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 font-heading text-base font-bold">
             纸张列表
-            <span class="tech-label ml-2 text-ink-4">{{ papers.length }} 种</span>
+            <span class="tech-label ml-2 text-ink-4 tech-label--cn text-xs">{{ papers.length }} 种</span>
           </h3>
 
           <div v-if="loading && !papers.length" class="flex flex-col gap-2">
@@ -422,10 +422,10 @@ onMounted(load)
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
-                  <p class="text-[13px] font-semibold">{{ item.name }}</p>
+                  <p class="text-sm font-semibold">{{ item.name }}</p>
                   <!-- 备注为空时什么都不画。写「无备注」会让列表里多出一行噪音，
                        而且和真的备注写着「无」分不开。 -->
-                  <p v-if="item.remark" class="mt-0.5 text-[12px] text-ink-3">
+                  <p v-if="item.remark" class="mt-0.5 text-xs text-ink-3">
                     {{ item.remark }}
                   </p>
                 </div>
@@ -437,7 +437,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5"
+                  class="tech-label rounded-full px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
@@ -446,7 +446,7 @@ onMounted(load)
                 >
                   {{ item.is_active === 1 ? '启用中' : '已停用' }}
                 </span>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-4">
                   #{{ item.id }} · {{ item.author ?? '系统' }} ·
                   {{ shortTime(item.update_time) }}
                 </span>
@@ -460,7 +460,7 @@ onMounted(load)
                   <template #icon><Pencil :size="12" /></template>
                   编辑
                 </NButton>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-4">
                   {{ item.used_count ? `已被 ${item.used_count} 单使用` : '还没有人用过' }}
                 </span>
                 <NButton size="tiny" quaternary class="ml-auto" @click="removePaper(item)">

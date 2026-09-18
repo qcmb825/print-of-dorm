@@ -35,10 +35,10 @@ const options = computed<DropdownOption[]>(() => [
     type: 'render',
     render: () =>
       h('div', { class: 'px-3 py-2' }, [
-        h('div', { class: 'text-[13px] font-bold' }, auth.user?.real_name || auth.displayName),
+        h('div', { class: 'text-sm font-bold' }, auth.user?.real_name || auth.displayName),
         h(
           'div',
-          { class: 'tnum mt-0.5 text-[11px] opacity-60' },
+          { class: 'tnum mt-0.5 text-xs opacity-60' },
           `学号 ${auth.user?.student_id || '—'}`,
         ),
       ]),
@@ -100,7 +100,7 @@ async function onSelect(key: string): Promise<void> {
 
         <template v-if="props.stacked">
           <span class="flex min-w-0 flex-col items-start gap-0.5">
-            <span class="block w-full truncate text-[13px] leading-tight font-semibold">
+            <span class="block w-full truncate text-sm leading-tight font-semibold">
               {{ auth.displayName }}
             </span>
             <RoleTag v-if="auth.user" :role="auth.user.role" />
@@ -111,7 +111,7 @@ async function onSelect(key: string): Promise<void> {
           <!-- truncate 要求元素是块级/行内块，inline 上不生效；
                外层还要有 min-w-0，否则 flex 子项不肯收缩，长昵称会顶破布局。
                昵称在 md 出现、角色标签到 lg 才出现：两者同时挤进顶栏会和导航打架。 -->
-          <span class="hidden min-w-0 truncate text-[13px] font-semibold md:block">
+          <span class="hidden min-w-0 truncate text-sm font-semibold md:block">
             {{ auth.displayName }}
           </span>
           <!-- 包一层来控制显隐：RoleTag 根节点自带 inline-flex，

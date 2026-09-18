@@ -144,8 +144,8 @@ async function withdraw(order: Order): Promise<void> {
   <div class="mx-auto max-w-3xl">
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
-        <h1 class="font-heading text-lg font-bold sm:text-xl">我的订单</h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">每 20 秒自动刷新，切走页面时暂停</p>
+        <h1 class="font-heading text-xl font-bold sm:text-2xl">我的订单</h1>
+        <p class="mt-0.5 text-sm text-ink-3">每 20 秒自动刷新，切走页面时暂停</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="load()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -155,22 +155,22 @@ async function withdraw(order: Order): Promise<void> {
 
     <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <div class="panel panel-raised px-3 py-2.5">
-        <div class="tech-label text-ink-4">进行中</div>
+        <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.active }}</div>
       </div>
       <div class="panel panel-raised border-primary/40 px-3 py-2.5">
-        <div class="tech-label text-ink-4">可取了</div>
+        <div class="tech-label text-ink-4 tech-label--cn text-xs">可取了</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
           {{ summary.ready }}
         </div>
       </div>
       <div class="panel panel-raised px-3 py-2.5">
-        <div class="tech-label text-ink-4">已取件</div>
+        <div class="tech-label text-ink-4 tech-label--cn text-xs">已取件</div>
         <div class="tnum font-heading text-xl font-bold">{{ summary.done }}</div>
       </div>
       <!-- 合计只统计当前这一页拉到的订单（此接口不带分页，学生自己能看到全部） -->
       <div class="panel panel-raised px-3 py-2.5">
-        <div class="tech-label text-ink-4">已计费合计</div>
+        <div class="tech-label text-ink-4 tech-label--cn text-xs">已计费合计</div>
         <div class="tnum font-heading text-xl font-bold">￥{{ spent.toFixed(2) }}</div>
       </div>
     </div>
@@ -202,8 +202,8 @@ async function withdraw(order: Order): Promise<void> {
           <div class="min-w-0">
             <!-- 预设单没有文件名（后端存的是空串哨兵值），直接插值会得到一片空白，
                  学生会以为自己的订单没记录上。 -->
-            <p class="truncate text-[14px] font-bold">{{ orderFileLabel(order) }}</p>
-            <p class="tnum mt-1 text-[11px] text-ink-4">
+            <p class="truncate text-base font-bold">{{ orderFileLabel(order) }}</p>
+            <p class="tnum mt-1 text-2xs text-ink-4">
               #{{ order.id }} · {{ shortTime(order.create_time) }}
             </p>
           </div>
@@ -212,44 +212,44 @@ async function withdraw(order: Order): Promise<void> {
 
         <div class="mt-3 flex flex-wrap items-end gap-x-5 gap-y-2">
           <div>
-            <div class="tech-label mb-0.5 text-ink-4">费用</div>
+            <div class="tech-label mb-0.5 text-ink-4 tech-label--cn text-xs">费用</div>
             <!-- 未计费显示「未计费」而不是「￥0.00」：刚提交的订单本来就是 null，
                  写成 0 元会让学生以为这单不要钱。 -->
             <div
               v-if="typeof order.price === 'number'"
-              class="tnum font-heading text-[23px] leading-none font-bold"
+              class="tnum font-heading text-2xl leading-none font-bold"
             >
               ￥{{ order.price.toFixed(2) }}
             </div>
-            <div v-else class="text-[13px] leading-[23px] text-ink-4">
+            <div v-else class="text-sm leading-[23px] text-ink-4">
               {{ priceLabel(order.price) }}
-              <span class="text-[11px]">· 等管理员确认</span>
+              <span class="text-xs">· 等管理员确认</span>
             </div>
           </div>
           <div>
-            <div class="tech-label mb-0.5 text-ink-4">取件码</div>
+            <div class="tech-label mb-0.5 text-ink-4 tech-label--cn text-xs">取件码</div>
             <div
-              class="tnum font-heading text-[23px] leading-none font-bold tracking-[0.1em]"
+              class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"
               :style="order.status === '可取了' ? { color: 'var(--accent-text)' } : undefined"
             >
               {{ pickupCodeLabel(order.pickup_code) }}
             </div>
           </div>
           <div class="flex flex-wrap gap-1.5">
-            <span class="tech-label rounded-full px-2 py-1" style="background-color: var(--muted)">
+            <span class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
             </span>
-            <span class="tech-label rounded-full px-2 py-1" style="background-color: var(--muted)">
+            <span class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             </span>
             <!-- 份数一定要显示：它直接决定交多少钱，学生看不出来就会反复问管理员。
                  null 是「未记录」（本次升级前的老订单）而不是 1 份，走 copiesLabel。 -->
-            <span class="tech-label tnum rounded-full px-2 py-1" style="background-color: var(--muted)">
+            <span class="tech-label tnum rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ copiesLabel(order.copies) }}
             </span>
             <span
               v-if="order.paper_name"
-              class="tech-label rounded-full px-2 py-1"
+              class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs"
               style="background-color: var(--muted)"
             >
               {{ paperLabel(order.paper_name) }}
@@ -261,17 +261,17 @@ async function withdraw(order: Order): Promise<void> {
              而他们甚至没有文件名可以对照。 -->
         <p
           v-if="order.preset_content"
-          class="mt-3 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-2"
+          class="mt-3 rounded-lg px-2.5 py-1.5 text-xs text-ink-2"
           style="background-color: var(--muted)"
         >
           预设服务：{{ order.preset_content }}
         </p>
 
-        <p v-if="order.remark" class="mt-3 rounded-lg px-2.5 py-1.5 text-[12px] text-ink-2" style="background-color: var(--muted)">
+        <p v-if="order.remark" class="mt-3 rounded-lg px-2.5 py-1.5 text-xs text-ink-2" style="background-color: var(--muted)">
           备注：{{ order.remark }}
         </p>
 
-        <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2.5 text-[11px] text-ink-4" style="border-color: var(--border)">
+        <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-2.5 text-xs text-ink-4" style="border-color: var(--border)">
           <span class="flex items-center gap-1">
             <Clock :size="12" />
             提交 {{ fullTime(order.create_time) }}

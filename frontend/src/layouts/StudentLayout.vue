@@ -46,7 +46,7 @@ onMounted(() => {
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="nav-link flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-semibold no-underline"
+            class="nav-link flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold no-underline"
             :class="currentPath === item.to && 'nav-link--active'"
             :style="
               currentPath === item.to
@@ -116,7 +116,7 @@ onMounted(() => {
              他的标签栏比别人多一格（6 列），320px 屏上每列只剩 ~52px，
              「管理控制台」五个字放不下。不加的话是硬溢出，会把整页顶出横向滚动条，
              而截断只是这几个字变成「管理控…」—— 图标还在，认得出是哪个入口。 -->
-        <span class="w-full truncate text-center text-[11px] font-semibold">{{ item.label }}</span>
+        <span class="w-full truncate text-center text-xs font-semibold">{{ item.label }}</span>
       </RouterLink>
     </nav>
   </div>

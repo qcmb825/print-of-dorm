@@ -183,10 +183,10 @@ onBeforeUnmount(pause)
   <div class="flex h-full flex-col">
     <header class="flex items-start justify-between gap-3 border-b px-4 py-3" style="border-color: var(--border)">
       <div class="min-w-0">
-        <h3 class="truncate font-heading text-[15px] font-bold">
+        <h3 class="truncate font-heading text-base font-bold">
           {{ ticket?.subject ?? '加载中…' }}
         </h3>
-        <p class="tech-label mt-1 text-ink-4">
+        <p class="tech-label mt-1 text-ink-4 tech-label--cn text-xs">
           #{{ ticketId }}
           <template v-if="staff && ticket"> · 提交人 {{ ticket.owner_nickname }}</template>
           <template v-if="ticket"> · {{ TICKET_STATUS_LABEL[ticket.status] }}</template>
@@ -219,14 +219,14 @@ onBeforeUnmount(pause)
           >
             <div class="max-w-[86%]">
               <div
-                class="mb-1 flex items-center gap-2 text-[11px] text-ink-4"
+                class="mb-1 flex items-center gap-2 text-xs text-ink-4"
                 :class="item.sender_id === currentUserId ? 'justify-end' : ''"
               >
                 <span class="font-semibold">{{ item.sender_nickname ?? '（已注销）' }}</span>
                 <span class="tnum">{{ item.create_time?.slice(5, 16) ?? '' }}</span>
               </div>
               <div
-                class="rounded-xl border px-3 py-2 text-[13px] whitespace-pre-wrap break-words"
+                class="rounded-xl border px-3 py-2 text-sm whitespace-pre-wrap break-words"
                 :style="
                   item.sender_id === currentUserId
                     ? {
@@ -255,7 +255,7 @@ onBeforeUnmount(pause)
         @keydown.enter.exact.prevent="send"
       />
       <div class="mt-2 flex items-center justify-between gap-3">
-        <span class="tnum text-[11px] text-ink-4">{{ replyBody.length }} / 1000</span>
+        <span class="tnum text-2xs text-ink-4">{{ replyBody.length }} / 1000</span>
         <NButton
           type="primary"
           size="small"

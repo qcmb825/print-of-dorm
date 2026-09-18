@@ -156,7 +156,7 @@ onMounted(() => {
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+          class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold no-underline"
           :class="activeNav === item.to && 'nav-link--active'"
           :style="
             activeNav === item.to
@@ -178,7 +178,7 @@ onMounted(() => {
            --primary 只有 2.09:1，而小字要 4.5:1（--accent-text 在同底上 4.82:1）。 -->
       <div
         v-if="auth.advanced"
-        class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]"
+        class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
         style="
           border-color: var(--accent-tint-border);
           background-color: var(--accent-tint-soft);
@@ -223,7 +223,7 @@ onMounted(() => {
                 v-for="item in navItems"
                 :key="item.to"
                 :to="item.to"
-                class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+                class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold no-underline"
                 :class="activeNav === item.to && 'nav-link--active'"
                 :style="
                   activeNav === item.to
@@ -250,7 +250,7 @@ onMounted(() => {
         </button>
         <span class="flex items-center gap-2">
           <Printer :size="16" style="color: var(--accent-text)" aria-hidden="true" />
-          <span class="font-heading text-[15px] font-bold">{{ currentTitle }}</span>
+          <span class="font-heading text-base font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
           <!-- 窄屏没有侧栏那条提示带，所以把标识收成一颗图标 —— 点它就退出。 -->

@@ -20,7 +20,7 @@ withDefaults(
     :class="accent && 'border-primary/40'"
   >
     <div class="flex items-center justify-between gap-2">
-      <span class="tech-label text-ink-3">{{ label }}</span>
+      <span class="tech-label text-ink-3 tech-label--cn text-xs">{{ label }}</span>
       <component
         :is="icon"
         v-if="icon"
@@ -33,7 +33,7 @@ withDefaults(
          --card 叠在页面底上（≈#fefefe），--primary 铺上去只有 2.36:1 —— 连 26-30px
          粗体要的 3:1 都不够。换 --accent-text 后是 5.43:1（顺手过了小字的 4.5:1）。 -->
     <div
-      class="tnum font-heading text-[26px] leading-none font-bold sm:text-[30px]"
+      class="tnum font-heading text-2xl leading-none font-bold sm:text-3xl"
       :style="accent ? { color: 'var(--accent-text)' } : undefined"
     >
       {{ value }}

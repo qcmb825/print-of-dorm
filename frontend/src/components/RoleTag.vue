@@ -13,7 +13,7 @@ const style = computed(() => ({
 
 <template>
   <span
-    class="tech-label inline-flex items-center rounded-full px-2 py-[3px] leading-none"
+    class="tech-label inline-flex items-center rounded-full px-2 py-[3px] leading-none tech-label--cn text-xs"
     :style="style"
   >
     {{ ROLE_LABELS[role] }}

@@ -131,8 +131,8 @@ onMounted(load)
   <div class="mx-auto max-w-3xl">
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
-        <h1 class="font-heading text-lg font-bold sm:text-xl">服务数据</h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">排队情况 · 下单榜 · 我的进度</p>
+        <h1 class="font-heading text-xl font-bold sm:text-2xl">服务数据</h1>
+        <p class="mt-0.5 text-sm text-ink-3">排队情况 · 下单榜 · 我的进度</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="load()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -147,29 +147,29 @@ onMounted(load)
     <template v-else-if="board">
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div class="panel panel-raised border-primary/40 px-3 py-2.5">
-          <div class="tech-label text-ink-4">待我取件</div>
+          <div class="tech-label text-ink-4 tech-label--cn text-xs">待我取件</div>
           <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ mine?.ready ?? 0 }}
           </div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">进行中</div>
+          <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
           <div class="tnum font-heading text-xl font-bold">{{ mine?.active ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">我的单数</div>
+          <div class="tech-label text-ink-4 tech-label--cn text-xs">我的单数</div>
           <div class="tnum font-heading text-xl font-bold">{{ mine?.total ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">我的名次</div>
+          <div class="tech-label text-ink-4 tech-label--cn text-xs">我的名次</div>
           <div class="tnum font-heading text-xl font-bold">{{ mineRankText }}</div>
         </div>
       </div>
 
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
         <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 class="font-heading text-[14px] font-bold">排队情况</h2>
-          <span class="text-[12px] text-ink-3">
+          <h2 class="font-heading text-base font-bold">排队情况</h2>
+          <span class="text-xs text-ink-3">
             {{ queue?.unclaimed ?? 0 }} 单还没人接
           </span>
         </div>
@@ -180,7 +180,7 @@ onMounted(load)
             class="rounded-lg px-2.5 py-2"
             style="background-color: var(--muted)"
           >
-            <div class="tech-label" :style="{ color: row.color }">{{ row.status }}</div>
+            <div class="tech-label tech-label--cn text-xs" :style="{ color: row.color }">{{ row.status }}</div>
             <div class="tnum font-heading text-lg leading-tight font-bold">{{ row.count }}</div>
           </li>
         </ul>
@@ -188,7 +188,7 @@ onMounted(load)
 
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="font-heading text-[14px] font-bold">下单排行 · 前 10</h2>
+          <h2 class="font-heading text-base font-bold">下单排行 · 前 10</h2>
           <!-- 分段切换用原生 button：这里只是换个本地 ref，套一层 NRadioGroup
                反而要处理它的 string | number 值类型，得不偿失。 -->
           <div class="flex items-center gap-0.5 rounded-lg p-0.5" style="background-color: var(--muted)">
@@ -196,7 +196,7 @@ onMounted(load)
               v-for="item in boardTabs"
               :key="item.key"
               type="button"
-              class="rounded-md px-2.5 py-1 text-[12px] font-semibold"
+              class="rounded-md px-2.5 py-1 text-xs font-semibold"
               :style="
                 tab === item.key
                   ? { backgroundColor: 'var(--card)', color: 'var(--foreground)' }
@@ -221,15 +221,15 @@ onMounted(load)
             "
           >
             <span
-              class="tnum font-heading w-5 shrink-0 text-center text-[13px] font-bold"
+              class="tnum font-heading w-5 shrink-0 text-center text-sm font-bold"
               :style="{ color: entry.rank <= 3 ? 'var(--accent-text)' : 'var(--text-quaternary)' }"
             >
               {{ entry.rank }}
             </span>
             <div class="min-w-0 flex-1">
-              <div class="truncate text-[13px] font-semibold">
+              <div class="truncate text-sm font-semibold">
                 {{ entry.nickname }}
-                <span v-if="entry.is_me" class="tech-label ml-1" style="color: var(--accent-text)">你</span>
+                <span v-if="entry.is_me" class="tech-label ml-1 tech-label--cn text-xs" style="color: var(--accent-text)">你</span>
               </div>
               <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full" style="background-color: var(--muted)">
                 <div
@@ -238,7 +238,7 @@ onMounted(load)
                 />
               </div>
             </div>
-            <span class="tnum font-heading shrink-0 text-[13px] font-bold">{{ entry.count }} 单</span>
+            <span class="tnum font-heading shrink-0 text-sm font-bold">{{ entry.count }} 单</span>
           </li>
         </ul>
 
@@ -250,7 +250,7 @@ onMounted(load)
 
         <p
           v-if="myLine"
-          class="mt-3 rounded-lg px-2.5 py-2 text-[12px] text-ink-2"
+          class="mt-3 rounded-lg px-2.5 py-2 text-xs text-ink-2"
           style="background-color: var(--muted)"
         >
           {{ myLine }}
@@ -258,7 +258,7 @@ onMounted(load)
       </section>
 
       <section class="panel panel-raised p-3.5 sm:p-4">
-        <h2 class="font-heading mb-2 text-[14px] font-bold">近 14 天单量</h2>
+        <h2 class="font-heading mb-2 text-base font-bold">近 14 天单量</h2>
         <ChartBox
           :option="trend"
           :height="200"

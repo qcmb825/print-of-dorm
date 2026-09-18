@@ -75,7 +75,7 @@ const authorLine = computed(() => {
           <p class="whitespace-pre-wrap break-words" :style="bodyStyle">
             {{ announcement.content }}
           </p>
-          <p class="tech-label mt-1.5" style="color: var(--paper-muted)">{{ authorLine }}</p>
+          <p class="tech-label mt-1.5 tech-label--cn text-xs" style="color: var(--paper-muted)">{{ authorLine }}</p>
         </div>
         <NButton
           quaternary

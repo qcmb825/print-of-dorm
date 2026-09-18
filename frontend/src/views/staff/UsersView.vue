@@ -427,13 +427,13 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       width: 150,
       render: (row) =>
         h('div', { class: 'min-w-0' }, [
-          h('div', { class: 'truncate text-[13px] font-semibold' }, [
+          h('div', { class: 'truncate text-sm font-semibold' }, [
             row.nickname,
             // 标注自己那一行不是装饰：对自己，改角色/禁用/注销在菜单里都是灰的
             // （后端一律 400），不标出来会让人以为是页面坏了。
-            row.is_self ? h('span', { class: 'ml-1 text-[11px] opacity-60' }, '（你自己）') : null,
+            row.is_self ? h('span', { class: 'ml-1 text-xs opacity-60' }, '（你自己）') : null,
           ]),
-          h('div', { class: 'tnum text-[11px] opacity-60' }, `#${row.id}`),
+          h('div', { class: 'tnum text-2xs opacity-60' }, `#${row.id}`),
         ]),
     },
     {
@@ -442,15 +442,15 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       width: 150,
       render: (row) =>
         h('div', { class: 'min-w-0' }, [
-          h('div', { class: 'truncate text-[13px]' }, row.real_name || '—'),
-          h('div', { class: 'tnum truncate text-[11px] opacity-60' }, row.student_id || '—'),
+          h('div', { class: 'truncate text-sm' }, row.real_name || '—'),
+          h('div', { class: 'tnum truncate text-2xs opacity-60' }, row.student_id || '—'),
         ]),
     },
     {
       title: '宿舍',
       key: 'dorm',
       width: 118,
-      render: (row) => h('span', { class: 'truncate text-[12px]' }, row.dorm || '—'),
+      render: (row) => h('span', { class: 'truncate text-xs' }, row.dorm || '—'),
     },
     {
       title: '联系方式',
@@ -459,7 +459,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'truncate text-[12px] opacity-80' },
+          { class: 'truncate text-xs opacity-80' },
           row.contact ? `${row.contact_type === 'wechat' ? '微信' : row.contact_type === 'qq' ? 'QQ' : '邮箱'} ${row.contact}` : '—',
         ),
     },
@@ -485,14 +485,14 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       key: 'order_count',
       width: 96,
       render: (row) =>
-        h('span', { class: 'tnum text-[12px]' }, `${row.order_count} / ${row.claimed_count}`),
+        h('span', { class: 'tnum text-xs' }, `${row.order_count} / ${row.claimed_count}`),
     },
     {
       title: '注册 / 最后登录',
       key: 'last_login',
       width: 140,
       render: (row) =>
-        h('div', { class: 'tnum text-[11px] opacity-70' }, [
+        h('div', { class: 'tnum text-2xs opacity-70' }, [
           h('div', {}, shortTime(row.create_time)),
           h('div', {}, shortTime(row.last_login)),
         ]),
@@ -507,7 +507,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'tnum text-[12px]', style: { color: 'var(--warn)' } },
+          { class: 'tnum text-xs', style: { color: 'var(--warn)' } },
           row.password ?? '—',
         ),
     })
@@ -597,7 +597,7 @@ onMounted(load)
           <NSwitch v-model:value="withPassword" size="small" @update:value="load()" />
           <button
             type="button"
-            class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3"
+            class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3 tech-label--cn text-xs"
             @click="toggleWithPassword"
           >
             <Eye :size="12" />
@@ -626,7 +626,7 @@ onMounted(load)
       <span v-if="advanced" class="flex items-center gap-2">
         <NSwitch v-model:value="includeClosed" size="small" @update:value="load()" />
         <span
-          class="tech-label cursor-pointer select-none text-ink-3"
+          class="tech-label cursor-pointer select-none text-ink-3 tech-label--cn text-xs"
           @click="toggleIncludeClosed"
         >
           含已注销
@@ -636,7 +636,7 @@ onMounted(load)
            会变成一场谁也说不清的争执。
            开关打开时不能再报这条：那些账号此刻就在列表里，
            再说一句「未列出」等于自己打自己（浏览器里看到过这条自相矛盾的文案）。 -->
-      <span class="tech-label ml-auto text-ink-4">
+      <span class="tech-label ml-auto text-ink-4 tech-label--cn text-xs">
         显示 {{ filtered.length }} / {{ users.length }} 个账号<span
           v-if="closedTotal && !includeClosed"
         >
@@ -647,7 +647,7 @@ onMounted(load)
 
     <p
       v-if="withPassword"
-      class="mb-3 rounded-lg border px-3 py-2 text-[12px]"
+      class="mb-3 rounded-lg border px-3 py-2 text-xs"
       style="
         border-color: var(--warn-tint-border);
         background-color: var(--warn-tint);
@@ -686,7 +686,7 @@ onMounted(load)
       :mask-closable="false"
     >
       <template v-if="dialog.target">
-        <p class="mb-3 text-[13px] leading-6 text-ink-3">
+        <p class="mb-3 text-sm leading-6 text-ink-3">
           目标账号
           <span class="font-heading font-bold text-ink">{{ dialog.target.nickname }}</span>
           <span class="ml-1 font-mono">#{{ dialog.target.id }}</span>
@@ -695,7 +695,7 @@ onMounted(load)
         <template v-if="dialog.kind === 'profile'">
           <div class="flex flex-col gap-3">
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">昵称</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">昵称</span>
               <NInput
                 v-model:value="profileForm.nickname"
                 :maxlength="20"
@@ -703,7 +703,7 @@ onMounted(load)
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">姓名</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">姓名</span>
               <NInput
                 v-model:value="profileForm.real_name"
                 :maxlength="20"
@@ -711,15 +711,15 @@ onMounted(load)
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">学号（登录名）</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">学号（登录名）</span>
               <NInput v-model:value="profileForm.student_id" :maxlength="20" placeholder="4-20 位数字" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">宿舍</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">宿舍</span>
               <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="请写到门牌号" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">联系方式</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">联系方式</span>
               <div class="flex gap-2">
                 <NSelect
                   v-model:value="profileForm.contact_type"
@@ -734,7 +734,7 @@ onMounted(load)
               </div>
             </label>
           </div>
-          <p class="mt-3 text-[12px] leading-5 text-ink-4">
+          <p class="mt-3 text-xs leading-5 text-ink-4">
             学号是登录名，改完本人必须用新学号登录。这里不核对学生名单 ——
             名单是注册的闸门，而改资料是人工介入，名单本身就可能落后于现实。
           </p>
@@ -778,7 +778,7 @@ onMounted(load)
           </div>
         </template>
 
-        <p v-if="dialogIssue" class="mt-2 text-[12px]" style="color: var(--err)">
+        <p v-if="dialogIssue" class="mt-2 text-xs" style="color: var(--err)">
           {{ dialogIssue }}
         </p>
       </template>
@@ -809,14 +809,14 @@ onMounted(load)
         <li
           v-for="item in conflicts.items"
           :key="`${item.label}:${item.value}`"
-          class="flex flex-wrap items-center gap-x-2 rounded-[10px] border px-3 py-2 text-[13px]"
+          class="flex flex-wrap items-center gap-x-2 rounded-[10px] border px-3 py-2 text-sm"
           style="border-color: var(--border)"
         >
-          <span class="tech-label text-ink-4">{{ item.label }}</span>
+          <span class="tech-label text-ink-4 tech-label--cn text-xs">{{ item.label }}</span>
           <span class="font-mono">{{ item.value }}</span>
           <span class="text-ink-4">已被</span>
           <span class="font-semibold">{{ item.owner_nickname }}</span>
-          <span class="font-mono text-[12px] text-ink-4">#{{ item.owner_id }}</span>
+          <span class="font-mono text-xs text-ink-4">#{{ item.owner_id }}</span>
           <NButton size="tiny" quaternary class="!ml-auto" @click="locateOwner(item.owner_nickname)">
             在列表里找它
           </NButton>

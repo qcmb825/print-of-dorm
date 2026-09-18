@@ -544,5 +544,27 @@
   --text-3xl: 30px;
   --text-4xl: 44px;
 
+  /* 行高必须**显式写**，不能靠 Tailwind 的比例。
+   *
+   * Tailwind 的行高是按比例算的（--text-sm--line-height: calc(1.25/0.875) 之类），
+   * 所以上面把字号调小之后，行高会跟着等比缩水：text-sm 从 14px/20px 变成 13px/18.6px、
+   * text-base 从 16px/24px 变成 15px/22.5px。那是**无意引入的回归** —— 字号是为了收紧，
+   * 行高跟着缩会让正文变挤。这里把两档按原来的绝对行高钉住：
+   *   sm   13px / 20px（原来 14px 配的 --leading-5）
+   *   base 15px / 24px（原来 16px 配的默认 1.5rem）
+   * 其余几档与 Tailwind 的比例算出来几乎一致，一并钉住只为「改了字号不用回头看行高」。
+   *
+   * 注意：元素上若另写了 leading-*（如 leading-6），那个仍然优先 —— 显式工具类赢主题变量。
+   * 全站有若干处「px 字号 + 显式 leading」的组合，收敛字号时要一并看。 */
+  --text-2xs--line-height: 16px;
+  --text-xs--line-height: 16px;
+  --text-sm--line-height: 20px;
+  --text-base--line-height: 24px;
+  --text-lg--line-height: 26px;
+  --text-xl--line-height: 28px;
+  --text-2xl--line-height: 32px;
+  --text-3xl--line-height: 36px;
+  --text-4xl--line-height: 48px;
+
   --radius-panel: 12px;
 }

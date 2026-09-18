@@ -172,13 +172,27 @@
     transform: scale(0.98);
   }
 
-  /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理 */
+  /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理。
+   *
+   * **本类不带 font-size** —— 字号由调用处显式给（拉丁走 text-2xs，中文走 text-xs）。
+   * 原先这里写死 11px，但那是按拉丁字母定的：汉字没有大小写（uppercase 对它是空操作），
+   * .09em 的字距会把汉字拉散，而 11px 又低于中文 12px 的可读下限。
+   * 两套需求放不进一个类，所以拆开：本类只管家族 / 大小写 / 字距，字号交给工具类。
+   * 漏写字号的后果是继承正文 15px（静默变大），所以每个调用处都必须有 size 类。 */
   .tech-label {
     font-family: var(--stack-mono);
-    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.09em;
     text-transform: uppercase;
+  }
+
+  /* 中文标签的对应形态。必须写在 .tech-label **之后**（同层同特异度，后者胜）。
+     中文不加字距：CLReq 的疏排档位是 1/4em、1/3em 这类刻度，.09em 落在档位之间，
+     既读不出疏排意图又破坏了汉字字框的均匀节奏 —— 归零更干净。 */
+  .tech-label--cn {
+    font-family: var(--stack-heading);
+    letter-spacing: 0;
+    text-transform: none; /* 对汉字是空操作，写出来是为了表明意图 */
   }
 
   /* 「几份」这个数字。打印员是照着它干活的，而它原来只是规格列第二行里的

@@ -215,7 +215,7 @@ async function check(): Promise<void> {
           申请已提交，管理员核对通过后你就能用这个学号注册了。可以随时回来查进度。
         </NAlert>
 
-        <p class="mb-4 text-[13px] leading-6 text-ink-3">
+        <p class="mb-4 text-sm leading-6 text-ink-3">
           只有在名单上查不到你的学号时才需要提交。填一份能联系到你的资料，管理员会人工核对。
           <span class="text-ink-4">一个学号只能提交一次。</span>
         </p>
@@ -252,7 +252,7 @@ async function check(): Promise<void> {
               />
             </div>
           </NFormItem>
-          <p class="-mt-3 mb-3 text-[11px] text-ink-4">
+          <p class="-mt-3 mb-3 text-xs text-ink-4">
             {{ CONTACT_HINT[form.contact_type] }}
           </p>
 
@@ -288,7 +288,7 @@ async function check(): Promise<void> {
       </NTabPane>
 
       <NTabPane name="query" tab="查询进度">
-        <p class="mb-4 text-[13px] leading-6 text-ink-3">
+        <p class="mb-4 text-sm leading-6 text-ink-3">
           填申请时留下的<strong>学号和联系方式</strong>，两个都对才查得到 ——
           这是为了不让别人拿学号挨个试出谁申请过。
         </p>
@@ -330,11 +330,11 @@ async function check(): Promise<void> {
                       : 'var(--status-unpriced)',
               }"
             />
-            <span class="font-heading text-[15px] font-bold">{{ result.status_label }}</span>
+            <span class="font-heading text-base font-bold">{{ result.status_label }}</span>
           </div>
 
-          <p class="mt-2 text-[12px] text-ink-3">提交于 {{ fullTime(result.create_time) }}</p>
-          <p v-if="result.review_time" class="text-[12px] text-ink-3">
+          <p class="mt-2 text-xs text-ink-3">提交于 {{ fullTime(result.create_time) }}</p>
+          <p v-if="result.review_time" class="text-xs text-ink-3">
             处理于 {{ fullTime(result.review_time) }}
           </p>
 
@@ -347,16 +347,16 @@ async function check(): Promise<void> {
             {{ result.review_note }}
           </NAlert>
 
-          <p v-if="result.status === 'approved'" class="mt-3 text-[13px] leading-6">
+          <p v-if="result.status === 'approved'" class="mt-3 text-sm leading-6">
             现在可以回到「注册」页用这个学号注册了。
           </p>
-          <p v-else-if="result.status === 'rejected'" class="mt-3 text-[13px] leading-6 text-ink-3">
+          <p v-else-if="result.status === 'rejected'" class="mt-3 text-sm leading-6 text-ink-3">
             如果情况有变化，可以直接找管理员当面说明 —— 一个学号只有一条申请记录，
             同一个人不存在第二种答案，所以不能重复提交。
           </p>
         </div>
 
-        <p v-else class="mt-5 flex items-center gap-1.5 text-[12px] text-ink-4">
+        <p v-else class="mt-5 flex items-center gap-1.5 text-xs text-ink-4">
           <CircleHelp :size="13" />
           还没有查到记录。填对学号和联系方式后点「查询」。
         </p>

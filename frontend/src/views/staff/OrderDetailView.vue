@@ -209,19 +209,19 @@ onMounted(load)
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0">
             <h2
-              class="truncate text-[17px] font-bold"
+              class="truncate text-lg font-bold"
               :title="order.preset_content ?? order.filename"
             >
               {{ orderFileLabel(order) }}
             </h2>
-            <p class="tech-label mt-1 text-ink-4">
+            <p class="tech-label mt-1 text-ink-4 tech-label--cn text-xs">
               提交于 {{ fullTime(order.create_time) }}
             </p>
           </div>
           <div class="flex shrink-0 flex-wrap items-center gap-2">
             <StatusTag :status="order.status" />
             <span
-              class="tnum font-heading text-[18px] font-bold"
+              class="tnum font-heading text-xl font-bold"
               :style="{
                 color:
                   order.price === null || order.price === undefined
@@ -254,11 +254,11 @@ onMounted(load)
            单独一整块、摆在那两栏之前：它可能很长（上限 300 字），
            塞进任何一栏都会把那一栏撑成一条窄长的筒。 -->
       <section v-if="isPreset" class="panel mb-3 p-4">
-        <h3 class="tech-label mb-1 text-ink-3">预设打印服务</h3>
-        <p class="whitespace-pre-wrap break-words text-[13px] leading-6">
+        <h3 class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">预设打印服务</h3>
+        <p class="whitespace-pre-wrap break-words text-sm leading-6">
           {{ order.preset_content }}
         </p>
-        <p class="mt-2 text-[11px] text-ink-4">
+        <p class="mt-2 text-xs text-ink-4">
           这一单没有上传文件。上面这段话是下单当时从预设里抄下来的快照，
           即使后来预设被改动或删掉了，这里显示的仍是学生当时看到的原文。
         </p>
@@ -266,7 +266,7 @@ onMounted(load)
 
       <div class="mb-3 grid gap-3 sm:grid-cols-2">
         <section class="panel p-4">
-          <h3 class="tech-label mb-1 flex items-center gap-1.5 text-ink-3">
+          <h3 class="tech-label mb-1 flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
             打印要求
             <FileWarning v-if="!order.file_exists && !isPreset" :size="13" />
           </h3>
@@ -277,8 +277,8 @@ onMounted(load)
               class="flex items-baseline justify-between gap-3 py-1.5"
               style="border-color: var(--border)"
             >
-              <dt class="shrink-0 text-[12px] text-ink-4">{{ field.label }}</dt>
-              <dd class="min-w-0 truncate text-right text-[13px]" :title="field.value ?? ''">
+              <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+              <dd class="min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                 {{ field.value ?? '—' }}
               </dd>
             </div>
@@ -286,20 +286,20 @@ onMounted(load)
 
           <!-- 备注单独一块、不截断：它是学生自己写的原话，
                截一半反而更容易看错（「只打第 1 页」和「只打第 1 页到第 3 页」）。 -->
-          <p class="mt-2 text-[11px] text-ink-4">备注</p>
+          <p class="mt-2 text-xs text-ink-4">备注</p>
           <p
             v-if="order.remark"
-            class="mt-1 whitespace-pre-wrap break-words rounded-md p-2 text-[13px] leading-6"
+            class="mt-1 whitespace-pre-wrap break-words rounded-md p-2 text-sm leading-6"
             style="background: var(--accent-tint-soft)"
           >
             {{ order.remark }}
           </p>
-          <p v-else class="mt-1 text-[13px] text-ink-4">学生没有填写备注</p>
+          <p v-else class="mt-1 text-sm text-ink-4">学生没有填写备注</p>
         </section>
 
         <div class="flex flex-col gap-3">
           <section class="panel p-4">
-            <h3 class="tech-label mb-1 text-ink-3">下单人</h3>
+            <h3 class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">下单人</h3>
             <dl class="divide-y" style="border-color: var(--border)">
               <div
                 v-for="field in ownerFields"
@@ -307,8 +307,8 @@ onMounted(load)
                 class="flex items-baseline justify-between gap-3 py-1.5"
                 style="border-color: var(--border)"
               >
-                <dt class="shrink-0 text-[12px] text-ink-4">{{ field.label }}</dt>
-                <dd class="min-w-0 truncate text-right text-[13px]" :title="field.value ?? ''">
+                <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+                <dd class="min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                   {{ field.value ?? '—' }}
                 </dd>
               </div>
@@ -316,7 +316,7 @@ onMounted(load)
           </section>
 
           <section class="panel p-4">
-            <h3 class="tech-label mb-1 text-ink-3">流程信息</h3>
+            <h3 class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">流程信息</h3>
             <dl class="divide-y" style="border-color: var(--border)">
               <div
                 v-for="field in flowFields"
@@ -324,8 +324,8 @@ onMounted(load)
                 class="flex items-baseline justify-between gap-3 py-1.5"
                 style="border-color: var(--border)"
               >
-                <dt class="shrink-0 text-[12px] text-ink-4">{{ field.label }}</dt>
-                <dd class="tnum min-w-0 truncate text-right text-[13px]" :title="field.value ?? ''">
+                <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+                <dd class="tnum min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                   {{ field.value ?? '—' }}
                 </dd>
               </div>
@@ -342,7 +342,7 @@ onMounted(load)
               <template #icon><Download :size="14" /></template>
               下载文件（{{ formatBytes(order.file_size) }}）
             </NButton>
-            <p v-else-if="order.claimed_by === null" class="mt-3 text-[11px] text-ink-4">
+            <p v-else-if="order.claimed_by === null" class="mt-3 text-xs text-ink-4">
               接单后才能下载文件。
             </p>
           </section>
@@ -350,7 +350,7 @@ onMounted(load)
       </div>
 
       <section class="panel p-4">
-        <h3 class="tech-label mb-4 flex flex-wrap items-center gap-2 text-ink-3">
+        <h3 class="tech-label mb-4 flex flex-wrap items-center gap-2 text-ink-3 tech-label--cn text-xs">
           操作记录
           <span class="text-ink-4">{{ logs.length }} 条</span>
         </h3>
@@ -365,14 +365,14 @@ onMounted(load)
             :color="LOG_ACTION_COLOR[log.action]"
           >
             <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-              <span class="text-[13px] font-semibold">{{ log.action_label }}</span>
-              <span class="text-[12px] text-ink-3">
+              <span class="text-sm font-semibold">{{ log.action_label }}</span>
+              <span class="text-xs text-ink-3">
                 {{ log.actor_nickname ?? '（账号已注销）' }}
               </span>
               <!-- actor_role 走的是对外口径，这里永远不会出现「默认管理员」这种标记 -->
               <RoleTag v-if="log.actor_role" :role="log.actor_role" />
             </div>
-            <p v-if="log.detail" class="mt-0.5 break-words text-[12px] leading-5 text-ink-3">
+            <p v-if="log.detail" class="mt-0.5 break-words text-xs leading-5 text-ink-3">
               {{ log.detail }}
             </p>
           </NTimelineItem>
@@ -380,13 +380,13 @@ onMounted(load)
 
         <!-- 老订单在这张表里本来就是空的：留痕是这次升级才加的，
              不能拿 orders 那几个时间戳倒推补几条（倒推出来的操作人只会是错的）。 -->
-        <p v-else class="text-[12px] leading-6 text-ink-4">
+        <p v-else class="text-xs leading-6 text-ink-4">
           这一单还没有操作记录。留痕功能是后加的，升级之前发生的步骤不会被倒推补录 ——
           与其显示一条猜出来的记录，不如明确告诉你这里没有。
         </p>
       </section>
 
-      <p class="tech-label mt-3 text-ink-4">最后更新 {{ shortTime(order.update_time) }}</p>
+      <p class="tech-label mt-3 text-ink-4 tech-label--cn text-xs">最后更新 {{ shortTime(order.update_time) }}</p>
     </template>
   </div>
 </template>

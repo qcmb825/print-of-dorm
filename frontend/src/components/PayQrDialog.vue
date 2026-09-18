@@ -131,10 +131,10 @@ async function onRemove(): Promise<void> {
         />
         <div v-else class="flex flex-col items-center gap-2 text-center">
           <QrCode :size="34" class="opacity-40" aria-hidden="true" />
-          <p class="text-[13px] font-semibold">
+          <p class="text-sm font-semibold">
             {{ broken ? '这张图读不到了' : '还没有上传收款码' }}
           </p>
-          <p class="text-[12px] opacity-60">
+          <p class="text-xs opacity-60">
             {{
               broken
                 ? '服务端还记着它，但文件已经不在了，重新上传一张即可。'
@@ -165,7 +165,7 @@ async function onRemove(): Promise<void> {
         </NButton>
       </div>
 
-      <p class="text-[12px] leading-relaxed opacity-60">
+      <p class="text-xs leading-relaxed opacity-60">
         支持 PNG / JPG，不超过 2 MB。建议用微信「收付款 - 二维码收款」里保存下来的那张原图，
         截图也行，但别裁掉码四周的留白 —— 留白没了有些手机扫不出来。
       </p>

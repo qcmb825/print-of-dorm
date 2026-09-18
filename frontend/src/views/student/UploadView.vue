@@ -275,13 +275,13 @@ onMounted(async () => {
             <CircleCheck :size="17" />
           </span>
           <div class="min-w-0 flex-1">
-            <h2 class="font-heading text-base font-bold">下单成功</h2>
-            <p class="mt-0.5 truncate text-[13px] text-ink-3">
+            <p class="font-heading text-base font-bold">下单成功</p>
+            <p class="mt-0.5 truncate text-sm text-ink-3">
               订单 #{{ receipt.orderId }} · {{ receipt.filename }}
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
               <div>
-                <div class="tech-label mb-1 text-ink-4">取件码</div>
+                <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">取件码</div>
                 <div
                   class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
                   style="color: var(--accent-text)"
@@ -291,7 +291,7 @@ onMounted(async () => {
               </div>
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
-            <p class="mt-3 text-[12px] text-ink-4">
+            <p class="mt-3 text-xs text-ink-4">
               管理员接单并打印完成后，凭上面的取件码到打印点取件。
             </p>
           </div>
@@ -314,11 +314,11 @@ onMounted(async () => {
         <History :size="15" />
       </span>
       <div class="min-w-0 flex-1">
-        <p class="truncate text-[13px] font-semibold">
+        <p class="truncate text-sm font-semibold">
           《{{ session.filename }}》
           <span v-if="session.resumed" class="text-primary">（续传）</span>
         </p>
-        <p class="mt-0.5 text-[12px] text-ink-3">
+        <p class="mt-0.5 text-xs text-ink-3">
           {{ prettySize(session.size) }} · {{ session.received_count }}/
           {{ session.total_chunks }} 片
           · 剩余 {{ session.expires_in < 60 ? session.expires_in + ' 秒' : Math.ceil(session.expires_in / 60) + ' 分钟' }}
@@ -338,8 +338,8 @@ onMounted(async () => {
     </section>
 
     <div class="panel p-4 sm:p-5">
-      <h1 class="font-heading text-lg font-bold sm:text-xl">下单打印</h1>
-      <p class="mt-1 mb-4 text-[13px] text-ink-3">
+      <h1 class="font-heading text-xl font-bold sm:text-2xl">下单打印</h1>
+      <p class="mt-1 mb-4 text-sm text-ink-3">
         {{ usingPreset
           ? '选一项预设打印服务下单，管理员按它的说明打印，不需要上传文件。'
           : '支持 PDF、Word 和图片。上传后由管理员接单打印。' }}
@@ -356,7 +356,7 @@ onMounted(async () => {
 
       <!-- 预设清单拉不到时给一句人话。不写它的话，第二个按钮是灰的、
            下拉框是空的，看起来就是这个功能没做。 -->
-      <p v-if="optionsError" class="mb-4 rounded-lg px-3 py-2 text-[12px]" role="alert"
+      <p v-if="optionsError" class="mb-4 rounded-lg px-3 py-2 text-xs" role="alert"
          style="background-color: var(--err-bg); color: var(--err)">
         {{ optionsError }}
       </p>
@@ -387,7 +387,7 @@ onMounted(async () => {
           >
             <Printer :size="17" />
           </span>
-          <p class="min-w-0 flex-1 text-[13px] leading-relaxed whitespace-pre-wrap">
+          <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
             {{ selectedPreset.content }}
           </p>
         </div>
@@ -415,8 +415,8 @@ onMounted(async () => {
             >
               <Upload :size="20" />
             </span>
-            <p class="text-[14px] font-semibold">点击选择文件，或拖到这里</p>
-            <p class="tech-label text-ink-4">PDF · JPG · PNG · DOC · DOCX</p>
+            <p class="text-base font-semibold">点击选择文件，或拖到这里</p>
+            <p class="tech-label text-ink-4 text-2xs">PDF · JPG · PNG · DOC · DOCX</p>
           </div>
         </NUploadDragger>
       </NUpload>
@@ -435,8 +435,8 @@ onMounted(async () => {
           <FileText :size="17" />
         </span>
         <div class="min-w-0 flex-1">
-          <p class="truncate text-[13px] font-semibold">{{ selected.name }}</p>
-          <p class="tnum text-[11px] text-ink-4">
+          <p class="truncate text-sm font-semibold">{{ selected.name }}</p>
+          <p class="tnum text-2xs text-ink-4">
             {{ selectedFile ? prettySize(selectedFile.size) : '' }}
           </p>
         </div>
@@ -489,7 +489,7 @@ onMounted(async () => {
           />
         </NFormItem>
       </div>
-      <p class="mt-2 text-[12px] text-ink-4">
+      <p class="mt-2 text-xs text-ink-4">
         份数范围 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
         不确定就用「不指定」，打印时会按常规纸走。
       </p>
@@ -511,7 +511,7 @@ onMounted(async () => {
            （它被 `submitting` 关着，但预设单提交时 totalBytes 是 0，
            进度条会出现一条 0/0 的空条 —— 所以这里还要排掉 usingPreset）。 -->
       <div v-if="submitting && !usingPreset" class="mt-4">
-        <div class="mb-1.5 flex items-center justify-between gap-3 text-[12px]">
+        <div class="mb-1.5 flex items-center justify-between gap-3 text-xs">
           <span class="text-ink-3">{{ progressHint }}</span>
           <span class="tnum shrink-0 text-ink-4">
             {{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}
@@ -543,7 +543,7 @@ onMounted(async () => {
           </template>
           {{ submitting ? (usingPreset ? '提交中…' : '上传中…') : '提交订单' }}
         </NButton>
-        <span class="tech-label flex items-center gap-1.5 text-ink-4">
+        <span class="tech-label flex items-center gap-1.5 text-ink-4 tech-label--cn text-xs">
           <Hash :size="12" />
           <template v-if="usingPreset">不需要上传文件，提交后立即生成取件码</template>
           <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>

@@ -225,18 +225,18 @@ onMounted(async () => {
       <section class="hidden lg:block">
         <div class="mb-6 inline-flex items-center gap-2 rounded-full border px-3 py-1.5" style="border-color: var(--accent-tint-border); background-color: var(--accent-tint)">
           <span class="size-1.5 rounded-full" style="background-color: var(--secondary); box-shadow: var(--glow-secondary)" />
-          <span class="tech-label text-ink-2">Campus print service</span>
+          <span class="tech-label text-ink-2 text-2xs">Campus print service</span>
         </div>
-        <h1 class="max-w-md font-heading text-[44px] leading-[1.08] font-bold tracking-[-0.04em]">
+        <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
           从文件到取件，<br />
           <span style="color: var(--accent-text)">一张单</span>就够了。
-        </h1>
-        <p class="mt-5 max-w-sm text-[15px] leading-7 text-ink-3">
+        </p>
+        <p class="mt-5 max-w-sm text-base leading-7 text-ink-3">
           上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
         </p>
         <div class="mt-8 grid max-w-md grid-cols-3 gap-3">
           <div v-for="item in ['在线提交', '进度可查', '凭码取件']" :key="item" class="border-t pt-3" style="border-color: var(--border)">
-            <span class="tech-label text-ink-2">{{ item }}</span>
+            <span class="tech-label text-ink-2 tech-label--cn text-xs">{{ item }}</span>
           </div>
         </div>
       </section>
@@ -256,8 +256,8 @@ onMounted(async () => {
             <Printer :size="18" />
           </span>
           <span class="flex flex-col leading-none">
-            <span class="font-heading text-[15px] font-bold">猫娘打印服务</span>
-            <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
+            <span class="font-heading text-base font-bold">猫娘打印服务</span>
+            <span class="tech-label mt-0.5 text-ink-4 text-2xs">Neko Print</span>
           </span>
         </span>
       </div>
@@ -266,7 +266,7 @@ onMounted(async () => {
         <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来 -->
         <div class="mb-4 flex items-center gap-2">
           <span
-            class="tech-label inline-flex items-center gap-1.5 rounded-full px-2 py-1"
+            class="tech-label inline-flex items-center gap-1.5 rounded-full px-2 py-1 tech-label--cn text-xs"
             :style="{
               color: online === false ? 'var(--err)' : 'var(--secondary)',
               backgroundColor: online === false ? 'var(--err-bg)' : 'var(--role-user-bg)',
@@ -279,13 +279,13 @@ onMounted(async () => {
             />
             {{ online === null ? '正在连接' : online ? '服务在线' : '服务不可达' }}
           </span>
-          <span class="tech-label ml-auto text-ink-4">v2</span>
+          <span class="tech-label ml-auto text-ink-4 text-2xs">v2</span>
         </div>
 
-        <h1 class="font-heading text-[26px] leading-tight font-bold">
+        <h1 class="font-heading text-2xl leading-tight font-bold">
           {{ tab === 'login' ? '登录你的账号' : '注册新账号' }}
         </h1>
-        <p class="mt-1.5 mb-5 text-[13px] text-ink-3">
+        <p class="mt-1.5 mb-5 text-sm text-ink-3">
           {{
             tab === 'login'
               ? '用学号登录，提交文件后凭取件码取件。'
@@ -374,7 +374,7 @@ onMounted(async () => {
                   />
                 </div>
               </NFormItem>
-              <p class="-mt-3 mb-3 text-[11px] text-ink-4">
+              <p class="-mt-3 mb-3 text-xs text-ink-4">
                 {{ CONTACT_HINT[registerForm.contact_type] }}
               </p>
 
@@ -415,12 +415,12 @@ onMounted(async () => {
         </NTabs>
       </div>
 
-      <p class="mt-4 text-center text-[11px] text-ink-4">
+      <p class="mt-4 text-center text-xs text-ink-4">
         管理员账号由管理端开通，注册一律为普通用户。
       </p>
       <!-- 这里曾经还有一个「换个界面」链接。全站已经锁死新版（app.py 的
            UI_SWITCH_ENABLED），点过去也只会回到同一套外壳，留着反而像是坏了。 -->
-      <p class="mt-2 text-center text-[11px] text-ink-4">
+      <p class="mt-2 text-center text-xs text-ink-4">
         <button
           type="button"
           class="underline decoration-dotted underline-offset-2 hover:text-ink-2"

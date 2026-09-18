@@ -104,11 +104,11 @@ onMounted(async () => {
   <div class="mx-auto max-w-6xl">
     <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="flex items-center gap-2 font-heading text-lg font-bold sm:text-xl">
+        <h1 class="flex items-center gap-2 font-heading text-xl font-bold sm:text-2xl">
           {{ staff ? '工单处理' : '问题反馈' }}
           <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
         </h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">
+        <p class="mt-0.5 text-sm text-ink-3">
           {{ staff ? '学生提交的问题与需求，回复后对方会看到未读提示' : '有打印相关的问题，在这里留言给管理员' }}
         </p>
       </div>
@@ -161,20 +161,20 @@ onMounted(async () => {
               @click="open(ticket)"
             >
               <div class="flex items-start justify-between gap-2">
-                <span class="min-w-0 flex-1 truncate text-[13px] font-semibold">
+                <span class="min-w-0 flex-1 truncate text-sm font-semibold">
                   {{ ticket.subject }}
                 </span>
                 <NBadge v-if="ticket.unread" :value="ticket.unread" type="warning" />
                 <span
                   v-else
-                  class="tech-label shrink-0"
+                  class="tech-label shrink-0 tech-label--cn text-xs"
                   :style="{ color: ticket.status === 'open' ? 'var(--secondary)' : 'var(--text-quaternary)' }"
                 >
                   {{ TICKET_STATUS_LABEL[ticket.status] }}
                 </span>
               </div>
-              <p class="mt-1 line-clamp-2 text-[12px] text-ink-3">{{ ticket.last_body }}</p>
-              <p class="tech-label mt-1.5 text-ink-4">
+              <p class="mt-1 line-clamp-2 text-xs text-ink-3">{{ ticket.last_body }}</p>
+              <p class="tech-label mt-1.5 text-ink-4 tech-label--cn text-xs">
                 #{{ ticket.id }}
                 <template v-if="staff && ticket.owner_nickname"> · {{ ticket.owner_nickname }}</template>
                 · {{ shortTime(ticket.update_time) }} · {{ ticket.msg_count }} 条

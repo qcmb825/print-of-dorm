@@ -136,7 +136,7 @@ onMounted(load)
           <span class="inline-flex items-center gap-1.5">
             {{ tab.label }}
             <span
-              class="rounded-full px-1.5 py-px text-[11px] font-bold"
+              class="rounded-full px-1.5 py-px text-2xs font-bold"
               :style="{
                 // 计数为 0 时刻意弱化（标签名本身已经说明了这一栏是什么），走四级文字色。
                 // 原先的 var(--ink-4) 不存在，静默失效 —— 0 会显示成和计数非 0 一样的颜色。
@@ -162,10 +162,10 @@ onMounted(load)
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-heading text-[16px] font-bold">{{ item.real_name }}</span>
-                  <span class="font-mono text-[13px] text-ink-3">{{ item.student_id }}</span>
+                  <span class="font-heading text-lg font-bold">{{ item.real_name }}</span>
+                  <span class="font-mono text-sm text-ink-3">{{ item.student_id }}</span>
                   <span
-                    class="rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    class="rounded-full px-2 py-0.5 text-xs font-bold"
                     :style="{
                       color: STATUS_META[item.status].color,
                       backgroundColor: STATUS_META[item.status].bg,
@@ -173,17 +173,17 @@ onMounted(load)
                   >
                     {{ item.status_label ?? STATUS_META[item.status].label }}
                   </span>
-                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-4">
+                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-4 tech-label--cn text-xs">
                     由 {{ item.reviewer_nickname }} 处理
                   </span>
-                  <span v-else class="tech-label text-ink-4">#{{ item.id }}</span>
+                  <span v-else class="tech-label text-ink-4 text-2xs">#{{ item.id }}</span>
                 </div>
 
-                <p class="mt-2 text-[12px] text-ink-3">
+                <p class="mt-2 text-xs text-ink-3">
                   {{ CONTACT_LABELS[item.contact_type] }}：
                   <span class="font-mono">{{ item.contact }}</span>
                 </p>
-                <p class="mt-1 text-[12px] text-ink-4">提交于 {{ fullTime(item.create_time) }}</p>
+                <p class="mt-1 text-xs text-ink-4">提交于 {{ fullTime(item.create_time) }}</p>
               </div>
 
               <div class="flex shrink-0 items-center gap-2">
@@ -214,22 +214,22 @@ onMounted(load)
               </div>
             </div>
 
-            <div v-if="item.note" class="mt-3 border-l-2 pl-3 text-[13px] leading-6" style="border-color: var(--border)">
-              <div class="tech-label mb-1 text-ink-4">申请人说明</div>
+            <div v-if="item.note" class="mt-3 border-l-2 pl-3 text-sm leading-6" style="border-color: var(--border)">
+              <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">申请人说明</div>
               <p class="whitespace-pre-wrap break-words">{{ item.note }}</p>
             </div>
 
             <div
               v-if="item.review_note"
-              class="mt-3 rounded-[10px] px-3 py-2 text-[13px] leading-6"
+              class="mt-3 rounded-[10px] px-3 py-2 text-sm leading-6"
               :style="{
                 backgroundColor: STATUS_META[item.status].bg,
                 color: STATUS_META[item.status].color,
               }"
             >
-              <span class="tech-label">处理备注</span>
+              <span class="tech-label tech-label--cn text-xs">处理备注</span>
               <p class="mt-1 whitespace-pre-wrap break-words">{{ item.review_note }}</p>
-              <p v-if="item.review_time" class="mt-1 text-[11px] opacity-80">
+              <p v-if="item.review_time" class="mt-1 text-2xs opacity-80">
                 {{ fullTime(item.review_time) }}
               </p>
             </div>
@@ -247,7 +247,7 @@ onMounted(load)
       :mask-closable="false"
     >
       <template v-if="dialog.target">
-        <p class="mb-3 text-[13px] leading-6 text-ink-3">
+        <p class="mb-3 text-sm leading-6 text-ink-3">
           <span class="font-heading font-bold text-ink">{{ dialog.target.real_name }}</span>
           <span class="mx-1.5 font-mono">{{ dialog.target.student_id }}</span>
           ·
