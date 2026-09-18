@@ -117,7 +117,7 @@ const toCss = (c) =>
  * @param decls    当前主题的声明
  * @param fallback 另一主题的声明。tokens.css 里有少数令牌（--veil-grid /
  *                 --veil-hairline / --veil-accent-tint）刻意只在浅色块声明一次、
- *                 两主题共用，因为它们脚下永远是暗幕布。这里允许回落到另一主题，
+ *                 两主题共用，因为它们脚下永远是暗面板。这里允许回落到另一主题，
  *                 但会把回落过的名字记进 shared，最后提示出来 ——
  *                 「缺失就悄悄用对面的值」正是本项目最怕的那类静默错位。
  */
@@ -269,15 +269,15 @@ const CHECKS = [
   ['paper-muted', 'paper', 4.5, 'must', '公告发布人行'],
   ['paper-accent', 'paper', 3, 'must', '公告条上的小图标（图形，3:1）'],
 
-  // —— 换场覆盖层（脚下永远是暗幕布，所以按暗底检查）——
-  ['veil-ink-code', 'veil-mat', 4.5, 'must', '场记读数里的青色代号'],
-  ['primary', 'veil-mat', 4.5, 'must', '套准线与场记读数（这里刻意用 primary 而非 accent-text）'],
+  // —— 换场覆盖层（脚下永远是暗面板，所以按暗底检查）——
+  ['veil-ink-code', 'veil-mat', 4.5, 'must', '中心读数里的英文引导行与页名代号'],
+  ['primary', 'veil-mat', 4.5, 'must', '中心读数的页名与三角阵列（这里刻意用 primary 而非 accent-text）'],
   [
     'veil-accent-tint',
     'veil-mat',
     1.2,
     'known',
-    '套准线的发光与读数分隔线，纯装饰、不承载信息，只要求「看得见」。',
+    '面板前缘扫描边的光晕，纯装饰、不承载信息，只要求「看得见」。',
   ],
 
   // —— 非文本分隔 ——
@@ -401,7 +401,7 @@ if (sharedAcrossThemes.size) {
   console.log(
     `\n跨主题共用（只在浅色块声明、深色回落到它）：${[...sharedAcrossThemes].sort().join(', ')}`,
   )
-  console.log('  这几支脚下永远是暗幕布，所以刻意不跟随主题 —— 是本文件的既定写法，不是漏写。')
+  console.log('  这几支脚下永远是暗面板，所以刻意不跟随主题 —— 是本文件的既定写法，不是漏写。')
 }
 
 if (failures > 0) {

@@ -27,7 +27,7 @@ const props = withDefaults(
     transitionKey: string
     /** 不传就是布局内子页档 */
     profile?: VeilProfile
-    /** 外壳档的场记代号与页名，见 App.vue；子页档留空则自动取 route.path / meta.title */
+    /** 外壳档的代号与页名，见 App.vue；子页档留空则自动取 meta.code / meta.title */
     veilCode?: string
     veilTitle?: string
   }>(),
@@ -39,16 +39,18 @@ const veil = useRouteVeil()
 
 /** 这一次换场的编号。三个钩子都是异步到场的（after-leave 在离场结束时、
  *  after-enter 在入场结束时），必须带着编号回去认领 —— 否则连点导航时，
- *  上一次的 after-enter 会把新一次换场提前收掉，幕布在半开位置被切掉。 */
+ *  上一次的 after-enter 会把新一次换场提前收掉，面板在半路被切掉。 */
 let runId = 0
 /** 本实例是不是正拥有一次在飞的换场。用来判断「这次 props 变化该不该改写场记读数」。 */
 let inFlight = false
 
-/** 目标页名。before-leave 那一刻 vue-router 已经提交了新路由（路由先落、组件后换），
- *  所以 route 上读到的是**要去哪**，不是从哪来。 */
+/** 目标页。before-leave 那一刻 vue-router 已经提交了新路由（路由先落、组件后换），
+ *  所以 route 上读到的是**要去哪**，不是从哪来。
+ *  代号取路由表里的 meta.code（01–07），不拿 route.path：读数是给人看的编号，
+ *  而 route.path 是一串以斜杠开头的英文路径 —— 那是调试信息。 */
 function currentTarget(): VeilTarget {
   return {
-    code: props.veilCode ?? route.path,
+    code: props.veilCode ?? `SECTOR ${(route.meta.code as string | undefined) ?? '--'}`,
     title: props.veilTitle ?? (route.meta.title as string | undefined) ?? props.transitionKey,
   }
 }

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-/** 换场覆盖层：一块**斜切擦除面板**单向穿过整屏，前缘带一条扫描边；
- *  面板盖住的那一帧闪一次套准线，外壳档再从面板上浮出一行场记读数，然后同向滑走。
+/** 换场覆盖层：一块**斜切面板**单向穿过整屏，前缘带一条扫描边；面板下面垫着一层黄，
+ *  盖住之后在屏幕正中报出"转到哪去"，然后同向滑走。
  *
  *  「单向穿过」是这个方案的关键：出相位从左侧外滑到正好盖住（那一帧就是 DOM 换手帧），
  *  入相位不停留、沿同一方向继续滑出右侧。所以全屏被遮死的窗口只有换手那一帧，
- *  而不是旧版两扇幕布咬合方案里的 480/600ms。
+ *  而不是更早那版两扇幕布咬合方案里的 480/600ms。
  *
  *  全站只有一个实例，挂在 App.vue 里 <RouterView> 的兄弟位置，并 Teleport 到 body。
  *  三个约束共同决定了它必须在这儿，一个都不能松：
@@ -31,6 +31,10 @@ import { useRouteVeil } from '@/composables/route-veil'
 
 // 解构出来是顶层 ref，模板里自动解包；readonly 的那几个只读不写。
 const { phase, profile, target, reentrant } = useRouteVeil()
+
+/** 三角阵列的八个格子：两行 × 四列，**第七格刻意空着**（理由见 base.css 的 .route-veil__tri）。
+ *  写成数据而不是复制八份 <i>：错峰要用的序号也在同一个循环里给。 */
+const TRI_CELLS = [true, true, true, true, true, true, false, true]
 </script>
 
 <template>
@@ -42,17 +46,27 @@ const { phase, profile, target, reentrant } = useRouteVeil()
       :data-run="reentrant ? 're' : 'first'"
       aria-hidden="true"
     >
-      <!-- 擦除面板。前缘那 3px（1px 发丝线 + 2px 亮线 + 光晕）挂在它的 ::before 上、
-           跟着面板一起走 —— 重绘面积只有那条窄边，而不是「一条线横扫全屏」。 -->
+      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在黑层下面。
+           整个行程比黑层多走一个 --motion-route-wipe-lead，于是两个相位里都能从
+           黑层的边下露出一条黄边。 -->
+      <span class="route-veil__wipe-under" />
+      <!-- 黑层。前缘那条 3px 扫描边挂在它的 ::before 上、跟着一起走。 -->
       <span class="route-veil__wipe" />
-      <!-- 套准线：全程唯一一次"快"，也是唯一一处发光。 -->
-      <span class="route-veil__rule" />
-      <!-- 场记读数：等宽大写的目标页名，换场里唯一的文字。
-           **只在外壳档显示**（子页档是高频导航，没有演出）—— 见 base.css 的 data-profile 规则。 -->
+      <!-- 中心读数：整场唯一的文字。三层 —— 英文引导行、页名 + 代号、三角阵列。 -->
       <span class="route-veil__hud">
-        <span class="tech-label tnum route-veil__hud-code">{{ target.code }}</span>
-        <i class="route-veil__hud-sep" />
-        <span class="tech-label route-veil__hud-title">{{ target.title }}</span>
+        <span class="route-veil__hud-lead">TRANSITION TO</span>
+        <span class="route-veil__hud-line">
+          <span class="route-veil__hud-title">{{ target.title }}</span>
+          <span v-if="target.code" class="route-veil__hud-code">{{ target.code }}</span>
+        </span>
+        <span class="route-veil__tri">
+          <i
+            v-for="(on, i) in TRI_CELLS"
+            :key="i"
+            :class="{ 'is-blank': !on }"
+            :style="{ '--tri-i': i }"
+          />
+        </span>
       </span>
     </div>
   </Teleport>

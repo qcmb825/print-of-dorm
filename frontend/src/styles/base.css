@@ -914,15 +914,16 @@
   }
 
   /* ══ 转场回执条 ═════════════════════════════════════════════════
-   * **每一次转场都出一条**，说清"刚才发生了什么 / 你现在去哪"。两档，动效与权重匹配：
-   *   [data-kind='event']  两层：黄承载带（慢进、殿后）+ 数据带 + 底边排空线，有停留；
-   *   [data-kind='pass']   只有数据带、更薄、不停留：从右进、接着从左边出去。
-   * 为什么分两档：一次 2.4 秒的停留挂在每次点导航上，界面就成了老虎机 ——
-   * 高频动作要的是"一眼看见去哪"，不是"停下来看演出"。
+   * 一条横贯全屏的带子，两层（黄承载带慢进、殿后；数据带后进、先走）+ 底边排空线，
+   * 说清"刚才发生了什么、你现在去哪"。**只给有结果的事件**：登录成功、下单成功、撤回…
    *
-   * 位置与分层：走在垂直中线上、贯穿全宽、z-index 300（换场幕布 100、布局 sticky 顶栏 20、
+   * 普通导航**不再走这里**（2026-09-18 撤掉）：那条高频路径上的"去哪"改由换场覆盖层
+   * 自己在屏幕正中报出来，屏幕中间不必再横着一条带子。
+   * 于是这条带子只在低频、有结果的那一刻出现，"停下来读一会儿"才是对的权重。
+   *
+   * 位置与分层：走在垂直中线上、贯穿全宽、z-index 300（换场面板 100、布局 sticky 顶栏 20、
    * Naive 弹层 2000）。整层 pointer-events: none —— 盖着也点得到下面的一切。
-   * 它活着的时候幕布的场记读数让位（见文件末尾 :root[data-receipt] 那条）。 */
+   * 它活着的时候覆盖层的中心读数让位（见文件末尾 :root[data-receipt] 那条）。 */
   .receipt {
     position: fixed;
     top: 50%;
@@ -939,20 +940,11 @@
     transition: transform var(--motion-dur-band) linear;
   }
 
-  /* pass 档更薄：它承载的信息更轻（只是"去哪"），厚度跟着信息量走。 */
-  .receipt[data-kind='pass'] {
-    height: 40px;
-  }
-
   .receipt__mat {
     position: absolute;
     inset: 0;
     background-color: var(--primary);
     animation: receipt-mat-in var(--motion-dur-band) var(--motion-ease-drawer);
-  }
-
-  .receipt[data-kind='pass'] .receipt__mat {
-    display: none;
   }
 
   .receipt__strip {
@@ -965,7 +957,7 @@
     align-items: center;
     gap: 12px;
     padding: 0 16px;
-    /* 实底而不是半透明：它既会落在暗幕布上、也会落在新页面的浅底上，
+    /* 实底而不是半透明：它既会落在暗面板上、也会落在新页面的浅底上，
        唯一在这两个底上都读得清的，是它自带表面。 */
     background-color: var(--background);
     border-top: 1px solid var(--border);
@@ -974,13 +966,6 @@
        落点上（屏外滑入变成"凭空出现再动一下"）。 */
     animation: receipt-strip-in var(--motion-dur-band) var(--motion-ease-drawer)
       var(--motion-dur-band-lag) backwards;
-  }
-
-  .receipt[data-kind='pass'] .receipt__strip {
-    top: 4px;
-    bottom: 4px;
-    animation-duration: var(--motion-dur-band-out);
-    animation-delay: 0ms;
   }
 
   @keyframes receipt-mat-in {
@@ -1019,14 +1004,14 @@
     gap: 12px;
   }
 
-  /* event 档停下来的那一下：字**闪一下**（一次到位、带一点回弹），模拟电子屏刷新。
+  /* 字**闪一下**（一次到位、带一点回弹），模拟电子屏刷新。
      三条纪律：
      ① **只闪字不闪带** —— 整条带是 56×1430px 的大面积亮度摆动，那是 WCAG 2.3.1
         与光敏性癫痫的地界；字那一块面积小三个数量级，闪一下只是"屏刷新了"的一眼。
      ② **一次性**，不循环：常驻闪烁才是问题，标记一下不是。
      ③ 延迟 = 进场 + 那 90ms 错帧，所以它恰好落在"字刚停稳"那一刻；
         减少动效下由全局兜底把时长压成 0，这一下自动消失（不会变成对光敏用户的闪烁）。 */
-  .receipt[data-kind='event'] .receipt__ink {
+  .receipt__ink {
     /* **step-end**：这一步是关键。linear 会把每个档位之间插值成渐变 ——
        实测透明度的取值是一串 0.95/0.77/0.58/0.39/0.2…，看起来像"慢慢暗下去"，
        那是淡入淡出，不是闪。数字屏的明灭是**硬切**：只有那几个档位值，中间什么都没有。 */
@@ -1112,8 +1097,8 @@
     }
   }
 
-  /* 回执占着中线的那几秒里，**幕布的场记读数让位**。
-     两条读数说的是同一件事（都报目标页），挤在同一条中线上只是噪音。 */
+  /* 回执占着中线的那几秒里，**覆盖层的中心读数让位**。
+     两条读数说的是同一件事（都报目标页），挤在同一个位置只是噪音。 */
   :root[data-receipt] .route-veil__hud {
     display: none;
   }
@@ -1217,11 +1202,11 @@
        读者反馈"网格线影响到内容阅读了"，所以它现在降到 3%/5.5%，并且密排数据另有实底。 */
   }
 
-  /* 入场：等 --veil-hold 那么久（那一段正是幕布闭死的休止符，也是 DOM 换手发生的时刻），
-     再和幕布退开同刻起步、同时长收尾。
-     这个 transition-delay 是整个方案里唯一一处「内容与幕布对齐」的机关 ——
+  /* 入场：等 --veil-hold 那么久（那一段正是面板盖死的休止符，也是 DOM 换手发生的时刻），
+     再和面板滑开同刻起步、同时长收尾。
+     这个 transition-delay 是整个方案里唯一一处「内容与覆盖层对齐」的机关 ——
      Vue 的 getTransitionInfo/getTimeout 算的是 max(duration + delay)，
-     delay 会被计入，所以 @after-enter 恰好落在幕布退到屏外的那一帧，
+     delay 会被计入，所以 @after-enter 恰好落在面板滑到屏外的那一帧，
      状态机可以放心用它收尾，不需要任何 JS 计时器去猜时长。 */
   .route-enter-active {
     transition: opacity var(--veil-part) var(--motion-ease-out) var(--veil-hold);
@@ -1231,8 +1216,8 @@
     opacity: 0;
   }
 
-  /* 离场：用 --motion-ease-in-out。这不是机械动作（机器动作是幕布，它走 ease-out），
-     而是幕布压上来之前内容自己先淡掉的那一段，慢起慢收正好。 */
+  /* 离场：用 --motion-ease-in-out。这不是机械动作（机器动作是面板，它走 ease-out），
+     而是面板压上来之前内容自己先淡掉的那一段，慢起慢收正好。 */
   .route-leave-active {
     transition: opacity var(--veil-leave) var(--motion-ease-in-out);
   }
@@ -1279,7 +1264,7 @@
    * 1. 每一层都用 position:absolute，只有根元素是 fixed。根挂在 body 下本来就没有会
    *    改变包含块的祖先，保持这条纪律是为了防止日后有人图省事把 <RouteVeil /> 挪回
    *    #app 里 —— 那一刻它会开始受 .route-stage 的层叠与 Naive provider 的影响。
-   * 2. 两扇幕布的闭合位置必须与内容层的 leave 时长严格同刻（见 tokens.css 里的恒等式）。
+   * 2. 面板盖住的那一帧必须与内容层的 leave 时长严格同刻（见 tokens.css 里的恒等式）。
    * 3. 整层 pointer-events: none，从不吃点击。改成 auto 就等于换场时锁死整个界面，
    *    任何一条异常路径回不到 idle 都会让整屏点不动。
    * ================================================================ */
@@ -1289,12 +1274,12 @@
     left: 0;
     right: 0;
     /* 用 dvh 明确定高，而不是靠 inset:0 —— inset:0 跟的是 layout viewport，
-       移动端地址栏收放时整层中线会偏离视觉中心，而套准线正落在中线上。
+       移动端地址栏收放时整层中线会偏离视觉中心，而中心读数正落在中线上。
        写了 height 之后 bottom:0 成为过约束被忽略，这正是要的结果。 */
     height: 100dvh;
     z-index: 100; /* (布局 chrome 的 20, Naive 弹层最低的 2000) */
     pointer-events: none;
-    /* 静默期不绘制。不能用 display:none —— 那会让幕布的过渡彻底不跑
+    /* 静默期不绘制。不能用 display:none —— 那会让面板的过渡彻底不跑
        （元素根本没被渲染，过渡无从开始）；visibility 是离散属性，
        隐藏的元素仍然参与过渡，只是不画。 */
     visibility: hidden;
@@ -1306,28 +1291,24 @@
     visibility: visible;
   }
 
-  /* 擦除面板：一块斜切面板**单向穿过整屏**。
+  /* 擦除面板：一块斜切面板**单向穿过整屏**，两层。
    *
    * 出相位：从屏幕左侧外滑到「正好完全盖住」；那一帧就是 DOM 换手帧（= @after-leave）。
    * 入相位：不停留，沿**同一方向**继续滑出右侧，把新页让出来。
-   * 于是「全屏被遮死」的窗口只有换手那一帧，而不是原来那 480/600ms。
+   * 于是「全屏被遮死」的窗口只有换手那一帧，而不是更早那版两扇幕布咬合方案的 480/600ms。
    *
    * 宽度取 118%、左移 9%：斜切角会让面板上下缘各偏出约 height·tan(4°)，
    * 不留这个余量，「完全盖住」那一帧会在上下角露出缝隙。
    *
    * 材质与 .route-stage 同尺度（48px 网格），换场时网格是"跟着面板一起走"而不是
    * 被抹平成一块纯色。**不要**换成 .grid-lines —— 那是 32px，两套尺度会打架。 */
-  .route-veil__wipe {
+  .route-veil__wipe,
+  .route-veil__wipe-under {
     position: absolute;
     top: 0;
     bottom: 0;
     left: -9%;
     width: 118%;
-    background-color: var(--veil-mat);
-    background-image:
-      linear-gradient(var(--veil-grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
-    background-size: 48px 48px;
     transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
     /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
@@ -1335,10 +1316,26 @@
     transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
   }
 
-  /* 面板前缘的扫描边：1px 发丝线 + 2px 亮线 + 光晕。
-   * 它挂在面板上、跟着一起走，所以重绘面积只有那条窄边（全屏的百分之几），
-   * 而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘 —— 后者当年被删掉的原因
-   * 正是 560ms 扫过全宽约 9000px/s，观感是闪一下而不是扫一遍。
+  .route-veil__wipe {
+    background-color: var(--veil-mat);
+    background-image:
+      linear-gradient(var(--veil-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  /* 黄层。**必须在黑层之前出现在 DOM 里**（同一层叠层下 DOM 顺序就是绘制顺序）。
+     它整个行程都比黑层多走一个 --motion-route-wipe-lead，于是两个相位里都能从黑层的
+     边下露出一条黄边：出相位它领先（黑层的边还没扫到，它先铺过去了）、入相位它殿后
+     （黑层让开一条，它还在下面）—— 与回执条「黄带先进后出」是同一条规矩。
+     不画网格：黄层是黑层的衬边，铺满网格会让那条几像素的边看着发脏。 */
+  .route-veil__wipe-under {
+    background-color: var(--primary);
+  }
+
+  /* 面板前缘的扫描边：1px 发丝线 + 1px 青线 + 1px 白核心 + 光晕。
+   * 它挂在黑层自己**朝行进方向的那条边**上、跟着一起走，所以重绘面积只有那条窄边
+   * （全屏的百分之几），而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘。
    *
    * 亮度走 --scan-line（浅色主题取 --status-printing，深色是 #67e8f9），
    * 它在暗面板上是看得见的；光晕用不跟随主题的 --veil-accent-tint。 */
@@ -1366,11 +1363,16 @@
     transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 重入：上一次换场还没走完就又点了一次导航，幕布多半已经在半开位置了，
+  .route-veil[data-phase='out'] .route-veil__wipe-under {
+    transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
+  }
+
+  /* 重入：上一次换场还没走完就又点了一次导航，面板多半已经在半路上了，
      再等 --veil-latch 那一段空拍就是一次肉眼看得见的卡顿。
      空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
      闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe,
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under {
     transition-delay: 0ms;
   }
 
@@ -1379,134 +1381,143 @@
      沿同方向滑出去」完全由 CSS 排出来，不依赖任何 JS 计时器。
      停在盖住位的这一段就是休止符，也是 DOM 换手真正发生的地方。
    *
-   * 与旧版一处关键差别：这里**必须显式写落点**（+100%）。旧版两扇幕布的落点写在
-   * --top/--bottom 基类里，靠"in 相位下不匹配 out 规则就落回基类"生效；现在基类的
-   * 落点是 -100%（屏外左侧），而入场要去屏外右侧，所以得写出来。 */
-  .route-veil[data-phase='in'] .route-veil__wipe {
-    transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
+   * 落点必须**显式写出来**：基类的落点是 −100%（屏外左侧），而入场要去屏外右侧。
+   * 黄层的落点同样把那个 lead 减掉，否则它收尾时会留一条 3% 宽的黄边贴在屏幕右边，
+   * 直到 settle() 把整层切掉才消失。 */
+  .route-veil[data-phase='in'] .route-veil__wipe,
+  .route-veil[data-phase='in'] .route-veil__wipe-under {
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
   }
 
-  /* 套准线：全程唯一一次「快」，也是唯一一处发光。
-     配方直接抄 .login-card::after —— transparent → --primary → --secondary → transparent，
-     那是站点自己的冷暖双色语汇，不新造霓虹色。
-     它只做一次 scaleX 展开：不做位移，峰值那一帧屏幕上就这一件事在动。 */
-  .route-veil__rule {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 2px;
-    margin-top: -1px;
-    /* **这一处刻意用 --primary 而不是 --accent-text。**
-       判定依据是「承载背景是不是暗的」，不是「它是不是一条线」：
-       套准线铺在幕布上，而幕布在深浅两个主题下都是暗底（浅色是 90% 前景色混页底、
-       深色是 --deep-void），荧光黄在那个底上清晰可见；反过来 --accent-text 在浅色主题
-       是深黄 #756a00，铺到暗幕布上才看不见。 */
-    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
-    /* 发光也不能用 --accent-tint-border：那一支跟着主题走，浅色下是深黄，在暗幕布上会糊成脏斑。
-       --veil-accent-tint 是刻意不跟随主题的一支，见 tokens.css。 */
-    box-shadow: 0 0 12px 0 var(--veil-accent-tint);
-    opacity: 0;
-    transform: scaleX(var(--motion-route-cut));
-    transform-origin: center;
+  .route-veil[data-phase='in'] .route-veil__wipe {
+    transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  .route-veil[data-phase='in'] .route-veil__rule {
-    animation: veil-rule-strike var(--motion-dur-route-rule) var(--motion-ease-out) both;
+  .route-veil[data-phase='in'] .route-veil__wipe-under {
+    transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
+      skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 场记读数：等宽大写的目标页名，换场里唯一的文字。
-     排版直接用既有的 .tech-label + .tnum，不新增字体样式。
-     它是信息不是装饰，所以整场只有这一处文字，也没有第二块浮出的面板。 */
+  /* 中心读数：整场唯一的文字，落在屏幕正中，由三层组成 ——
+     英文引导行 → 页名 + 代号 → 黄三角阵列。
+     **两档都出**（曾经只挂外壳档、子页档整段不可见）：普通切屏现在就是靠它说"你去哪"，
+     所以屏幕上不再另出那条横贯全屏的回执条了。
+     读数正坐在屏幕中心，也是那条 2px 套准线（横穿全宽、走 50%）被删掉的原因 ——
+     它一定会从字中间穿过去。 */
   .route-veil__hud {
     position: absolute;
     inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    /* **读数让开正中那条轴。** 套准线走 50%（那是换手的轴线），而读数原来也挂在 50% 上，
-       2px 亮线正好从字中间穿过去 —— 实测抓帧看得很清楚，是"图形压在文字上"的老毛病。
-       容器是 flex + align-items:center，所以给 padding-top 会让内容在**剩下**的高度里居中，
-       净效果就是整体下移 padding/2 = 26px：套准线在字上方，两者构成"一条基线 + 一行读数"。
-       （不能用 transform 移：容器上挂着 veil-hud-pass 的 translateY 动画，会互相顶掉。） */
-    padding: 52px 24px 0;
+    gap: 12px;
+    padding: 0 24px;
     overflow: hidden;
-    white-space: nowrap;
-    /* 同套准线：读数是打在暗幕布上的「场记板」，用 --primary（荧光黄）而不是 --accent-text。
-       它在两个主题下都是浅色字压暗底。 */
-    color: var(--primary);
     opacity: 0;
   }
 
-  /* 两个 span 都带 .tech-label，那是 11px + 字距 .09em 的通用小标签规格。
-     缝里这批字是整场唯一的文字、也是用户唯一要读的东西，按通用规格走偏小；
-     中文页名再叠上 .09em 也太挤。这里覆盖成"场记板"的读法：中文 15px + .18em。 */
+  /* 英文引导行。它读起来要是一块"标签"而不是一个词，所以字距拉到 .34em；
+     字距会在最后一个字后面留一份空白、整行看着偏左，补等量负边距拉回中线。
+     颜色走 --veil-ink-code 而不是 --secondary：面板在两个主题下都是暗底，
+     浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。 */
+  .route-veil__hud-lead {
+    font-family: var(--stack-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.34em;
+    margin-right: -0.34em;
+    color: var(--veil-ink-code);
+  }
+
+  /* 页名与代号同排、按基线对齐：页名（中文、标题字、荧光黄）是主角，代号是它的编号。
+     窄屏放不下这一排时让它换行（页名一行、代号一行），而不是砍掉哪一个 ——
+     两个都是信息，挤着读不出来的才该砍。 */
+  .route-veil__hud-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px 14px;
+  }
+
   .route-veil__hud-title {
-    font-size: 15px;
-    letter-spacing: 0.18em;
-    /* 字距会在最后一个字后面留出一份空白，居中时整行看着偏左；补一个等量负边距拉回中线。 */
-    margin-right: -0.18em;
+    font-family: var(--stack-heading);
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    margin-right: -0.1em;
+    /* 读数是打在暗面板上的「场记板」，用 --primary（荧光黄）而不是 --accent-text：
+       后者在浅色主题是深黄 #756a00，铺到暗面板上读不出来。 */
+    color: var(--primary);
   }
 
   .route-veil__hud-code {
-    /* 走 --veil-ink-code 而不是 --secondary：幕布在两个主题下都是暗底，
-       浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。
-       这里**不补**负边距：它不是整行的最后一个元素（后面还跟着分隔线），
-       字距挂在它尾部只是把它和分隔线的间距撑开一点，不影响整行居中。 */
-    color: var(--veil-ink-code);
+    font-family: var(--stack-mono);
     font-size: 12px;
-    letter-spacing: 0.14em;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--veil-ink-code);
   }
 
-  .route-veil__hud-sep {
-    flex: none;
-    width: 1px;
-    height: 16px;
-    background: var(--veil-accent-tint);
+  /* 三角阵列：两行 × 四格，**第七格刻意空着**。
+     排满八格是一块图案；空一格才读得出"这是数据阵列里没点亮的那一格"，
+     而不是一条装饰花边 —— 空的那一格是这组三角里唯一有信息的一格。
+     几何用 clip-path 画、不用「◣」这个字形：那个码位的形状与基线随平台字体变，阵列会歪；
+     clip-path 在任何 DPR 下都是同一个下左三角。 */
+  .route-veil__tri {
+    display: grid;
+    grid-template-columns: repeat(4, 9px);
+    gap: 5px;
   }
 
-  /* **读数只挂外壳档。** 子页档的 --veil-hold 是 0，读数动画时长也就为 0、整段不可见；
-     与其留一个"算出来是 0"的动画，不如显式关掉 —— 高频导航本来就不该有演出。 */
-  .route-veil[data-profile='inline'] .route-veil__hud {
-    display: none;
+  .route-veil__tri > i {
+    width: 9px;
+    height: 9px;
+    background-color: var(--primary);
+    clip-path: polygon(0 100%, 0 0, 100% 100%);
+    opacity: 0;
   }
 
+  .route-veil__tri > i.is-blank {
+    background-color: transparent;
+  }
+
+  /* 时长就是**停留**这一段，不含开幕 —— 读数活在「面板盖死」的窗口里，
+     关键帧在 100% 处收到 opacity: 0，所以开幕一动它已经退干净了；
+     否则那几个字会浮在被揭开的新页面上方，成了压在内容上的浮层。
+     这条 var() 必须写在**使用处**：自定义属性里的 var() 是在声明它的那个元素上完成
+     代换的，写成 :root 上的 --veil-hud 令牌就会被算一次再继承，外壳档会拿到子页档
+     的时长 —— 不报错，只是两种档位的时间轴静默对不上。 */
   .route-veil[data-phase='in'] .route-veil__hud {
-    /* 时长就是**停留**这一段，不含开幕 —— 读数活在「幕布闭死」的窗口里，
-       关键帧在 100% 处收到 opacity: 0，所以开幕一动它已经退干净了；
-       否则那几个字会浮在被揭开的新页面上方，成了压在内容上的浮层。
-       这条 calc 必须写在**使用处**：自定义属性里的 var() 是在声明它的那个元素上完成
-       代换的，写成 :root 上的 --veil-hud 令牌就会被算一次再继承，外壳档会拿到子页档
-       的时长 —— 不报错，只是两种档位的时间轴静默对不上。 */
     animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
   }
 
-  /* 窄屏：一行放不下三段（代号 + 分隔线 + 中文页名），所以砍掉代号只留中文页名。
-     挤着读不出来的东西就是「用装饰冒充信息」。 */
+  /* 三角逐格点亮：一格约 2.5% 停留的错峰（整列约 17%，两档都落在 100ms 上下）。
+     一次性、不循环 —— 常驻闪烁才是 WCAG 2.3.1 的地界，而"点亮"这件事只需要发生一次。
+     延迟写成停留的比例而不是绝对毫秒：两档的停留长度不同，按比例切，点的节奏才一样。 */
+  .route-veil[data-phase='in'] .route-veil__tri > i {
+    animation: veil-tri-in 140ms var(--motion-ease-out) both;
+    animation-delay: calc(var(--veil-hold) * 0.025 * var(--tri-i));
+  }
+
+  /* 窄屏：页名收一档。它是这一层存在的理由，不能砍；代号掉到第二行。 */
   @media (max-width: 640px) {
     .route-veil__hud {
-      padding: 52px 16px 0;
+      padding: 0 16px;
     }
-    /* 窄屏只留中文页名，字号跟着缝一起收一档（缝的下限是 32px，13px 行高放得下）。
-       不能再小了 —— 它是这道缝存在的理由。 */
     .route-veil__hud-title {
-      font-size: 13px;
-      letter-spacing: 0.14em;
-      margin-right: -0.14em;
-    }
-    .route-veil__hud-code,
-    .route-veil__hud-sep {
-      display: none;
+      font-size: 18px;
+      letter-spacing: 0.08em;
+      margin-right: -0.08em;
     }
   }
 
   /* 触屏：发光半径收一档。390px 宽的屏上 12px 的柔和光晕会糊成一片，
-     8px 才看得出「是一条线在发光」而不是「屏幕上有一团黄」。 */
+     8px 才看得出「是一条边在发光」而不是「屏幕上有一团黄」。 */
   @media (hover: none) {
-    .route-veil__rule {
+    .route-veil__wipe::before {
       box-shadow: 0 0 8px 0 var(--veil-accent-tint);
     }
   }
@@ -1514,7 +1525,7 @@
 
 /* ══ 切页时装饰元素动起来 ══════════════════════════════════════════
  * 换场相位被镜像到 <html> 的 data-veil-phase 上（见 composables/route-veil.ts），
- * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块擦除面板在动。
+ * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块斜切面板在动。
  *
  * **不写 fill 模式**：动画结束后 transform 要回到视差那条规则算出来的值，
  * 用 forwards/both 会把视差的位移冻在动画的终值上。
@@ -1617,50 +1628,32 @@
   }
 }
 
-/* 套准线那一闪：35ms 内铺满全宽，亮着停约 50ms，再用 75ms 收掉。
-   ease-out 的整段缓动 + 这条百分比切分，观感是「闪」而不是「扫」——
-   扫是 73e18de 那版的做法（560ms 扫全宽 = 9000px/s），快慢感受完全两样。 */
-@keyframes veil-rule-strike {
-  0% {
+/* 三角阵列逐格点亮。只有两级（灭 → 亮）、中间不插值：阵列是**状态显示**，
+   不是渐显的装饰。每格的错峰由使用处的 animation-delay 给。 */
+@keyframes veil-tri-in {
+  from {
     opacity: 0;
-    transform: scaleX(var(--motion-route-cut));
   }
-  22% {
+  to {
     opacity: 1;
-    transform: scaleX(1);
-  }
-  55% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scaleX(1);
   }
 }
 
-/* 场记读数：整场唯一的文字，只在「幕布闭死」那一段里浮出、停住、退干净。
+/* 中心读数：整场唯一的文字，只在「面板盖死」那一段里浮出、停住、退干净。
  * 动画时长 = --veil-hold，所以这里的百分比是**停留这一段内部**的切分，与开幕时长无关
  * —— 百分比表对两档自动都成立，改 tokens 里的两档停留时长不需要回来动这里。
  *
- * 满不透明窗口 = 11% → 80%，占整段停留的 69%：
- *   外壳（停留 600ms）约 66ms 淡入，之后 414ms 全亮，最后 120ms 退掉；
- *   子页（停留 480ms）约 53ms 淡入，之后 331ms 全亮。
- * 400ms 上下是「四到六个汉字扫一眼能读出来」的底线，比这更短就会出现用户说的
- * 「来不及看清」。上一版这里是 30%→55% 退场、且时长按 停留:开幕 比例摊开，
- * 满亮窗口只有约 170ms。
+ * 满亮窗口 = 8% → 88%，占整段停留的 80%：中文字的停留长度由阅读决定，
+ * 要的是"绝大部分时间都在满亮"，而不是把停留均分给进场和退场。
+ * 退场比入场短是有意的：退场只需要"消失得干净"，不需要被读。
  *
- * 收尾必须落在 100% 而不是更早：100% 正好是开幕起步那一帧，读数与幕布同时让位，
+ * 收尾必须落在 100% 而不是更早：100% 正好是开幕起步那一帧，读数与面板同时让位，
  * 中间不留一段"只剩字浮在黑场上"的空转。 */
 @keyframes veil-hud-pass {
   0% {
     opacity: 0;
     transform: translateY(8px);
   }
-  /* 满亮窗口 = 8% → 88%，占整段停留的 80%。
-     外壳档停留 360ms 时，这一段是 29ms 淡入 + 288ms 全亮 + 43ms 退场 ——
-     288ms 是"看清四个到六个汉字"的下限（400ms 更从容，但那要把整场拖到 900ms 以上）。
-     退场比入场短是有意的：退场只需要"消失得干净"，不需要被读。 */
   8% {
     opacity: 1;
     transform: translateY(0);
@@ -1740,19 +1733,19 @@
  *   层内 !important 反而会赢过层外 !important，比这里更容易被后人改错。）
  *
  * 降级目标：不是硬切，是「把位移全部去掉、只留一次缓慢的明暗」。
- * 内容仍然交叉淡入淡出，场记读数仍然报出目标页名 —— 只是屏幕上没有东西在移动。
- * 光靠上面那条全局兜底会得到最糟的结果：幕布从「合上」瞬间跳到「打开」，
+ * 内容仍然交叉淡入淡出，中心读数仍然报出目标页名 —— 只是屏幕上没有东西在移动。
+ * 光靠上面那条全局兜底会得到最糟的结果：覆盖层从「盖住」瞬间跳到「揭开」，
  * 等于两帧全屏闪，比不做动画还难看。
  */
 @media (prefers-reduced-motion: reduce) {
   /* 位移与扫掠类动作**整层撤掉**，不是变慢。
-     一块横扫全屏的暗面板同时踩两类风险：它是「大面积 pan」（前庭触发器），
+     一块横扫全屏的暗面板同时踩两类风险：它是「大面积平移」（前庭触发器），
      又是一次全屏亮度反转（闪阈）。对这类元素，减少动效的正确降级是让它不存在，
      而不是把同样的动作放慢 —— 放宽慢的一秒比没有过渡更难接受。
      display:none 在这里安全：这些层本来就不该动，覆盖层里唯一需要保留的信息（读数）
      挂在 .route-veil__hud 上。 */
   .route-veil__wipe,
-  .route-veil__rule {
+  .route-veil__wipe-under {
     display: none !important;
   }
 
@@ -1772,16 +1765,22 @@
     opacity: 0 !important;
   }
 
-  /* 读数不参与扫掠：它只是跟着整层的明暗一起出现和消失。 */
+  /* 读数不参与扫掠：它只是跟着整层的明暗一起出现和消失。
+     三角阵列的逐格点亮也一并取消 —— 它是动效的一部分，不是信息。 */
   .route-veil[data-phase='out'] .route-veil__hud,
   .route-veil[data-phase='in'] .route-veil__hud {
     animation: none !important;
     opacity: 1 !important;
   }
 
+  .route-veil__tri > i {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
   /* 内容层：位移去掉，时长换成一档慢的，并且**显式把 delay 归零** ——
      全局兜底只压 duration，transition-delay 原样保留的话，
-     新页会先隐形 --veil-hold 那么久，再和幕布一起闪出来，比不做还糟
+     新页会先隐形 --veil-hold 那么久，再和盖住的那一层一起闪出来，比不做还糟
      （.motion-stagger 那段已经踩过同一个坑）。 */
   .route-enter-active,
   .route-leave-active {

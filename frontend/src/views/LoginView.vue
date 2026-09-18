@@ -179,18 +179,15 @@ async function submitLogin(): Promise<void> {
   try {
     await auth.login(loginForm.identifier.trim(), loginForm.password)
     // 不再用 message.success('登录成功')：通用的吐司是"操作成功"的形状，
-    // 而这一下是**身份被接收**——换成一张会跨换场留下来的回执（components/AuthBanner.vue）。
-    // 目标页名从路由表取，和守卫算的是同一份事实来源。
+    // 而这一下是**身份被接收**——换成一张会跨换场留下来的回执
+    // （components/TransitionReceipt.vue）。目标页名从路由表取，和守卫算的是同一份事实来源。
     const target = landingPath()
-    showReceipt(
-      {
-        code: 'AUTHORIZATION SUCCESS',
-        title: '认证成功',
-        detail: `${auth.user?.nickname ?? '已登录'}（${auth.user ? ROLE_LABELS[auth.user.role] : '用户'}）`,
-        target: (router.resolve(target).meta.title as string | undefined) ?? '主页',
-      },
-      'event',
-    )
+    showReceipt({
+      code: 'AUTHORIZATION SUCCESS',
+      title: '认证成功',
+      detail: `${auth.user?.nickname ?? '已登录'}（${auth.user ? ROLE_LABELS[auth.user.role] : '用户'}）`,
+      target: (router.resolve(target).meta.title as string | undefined) ?? '主页',
+    })
     await router.replace(target)
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试')
