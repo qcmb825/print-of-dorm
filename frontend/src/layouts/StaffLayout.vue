@@ -14,6 +14,7 @@ import {
 } from '@lucide/vue'
 import { NDrawer, NDrawerContent, useMessage } from 'naive-ui'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
@@ -276,9 +277,26 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="frame-brackets relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
-        <span class="vticks pointer-events-none absolute top-0 bottom-0 left-0" aria-hidden="true" />
-      <span class="watermark pointer-events-none absolute right-0 bottom-2" aria-hidden="true">
+      <main class="relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+        <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
+        <span
+          class="frame-brackets pointer-events-none absolute inset-0"
+          data-parallax
+          style="--depth: 5px"
+          aria-hidden="true"
+        />
+        <span
+          class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
+          data-parallax
+          style="--depth: 4px"
+          aria-hidden="true"
+        />
+      <span
+        class="watermark pointer-events-none absolute right-0 bottom-2"
+        data-parallax
+        style="--depth: 22px"
+        aria-hidden="true"
+      >
         {{ route.meta.code }}
       </span>
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
@@ -296,10 +314,16 @@ onMounted(() => {
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
         <span class="readout hidden sm:inline" aria-hidden="true">01 02 03 04 05 06 07 08</span>
       </div>
+      <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
+           放在文档流末尾，所以永远不会压到内容上。 -->
+      <DecorStrip :code="route.meta.code" />
+
       <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
            它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
       <span
         class="cut pointer-events-none absolute bottom-6 left-1.5 h-3.5 w-10 bg-[var(--accent-tint)]"
+        data-parallax
+        style="--depth: 16px"
         aria-hidden="true"
       />
     </main>

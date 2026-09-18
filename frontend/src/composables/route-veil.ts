@@ -14,7 +14,7 @@
  *  也正因为这里不依赖任何时长，全局那条 `transition-duration: 0.001ms !important`
  *  兜底不会把状态机压坏 —— 时长被压短只是让钩子更早回来，状态流转照旧。
  */
-import { readonly, ref } from 'vue'
+import { readonly, ref, watch } from 'vue'
 
 export type VeilPhase = 'idle' | 'out' | 'in'
 
@@ -54,6 +54,15 @@ function disarmWatchdog(): void {
     clearTimeout(watchdog)
     watchdog = null
   }
+}
+
+// 把换场相位镜像到 <html> 的 data-veil-phase 上。
+// 装饰元素（刻度尺、水印、斜切块）用它挂"切页时动起来"的动效 —— 换场覆盖层那三个
+// data-* 挂在 body 上的 .route-veil 上，装饰元素在内容树里，够不到它，只能借 html 传。
+if (typeof document !== 'undefined') {
+  watch(phase, (v) => {
+    document.documentElement.dataset.veilPhase = v
+  })
 }
 
 export function useRouteVeil() {

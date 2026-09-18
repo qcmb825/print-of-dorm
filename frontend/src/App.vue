@@ -6,9 +6,13 @@ import AppBridge from '@/components/AppBridge.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import RouteVeil from '@/components/RouteVeil.vue'
 import { useThemeStore } from '@/stores/theme'
+import { usePointerParallax } from '@/composables/motion'
 
 const theme = useThemeStore()
 const route = useRoute()
+
+// 指针视差：减少动效与触屏情况下它什么都不做（见 composables/motion.ts）
+usePointerParallax()
 
 /** 外壳只在登录、学生、管理三种结构互换时切一次，子页面由各自布局处理。
  *  子页导航不改变这个 key，所以外壳那层 Transition 不会被内层导航连带触发。 */
@@ -56,6 +60,14 @@ const shellLabel = computed(() => {
     :date-locale="dateZhCN"
     class="h-full"
   >
+    <!-- 装饰层：固定铺满视口、在内容之下，承载随指针做视差的那几件装饰。
+         **必须放在换场 stage 之外**：stage 在换场时会被 transform，而 transform 会给
+         固定定位的后代换掉包含块，这一层就会跟着内容一起飘。
+         它是 aria-hidden 且 pointer-events: none 的，不参与交互。 -->
+    <div class="decor-layer" aria-hidden="true">
+      <span class="decor-layer__grid" data-parallax style="--depth: 10px" />
+    </div>
+
     <NMessageProvider :max="3" placement="top">
       <NDialogProvider>
         <NLoadingBarProvider>

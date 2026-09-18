@@ -53,7 +53,7 @@ const authorLine = computed(() => {
     leave-active-class="transition duration-[150ms] ease-out"
     leave-to-class="-translate-y-2 opacity-0"
   >
-    <div v-if="store.visible && announcement" class="px-3 pt-3 sm:px-5 sm:pt-4">
+    <div v-if="store.visible && announcement" class="px-3 pt-3 pb-3 sm:px-5 sm:pt-4 sm:pb-4">
       <section
         role="status"
         aria-label="站点公告"

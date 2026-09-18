@@ -247,6 +247,53 @@
    *      不接收指针事件（CSS Masking §5），压在按钮上会让焦点环消失、点不到；
    *   3) 全部用静态 background-image 或伪元素，不动画、不开新层、不加 will-change。 */
 
+  /* ══ 装饰层（App.vue 里的固定层）══════════════════════════════════
+   * 它铺满视口、在内容之下，承载"随指针做视差"的那几件装饰。
+   * 必须放在换场 stage **之外**：stage 在换场时会被 transform，而 transform 会给
+   * 固定定位的后代换掉包含块，这一层就会跟着飘走。 */
+  .decor-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  /* 底纹网格。inset 留出负余量，视差移动后不会露出边缘。 */
+  .decor-layer__grid {
+    position: absolute;
+    inset: -48px;
+    /* 双层：上面两层是 48px 的细线，下面两层是每 5 格一条的重线。
+       细线写在前面（画在上面），两线重合处会叠加 —— 那正好让"每 5 格一条"看起来更重。 */
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(var(--grid-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+    background-size: 48px 48px, 48px 48px, 240px 240px, 240px 240px;
+    background-position: center;
+  }
+
+  /* ── 视差 ────────────────────────────────────────────────────────
+   * **只动 transform**（合成属性）。JS 每帧只写 --px / --py，位移由这里的 calc() 算，
+   * 所以"谁动多少"完全在 CSS 里：各元素给自己的 --depth 即可。
+   * 那条短过渡是刻意的 —— 它把逐帧的指针更新抹平，观感是"跟过来"而不是"黏在指针上"。
+   * 减少动效下由下面的媒体查询整条撤掉（JS 那边也压根不装监听器）。 */
+  [data-parallax] {
+    transform: translate3d(
+      calc(var(--px, 0) * var(--depth, 6px)),
+      calc(var(--py, 0) * var(--depth, 6px)),
+      0
+    );
+    transition: transform 280ms var(--motion-ease-out);
+  }
+
+  /* 密排数据的实底。网格虽然已经降到 3%/5.5%，但表格是唯一"每一行都要逐列对齐"的地方，
+     再淡的线也会分神 —— 给它一块干净的底。 */
+  .data-surface {
+    background-color: var(--background);
+  }
+
   /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
      上的伪元素互不打架，也能直接叠在任何容器上。
      背景图不会接收指针事件，所以这里不需要 pointer-events: none（那会连子元素一起禁掉）。 */
@@ -497,16 +544,10 @@
     min-width: 0;
     min-height: 100%;
     isolation: isolate;
-    /* 双层网格：上面两层是 48px 的细线，下面两层是每 5 格一条的重线。
-       细线写在前面（画在上面），两线重合处会叠加 —— 那正好让"每 5 格一条"看起来更重，
-       不需要为它单独调一个更深的颜色。 */
-    background-image:
-      linear-gradient(var(--grid-line) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(var(--grid-major) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
-    background-size: 48px 48px, 48px 48px, 240px 240px, 240px 240px;
-    background-position: center;
+    /* 网格**不在这里** —— 它搬到了 App.vue 那层固定的 .decor-layer 上。
+       两个原因：① 视差需要一个能独立 transform 的层，而这一层（stage）在换场时会被
+       transform，固定定位的后代包含块会跟着变；② 网格压在所有内容下面，包括密集表格 ——
+       读者反馈"网格线影响到内容阅读了"，所以它现在降到 3%/5.5%，并且密排数据另有实底。 */
   }
 
   /* 入场：等 --veil-hold 那么久（那一段正是幕布闭死的休止符，也是 DOM 换手发生的时刻），
@@ -795,6 +836,57 @@
   }
 }
 
+/* ══ 切页时装饰元素动起来 ══════════════════════════════════════════
+ * 换场相位被镜像到 <html> 的 data-veil-phase 上（见 composables/route-veil.ts），
+ * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块擦除面板在动。
+ *
+ * **不写 fill 模式**：动画结束后 transform 要回到视差那条规则算出来的值，
+ * 用 forwards/both 会把视差的位移冻在动画的终值上。
+ */
+:root[data-veil-phase='out'] .ticks,
+:root[data-veil-phase='out'] .vticks {
+  animation: decor-measure 420ms var(--motion-ease-out);
+}
+
+:root[data-veil-phase='out'] .watermark {
+  animation: decor-drift 520ms var(--motion-ease-out);
+}
+
+:root[data-veil-phase='out'] .cut {
+  animation: decor-nudge 420ms var(--motion-ease-out);
+}
+
+/* 刻度尺"重新量一遍"：刻度纹从左往右扫过来落位。尺子很短（96×5），重绘可以忽略。 */
+@keyframes decor-measure {
+  from {
+    background-position-x: -28px;
+  }
+  to {
+    background-position-x: 0;
+  }
+}
+
+/* 水印：从低处淡着浮上来一点，像刚印上去。 */
+@keyframes decor-drift {
+  from {
+    opacity: 0.25;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 斜切块：先暗一下再亮起来。 */
+@keyframes decor-nudge {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* 只写 from：to 就是元素本来的样式，动画结束后不留残余的 transform。 */
 @keyframes motion-enter {
   from {
@@ -1014,4 +1106,23 @@
 
 .n-popover-arrow {
   box-shadow: none !important;
+}
+
+/* ══ 微动态的收口：减少动效下这些一律不成立 ══════════════════════════
+ * 视差与"切页时装饰动起来"都属于**大面积位移**，是前庭敏感最主要的一类触发器。
+ * JS 那边已经在 prefers-reduced-motion 下压根不装视差监听器，这里是第二道闸：
+ * 即使有别的路径把 --px/--py 写了进来，位移也不会生效。
+ * （必须留在 @layer 之外并加 !important —— Naive 与会话里的其它无层级规则同理。） */
+@media (prefers-reduced-motion: reduce) {
+  [data-parallax] {
+    transform: none !important;
+    transition: none !important;
+  }
+
+  :root[data-veil-phase='out'] .ticks,
+  :root[data-veil-phase='out'] .vticks,
+  :root[data-veil-phase='out'] .watermark,
+  :root[data-veil-phase='out'] .cut {
+    animation: none !important;
+  }
 }

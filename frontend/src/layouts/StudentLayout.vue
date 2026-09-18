@@ -3,6 +3,7 @@
 import { computed, onMounted } from 'vue'
 import { ClipboardList, LayoutDashboard, MessageSquare, TrendingUp, Upload } from '@lucide/vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
+import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
@@ -73,9 +74,26 @@ onMounted(() => {
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
-    <main class="frame-brackets relative mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
-        <span class="vticks pointer-events-none absolute top-0 bottom-0 left-0" aria-hidden="true" />
-      <span class="watermark pointer-events-none absolute right-0 bottom-2" aria-hidden="true">
+    <main class="relative mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
+        <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
+        <span
+          class="frame-brackets pointer-events-none absolute inset-0"
+          data-parallax
+          style="--depth: 5px"
+          aria-hidden="true"
+        />
+        <span
+          class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
+          data-parallax
+          style="--depth: 4px"
+          aria-hidden="true"
+        />
+      <span
+        class="watermark pointer-events-none absolute right-0 bottom-2"
+        data-parallax
+        style="--depth: 22px"
+        aria-hidden="true"
+      >
         {{ route.meta.code }}
       </span>
       <!-- profile="inline"：这一层 stage 只包 <main> 里的页面组件，本站唯一的 fixed
@@ -94,10 +112,16 @@ onMounted(() => {
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
         <span class="readout hidden sm:inline" aria-hidden="true">01 02 03 04 05 06 07 08</span>
       </div>
+      <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
+           放在文档流末尾，所以永远不会压到内容上。 -->
+      <DecorStrip :code="route.meta.code" />
+
       <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
            它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
       <span
         class="cut pointer-events-none absolute bottom-6 left-1.5 h-3.5 w-10 bg-[var(--accent-tint)]"
+        data-parallax
+        style="--depth: 16px"
         aria-hidden="true"
       />
     </main>
