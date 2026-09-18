@@ -250,7 +250,8 @@ onMounted(load)
       </section>
 
       <!-- 历史列表 -->
-      <section>
+      <!-- 分栏线：两块并排时只靠间隙分不出"这是一栏还是两块"，有了这条 1px 线，它们读成一份双栏的文件。 -->
+      <section class="lg:border-l lg:border-[var(--border)] lg:pl-4">
         <h3 class="mb-3 font-heading text-base font-bold">
           历史公告
           <span class="tech-label ml-2 text-ink-4 tech-label--cn text-xs">最近 50 条</span>

@@ -343,7 +343,8 @@ onMounted(load)
       </section>
 
       <!-- ============ 纸张类型 ============ -->
-      <section class="flex min-w-0 flex-col gap-4">
+      <!-- 分栏线：两块并排时只靠间隙分不出"这是一栏还是两块"。 -->
+      <section class="flex min-w-0 flex-col gap-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
         <div class="panel p-4">
           <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
             <component

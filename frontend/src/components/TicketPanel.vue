@@ -192,7 +192,10 @@ onMounted(async () => {
       </div>
 
       <!-- 详情：宽屏常驻 -->
-      <div class="panel hidden min-h-[420px] overflow-hidden lg:block">
+      <!-- 分栏线：左列表右详情，一条 1px 线把"一栏"说清楚。 -->
+      <div
+        class="panel hidden min-h-[420px] overflow-hidden lg:block lg:border-l lg:border-[var(--border)] lg:pl-4"
+      >
         <TicketDetail
           v-if="selected"
           :key="selected.id"

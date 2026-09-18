@@ -178,7 +178,10 @@ onMounted(load)
           <ChartBox :option="trend" :height="248" :empty="!hasTrendData" />
         </section>
 
-        <section class="panel p-4">
+        <!-- 右列。lg 起这条左线是**分栏线**：两块并排时只靠间隙分不出
+             "这是一栏还是两块"。行与行之间会断开 16px（grid 的 gap）——
+             接受这个断口：它是"每行一栏"的读法，而不是一条贯穿全页的竖线。 -->
+        <section class="panel p-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
           <h3 class="mb-1 font-heading text-base font-bold">订单状态分布</h3>
           <p class="tech-label mb-3 text-ink-4 text-2xs">By status</p>
           <ChartBox :option="byStatus" :height="248" :empty="!hasStatusData" />
@@ -190,7 +193,10 @@ onMounted(load)
           <ChartBox :option="splitBar" :height="248" />
         </section>
 
-        <section class="panel p-4">
+        <!-- 右列。lg 起这条左线是**分栏线**：两块并排时只靠间隙分不出
+             "这是一栏还是两块"。行与行之间会断开 16px（grid 的 gap）——
+             接受这个断口：它是"每行一栏"的读法，而不是一条贯穿全页的竖线。 -->
+        <section class="panel p-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
           <h3 class="mb-1 font-heading text-base font-bold">接单排行</h3>
           <p class="tech-label mb-3 text-ink-4 text-2xs">Top 5 claimers</p>
           <ChartBox :option="rank" :height="248" :empty="!hasRankData" empty-text="还没有接单记录" />
