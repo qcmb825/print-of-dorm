@@ -1521,17 +1521,28 @@
     background-color: transparent;
   }
 
-  /* 读数的进出：只在**盖死**那一段里发生 —— 时长就是停留，关键帧在 100% 处已经退干净，
-     所以面板一让开，屏幕上没有东西在往下压。方向与面板一致（进来时从左侧一丁点滑入、
-     出去时向右一丁点滑走），但幅度只有 14px：它是"轻微滑动"，不是又一次横扫。
-     三角阵列与协议号晚 6% 起步，与中心读数错开一帧，读起来是同一块版面在自检。 */
+  /* 读数的进出**与面板的滑动同时**，不再等"盖死"那一拍：
+     出相位它跟着面板一起进来（淡入 + 14px 滑动，方向与面板一致，读起来是"边扫过、字浮出"），
+     入相位它跟着面板一起退走。两段各自挂在所在相位的时长上 —— 进场用 --veil-gate、
+     退场用 --veil-part —— 所以关键帧里的百分比永远是"这一次滑动内部的切分"，
+     改令牌不用回来动这里，也不存在动画与相位各跑一套时钟的错位。
+     三角阵列与协议号各晚 8% 起步：两块错开两帧，是同一块版面在自检，不是排队进场。 */
+  .route-veil[data-phase='out'] .route-veil__read {
+    animation: veil-read-in var(--veil-gate) var(--motion-ease-out) var(--veil-latch) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__corner {
+    animation: veil-read-in var(--veil-gate) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.08) both;
+  }
+
   .route-veil[data-phase='in'] .route-veil__read {
-    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
+    animation: veil-read-out var(--veil-part) var(--motion-ease-out) var(--veil-hold) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__corner {
-    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
-    animation-delay: calc(var(--veil-hold) * 0.06);
+    animation: veil-read-out var(--veil-part) var(--motion-ease-out)
+      calc(var(--veil-hold) + var(--veil-part) * 0.08) both;
   }
 
   /* 窄屏：同比收一档（桌面那套撑到 36px 页名 / 40px 三角，小屏放不下）。
@@ -1690,26 +1701,31 @@
   }
 }
 
-/* 读数的进出：一次轻微滑动 + 淡入淡出。
- * 动画时长 = --veil-hold，所以百分比是**停留这一段内部**的切分，与面板的行程无关 ——
- * 两档的停留长度不同，这张表对两档自动都成立。
- * 满亮窗口 10% → 90%（占停留的 80%）：中文字的停留长度由阅读决定，要的是"绝大部分时间
- * 都在满亮"，而不是把停留均分给进场和退场。退场比入场短是有意的 —— 退场只需要消失得干净。
- * 位移只有 14px 且方向与面板一致（进去时从面板来的那一侧滑入、出去时继续同向滑走），
- * 所以它是"贴上去的一张读数"，不是又一次横扫。 */
-@keyframes veil-hud-pass {
-  0% {
+/* 读数进场。前 14% 是**故意空着的**：面板的斜边从左边扫过来，大约在这一刻掠过屏幕中线，
+ * 字在这之后才浮出，才不会先在还没盖住的右半屏上亮起来（那是"图形压在内容上"）。
+ * 30% 之后就一直是满不透明，正好接上停留那一段。位移只有 14px 且与面板同向：
+ * 它是"贴上去的一张读数"，不是又一次横扫。 */
+@keyframes veil-read-in {
+  0%,
+  14% {
     opacity: 0;
     transform: translate3d(-14px, 0, 0);
   }
-  10% {
+  30%,
+  100% {
     opacity: 1;
     transform: translate3d(0, 0, 0);
   }
-  90% {
+}
+
+/* 读数退场。与面板退场同时开始，14% 内退干净 —— 面板的尾边回到屏幕中线大约就在那一刻，
+ * 再晚就会留下一段"字浮在新页面上"。 */
+@keyframes veil-read-out {
+  0% {
     opacity: 1;
     transform: translate3d(0, 0, 0);
   }
+  14%,
   100% {
     opacity: 0;
     transform: translate3d(14px, 0, 0);
