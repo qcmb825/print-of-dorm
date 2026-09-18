@@ -18,8 +18,9 @@ import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import BlueprintSheet from '@/components/BlueprintSheet.vue'
 import { ApiError } from '@/api/client'
+import { showAuthBanner } from '@/composables/auth-banner'
 import { useClock } from '@/composables/clock'
-import { CONTACT_LABELS, type ContactType } from '@/api/types'
+import { CONTACT_LABELS, ROLE_LABELS, type ContactType } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import {
   CONTACT_HINT,
@@ -177,8 +178,16 @@ async function submitLogin(): Promise<void> {
   submitting.value = true
   try {
     await auth.login(loginForm.identifier.trim(), loginForm.password)
-    message.success('登录成功')
-    await router.replace(landingPath())
+    // 不再用 message.success('登录成功')：通用的吐司是"操作成功"的形状，
+    // 而这一下是**身份被接收**——换成一张会跨换场留下来的回执（components/AuthBanner.vue）。
+    // 目标页名从路由表取，和守卫算的是同一份事实来源。
+    const target = landingPath()
+    showAuthBanner({
+      nickname: auth.user?.nickname ?? '已登录',
+      role: auth.user ? ROLE_LABELS[auth.user.role] : '用户',
+      target: (router.resolve(target).meta.title as string | undefined) ?? '主页',
+    })
+    await router.replace(target)
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试')
   } finally {

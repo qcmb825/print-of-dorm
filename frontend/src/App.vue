@@ -3,6 +3,7 @@ import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider
 import { computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
+import AuthBanner from '@/components/AuthBanner.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import RouteVeil from '@/components/RouteVeil.vue'
 import { useThemeStore } from '@/stores/theme'
@@ -88,6 +89,8 @@ const shellLabel = computed(() => {
           <!-- 换场覆盖层：全站唯一实例，Teleport 到 body。
                放在 provider 里只是为了拿到应用上下文，DOM 上它不在 #app 内。 -->
           <RouteVeil />
+          <!-- 认证回执：登录成功后从右侧入场，跨换场留在屏幕上（理由见组件顶部）。 -->
+          <AuthBanner />
         </NLoadingBarProvider>
       </NDialogProvider>
     </NMessageProvider>
