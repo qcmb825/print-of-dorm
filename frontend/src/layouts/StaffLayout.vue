@@ -288,7 +288,21 @@ onMounted(() => {
             <component :is="Component" />
           </RouteTransition>
         </RouterView>
-      </main>
+            <!-- 底部状态带：把"这一页属于哪个扇区"和刻度摊在页面底部。
+           不是新增信息，是同一块牌子在两处出现 —— 终端叙事里那种重复本身就是语言的一部分。
+           右侧那串数字是尺子的刻度读数，纯装饰（aria-hidden）。 -->
+      <div class="mt-8 flex items-center gap-3 border-t pt-1" style="border-color: var(--border)">
+        <span class="readout">{{ route.meta.code ?? '--' }} // PRINT SERVICE</span>
+        <span class="ticks min-w-8 flex-1" aria-hidden="true" />
+        <span class="readout hidden sm:inline" aria-hidden="true">01 02 03 04 05 06 07 08</span>
+      </div>
+      <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
+           它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
+      <span
+        class="cut pointer-events-none absolute bottom-6 left-1.5 h-3.5 w-10 bg-[var(--accent-tint)]"
+        aria-hidden="true"
+      />
+    </main>
     </div>
   </div>
 </template>

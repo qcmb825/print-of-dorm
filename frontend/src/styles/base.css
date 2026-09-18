@@ -12,6 +12,9 @@
 :root body {
   margin: 0;
   background-color: var(--background);
+  /* 对角打光。挂在 body 上而不是 .route-stage 上：它是整页的底光，
+     而 stage 会因为换场被 transform，背景跟着动会露馅。 */
+  background-image: var(--surface-sheen);
   color: var(--foreground);
   font-family: var(--stack-body);
   font-size: 15px;
@@ -494,10 +497,15 @@
     min-width: 0;
     min-height: 100%;
     isolation: isolate;
+    /* 双层网格：上面两层是 48px 的细线，下面两层是每 5 格一条的重线。
+       细线写在前面（画在上面），两线重合处会叠加 —— 那正好让"每 5 格一条"看起来更重，
+       不需要为它单独调一个更深的颜色。 */
     background-image:
-      linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-    background-size: 48px 48px;
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(var(--grid-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+    background-size: 48px 48px, 48px 48px, 240px 240px, 240px 240px;
     background-position: center;
   }
 
