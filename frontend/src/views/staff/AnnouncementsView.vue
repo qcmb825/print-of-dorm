@@ -272,9 +272,11 @@ onMounted(load)
           v-else
           tag="ul"
           class="flex list-none flex-col gap-3 p-0"
-          enter-active-class="transition duration-[200ms] ease-out"
+          enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
           enter-from-class="opacity-0 translate-x-1"
-          move-class="transition duration-[200ms] ease-out"
+          leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
+          leave-to-class="opacity-0"
+          move-class="transition duration-[var(--motion-dur-base)] ease-out"
         >
           <li
             v-for="item in list"

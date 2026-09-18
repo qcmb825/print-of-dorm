@@ -1049,9 +1049,9 @@ onBeforeUnmount(() => {
         v-else
         tag="ul"
         class="flex list-none flex-col p-0"
-        enter-active-class="transition duration-[200ms] ease-out"
+        enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
         enter-from-class="opacity-0 translate-x-1"
-        move-class="transition duration-[200ms] ease-out"
+        move-class="transition duration-[var(--motion-dur-base)] ease-out"
       >
         <li
           v-for="order in orders"

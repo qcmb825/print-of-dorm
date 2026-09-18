@@ -68,6 +68,16 @@ const flowRows = [
   { code: '03', label: '凭码取件' },
 ]
 
+/** 认证告示上的三行范围读数。三行都对应系统里真实存在的东西：
+ *  本页只发放普通用户权限（见页面底部那句）、服务范围是校园打印、
+ *  进页面时会话尚未建立。**不写"机密/绝密"一类的分级** —— 这个系统没有
+ *  分类分级制度，编一个出来是扮演；学那套版式就够了，密级那一栏留空。 */
+const scopeRows = [
+  { key: 'SCOPE', value: '校园打印服务' },
+  { key: 'CLEARANCE', value: '普通用户（USER）' },
+  { key: 'SESSION', value: '未建立 · PENDING' },
+]
+
 /** 面板底行的同步读数：与页面头部的 SYNC 同一件东西 —— 纸上的表单是静止的，
  *  而这块面板在"接入"这个动作发生之前就该是活的。 */
 const clock = useClock()
@@ -239,30 +249,81 @@ onMounted(async () => {
   <div class="login-shell grid min-h-dvh place-items-center overflow-hidden px-4 py-8 sm:px-6">
     <div class="relative grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
       <!-- 宽屏保留一块品牌区：登录不是普通表单，先让用户确认自己到了对的服务。
-           这一版把它做成**海报**：整页只有这一处字号到 44px，配铭牌行、斜切色带、
-           刻度尺与底线读数 —— 版式学的是宣传物料那一套（大标题压在色块与刻度上），
-           与内容区那种"密排的技术文件"形成对比：**入口是海报，进去是工单**。 -->
+           这一版把它做成**核验告示**（实验/临床设备那套语汇）：一枚目镜（同心环 +
+           准星 + 六边形）、一行密级铭牌、三条读数列、底部斜切色带与刻度尺。
+           与右侧"凭据核验"面板是同一件事的两半：左边说明这是哪里、能拿到什么，
+           右边才是那道闸门。
+
+           配色上这里刻意让**青色当主角**（--secondary），黄色留给"动作"（登录按钮）。
+           这是全站唯一一处这样分工的地方，理由写在面板顶部：认证这件事本身是
+           "仪器在读数"，不是"按钮在喊"；而一旦进入业务区，动作仍然只有一种颜色。 -->
       <section class="hidden lg:block">
         <div
           class="flex items-center justify-between gap-4 border-b pb-1.5"
           style="border-color: var(--border)"
         >
           <span class="readout">NEKO PRINT // 校园打印服务</span>
-          <span class="readout">REV 2.006</span>
+          <span class="readout">REV 2.006 / AUTH</span>
         </div>
 
-        <p class="mt-7 max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
-          从文件到取件，<br />
-          <span style="color: var(--accent-text)">一张单</span>就够了。
-        </p>
-        <p class="mt-5 max-w-sm text-base leading-7 text-ink-3">
-          上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
-        </p>
+        <div class="mt-7">
+          <!-- 目镜。整块 aria-hidden：它是图形，不是信息（下面对应的三行读数才是）。
+               **不能与标题并排**：左栏宽约 456px，44px 的标题在「从文件到取件，」处
+               正好需要整栏的宽度，并排会让它断成"从文件到取 / 件，"这种半句换行。
+               所以竖排在标题上方 —— 它本来也更像一枚"铭牌/印章"的位置。 -->
+          <svg
+            class="mb-6 block"
+            width="132"
+            height="132"
+            viewBox="0 0 200 200"
+            fill="none"
+            aria-hidden="true"
+          >
+            <!-- 外圈刻度盘：缓慢自转的那一圈。dasharray 划出刻度，
+                 它同时是"量程"（同心环）与"正在扫描"（转动）两件事的载体。 -->
+            <g class="reticle__dial">
+              <circle
+                cx="100"
+                cy="100"
+                r="92"
+                stroke="var(--secondary)"
+                stroke-width="1"
+                stroke-dasharray="1 7"
+                opacity="0.75"
+              />
+              <circle cx="100" cy="100" r="92" stroke="var(--secondary)" stroke-width="1" opacity="0.22" />
+            </g>
+            <!-- 内圈 + 六边形 + 准星：这三件不动。 -->
+            <circle cx="100" cy="100" r="72" stroke="var(--secondary)" stroke-width="1" opacity="0.42" />
+            <polygon
+              points="162,100 131,153.7 69,153.7 38,100 69,46.3 131,46.3"
+              stroke="var(--secondary)"
+              stroke-width="1"
+              opacity="0.6"
+            />
+            <path
+              d="M100 22v40M100 138v40M22 100h40M138 100h40"
+              stroke="var(--secondary)"
+              stroke-width="1"
+              opacity="0.45"
+            />
+            <circle cx="100" cy="100" r="9" stroke="var(--secondary)" stroke-width="1" opacity="0.8" />
+            <circle cx="100" cy="100" r="2" fill="var(--accent-text)" />
+          </svg>
+
+          <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
+            从文件到取件，<br />
+            <span style="color: var(--accent-text)">一张单</span>就够了。
+          </p>
+          <p class="mt-4 max-w-sm text-base leading-7 text-ink-3">
+            上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
+          </p>
+        </div>
 
         <!-- 三条流程说明用**字段行**排（等宽标签 + 点线引导），而不是三个格子：
              它是"这份服务的规格表"，不是三块卖点卡片 —— 页面里的信息越像记录，
              越不像广告。 -->
-        <div class="mt-8 grid max-w-md gap-2.5">
+        <div class="mt-7 grid max-w-md gap-2.5">
           <span v-for="item in flowRows" :key="item.code" class="field">
             <span class="field__k">{{ item.code }}</span>
             <span class="field__lead" />
@@ -270,8 +331,20 @@ onMounted(async () => {
           </span>
         </div>
 
-        <!-- 收尾：斜切色带 + 刻度尺 + 大号读数。海报底部那一排印刷标记。 -->
-        <div class="mt-10 flex items-end gap-5" aria-hidden="true">
+        <!-- 核验范围读数：这三行说的是"这道闸门后面是什么"，用的都是真话 ——
+             本页只开放普通用户权限（页面底部也写着同一件事），这里是同一信息的
+             机读版本。**刻意不写"机密/绝密"分级**：这个系统没有分级制度，
+             编一个出来是扮演，不是设计；学它的版式就够了，密级那一栏留空。 -->
+        <div class="mt-6 grid max-w-md gap-2.5 border-t pt-4" style="border-color: var(--border)">
+          <span v-for="row in scopeRows" :key="row.key" class="field">
+            <span class="field__k">{{ row.key }}</span>
+            <span class="field__lead" />
+            <span class="field__v">{{ row.value }}</span>
+          </span>
+        </div>
+
+        <!-- 收尾：斜切色带 + 刻度尺 + 大号读数。告示底部那一排印刷标记。 -->
+        <div class="mt-8 flex items-end gap-5" aria-hidden="true">
           <span class="decor-band h-10 w-36 shrink-0" />
           <span class="ticks mb-1 flex-1" />
         </div>
@@ -301,16 +374,20 @@ onMounted(async () => {
         </span>
       </div>
 
-      <!-- 表单面板做成一块**接入终端**：顶部铭牌行（编号 + 服务状态）、中部表单、
-           底部状态行（会话灯 + 同步时钟 + 页码）。三行的存在理由不是装饰 ——
-           登录页是唯一一个"什么都还没发生"的页面，它需要自己说明"这块屏在跑、
-           服务在、你接下来要做的是接入"。 -->
+      <!-- 表单面板做成一块**凭据核验终端**：顶部铭牌行（编号 + 服务状态）、
+           一条"需要授权"的斜纹提示带、中部表单、底部状态行（会话灯 + 同步时钟 + 光标）。
+           三行的存在理由不是装饰 —— 登录页是唯一一个"什么都还没发生"的页面，
+           它需要自己说明"这块屏在跑、服务在、你接下来要做的是核验身份"。
+
+           配色分工（全站唯一一处）：这里让青色主导（仪器/核验语汇），
+           黄色只留给**动作**（登录按钮、强调数）。进到业务区仍然只有一种强调色，
+           所以这条分工不会渗出去。 -->
       <div class="panel login-card">
         <div
           class="flex items-center justify-between gap-3 border-b px-5 py-2"
           style="border-color: var(--border)"
         >
-          <span class="readout">00 // 接入终端</span>
+          <span class="readout">00 // 凭据核验</span>
           <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来。
                它属于铭牌行：这是"终端"自己的状态，不是表单的一部分。 -->
           <span
@@ -327,6 +404,17 @@ onMounted(async () => {
             />
             {{ online === null ? '正在连接' : online ? '服务在线' : '服务不可达' }}
           </span>
+        </div>
+
+        <!-- 授权提示带：斜纹只占 5px 窄条，文字用 padding 让开 ——
+             这一条是整页唯一"有攻击性"的记号，它标的是"这里是一道闸门"。
+             文案只说真实的事：本页需要凭据，未通过核验就进不去后面的页面。 -->
+        <div
+          class="hazard-left flex items-center gap-2 border-b py-1.5 pr-5 pl-5"
+          style="border-color: var(--border)"
+        >
+          <span class="readout">AUTHORIZATION REQUIRED</span>
+          <span class="readout ml-auto hidden sm:inline">凭据核验后方可进入</span>
         </div>
 
         <div class="p-5 sm:p-6">

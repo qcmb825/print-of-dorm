@@ -790,6 +790,43 @@
     );
   }
 
+  /* ══ 目镜（认证页的同心环 + 准星 + 六边形）═════════════════════════
+   * 登录页的那件"大东西"。这一套语汇在实验/医疗设备的界面里到处都是：
+   * 同心环量的是**范围**，十字准星标的是**中心**，六边形是"样本/单元"的记号 ——
+   * 三件东西合起来说的是"这里正在核验一个对象"，而不是"这里有个徽章"。
+   *
+   * 最外那圈刻度缓慢自转（14s/一圈，约 26°/s）：静止的同心环读成徽章，
+   * 转起来才读成仪表。**只转最外圈**，中心与准星不动 —— 整个图形一起转会晃眼，
+   * 而且"准星在转"这件事在语义上是错的。
+   *
+   * 用 SVG 画而不是堆背景渐变：这些线要精确的圆心与角度，CSS 做不到，
+   * 而且 SVG 描边是矢量，任何缩放下都不糊。 */
+  .reticle__dial {
+    /* transform-box 不能省：SVG 元素默认以用户坐标系原点（0 0）为旋转中心，
+       不设 fill-box 的话这一圈会绕着画布左上角转出去。 */
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: reticle-spin var(--motion-dur-dial) linear infinite;
+  }
+
+  @keyframes reticle-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* 数值变化：数字亮一下再退回来（配套 composables/motion.ts 的 useValueTick）。
+   * 用 transition 而不是 animation —— 同一批元素上 .motion-stagger 已经挂了
+   * animation-delay，两条 animation 会互相顶掉。 */
+  .value-tick {
+    transition: color var(--motion-dur-slow) var(--motion-ease-out);
+  }
+
+  .value-tick--on {
+    color: var(--accent-text);
+    transition-duration: var(--motion-dur-fast);
+  }
+
   /* 规格标签：一条左强调边 + 极淡底。
    * 刻意**不用** clip-path 切斜角（虽然那样更像"标签"）：切面会裁掉左边这根线，
    * 更要紧的是斜边紧贴的两端会切到字的边缘 —— 这套视觉里"图形与笔画混同"是红线，
@@ -800,13 +837,11 @@
     padding: 2px 8px;
   }
 
-  /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
-  .login-shell {
-    background-image:
-      linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-    background-size: 42px 42px, 42px 42px;
-  }
+  /* 登录首屏这里**曾经**还有一层自己的 42px 网格（"加强首屏层次"）。
+     2026-09-18 删掉：全站那层 48px 工作台网格（.decor-layer__grid）是 fixed 的，
+     它在登录页同样铺着，两层网格间距不同 → 叠出一种拍频，近处是一堆疏密不匀的
+     方块，远看像背景糊了。**一整页只能有一把尺子** —— 留着全局那层，删掉本地这层。
+     .login-shell 这个类保留：它还是登录页的布局宿主（grid + place-items-center）。 */
 
   .login-card::after {
     position: absolute;
@@ -1215,6 +1250,28 @@
   }
 }
 
+/* 等宽读数代号在换场时"重新读一遍"：淡一下、落位、回到清晰。
+ *
+ *  **刻意不做**字符抖动 / RGB 分离那种经典 glitch，两个理由：
+ *    ① 那种效果要靠每秒多次的明暗跳变才读得出"故障"（要把 260ms 切四刀才像），
+ *       而三次/秒是 WCAG 2.3.1 的闪阈 —— 为了"更像赛博朋克"去踩它不值得；
+ *    ② 这一版的语言是**仪表**：准、稳、可读。一个正在闪的数字正好是它的反面，
+ *       而且读数代号里就有"P.02/05""REV 2.006"这类要看清的东西。
+ *  所以留下的只是"重新读数"这一层语义：先淡下去，再落回清晰。
+ *
+ *  范围也收着：只挂在 .readout 上（页头铭牌、扇区读数、状态栏代号）。
+ *  表格内容、表单标签、金额、取件码都不是 .readout —— 那些是要读准的东西。 */
+:root[data-veil-phase='out'] .readout {
+  animation: readout-reread 200ms var(--motion-ease-out);
+}
+
+@keyframes readout-reread {
+  from {
+    opacity: 0.3;
+    transform: translate3d(0, 2px, 0);
+  }
+}
+
 /* 刻度沟"重新量一遍"：刻度纹从上往下落位（与尺子同样的行为，只是转了 90°）。 */
 @keyframes decor-measure-y {
   from {
@@ -1483,7 +1540,8 @@
   :root[data-veil-phase='out'] .watermark,
   :root[data-veil-phase='out'] .cut,
   :root[data-veil-phase='out'] .decor-rail,
-  :root[data-veil-phase='out'] .data-dump {
+  :root[data-veil-phase='out'] .data-dump,
+  :root[data-veil-phase='out'] .readout {
     animation: none !important;
   }
 
@@ -1499,5 +1557,12 @@
   .status-led {
     animation: none !important;
     opacity: 1 !important;
+  }
+
+  /* 目镜：整件撤掉自转，图形原样留着（同心环 + 准星 + 六边形本来就是一件静态图形）。
+     旋转在减少动效下是最该撤的一类 —— 它是一个"永远在动的背景物体"，
+     视线没法让它停下来。 */
+  .reticle__dial {
+    animation: none !important;
   }
 }

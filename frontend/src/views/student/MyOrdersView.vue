@@ -23,6 +23,7 @@ import {
   shortTime,
 } from '@/utils/format'
 import { confirmAction, notify } from '@/composables/feedback'
+import { useValueTick } from '@/composables/motion'
 
 const orders = ref<Order[]>([])
 const loading = ref(true)
@@ -49,6 +50,13 @@ const summary = computed(() => ({
 const spent = computed(() =>
   orders.value.reduce((sum, o) => (typeof o.price === 'number' ? sum + o.price : sum), 0),
 )
+
+/** 四格的"变化反馈"：这一页每 20 秒自己刷一次，值真的变了才亮一下。
+ *  四格各拿一个 tick 而不是共用一个 —— 共用会把"只变了一格"演成"四格都动了"。
+ *  首次变化（数据到达）由 useValueTick 内部跳过，理由见那个函数的注释。 */
+const tickActive = useValueTick(() => summary.value.active)
+const tickDone = useValueTick(() => summary.value.done)
+const tickSpent = useValueTick(() => spent.value)
 
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
@@ -158,8 +166,12 @@ async function withdraw(order: Order): Promise<void> {
     <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
         <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
-        <div class="tnum font-heading text-xl font-bold">{{ summary.active }}</div>
+        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
+          {{ summary.active }}
+        </div>
       </div>
+      <!-- 「可取了」那格的数字本来就是强调色，所以这一跳在它身上看不见 ——
+           不给它另发明第二种信号（同一页里两种变化反馈比少一种更容易误读）。 -->
       <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
         <div class="tech-label text-ink-4 tech-label--cn text-xs">可取了</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
@@ -168,12 +180,16 @@ async function withdraw(order: Order): Promise<void> {
       </div>
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
         <div class="tech-label text-ink-4 tech-label--cn text-xs">已取件</div>
-        <div class="tnum font-heading text-xl font-bold">{{ summary.done }}</div>
+        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickDone && 'value-tick--on'">
+          {{ summary.done }}
+        </div>
       </div>
       <!-- 合计只统计当前这一页拉到的订单（此接口不带分页，学生自己能看到全部） -->
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
         <div class="tech-label text-ink-4 tech-label--cn text-xs">已计费合计</div>
-        <div class="tnum font-heading text-xl font-bold">￥{{ spent.toFixed(2) }}</div>
+        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickSpent && 'value-tick--on'">
+          ￥{{ spent.toFixed(2) }}
+        </div>
       </div>
     </div>
 
@@ -206,14 +222,24 @@ async function withdraw(order: Order): Promise<void> {
          按 key 打补丁时只有「真正新进来」的订单会跑入场动画 —— 每次轮询都重放一遍的话
          就是一屏东西在定时乱动。新订单从右侧切入，后面的项目只做让位移动。
          move-class 管的是「新单插进来、后面的项往下让位」这一段位移（FLIP）。
-         列表本体没有 gap：一条条的间距由 .wo 自己的 1px 上边线给，整列读成一张表。 -->
+         列表本体没有 gap：一条条的间距由 .wo 自己的 1px 上边线给，整列读成一张表。
+
+         leave 只属于**用户自己按下的那个撤回**：这一页有两条会让条目消失的路径 ——
+         轮询发现管理员那边删了单，和自己点撤回。前者补离场动画就变成了"定时闪烁"，
+         而这里写的是同一条 class，它管不到"是谁删的"。
+         好在两者不会同时发生：撤回走的是 withdraw() → 立刻 load(true)，
+         那一轮响应到达时数组已经少了一项，跑的就是这次 leave。
+         轮询删单极少见（管理员侧没有删单入口，只有撤回），出现时也只是没有动画而已 ——
+         这正是"宁可少动一次"的那一侧。 -->
     <TransitionGroup
       v-else
       tag="ul"
       class="m-0 flex list-none flex-col p-0"
-      enter-active-class="transition duration-[200ms] ease-out"
+      enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
       enter-from-class="opacity-0 translate-x-1"
-      move-class="transition duration-[200ms] ease-out"
+      leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
+      leave-to-class="opacity-0"
+      move-class="transition duration-[var(--motion-dur-base)] ease-out"
     >
       <li
         v-for="order in orders"

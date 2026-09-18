@@ -257,9 +257,9 @@ onMounted(async () => {
          只用透明度会像换了张图，不像「东西出现了」。起点是 0.97 而不是 0 —— 现实里没有东西
          从虚无里冒出来，scale(0) 一律禁止。 -->
     <Transition
-      enter-active-class="transition duration-[240ms] ease-out"
+      enter-active-class="transition duration-[var(--motion-dur-slow)] ease-out"
       enter-from-class="opacity-0 scale-[0.97]"
-      leave-active-class="transition duration-[140ms] ease-out"
+      leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
       leave-to-class="opacity-0"
     >
       <section

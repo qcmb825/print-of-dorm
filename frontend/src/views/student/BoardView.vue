@@ -21,6 +21,7 @@ import type { ChartPalette } from '@/charts/setup'
 import ChartBox from '@/components/charts/ChartBox.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { notify } from '@/composables/feedback'
+import { useValueTick } from '@/composables/motion'
 import { useThemeStore } from '@/stores/theme'
 import { STATUS_COLOR_VAR } from '@/utils/format'
 
@@ -109,6 +110,12 @@ const mineRankText = computed(() => {
   return `第 ${me.rank} 名`
 })
 
+/** 三格的"变化反馈"：值真的变了才亮一下（这一页靠手动刷新，不是轮询）。
+ *  「待我取件」那格的数字本来就是强调色，所以不接 —— 不为一格另发明一种信号。 */
+const tickActive = useValueTick(() => mine.value?.active)
+const tickTotal = useValueTick(() => mine.value?.total)
+const tickRank = useValueTick(() => mineRankText.value)
+
 const hasTrendData = computed(() => (board.value?.daily ?? []).some((item) => item.count > 0))
 
 /** 这个页面刻意不自动刷新（订单列表那种轮询不适合它）：
@@ -155,15 +162,21 @@ onMounted(load)
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
-          <div class="tnum font-heading text-xl font-bold">{{ mine?.active ?? 0 }}</div>
+          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
+            {{ mine?.active ?? 0 }}
+          </div>
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">我的单数</div>
-          <div class="tnum font-heading text-xl font-bold">{{ mine?.total ?? 0 }}</div>
+          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickTotal && 'value-tick--on'">
+            {{ mine?.total ?? 0 }}
+          </div>
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-4 tech-label--cn text-xs">我的名次</div>
-          <div class="tnum font-heading text-xl font-bold">{{ mineRankText }}</div>
+          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickRank && 'value-tick--on'">
+            {{ mineRankText }}
+          </div>
         </div>
       </div>
 

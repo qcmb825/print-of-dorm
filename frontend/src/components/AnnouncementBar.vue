@@ -48,9 +48,9 @@ const authorLine = computed(() => {
        退场原先写的是 ease-in：它会「慢慢起步再加速」，而起步那一刻正是用户盯着看的时候，
        观感上比 200ms 的 ease-out 还慢。UI 上的进出场一律 ease-out。 -->
   <Transition
-    enter-active-class="transition duration-[180ms] ease-out"
+    enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
     enter-from-class="-translate-y-2 opacity-0"
-    leave-active-class="transition duration-[150ms] ease-out"
+    leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
     leave-to-class="-translate-y-2 opacity-0"
   >
     <div v-if="store.visible && announcement" class="px-3 pt-3 pb-3 sm:px-5 sm:pt-4 sm:pb-4">

@@ -11,7 +11,7 @@
  *     不触发重排重绘；每帧最多两次 setProperty，用 rAF 合并。
  */
 
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 
 /** 系统是否要求减少动效。**响应式**：用户可以在会话中途改系统设置，
  *  所以必须监听 change，不能只读一次 .matches（那会让设置改了也不生效）。 */
@@ -65,4 +65,51 @@ export function usePointerParallax(): void {
     root.style.removeProperty('--px')
     root.style.removeProperty('--py')
   })
+}
+
+/** 数值变化反馈：被观察的值**真的变了**才亮一下，亮的是数字自己。
+ *
+ *  三条与"别把它做成定时闪烁"直接相关的设计：
+ *
+ *  1. **只在变化时触发**，不按时间触发。看板每 20 秒轮询一次，如果按"刷新了"就亮，
+ *     那每隔 20 秒全屏的格子一起眨一下 —— 那是最糟的一类动效（无信息、有干扰、
+ *     还停不下来）。这里看的是值本身，没变就什么都不发生。
+ *  2. **用 class 切换 + transition，不用 animation。** 同一批元素上已经有
+ *     .motion-stagger 挂着 animation-delay，再来一条 animation 会互相顶掉
+ *     （同属性、同时长、后写的赢），表现成"要么不跳、要么入场延迟失效"。
+ *     transition 走的是另一条通道，两者可以共存。
+ *  3. **减少动效下直接不跳。** 这条反馈是锦上添花（数字已经变了），
+ *     不值得为它破一次纪律 —— 不是"跳小一点"。
+ *
+ *  用法：`const ticking = useValueTick(() => props.value)`，
+ *  然后把 `.value-tick--on` 按需挂到数字元素上。
+ */
+export function useValueTick(
+  source: () => unknown,
+  { holdMs = 420, skipFirst = true }: { holdMs?: number; skipFirst?: boolean } = {},
+): Ref<boolean> {
+  const ticking = ref(false)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let seen = 0
+
+  watch(source, () => {
+    // 首次变化是**数据到达**（占位值 → 真实值），不是"更新"。这一跳的语义是
+    // "你正在看的这个数变了"，而第一次有值时还没有"你正在看的"那个数 ——
+    // 让它在骨架屏收尾时再闪一下，读到的是"页面在抖"。
+    seen += 1
+    if (skipFirst && seen === 1) return
+    if (prefersReducedMotion.value) return
+    ticking.value = true
+    if (timer !== undefined) clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = undefined
+      ticking.value = false
+    }, holdMs)
+  })
+
+  onBeforeUnmount(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+
+  return ticking
 }
