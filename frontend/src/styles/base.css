@@ -1610,6 +1610,22 @@
   box-shadow: none !important;
 }
 
+/* Naive 有三处圆角**不读 common.borderRadius**，是写在它自己样式表里的字面量：
+   Badge 的计数泡（4px 点 / 9px 数字泡，见 es/badge/src/styles/index.cssr.mjs）
+   与 Timeline 的节点（`border-radius: var(--n-icon-size)`，等于画成一个圆）。
+   全站圆角归零之后它们是仅存的漏网处 —— 和上面那条一样，只能无层级 + !important 压掉。
+   （Alert 不用管：它读的是 var(--n-border-radius)，已经跟着 common 归零了。） */
+/* 类名是从 Naive 自己的组件源码里抄的，别凭印象写：
+   badge 的数字泡是 `n-badge-sup`、点态是 `n-badge--dot`（修饰符，不是 `-dot`）；
+   timeline 的节点是 `n-timeline-item-timeline__circle`（双下划线）。
+   写错了不会报错，只是这条规则永远不命中 —— 而"看起来没生效"最容易被当成
+   "Naive 改不动"而放弃。 */
+.n-badge-sup,
+.n-badge--dot,
+.n-timeline-item-timeline__circle {
+  border-radius: 0 !important;
+}
+
 /* ══ 微动态的收口：减少动效下这些一律不成立 ══════════════════════════
  * 视差与"切页时装饰动起来"都属于**大面积位移**，是前庭敏感最主要的一类触发器。
  * JS 那边已经在 prefers-reduced-motion 下压根不装视差监听器，这里是第二道闸：

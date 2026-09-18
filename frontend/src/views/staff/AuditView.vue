@@ -12,7 +12,6 @@ import { Check, ClipboardCheck, RefreshCw, Undo2, X } from '@lucide/vue'
 import {
   NAlert,
   NButton,
-  NEmpty,
   NInput,
   NModal,
   NSkeleton,
@@ -23,6 +22,7 @@ import {
 import { ApiError } from '@/api/client'
 import { auditApi } from '@/api/endpoints'
 import { AUDIT_STATUSES, CONTACT_LABELS, type AuditRequest, type AuditStatus } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { fullTime } from '@/utils/format'
 
@@ -154,7 +154,7 @@ onMounted(load)
         </div>
 
         <div v-else-if="!list.length" class="panel flex flex-col items-center gap-3 py-12">
-          <NEmpty :description="emptyHint" />
+          <EmptyState code="00 / NO REQUEST" :title="emptyHint" hint="学生提交审核申请后会出现在这里" />
         </div>
 
         <ul v-else class="flex flex-col gap-3">

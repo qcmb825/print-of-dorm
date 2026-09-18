@@ -13,10 +13,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Download, FileWarning, RefreshCw } from '@lucide/vue'
-import { NAlert, NButton, NEmpty, NSkeleton, NTimeline, NTimelineItem, useMessage } from 'naive-ui'
+import { NAlert, NButton, NSkeleton, NTimeline, NTimelineItem, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
 import type { OrderDetail, OrderLog } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import RoleTag from '@/components/RoleTag.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -200,7 +201,12 @@ onMounted(load)
     </div>
 
     <div v-else-if="!order" class="panel grid place-items-center py-16">
-      <NEmpty :description="orderId === null ? '订单号不对，检查一下地址栏' : '没有这个订单'" />
+      <EmptyState
+        tone="alarm"
+        code="ERR / 404"
+        :title="orderId === null ? '订单号不对' : '没有这个订单'"
+        hint="地址栏里的订单号可能被改过，或这一单已经被撤回了"
+      />
     </div>
 
     <template v-else>

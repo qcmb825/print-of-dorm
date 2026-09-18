@@ -62,6 +62,9 @@ const clock = useClock()
           <h1 class="font-heading leading-none font-bold tracking-tight" :class="headingClass">
             {{ title }}
           </h1>
+          <!-- 标题行右侧的补充记号（未读角标之类）。做成槽而不是 prop：
+               它承载的是"这一页独有的东西"，写进 prop 就得为每个调用方加一个字段。 -->
+          <slot name="title-append" />
         </div>
         <p v-if="subtitle" class="mt-2 max-w-2xl text-sm text-ink-3">{{ subtitle }}</p>
       </div>

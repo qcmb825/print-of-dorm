@@ -21,7 +21,6 @@ import {
   NButton,
   NDataTable,
   NDropdown,
-  NEmpty,
   NInput,
   NModal,
   NPagination,
@@ -42,6 +41,7 @@ import {
   type OrderStatus,
   type PrintPreset,
 } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PickupCheckDialog from '@/components/PickupCheckDialog.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -1020,15 +1020,15 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="!orders.length" class="grid place-items-center py-14">
-        <NEmpty :description="emptyText">
-          <template #icon><Inbox :size="32" /></template>
+        <EmptyState code="00 / NO ORDER" :title="emptyText" hint="筛出来的空通常不是真的空">
+          <template #icon><Inbox :size="28" /></template>
           <!-- 筛出一片空的时候得给条退路：这一屏上同时开着五个筛子
                （范围、状态、打印服务、关键词、隐藏已取件），挨个去关
                很容易漏掉一个，而漏掉的那个恰恰就是把单子藏起来的那个。 -->
-          <template v-if="hasFilter" #extra>
+          <template v-if="hasFilter" #action>
             <NButton size="small" quaternary @click="resetFilters">清除筛选条件</NButton>
           </template>
-        </NEmpty>
+        </EmptyState>
       </div>
 
       <!-- 宽屏：表格 -->

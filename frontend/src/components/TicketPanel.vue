@@ -2,14 +2,12 @@
 /** 工单面板：左侧列表 + 右侧详情（窄屏收进抽屉）。两个角色共用，靠 staff 开关区分行为。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
-import { useRoute } from 'vue-router'
 import { Inbox, MessageSquarePlus, Plus } from '@lucide/vue'
 import {
   NBadge,
   NButton,
   NDrawer,
   NDrawerContent,
-  NEmpty,
   NFormItem,
   NInput,
   NModal,
@@ -20,14 +18,13 @@ import {
 import { ApiError } from '@/api/client'
 import { ticketApi } from '@/api/endpoints'
 import type { Ticket, TicketStatus } from '@/api/types'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import TicketDetail from '@/components/TicketDetail.vue'
 import { TICKET_STATUS_LABEL, shortTime } from '@/utils/format'
 
 const props = defineProps<{ staff: boolean; currentUserId: number }>()
 const message = useMessage()
-// 页面编号取自路由 meta（与 PageHeader 同一个事实来源）。这个组件同时服务
-// 学生端「问题反馈」与管理端「工单处理」两条路由，所以只能运行时读，不能写死。
-const pageCode = computed(() => useRoute().meta.code as string | undefined)
 
 const tickets = ref<Ticket[]>([])
 const unreadTotal = ref(0)
@@ -106,20 +103,23 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto max-w-6xl">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 class="flex items-baseline gap-2 font-heading text-xl font-bold sm:text-3xl">
-          <!-- 编号内联在这里而不是走 PageHeader：这个 h1 里嵌着未读角标，套不进那个组件的结构。
-               编号同样取自 route.meta.code，两条路由（学生端 04 / 管理端 07）各自不同。 -->
-          <span v-if="pageCode" class="tech-label shrink-0 text-2xs text-ink-3">{{ pageCode }} //</span>
-          <span class="flex items-center gap-2">{{ staff ? '工单处理' : '问题反馈' }}</span>
-          <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
-        </h1>
-        <p class="mt-0.5 text-sm text-ink-3">
-          {{ staff ? '学生提交的问题与需求，回复后对方会看到未读提示' : '有打印相关的问题，在这里留言给管理员' }}
-        </p>
-      </div>
-      <div class="flex items-center gap-2">
+    <!-- 走公共的 PageHeader：这一页原先手写了一个标题（理由是"h1 里要嵌未读角标"），
+         代价是它少了铭牌行、字段行（PATH/CODE/SYNC）与扇区读数 —— 全站 13 个页面里
+         只有这一页没有"文件头"。现在给 PageHeader 补了 title-append 槽，
+         编号仍取自 route.meta.code（学生端 04 / 管理端 07 各自不同），角标进槽。 -->
+    <PageHeader
+      heading="md"
+      :title="staff ? '工单处理' : '问题反馈'"
+      :subtitle="
+        staff
+          ? '学生提交的问题与需求，回复后对方会看到未读提示'
+          : '有打印相关的问题，在这里留言给管理员'
+      "
+    >
+      <template #title-append>
+        <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
+      </template>
+      <template #actions>
         <NSelect
           v-model:value="statusFilter"
           :options="statusOptions"
@@ -131,8 +131,8 @@ onMounted(async () => {
           <template #icon><Plus :size="15" /></template>
           新建工单
         </NButton>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <div class="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]">
       <!-- 列表 -->
@@ -141,9 +141,13 @@ onMounted(async () => {
           <NSkeleton v-for="index in 4" :key="index" height="58px" :sharp="false" />
         </div>
         <div v-else-if="!tickets.length" class="grid place-items-center py-12">
-          <NEmpty :description="staff ? '暂无工单' : '还没有工单'" size="small">
-            <template #icon><Inbox :size="30" /></template>
-          </NEmpty>
+          <EmptyState
+            code="00 / NO TICKET"
+            :title="staff ? '暂无工单' : '还没有工单'"
+            :hint="staff ? '学生提交后会自动出现在这里' : '有打印相关的问题，点右上角新建'"
+          >
+            <template #icon><Inbox :size="28" /></template>
+          </EmptyState>
         </div>
         <!-- 工单按 update_time 倒序：新工单从上方落下，有人回复的旧工单会移回顶部。
              那段「让位 / 回到顶部」的位移由 move-class 负责 —— 30 秒轮询下这是唯一能看出
@@ -205,9 +209,9 @@ onMounted(async () => {
           @changed="load(true)"
         />
         <div v-else class="grid h-full place-items-center py-16">
-          <NEmpty description="从左侧选一个工单查看详情" size="small">
-            <template #icon><MessageSquarePlus :size="30" /></template>
-          </NEmpty>
+          <EmptyState code="— / 待选择" title="从左侧选一个工单查看详情" hint="窄屏会以抽屉形式打开">
+            <template #icon><MessageSquarePlus :size="28" /></template>
+          </EmptyState>
         </div>
       </div>
     </div>

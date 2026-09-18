@@ -16,7 +16,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { FileStack, Pencil, Plus, Printer, RefreshCw, Trash2 } from '@lucide/vue'
 import {
   NButton,
-  NEmpty,
   NFormItem,
   NInput,
   NSkeleton,
@@ -26,6 +25,7 @@ import {
 import { ApiError } from '@/api/client'
 import { staffPrintOptionsApi } from '@/api/endpoints'
 import type { PaperType, PrintPreset } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
 import { shortTime } from '@/utils/format'
@@ -271,9 +271,9 @@ onMounted(load)
           </div>
 
           <div v-else-if="!presets.length" class="panel grid place-items-center py-10">
-            <NEmpty description="还没有配置预设打印服务" size="small">
-              <template #icon><Printer :size="28" /></template>
-            </NEmpty>
+            <EmptyState code="00 / NO PRESET" title="还没有配置预设打印服务" hint="左侧新建一条，学生端就能选到">
+              <template #icon><Printer :size="26" /></template>
+            </EmptyState>
           </div>
 
           <TransitionGroup
@@ -404,9 +404,9 @@ onMounted(load)
           </div>
 
           <div v-else-if="!papers.length" class="panel grid place-items-center py-10">
-            <NEmpty description="还没有配置纸张类型" size="small">
-              <template #icon><FileStack :size="28" /></template>
-            </NEmpty>
+            <EmptyState code="00 / NO PAPER" title="还没有配置纸张类型" hint="左侧新建一条，订单里的「纸张」才有得选">
+              <template #icon><FileStack :size="26" /></template>
+            </EmptyState>
           </div>
 
           <TransitionGroup

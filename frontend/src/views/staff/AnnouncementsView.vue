@@ -6,7 +6,6 @@ import { Eye, Megaphone, Pencil, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import {
   NButton,
   NColorPicker,
-  NEmpty,
   NFormItem,
   NInput,
   NInputNumber,
@@ -18,6 +17,7 @@ import {
 import { ApiError } from '@/api/client'
 import { announcementApi, type AnnouncementPayload } from '@/api/endpoints'
 import { ANNOUNCE_FONTS, type AnnounceFont, type Announcement } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -262,9 +262,9 @@ onMounted(load)
         </div>
 
         <div v-else-if="!list.length" class="panel grid place-items-center py-12">
-          <NEmpty description="还没有发布过公告" size="small">
-            <template #icon><Megaphone :size="30" /></template>
-          </NEmpty>
+          <EmptyState code="00 / NO NOTICE" title="还没有发布过公告" hint="左侧写完保存，就会出现在这里">
+            <template #icon><Megaphone :size="28" /></template>
+          </EmptyState>
         </div>
 
         <!-- 列表按「生效中 > id 倒序」排：新公告从上方落下，启停后那位「生效中」挪到顶部

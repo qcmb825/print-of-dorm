@@ -26,7 +26,6 @@ import {
   NButton,
   NDataTable,
   NDropdown,
-  NEmpty,
   NInput,
   NModal,
   NSelect,
@@ -48,6 +47,7 @@ import {
   type RestoreConflict,
   type Role,
 } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import RoleTag from '@/components/RoleTag.vue'
 import { confirmAction } from '@/composables/feedback'
@@ -662,7 +662,7 @@ onMounted(load)
         <NSkeleton v-for="index in 6" :key="index" height="48px" :sharp="false" />
       </div>
       <div v-else-if="!filtered.length" class="grid place-items-center py-14">
-        <NEmpty description="没有匹配的账号" />
+        <EmptyState code="00 / NO MATCH" title="没有匹配的账号" hint="换个关键词，或把筛选清掉" />
       </div>
       <NDataTable
         v-else
