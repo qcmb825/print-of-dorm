@@ -29,13 +29,24 @@ const DEFAULT_HOLD_MS = 2400
 
 let timer: number | undefined
 
+/** 在根元素上留一个记号，好让换场幕布的场记读数在这 2.4 秒里让位。
+ *  两条读数说的是同一件事（都报目标页），挤在同一条中线上只是噪音；
+ *  而回执条是这一下的主角。用根属性传信号，与 data-veil-phase 是同一个套路。 */
+function mark(on: boolean): void {
+  if (typeof document === 'undefined') return
+  if (on) document.documentElement.dataset.authBand = ''
+  else delete document.documentElement.dataset.authBand
+}
+
 export function showAuthBanner(next: AuthReceipt, holdMs: number = DEFAULT_HOLD_MS): void {
   receipt.value = next
   open.value = true
+  mark(true)
   if (timer !== undefined) window.clearTimeout(timer)
   timer = window.setTimeout(() => {
     timer = undefined
     open.value = false
+    mark(false)
   }, holdMs)
 }
 
@@ -46,6 +57,7 @@ export function dismissAuthBanner(): void {
     timer = undefined
   }
   open.value = false
+  mark(false)
 }
 
 export const authBanner = {

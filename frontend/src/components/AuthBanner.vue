@@ -11,9 +11,14 @@
  *  chrome 高度报上来 —— 为一个 2.4 秒的回执不值得引入这条耦合。
  *  它整条 pointer-events: none，所以盖着也点得到下面的一切，而且到点自己退场。
  *
- *  内容排成一行（机能风的做法：一条横向读数带）：状态块 → AUTH OK → 认证成功 →
- *  昵称（角色）· 正在进入 X → 右侧刻度与时间戳；底边一条会排空的进度线。
- *  窄屏砍掉"正在进入…"与时间戳，只留一条能一眼扫过的读数。
+ *  两层，右进左出：
+ *    · 黄色装饰层（--primary）**先进后出**，比内容条厚 6px，所以永远从上下露出边
+ *      —— 读起来是"一条黄色承载带 + 压在上面的一条数据带"，不是简单的错帧；
+ *    · 内容条后进先出，载着读数：AUTHORIZATION SUCCESS / 认证成功 /
+ *      昵称（角色）· 正在进入 X / 刻度与时间戳；
+ *    · 底边一条会排空的进度线。
+ *  进场从右缘进来、退场从左边出去 —— 它是**穿过去**的，不是弹一下。
+ *  窄屏砍掉"正在进入…"、刻度与时间戳，只留一行能一眼扫过的读数。
  *
  *  无障碍：整条 role="status"（读屏播报"认证成功 / 昵称 角色 / 正在进入 X"），
  *  装饰件（状态块、刻度、进度线）各自 aria-hidden。减少动效由 base.css 末尾的
@@ -37,29 +42,34 @@ const stamp = computed(() => {
   <Teleport to="body">
     <Transition name="auth-band">
       <div v-if="authBanner.open.value && info" class="auth-band" role="status">
-        <span
-          class="grid size-6 shrink-0 place-items-center"
-          style="background-color: var(--status-done-bg); color: var(--status-done)"
-          aria-hidden="true"
-        >
-          <CircleCheck :size="15" />
+        <!-- 黄层：装饰底，**先进后出**。它比内容条厚，所以永远从上下露出 6px 边 ——
+             两层不是简单的错帧，而是"一条黄色承载带 + 压在上面的一条数据带"。 -->
+        <span class="auth-band__mat" aria-hidden="true" />
+
+        <span class="auth-band__strip">
+          <span
+            class="grid size-6 shrink-0 place-items-center"
+            style="background-color: var(--status-done-bg); color: var(--status-done)"
+            aria-hidden="true"
+          >
+            <CircleCheck :size="15" />
+          </span>
+
+          <span class="auth-band__code shrink-0">AUTHORIZATION SUCCESS</span>
+          <span class="shrink-0 font-heading text-sm font-bold">认证成功</span>
+
+          <span class="hidden min-w-0 truncate text-xs text-ink-3 sm:inline">
+            {{ info.nickname }}（{{ info.role }}）· 正在进入{{ info.target }}
+          </span>
+
+          <!-- 右侧读数带：刻度 + 时间戳。机能风里"这一条是系统自己报的"靠这截收尾。 -->
+          <span class="ml-auto hidden shrink-0 items-center gap-3 lg:flex" aria-hidden="true">
+            <span class="ticks w-24" />
+            <span class="readout">{{ stamp }}</span>
+          </span>
         </span>
 
-        <span class="readout shrink-0" style="color: var(--status-done)">AUTH OK</span>
-        <span class="shrink-0 font-heading text-sm font-bold">认证成功</span>
-
-        <span class="min-w-0 truncate text-xs text-ink-3">
-          {{ info.nickname }}（{{ info.role }}）
-          <span class="hidden sm:inline">· 正在进入{{ info.target }}</span>
-        </span>
-
-        <!-- 右侧读数带：刻度 + 时间戳。机能风里"这一条是系统自己报的"靠这截收尾。 -->
-        <span class="ml-auto hidden shrink-0 items-center gap-3 sm:flex" aria-hidden="true">
-          <span class="ticks w-24" />
-          <span class="readout">{{ stamp }}</span>
-        </span>
-
-        <!-- 排空线：贴着底边，在停留时长里从左排到右。
+        <!-- 排空线：贴在内容条底边，在停留时长里从左排到右。
              它把"这条回执还剩多久"画出来 —— 到点自己退场这件事不该让用户猜。
              只动 transform（合成属性），不是 width。 -->
         <span class="auth-band__drain" aria-hidden="true" />
