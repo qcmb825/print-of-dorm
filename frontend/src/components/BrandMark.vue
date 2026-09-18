@@ -8,7 +8,7 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 <template>
   <RouterLink to="/" class="flex items-center gap-2.5 no-underline" style="color: inherit">
     <span
-      class="grid size-9 shrink-0 place-items-center rounded-[10px] border"
+      class="grid size-9 shrink-0 place-items-center border"
       style="
         background-color: var(--accent-tint-soft);
         border-color: var(--accent-tint-border);

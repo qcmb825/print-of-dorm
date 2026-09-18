@@ -226,7 +226,7 @@ onBeforeUnmount(pause)
                 <span class="tnum">{{ item.create_time?.slice(5, 16) ?? '' }}</span>
               </div>
               <div
-                class="rounded-xl border px-3 py-2 text-sm whitespace-pre-wrap break-words"
+                class="border px-3 py-2 text-sm whitespace-pre-wrap break-words"
                 :style="
                   item.sender_id === currentUserId
                     ? {

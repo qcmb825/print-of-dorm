@@ -236,20 +236,20 @@ async function withdraw(order: Order): Promise<void> {
             </div>
           </div>
           <div class="flex flex-wrap gap-1.5">
-            <span class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
+            <span class="tech-label px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
             </span>
-            <span class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
+            <span class="tech-label px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             </span>
             <!-- 份数一定要显示：它直接决定交多少钱，学生看不出来就会反复问管理员。
                  null 是「未记录」（本次升级前的老订单）而不是 1 份，走 copiesLabel。 -->
-            <span class="tech-label tnum rounded-full px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
+            <span class="tech-label tnum px-2 py-1 tech-label--cn text-xs" style="background-color: var(--muted)">
               {{ copiesLabel(order.copies) }}
             </span>
             <span
               v-if="order.paper_name"
-              class="tech-label rounded-full px-2 py-1 tech-label--cn text-xs"
+              class="tech-label px-2 py-1 tech-label--cn text-xs"
               style="background-color: var(--muted)"
             >
               {{ paperLabel(order.paper_name) }}
@@ -261,13 +261,13 @@ async function withdraw(order: Order): Promise<void> {
              而他们甚至没有文件名可以对照。 -->
         <p
           v-if="order.preset_content"
-          class="mt-3 rounded-lg px-2.5 py-1.5 text-xs text-ink-2"
+          class="mt-3 px-2.5 py-1.5 text-xs text-ink-2"
           style="background-color: var(--muted)"
         >
           预设服务：{{ order.preset_content }}
         </p>
 
-        <p v-if="order.remark" class="mt-3 rounded-lg px-2.5 py-1.5 text-xs text-ink-2" style="background-color: var(--muted)">
+        <p v-if="order.remark" class="mt-3 px-2.5 py-1.5 text-xs text-ink-2" style="background-color: var(--muted)">
           备注：{{ order.remark }}
         </p>
 

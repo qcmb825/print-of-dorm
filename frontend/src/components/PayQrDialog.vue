@@ -119,14 +119,14 @@ async function onRemove(): Promise<void> {
       </NAlert>
 
       <div
-        class="grid min-h-[200px] place-items-center rounded-md border border-dashed p-4"
+        class="grid min-h-[200px] place-items-center border border-dashed p-4"
         style="border-color: var(--border); background-color: var(--muted)"
       >
         <img
           v-if="hasQr"
           :src="previewUrl"
           alt="我的微信收款码"
-          class="max-h-[260px] w-auto max-w-full rounded-sm object-contain"
+          class="max-h-[260px] w-auto max-w-full object-contain"
           @error="broken = true"
         />
         <div v-else class="flex flex-col items-center gap-2 text-center">

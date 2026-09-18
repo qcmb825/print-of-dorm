@@ -511,7 +511,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
               'span',
               {
                 class:
-                  'mt-1 inline-flex items-center rounded-full border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap',
+                  'mt-1 inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap',
                 style: NOTIFY_BADGE_STYLE,
                 title: '这位学生推不出邮箱（填的是微信、或者没填），取件邮件发不出去，需要你手动联系他',
               },
@@ -595,7 +595,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
                 {
                   size: 'tiny',
                   quaternary: true,
-                  circle: true,
+                  class: '!h-7 !w-7 !p-0',
                   type: hasGroup(row) ? 'primary' : 'default',
                   disabled: busyId.value === row.id || noPresets,
                   title: noPresets
@@ -714,7 +714,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
               {
                 size: 'tiny',
                 quaternary: true,
-                circle: true,
+                class: '!h-7 !w-7 !p-0',
                 title: '下载文件',
                 onClick: () => void download(row),
               },
@@ -736,7 +736,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
         {
           size: 'tiny',
           quaternary: true,
-          circle: true,
+          class: '!h-7 !w-7 !p-0',
           title: '查看详情与操作记录',
           onClick: () => openDetail(row),
         },
@@ -1083,7 +1083,7 @@ onBeforeUnmount(() => {
                手机上只看到「需人工通知」四个字，没人知道是要自己去通知什么。 -->
           <p v-if="needsManualNotify(order)" class="mt-2 flex flex-wrap items-center gap-1.5 text-xs leading-5">
             <span
-              class="inline-flex items-center rounded-full border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap"
+              class="inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap"
               :style="NOTIFY_BADGE_STYLE"
             >
               需人工通知
@@ -1267,7 +1267,7 @@ onBeforeUnmount(() => {
              不把它的那句话摆出来的话，管理员只能对着一颗空标题猜价钱。 -->
         <p
           v-if="priceOrder.preset_content"
-          class="mb-3 rounded-lg px-3 py-2 text-xs leading-5 whitespace-pre-wrap"
+          class="mb-3 px-3 py-2 text-xs leading-5 whitespace-pre-wrap"
           style="background-color: var(--muted)"
         >
           {{ priceOrder.preset_content }}

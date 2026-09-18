@@ -217,7 +217,7 @@ onMounted(load)
             <div v-for="item in previews" :key="item.key">
               <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">{{ item.label }}</div>
               <div
-                class="rounded-[12px] border p-3"
+                class="border p-3"
                 :style="{ backgroundColor: item.paper, borderColor: item.line }"
               >
                 <p class="whitespace-pre-wrap break-words" :style="[previewFont, { color: item.ink }]">
@@ -234,7 +234,7 @@ onMounted(load)
         <div class="flex items-center gap-2">
           <NButton
             type="primary"
-            class="!font-bold shadow-[var(--glow-primary)]"
+            class="!font-bold"
             :loading="saving"
             :disabled="!canSubmit"
             @click="submit"
@@ -289,7 +289,7 @@ onMounted(load)
                 </p>
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span
-                    class="tech-label rounded-full px-2 py-0.5 tech-label--cn text-xs"
+                    class="tech-label px-2 py-0.5 tech-label--cn text-xs"
                     :style="
                       item.is_active === 1
                         ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }

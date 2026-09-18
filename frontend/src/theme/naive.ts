@@ -117,7 +117,10 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
   const brandFont = '17px'
   /* 聚焦光晕。原先是写死的 #d4a01726 / #ffd00026，等于把 primary 的 hex 抄了一份 ——
    * 强调色一换它就静默漂移。改成从令牌派生的 color-mix。 */
-  const focusRing = `0 0 0 2px color-mix(in srgb, ${t.accentText} 15%, transparent)`
+  /* 聚焦提示：**2px 实心环**，不是柔和光晕。
+   * 这套语言里没有模糊光晕，但焦点指示属于必须保留的无障碍信号（WCAG 2.4.11 要 3:1）。
+   * 实心环既符合硬边语汇，实测又够：浅色 #756a00 压白底 5.22:1、深色 #fffa00 压 #050505 18.4:1。 */
+  const focusRing = `0 0 0 2px ${t.accentText}`
 
   return {
     common: {
@@ -198,27 +201,34 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
 
       // 参考站的面板圆角是 12px、主按钮是方角；这里圆角给中等值，
       // 主按钮的方角在各自组件上单独覆盖。
-      borderRadius: '8px',
-      borderRadiusSmall: '6px',
+      /* 圆角全局归零。这一条与下一行足够 —— 已验证 button / card / dialog / input /
+       * tag / tooltip / popover / menu / alert / upload / drawer / switch / pagination /
+       * tabs / notification / message / radio / slider 的圆角都从这两个 common 变量派生，
+       * 所以各组件块里那些重复的 borderRadius 键已一并删除。
+       * 例外只有三处，都不归 common 管、必须单独处理：checkbox 走 borderRadiusSmall（这里也归零了）、
+       * NProgress 是组件 prop（UploadView 里两处已改 0）、NBadge 的计数泡硬编码 9px（见 base.css 末尾）。 */
+      borderRadius: '0',
+      borderRadiusSmall: '0',
       heightMini: '24px',
       heightTiny: '28px',
       heightSmall: '32px',
       heightMedium: '38px',
       heightLarge: '44px',
       heightHuge: '50px',
-      boxShadow1: isDark ? '0 8px 24px rgb(0 0 0 / 0.5)' : '0 8px 24px rgb(0 0 0 / 0.08)',
-      boxShadow2: isDark ? '0 12px 32px rgb(0 0 0 / 0.55)' : '0 12px 32px rgb(0 0 0 / 0.1)',
-      boxShadow3: isDark ? '0 16px 44px rgb(0 0 0 / 0.6)' : '0 16px 44px rgb(0 0 0 / 0.12)',
+      /* 三级投影全部置 none。这套语言用黑色半透明遮罩（--scrim-*）压暗下层来分层，
+       * 不给上层加投影 —— 实测鹰角官网主 CSS 里 box-shadow 总共只出现一次。
+       * 弹层因此失去与背景的分离手段，所以 base.css 末尾给它们补了 1px 硬描边。 */
+      boxShadow1: 'none',
+      boxShadow2: 'none',
+      boxShadow3: 'none',
     },
     Card: {
-      borderRadius: '12px',
       color: panel,
       borderColor: t.border,
       titleFontSizeMedium: brandFont,
       titleFontWeight: '700',
     },
     Button: {
-      borderRadiusMedium: '8px',
       fontWeight: '700',
       fontWeightStrong: '700',
       textColorPrimary: t.primaryForeground,
@@ -234,13 +244,11 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       thFontWeight: '700',
       tdColorHover: isDark ? '#ffffff0d' : '#00000005',
       tdColorStriped: isDark ? '#ffffff05' : '#00000002',
-      borderRadius: '12px',
       thPaddingMedium: '10px 14px',
       tdPaddingMedium: '12px 14px',
       fontSizeMedium: '13px',
     },
     Input: {
-      borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
       borderHover: `1px solid ${at.hover}`,
@@ -248,7 +256,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       boxShadowFocus: focusRing,
     },
     InternalSelection: {
-      borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
       borderHover: `1px solid ${at.hover}`,
@@ -258,7 +265,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       boxShadowActive: focusRing,
     },
     Tag: {
-      borderRadius: '999px',
       heightMedium: '26px',
       fontWeightStrong: '700',
       colorBordered: 'transparent',
@@ -269,7 +275,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       itemColorActiveHover: p.hover,
       itemTextColorActiveHover: t.primaryForeground,
       itemTextColorActiveHoverHorizontal: t.primaryForeground,
-      borderRadius: '8px',
       itemHeight: '42px',
     },
     Tabs: {
@@ -281,7 +286,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       tabFontWeight: '600',
     },
     Dialog: {
-      borderRadius: '12px',
       color: panel,
       titleFontSize: '17px',
       titleFontWeight: '700',
@@ -290,7 +294,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       draggerColor: 'transparent',
       draggerBorder: `1px dashed ${t.border}`,
       draggerBorderHover: `1px dashed ${t.accentText}`,
-      borderRadius: '12px',
     },
     Statistic: {
       /* 指标值是全站字号落差的顶端（正文 13、面板小标题 11，这里是 44）。
@@ -301,7 +304,6 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       valueTextColor: t.textPrimary,
     },
     Pagination: {
-      itemBorderRadius: '6px',
       itemTextColorActive: t.primaryForeground,
       itemColorActive: p.base,
     },
@@ -309,13 +311,10 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       color: t.surfaceTooltip,
       // 提示框底在深浅主题下都是深色，所以文字固定用白色，不跟着主题走
       textColor: '#ffffff',
-      borderRadius: '6px',
     },
     Alert: {
-      borderRadius: '10px',
     },
     Message: {
-      borderRadius: '8px',
       colorInfo: panel,
       colorSuccess: panel,
       colorWarning: panel,
@@ -324,7 +323,7 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColorSuccess: t.textPrimary,
       textColorWarning: t.textPrimary,
       textColorError: t.textPrimary,
-      boxShadow: isDark ? '0 8px 24px rgb(0 0 0 / 0.5)' : '0 8px 24px rgb(0 0 0 / 0.1)',
+      boxShadow: 'none',
     },
     Form: {
       labelFontWeight: '600',

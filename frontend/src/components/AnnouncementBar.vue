@@ -57,7 +57,7 @@ const authorLine = computed(() => {
       <section
         role="status"
         aria-label="站点公告"
-        class="mx-auto flex max-w-6xl items-start gap-3 rounded-[12px] border p-3 sm:p-4"
+        class="mx-auto flex max-w-6xl items-start gap-3 border p-3 sm:p-4"
         :style="{
           backgroundColor: 'var(--paper)',
           borderColor: 'var(--paper-line)',
@@ -65,7 +65,7 @@ const authorLine = computed(() => {
         }"
       >
         <span
-          class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md"
+          class="mt-0.5 grid size-7 shrink-0 place-items-center"
           style="background-color: var(--accent-tint-soft); color: var(--paper-accent)"
           aria-hidden="true"
         >
@@ -79,7 +79,7 @@ const authorLine = computed(() => {
         </div>
         <NButton
           quaternary
-          circle
+          class="!h-8 !w-8 !p-0"
           size="small"
           aria-label="关闭公告"
           style="color: var(--paper-muted)"

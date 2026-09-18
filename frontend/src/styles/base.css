@@ -12,8 +12,6 @@
 :root body {
   margin: 0;
   background-color: var(--background);
-  background-image: var(--ambient);
-  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--stack-body);
   font-size: 15px;
@@ -85,7 +83,6 @@
   }
   ::-webkit-scrollbar-thumb {
     background: var(--border);
-    border-radius: 999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
@@ -100,7 +97,6 @@
   :focus-visible {
     outline: 2px solid var(--accent-text);
     outline-offset: 2px;
-    border-radius: 2px;
   }
 
   .sr-only {
@@ -118,34 +114,29 @@
 
 @layer utilities {
   /* 磨砂面板：参考站的 glass-panel，用细边框而非阴影来分层 */
+  /* 面板：一度靠「圆角 + 柔和投影」浮起来，现在只有底色与 1px 描边。
+     层级交给遮罩阶梯（--scrim-*）与描边深浅，不给元素加投影。 */
   .panel {
     position: relative;
     background-color: var(--card);
     border: 1px solid var(--border);
-    border-radius: var(--radius-panel);
-    box-shadow: var(--shadow-panel);
+    border-radius: 0;
   }
 
-  /* 磨砂只留给登录首屏这种低频、面积可控的场景；订单表和图表不应在滚动时
-     为每个面板持续重算背景。 */
-  .login-card {
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
+  /* 这里原先有 .login-card 的 backdrop-filter: blur(12px)。
+     删掉有两条原因：它属于「柔和光晕」语汇，与纯平硬边的目标相反；以及
+     backdrop-filter 需要每帧重算背后的内容，滚动时是实打实的合成开销。
+     .login-card 这个类保留 —— 它是 .login-card::after 那条双色亮线的定位宿主。 */
 
-  /* 让需要承载数字或主要操作的卡片有一层克制的抬升感；普通容器不跟着动，
-     避免表格和大块内容在滚动时显得浮躁。 */
+  /* 承载数字或主要操作的卡片。原先是「抬升 + 投影 + hover 上浮 2px」，
+     现在投影与位移都去掉了：没有投影之后，2px 的上浮只剩「卡片在抖」，
+     而描边变色本身已经足够说明「这块可关注」。 */
   .panel-raised {
-    box-shadow: var(--shadow-raised);
-    transition:
-      transform var(--motion-dur-base) var(--motion-ease-out),
-      border-color var(--motion-dur-fast) ease,
-      box-shadow var(--motion-dur-base) var(--motion-ease-out);
+    transition: border-color var(--motion-dur-fast) ease;
   }
 
   @media (hover: hover) {
     .panel-raised:hover {
-      transform: translateY(-2px);
       border-color: var(--accent-tint-border);
     }
   }
@@ -164,7 +155,6 @@
     bottom: 9px;
     left: 0;
     width: 2px;
-    border-radius: 0 999px 999px 0;
     /* 激活色条是「线」，走 --accent-text。荧光黄当 2px 竖条在浅色底上只有 1.05:1，等于没有。
        （激活态另有文字色与 --muted 底色两个信号，所以这条即使变暗也不丢信息。） */
     background: var(--accent-text);
@@ -225,7 +215,6 @@
     align-items: baseline;
     padding: 1px 5px;
     border: 1px solid var(--accent-tint-border);
-    border-radius: 4px;
     background-color: var(--accent-tint);
     color: var(--accent-text);
     font-family: var(--stack-mono);
@@ -245,9 +234,8 @@
   .login-shell {
     background-image:
       linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px),
-      radial-gradient(circle at 72% 42%, var(--accent-tint-soft), transparent 24rem);
-    background-size: 42px 42px, 42px 42px, auto;
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+    background-size: 42px 42px, 42px 42px;
   }
 
   .login-card::after {
@@ -256,7 +244,6 @@
     right: 22px;
     left: 22px;
     height: 2px;
-    border-radius: 999px;
     /* 卡顶那条 2px 双色亮线是「线」，走 --accent-text：卡面在浅色下接近纯白，
        荧光黄铺上去只有 1.11:1，会整条消失。深色下 --accent-text 就等于 --primary。 */
     background: linear-gradient(90deg, transparent, var(--accent-text), var(--secondary), transparent);
@@ -870,4 +857,37 @@
   .route-leave-to {
     transform: none !important;
   }
+}
+
+/* ============ 弹层的分离手段：1px 硬描边 ============
+ *
+ * 阶段 2 把 boxShadow1/2/3 全部置 none 之后，这一层是**必须补上**的东西：
+ * Naive 的 Popover 主题里只有 `boxShadow: boxShadow2`、**没有 border**；
+ * Message 的 border 默认是 "0"。投影一删，Dropdown / Select 下拉 / ColorPicker / Message
+ * 就既没描边也没投影，只剩一块不透明底压在同色系的页面上，边界消失。
+ *
+ * 必须留在 @layer 之外：Naive 的样式是运行时插入的**无层级**规则，同属性下无层级一律
+ * 赢过分层（Message 的 `border: var(--n-border)` 就属于这种冲突），所以这里既无层级又加
+ * !important。Modal / Drawer 本身有遮罩，本来就能分开，一并补上是为了让「弹层有硬边」
+ * 成为统一语言，而不是有的有、有的没有。
+ *
+ * 另：naive 的 popover 箭头自带一条硬编码的 `box-shadow: 0 0 8px rgba(0,0,0,.12)`
+ * （es/popover/src/styles/index.cssr.mjs），它不跟随主题、themeOverrides 也覆盖不到，
+ * 只能在这里压掉 —— 否则「零投影」会从箭头那道小阴影上漏出来。
+ *
+ * **类名要说清楚**：NDropdown / NSelect / NColorPicker 弹出来的「共享弹层」面板上挂的是
+ * `n-popover-shared`，**没有 `n-popover`**（实测完整类名：`n-dropdown-menu … n-popover-shared n-dropdown`）。
+ * 只写 `.n-popover` 会静默漏掉这三个最常用的弹层 —— 它们恰好又是**没有遮罩**的那几个，
+ * 最需要描边。所以两个都列上：同一个元素上两条规则只落一次边框，不会叠成双线。
+ */
+.n-popover,
+.n-popover-shared,
+.n-message,
+.n-modal,
+.n-drawer {
+  border: 1px solid var(--border) !important;
+}
+
+.n-popover-arrow {
+  box-shadow: none !important;
 }

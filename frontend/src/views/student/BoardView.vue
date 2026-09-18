@@ -177,7 +177,7 @@ onMounted(load)
           <li
             v-for="row in statusRows"
             :key="row.status"
-            class="rounded-lg px-2.5 py-2"
+            class="px-2.5 py-2"
             style="background-color: var(--muted)"
           >
             <div class="tech-label tech-label--cn text-xs" :style="{ color: row.color }">{{ row.status }}</div>
@@ -191,12 +191,12 @@ onMounted(load)
           <h2 class="font-heading text-base font-bold">下单排行 · 前 10</h2>
           <!-- 分段切换用原生 button：这里只是换个本地 ref，套一层 NRadioGroup
                反而要处理它的 string | number 值类型，得不偿失。 -->
-          <div class="flex items-center gap-0.5 rounded-lg p-0.5" style="background-color: var(--muted)">
+          <div class="flex items-center gap-0.5 p-0.5" style="background-color: var(--muted)">
             <button
               v-for="item in boardTabs"
               :key="item.key"
               type="button"
-              class="rounded-md px-2.5 py-1 text-xs font-semibold"
+              class="px-2.5 py-1 text-xs font-semibold"
               :style="
                 tab === item.key
                   ? { backgroundColor: 'var(--card)', color: 'var(--foreground)' }
@@ -213,7 +213,7 @@ onMounted(load)
           <li
             v-for="entry in topRows"
             :key="entry.rank"
-            class="flex items-center gap-2.5 rounded-lg px-2.5 py-2"
+            class="flex items-center gap-2.5 px-2.5 py-2"
             :style="
               entry.is_me
                 ? { backgroundColor: 'var(--muted)', outline: '1px solid var(--accent-text)' }
@@ -231,9 +231,9 @@ onMounted(load)
                 {{ entry.nickname }}
                 <span v-if="entry.is_me" class="tech-label ml-1 tech-label--cn text-xs" style="color: var(--accent-text)">你</span>
               </div>
-              <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full" style="background-color: var(--muted)">
+              <div class="mt-1 h-1.5 w-full overflow-hidden" style="background-color: var(--muted)">
                 <div
-                  class="h-full rounded-full"
+                  class="h-full"
                   :style="{ width: barWidth(entry.count), backgroundColor: 'var(--accent-text)' }"
                 />
               </div>
@@ -250,7 +250,7 @@ onMounted(load)
 
         <p
           v-if="myLine"
-          class="mt-3 rounded-lg px-2.5 py-2 text-xs text-ink-2"
+          class="mt-3 px-2.5 py-2 text-xs text-ink-2"
           style="background-color: var(--muted)"
         >
           {{ myLine }}

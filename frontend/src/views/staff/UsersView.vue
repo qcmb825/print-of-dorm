@@ -647,7 +647,7 @@ onMounted(load)
 
     <p
       v-if="withPassword"
-      class="mb-3 rounded-lg border px-3 py-2 text-xs"
+      class="mb-3 border px-3 py-2 text-xs"
       style="
         border-color: var(--warn-tint-border);
         background-color: var(--warn-tint);
@@ -809,7 +809,7 @@ onMounted(load)
         <li
           v-for="item in conflicts.items"
           :key="`${item.label}:${item.value}`"
-          class="flex flex-wrap items-center gap-x-2 rounded-[10px] border px-3 py-2 text-sm"
+          class="flex flex-wrap items-center gap-x-2 border px-3 py-2 text-sm"
           style="border-color: var(--border)"
         >
           <span class="tech-label text-ink-4 tech-label--cn text-xs">{{ item.label }}</span>

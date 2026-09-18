@@ -246,7 +246,7 @@ onMounted(load)
           <div class="flex items-center gap-2">
             <NButton
               type="primary"
-              class="!font-bold shadow-[var(--glow-primary)]"
+              class="!font-bold"
               :loading="saving"
               :disabled="!canSubmitPreset"
               @click="submitPreset"
@@ -302,7 +302,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5 tech-label--cn text-xs"
+                  class="tech-label px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
@@ -376,7 +376,7 @@ onMounted(load)
           <div class="flex items-center gap-2">
             <NButton
               type="primary"
-              class="!font-bold shadow-[var(--glow-primary)]"
+              class="!font-bold"
               :loading="saving"
               :disabled="!canSubmitPaper"
               @click="submitPaper"
@@ -437,7 +437,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5 tech-label--cn text-xs"
+                  class="tech-label px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }

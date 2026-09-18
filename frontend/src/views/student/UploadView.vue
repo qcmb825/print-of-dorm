@@ -268,7 +268,7 @@ onMounted(async () => {
       >
         <div class="flex items-start gap-3">
           <span
-            class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg"
+            class="mt-0.5 grid size-8 shrink-0 place-items-center"
             style="background-color: var(--status-done-bg); color: var(--status-done)"
             aria-hidden="true"
           >
@@ -307,7 +307,7 @@ onMounted(async () => {
       role="status"
     >
       <span
-        class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg"
+        class="mt-0.5 grid size-7 shrink-0 place-items-center"
         style="background-color: var(--accent-tint); color: var(--secondary)"
         aria-hidden="true"
       >
@@ -327,7 +327,7 @@ onMounted(async () => {
           v-if="session.total_chunks > 0"
           :percentage="Math.round((session.received_count / session.total_chunks) * 100)"
           :height="4"
-          :border-radius="2"
+          :border-radius="0"
           :show-indicator="false"
           class="mt-2"
         />
@@ -356,7 +356,7 @@ onMounted(async () => {
 
       <!-- 预设清单拉不到时给一句人话。不写它的话，第二个按钮是灰的、
            下拉框是空的，看起来就是这个功能没做。 -->
-      <p v-if="optionsError" class="mb-4 rounded-lg px-3 py-2 text-xs" role="alert"
+      <p v-if="optionsError" class="mb-4 px-3 py-2 text-xs" role="alert"
          style="background-color: var(--err-bg); color: var(--err)">
         {{ optionsError }}
       </p>
@@ -377,11 +377,11 @@ onMounted(async () => {
 
         <div
           v-if="selectedPreset"
-          class="mt-3 flex items-start gap-3 rounded-xl border p-3"
+          class="mt-3 flex items-start gap-3 border p-3"
           style="border-color: var(--border); background-color: var(--muted)"
         >
           <span
-            class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg"
+            class="mt-0.5 grid size-9 shrink-0 place-items-center"
             style="background-color: var(--accent-tint); color: var(--accent-text)"
             aria-hidden="true"
           >
@@ -405,7 +405,7 @@ onMounted(async () => {
         <NUploadDragger>
           <div class="flex flex-col items-center gap-2 py-5">
             <span
-              class="grid size-11 place-items-center rounded-xl border"
+              class="grid size-11 place-items-center border"
               style="
                 background-color: var(--accent-tint);
                 border-color: var(--accent-tint-border);
@@ -424,11 +424,11 @@ onMounted(async () => {
       <!-- 已选文件 -->
       <div
         v-if="!usingPreset && selected"
-        class="mt-3 flex items-center gap-3 rounded-xl border p-3"
+        class="mt-3 flex items-center gap-3 border p-3"
         style="border-color: var(--border)"
       >
         <span
-          class="grid size-9 shrink-0 place-items-center rounded-lg"
+          class="grid size-9 shrink-0 place-items-center"
           style="background-color: var(--muted); color: var(--secondary)"
           aria-hidden="true"
         >
@@ -442,7 +442,7 @@ onMounted(async () => {
         </div>
         <NButton
           quaternary
-          circle
+          class="!h-8 !w-8 !p-0"
           size="small"
           aria-label="移除已选文件"
           :disabled="submitting"
@@ -521,7 +521,7 @@ onMounted(async () => {
           type="line"
           :percentage="progress"
           :height="6"
-          :border-radius="3"
+          :border-radius="0"
           :show-indicator="false"
           :status="progress >= 100 ? 'success' : 'default'"
         />
@@ -531,7 +531,7 @@ onMounted(async () => {
         <NButton
           type="primary"
           size="large"
-          class="!font-bold shadow-[var(--glow-primary)]"
+          class="!font-bold"
           :loading="submitting"
           :disabled="!!blockReason"
           :title="blockReason ?? undefined"

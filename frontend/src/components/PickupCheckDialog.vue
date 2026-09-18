@@ -180,7 +180,7 @@ function close(): void {
 
     <template v-if="order">
       <div
-        class="mt-4 rounded-lg border p-3"
+        class="mt-4 border p-3"
         style="border-color: var(--border); background-color: var(--muted)"
       >
         <div class="flex items-start justify-between gap-3">

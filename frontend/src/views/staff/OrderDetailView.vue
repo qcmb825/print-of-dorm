@@ -289,7 +289,7 @@ onMounted(load)
           <p class="mt-2 text-xs text-ink-4">备注</p>
           <p
             v-if="order.remark"
-            class="mt-1 whitespace-pre-wrap break-words rounded-md p-2 text-sm leading-6"
+            class="mt-1 whitespace-pre-wrap break-words p-2 text-sm leading-6"
             style="background: var(--accent-tint-soft)"
           >
             {{ order.remark }}

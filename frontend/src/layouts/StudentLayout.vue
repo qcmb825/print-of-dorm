@@ -34,8 +34,8 @@ onMounted(() => {
 <template>
   <div class="flex min-h-full flex-col">
     <header
-      class="sticky top-0 z-20 border-b backdrop-blur-xl"
-      style="background-color: color-mix(in srgb, var(--background) 82%, transparent); border-color: var(--border)"
+      class="sticky top-0 z-20 border-b"
+      style="background-color: color-mix(in srgb, var(--background) 96%, transparent); border-color: var(--border)"
     >
       <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:h-16 sm:px-5">
         <BrandMark />
@@ -46,7 +46,7 @@ onMounted(() => {
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="nav-link flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold no-underline"
+            class="nav-link flex items-center gap-1.5 px-3 py-2 text-sm font-semibold no-underline"
             :class="currentPath === item.to && 'nav-link--active'"
             :style="
               currentPath === item.to
@@ -91,10 +91,10 @@ onMounted(() => {
          这一栏没有色条/下划线，激活态本来就只靠颜色区分，因此必须真的过 AA。
          上面那排横向导航不同：它的文字是 --foreground，本来就合格，不动。 -->
     <nav
-      class="fixed inset-x-0 bottom-0 z-20 grid border-t backdrop-blur-xl md:hidden"
+      class="fixed inset-x-0 bottom-0 z-20 grid border-t md:hidden"
       :style="{
         gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))`,
-        backgroundColor: 'color-mix(in srgb, var(--background) 88%, transparent)',
+        backgroundColor: 'color-mix(in srgb, var(--background) 96%, transparent)',
         borderColor: 'var(--border)',
         paddingBottom: 'env(safe-area-inset-bottom)',
       }"

@@ -278,7 +278,7 @@ async function check(): Promise<void> {
             block
             size="large"
             :loading="submitting"
-            class="!font-bold shadow-[var(--glow-primary)]"
+            class="!font-bold"
             @click="submit"
           >
             提交申请

@@ -165,18 +165,29 @@
   --paper-accent: var(--accent-text);
   --paper-muted: #71717a;
 
-  /* 顶部环境光，对应参考站那层很淡的径向渐变 */
-  --ambient: radial-gradient(at 12% 0%, rgb(212 160 23 / 0.1) 0%, transparent 45%),
-    radial-gradient(at 88% 8%, rgb(0 143 166 / 0.08) 0%, transparent 40%);
-
-  /* 发光套在**主按钮**上（7 处 shadow-[var(--glow-primary)]），是填充的伴随效果，
-     所以跟着 --primary 走而不是 --accent-text：浅色下它是一圈很淡的黄晕（几乎看不出，
-     这是可接受的 —— 阶段 2 会整体删掉发光），深色下就是主按钮的霓虹光。
-     用 --accent-text 的话浅色下会变成一圈深金，看着像脏了的投影。 */
-  --glow-primary: 0 0 20px 0 color-mix(in srgb, var(--primary) 35%, transparent);
-  --glow-secondary: 0 0 20px 0 rgb(0 143 166 / 0.3);
-  --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.03), 0 12px 32px rgb(17 17 17 / 0.035);
-  --shadow-raised: 0 2px 5px rgb(17 17 17 / 0.05), 0 18px 40px rgb(17 17 17 / 0.07);
+  /* ── 遮罩阶梯（scrim）─────────────────────────────────────────
+   * 这套语言**不用投影表达层级**，用黑色半透明遮罩：把下层压暗来突出上层。
+   * 十级梯度取自鹰角官网 CSS 的实测（rgba(0,0,0,.05/.1/.15/.3/.4/.5/.6/.7/.8/.9)）。
+   *
+   * **刻意不跟随主题，所以只在这一处声明**（:root 就是 <html>，深色块同样拿得到）。
+   * 深色下黑遮罩照样有效 —— 它压暗的是本来就暗的底，观感是「视线被收拢」而不是「更黑」。
+   *
+   * 替掉的是三组「柔和光晕」语汇，它们与纯平、硬边的目标正好相反：
+   *   --shadow-panel / --shadow-raised  卡片浮起
+   *   --glow-primary / --glow-secondary 主按钮与状态点的发光
+   *   --ambient                         顶部径向环境光
+   * 弹层（Dialog / Drawer / Dropdown / Select / Message）现在靠**遮罩压暗下层 + 1px 硬描边**
+   * 与背景分离，而不是给上层加投影。 */
+  --scrim-05: rgb(0 0 0 / 0.05);
+  --scrim-10: rgb(0 0 0 / 0.1);
+  --scrim-15: rgb(0 0 0 / 0.15);
+  --scrim-30: rgb(0 0 0 / 0.3);
+  --scrim-40: rgb(0 0 0 / 0.4);
+  --scrim-50: rgb(0 0 0 / 0.5);
+  --scrim-60: rgb(0 0 0 / 0.6);
+  --scrim-70: rgb(0 0 0 / 0.7);
+  --scrim-80: rgb(0 0 0 / 0.8);
+  --scrim-90: rgb(0 0 0 / 0.9);
 
   /* 字体栈：**拉丁在前、中文在后**。
    *
@@ -316,13 +327,7 @@
   --paper-accent: var(--primary);
   --paper-muted: #a1a1aa;
 
-  --ambient: radial-gradient(at 12% 0%, rgb(255 208 0 / 0.07) 0%, transparent 45%),
-    radial-gradient(at 88% 8%, rgb(0 240 255 / 0.06) 0%, transparent 40%);
-
-  --glow-primary: 0 0 24px 0 rgb(255 250 0 / 0.35);
-  --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
-  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28), 0 14px 38px rgb(0 0 0 / 0.2);
-  --shadow-raised: 0 3px 8px rgb(0 0 0 / 0.38), 0 22px 48px rgb(0 0 0 / 0.32);
+  /* 遮罩阶梯、投影与发光都不在这里声明：前者主题无关（见浅色块），后两组已删除。 */
 
   /* 路由转场扫描线专用颜色（深色下降低饱和度，避免霓虹色过于刺眼） */
   --scan-line: #67e8f9;
@@ -579,5 +584,8 @@
   --text-3xl--line-height: 36px;
   --text-4xl--line-height: 48px;
 
-  --radius-panel: 12px;
+  /* 面板圆角。归零 —— 这套语言的圆角几乎不存在（实测鹰角官网主 CSS 里
+   * border-radius:0 出现四次、其余值都 ≤16px）。Naive 组件那一侧靠
+   * theme/naive.ts 的 common.borderRadius / borderRadiusSmall 一起归零。 */
+  --radius-panel: 0;
 }

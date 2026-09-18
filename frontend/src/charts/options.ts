@@ -152,7 +152,7 @@ export function splitBarOption(
       barMaxWidth: 34,
       itemStyle: {
         color: colors[index % colors.length],
-        borderRadius: [4, 4, 0, 0],
+        borderRadius: [0, 0, 0, 0],
       },
       data: categories.map((name) => group.data.find((d) => d.name === name)?.value ?? 0),
     })),
@@ -193,7 +193,7 @@ export function rankOption(
       {
         type: 'bar',
         barMaxWidth: 16,
-        itemStyle: { color: palette.secondary, borderRadius: [0, 4, 4, 0] },
+        itemStyle: { color: palette.secondary, borderRadius: [0, 0, 0, 0] },
         label: {
           show: true,
           position: 'right',

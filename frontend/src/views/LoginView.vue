@@ -223,8 +223,8 @@ onMounted(async () => {
     <div class="relative grid w-full max-w-[960px] items-center gap-10 lg:grid-cols-[1fr_440px] lg:gap-16">
       <!-- 宽屏保留一块安静的品牌区：登录不是普通表单，先让用户确认自己到了对的服务。 -->
       <section class="hidden lg:block">
-        <div class="mb-6 inline-flex items-center gap-2 rounded-full border px-3 py-1.5" style="border-color: var(--accent-tint-border); background-color: var(--accent-tint)">
-          <span class="size-1.5 rounded-full" style="background-color: var(--secondary); box-shadow: var(--glow-secondary)" />
+        <div class="mb-6 inline-flex items-center gap-2 border px-3 py-1.5" style="border-color: var(--accent-tint-border); background-color: var(--accent-tint)">
+          <span class="size-1.5" style="background-color: var(--secondary);" />
           <span class="tech-label text-ink-2 text-2xs">Campus print service</span>
         </div>
         <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
@@ -245,7 +245,7 @@ onMounted(async () => {
       <div class="mb-5 flex items-center justify-between">
         <span class="flex items-center gap-2.5">
           <span
-            class="grid size-9 place-items-center rounded-[10px] border"
+            class="grid size-9 place-items-center border"
             style="
               background-color: var(--accent-tint-soft);
               border-color: var(--accent-tint-border);
@@ -266,7 +266,7 @@ onMounted(async () => {
         <!-- 服务状态：直接打后端的 /hello，让用户一眼看出是不是服务没起来 -->
         <div class="mb-4 flex items-center gap-2">
           <span
-            class="tech-label inline-flex items-center gap-1.5 rounded-full px-2 py-1 tech-label--cn text-xs"
+            class="tech-label inline-flex items-center gap-1.5 px-2 py-1 tech-label--cn text-xs"
             :style="{
               color: online === false ? 'var(--err)' : 'var(--secondary)',
               backgroundColor: online === false ? 'var(--err-bg)' : 'var(--role-user-bg)',
@@ -326,7 +326,7 @@ onMounted(async () => {
                 block
                 size="large"
                 :loading="submitting"
-                class="mt-1 !font-bold shadow-[var(--glow-primary)]"
+                class="mt-1 !font-bold"
                 @click="submitLogin"
               >
                 登录
@@ -405,7 +405,7 @@ onMounted(async () => {
                 block
                 size="large"
                 :loading="submitting"
-                class="!font-bold shadow-[var(--glow-primary)]"
+                class="!font-bold"
                 @click="submitRegister"
               >
                 注册并登录

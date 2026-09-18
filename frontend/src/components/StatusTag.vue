@@ -17,11 +17,11 @@ const style = computed(() => ({
 
 <template>
   <span
-    class="inline-flex items-center gap-1.5 rounded-full border font-bold whitespace-nowrap"
+    class="inline-flex items-center gap-1.5 border font-bold whitespace-nowrap"
     :class="size === 'sm' ? 'px-2 py-[1px] text-xs' : 'px-2.5 py-0.5 text-sm'"
     :style="style"
   >
-    <span class="size-1.5 rounded-full bg-current" aria-hidden="true" />
+    <span class="size-1.5 bg-current" aria-hidden="true" />
     {{ status }}
   </span>
 </template>

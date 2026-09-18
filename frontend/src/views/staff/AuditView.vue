@@ -136,7 +136,7 @@ onMounted(load)
           <span class="inline-flex items-center gap-1.5">
             {{ tab.label }}
             <span
-              class="rounded-full px-1.5 py-px text-2xs font-bold"
+              class="px-1.5 py-px text-2xs font-bold"
               :style="{
                 // 计数为 0 时刻意弱化（标签名本身已经说明了这一栏是什么），走四级文字色。
                 // 原先的 var(--ink-4) 不存在，静默失效 —— 0 会显示成和计数非 0 一样的颜色。
@@ -165,7 +165,7 @@ onMounted(load)
                   <span class="font-heading text-lg font-bold">{{ item.real_name }}</span>
                   <span class="font-mono text-sm text-ink-3">{{ item.student_id }}</span>
                   <span
-                    class="rounded-full px-2 py-0.5 text-xs font-bold"
+                    class="px-2 py-0.5 text-xs font-bold"
                     :style="{
                       color: STATUS_META[item.status].color,
                       backgroundColor: STATUS_META[item.status].bg,
@@ -221,7 +221,7 @@ onMounted(load)
 
             <div
               v-if="item.review_note"
-              class="mt-3 rounded-[10px] px-3 py-2 text-sm leading-6"
+              class="mt-3 px-3 py-2 text-sm leading-6"
               :style="{
                 backgroundColor: STATUS_META[item.status].bg,
                 color: STATUS_META[item.status].color,

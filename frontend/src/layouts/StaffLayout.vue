@@ -156,7 +156,7 @@ onMounted(() => {
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold no-underline"
+          class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
           :class="activeNav === item.to && 'nav-link--active'"
           :style="
             activeNav === item.to
@@ -178,7 +178,7 @@ onMounted(() => {
            --primary 只有 2.09:1，而小字要 4.5:1（--accent-text 在同底上 4.82:1）。 -->
       <div
         v-if="auth.advanced"
-        class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs"
+        class="mx-3 mb-2 flex items-center gap-2 border px-3 py-2 text-xs"
         style="
           border-color: var(--accent-tint-border);
           background-color: var(--accent-tint-soft);
@@ -201,9 +201,9 @@ onMounted(() => {
 
     <div class="flex min-w-0 flex-1 flex-col">
       <header
-        class="sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 backdrop-blur-xl lg:hidden"
+        class="sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 lg:hidden"
         style="
-          background-color: color-mix(in srgb, var(--background) 85%, transparent);
+          background-color: color-mix(in srgb, var(--background) 96%, transparent);
           border-color: var(--border);
         "
       >
@@ -223,7 +223,7 @@ onMounted(() => {
                 v-for="item in navItems"
                 :key="item.to"
                 :to="item.to"
-                class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold no-underline"
+                class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
                 :class="activeNav === item.to && 'nav-link--active'"
                 :style="
                   activeNav === item.to
@@ -241,7 +241,7 @@ onMounted(() => {
 
         <button
           type="button"
-          class="grid size-9 place-items-center rounded-lg"
+          class="grid size-9 place-items-center"
           style="color: var(--text-secondary)"
           aria-label="打开导航菜单"
           @click="drawerOpen = true"
@@ -257,7 +257,7 @@ onMounted(() => {
           <button
             v-if="auth.advanced"
             type="button"
-            class="grid size-9 place-items-center rounded-lg"
+            class="grid size-9 place-items-center"
             style="color: var(--accent-text)"
             title="退出高级视图"
             aria-label="退出高级视图"
