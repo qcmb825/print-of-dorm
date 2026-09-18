@@ -12,7 +12,7 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
       style="
         background-color: var(--accent-tint-soft);
         border-color: var(--accent-tint-border);
-        color: var(--primary);
+        color: var(--accent-text);
       "
       aria-hidden="true"
     >

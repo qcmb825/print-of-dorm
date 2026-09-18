@@ -80,8 +80,11 @@
     background-clip: content-box;
   }
 
+  /* 焦点轮廓走 --accent-text，不走 --primary：后者是荧光黄 #fffa00，压在浅底上只有
+     1.05:1 —— 键盘用户会完全看不到焦点在哪。--accent-text 在同底上是 5.22:1。
+     这属于 WCAG 2.4.11（非文本对比度 ≥3:1），换了颜色就要重新量。 */
   :focus-visible {
-    outline: 2px solid var(--primary);
+    outline: 2px solid var(--accent-text);
     outline-offset: 2px;
     border-radius: 2px;
   }
@@ -148,7 +151,9 @@
     left: 0;
     width: 2px;
     border-radius: 0 999px 999px 0;
-    background: var(--primary);
+    /* 激活色条是「线」，走 --accent-text。荧光黄当 2px 竖条在浅色底上只有 1.05:1，等于没有。
+       （激活态另有文字色与 --muted 底色两个信号，所以这条即使变暗也不丢信息。） */
+    background: var(--accent-text);
     content: '';
     opacity: 0;
     transform: scaleY(0.45);
@@ -224,7 +229,9 @@
     left: 22px;
     height: 2px;
     border-radius: 999px;
-    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    /* 卡顶那条 2px 双色亮线是「线」，走 --accent-text：卡面在浅色下接近纯白，
+       荧光黄铺上去只有 1.11:1，会整条消失。深色下 --accent-text 就等于 --primary。 */
+    background: linear-gradient(90deg, transparent, var(--accent-text), var(--secondary), transparent);
     content: '';
     opacity: 0.85;
   }
@@ -548,12 +555,15 @@
     top: 50%;
     height: 2px;
     margin-top: -1px;
+    /* **这一处刻意用 --primary 而不是 --accent-text。**
+       判定依据是「承载背景是不是暗的」，不是「它是不是一条线」：
+       套准线铺在幕布上，而幕布在深浅两个主题下都是暗底（浅色是 90% 前景色混页底、
+       深色是 --deep-void），荧光黄在那个底上清晰可见；反过来 --accent-text 在浅色主题
+       是深黄 #756a00，铺到暗幕布上才看不见。 */
     background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
-    /* 不用 --glow-secondary：那一对令牌是按 24px 半径的主按钮光晕调的（tokens.css 里
-       已经在 LoginView / UploadView 的主按钮上用着），铺到一条横贯全宽的 2px 线上，
-       面积大了十几倍，会从「高光」变成「漏光」。12px 的 --accent-tint-border 是同一个
-       色相、更小的半径，和站内的发光档位对得上。 */
-    box-shadow: 0 0 12px 0 var(--accent-tint-border);
+    /* 发光也不能用 --accent-tint-border：那一支跟着主题走，浅色下是深黄，在暗幕布上会糊成脏斑。
+       --veil-accent-tint 是刻意不跟随主题的一支，见 tokens.css。 */
+    box-shadow: 0 0 12px 0 var(--veil-accent-tint);
     opacity: 0;
     transform: scaleX(var(--motion-route-cut));
     transform-origin: center;
@@ -579,6 +589,8 @@
     padding: 0 24px;
     overflow: hidden;
     white-space: nowrap;
+    /* 同套准线：读数是打在暗幕布上的「场记板」，用 --primary（荧光黄）而不是 --accent-text。
+       它在两个主题下都是浅色字压暗底。 */
     color: var(--primary);
     opacity: 0;
   }
@@ -607,7 +619,7 @@
     flex: none;
     width: 1px;
     height: 16px;
-    background: var(--accent-tint-border);
+    background: var(--veil-accent-tint);
   }
 
   .route-veil[data-phase='in'] .route-veil__hud {
@@ -643,7 +655,7 @@
      8px 才看得出「是一条线在发光」而不是「屏幕上有一团黄」。 */
   @media (hover: none) {
     .route-veil__rule {
-      box-shadow: 0 0 8px 0 var(--accent-tint-border);
+      box-shadow: 0 0 8px 0 var(--veil-accent-tint);
     }
   }
 }

@@ -284,7 +284,7 @@ onMounted(async () => {
                 <div class="tech-label mb-1 text-ink-4">取件码</div>
                 <div
                   class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
-                  style="color: var(--primary)"
+                  style="color: var(--accent-text)"
                 >
                   {{ pickupCodeLabel(receipt.code) }}
                 </div>
@@ -382,7 +382,7 @@ onMounted(async () => {
         >
           <span
             class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg"
-            style="background-color: var(--accent-tint); color: var(--primary)"
+            style="background-color: var(--accent-tint); color: var(--accent-text)"
             aria-hidden="true"
           >
             <Printer :size="17" />
@@ -409,7 +409,7 @@ onMounted(async () => {
               style="
                 background-color: var(--accent-tint);
                 border-color: var(--accent-tint-border);
-                color: var(--primary);
+                color: var(--accent-text);
               "
               aria-hidden="true"
             >

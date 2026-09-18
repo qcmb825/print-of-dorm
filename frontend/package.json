@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:only": "vite build",
     "typecheck": "vue-tsc --noEmit",
+    "audit:contrast": "node scripts/contrast-audit.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

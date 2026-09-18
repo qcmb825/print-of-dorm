@@ -1,0 +1,1 @@
+import{S as e,it as t}from"./endpoints-BqUstzml.js";function n(n,r){return t(n,e=>{e!==void 0&&(r.value=e)}),e(()=>n.value===void 0?r.value:n.value)}export{n as t};

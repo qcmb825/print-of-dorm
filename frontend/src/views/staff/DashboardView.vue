@@ -36,7 +36,11 @@ const palette = computed<ChartPalette>(() => {
     text: t.textPrimary,
     textMuted: t.textTertiary,
     border: t.border,
-    primary: t.primary,
+    /* 图表序列色属于「线」：它画在图表自己的底上，浅色下是白/近白，
+       荧光黄 #fffa00 铺上去只有 1.11:1 会整条消失。走 --accent-text。
+       注意 options.ts 会在这串色值后面拼十六进制 alpha（如 `${p.primary}59`），
+       所以它必须是 6 位 hex —— --accent-text 在两套主题下都是字面 hex，成立。 */
+    primary: t.accentText,
     secondary: t.secondary,
     ok: t.ok,
     err: t.err,

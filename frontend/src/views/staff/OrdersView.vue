@@ -1281,7 +1281,7 @@ onBeforeUnmount(() => {
           @keydown.enter="submitPrice"
         >
           <template #prefix>
-            <span class="font-heading font-bold" style="color: var(--primary)">¥</span>
+            <span class="font-heading font-bold" style="color: var(--accent-text)">¥</span>
           </template>
         </NInput>
         <p class="mt-2 text-[11px]" :style="{ color: priceError ? 'var(--err)' : 'var(--ink-4)' }">

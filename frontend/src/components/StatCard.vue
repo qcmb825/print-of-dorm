@@ -25,7 +25,7 @@ withDefaults(
         :is="icon"
         v-if="icon"
         :size="16"
-        :style="{ color: accent ? 'var(--primary)' : 'var(--text-quaternary)' }"
+        :style="{ color: accent ? 'var(--accent-text)' : 'var(--text-quaternary)' }"
         aria-hidden="true"
       />
     </div>

@@ -16,6 +16,16 @@ export interface Tokens {
   card: string
   primary: string
   primaryForeground: string
+  /** 强调色**当文字、图标、描边、细线、图表序列用**的深度。
+   *
+   *  与 primary 的分工不是审美选择，是测量结果：浅色下 primary 是荧光黄 #fffa00，
+   *  压在浅底上只有 1.01~1.10:1 —— 当文字、当描边、当图表线全都看不见（整条黄谱都救不回来，
+   *  最深的 #a89a00 也只有 2.74:1，到不了非文本图形的 3:1）。深色下 primary 本身有 18.37:1，
+   *  这支就等于 primary。
+   *
+   *  **凡是「线」而不是「面」的用途都读它，不要读 primary。** primary 只用于
+   *  可承载 primaryForeground 的大面积填充（主按钮、菜单/分页激活块）。 */
+  accentText: string
   secondary: string
   secondaryForeground: string
   muted: string
@@ -56,6 +66,7 @@ const VAR_MAP: Record<
   card: '--card',
   primary: '--primary',
   primaryForeground: '--primary-foreground',
+  accentText: '--accent-text',
   secondary: '--secondary',
   secondaryForeground: '--secondary-foreground',
   muted: '--muted',
@@ -99,8 +110,14 @@ export function readTokens(): Tokens {
 
 export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides {
   const p = derive(t.primary, isDark)
+  /* 「线」用途的派生色。强调色的描边/细线一律走 --accent-text，不走 primary —— 理由见
+   * Tokens.accentText 的注释。 */
+  const at = derive(t.accentText, isDark)
   const panel = t.surfaceOverlay
-  const brandFont = '16px'
+  const brandFont = '17px'
+  /* 聚焦光晕。原先是写死的 #d4a01726 / #ffd00026，等于把 primary 的 hex 抄了一份 ——
+   * 强调色一换它就静默漂移。改成从令牌派生的 color-mix。 */
+  const focusRing = `0 0 0 2px color-mix(in srgb, ${t.accentText} 15%, transparent)`
 
   return {
     common: {
@@ -130,7 +147,9 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColor2: t.textSecondary,
       textColor3: t.textTertiary,
       textColorDisabled: t.textDisabled,
-      placeholderColor: t.textQuaternary,
+      /* 输入框占位符原先是 t.textQuaternary（40% 黑，2.61:1）—— 占位符是**要读的**
+       * 提示文字，不是装饰。mutedForeground 是现成的合格值（#71717a，4.59:1）。 */
+      placeholderColor: t.mutedForeground,
       placeholderColorDisabled: t.textDisabled,
       iconColor: t.textTertiary,
       iconColorHover: t.textSecondary,
@@ -166,13 +185,15 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
 
       fontFamily: t.stackBody,
       fontFamilyMono: t.stackMono,
+      /* 字号对齐 tokens.css 的 --text-* 阶梯（正文收窄、标题放大，拉开落差）。
+       * 改这里之前先看 tokens.css 里那张阶梯表。 */
       fontSize: '15px',
-      fontSizeMini: '12px',
+      fontSizeMini: '11px',
       fontSizeTiny: '12px',
       fontSizeSmall: '13px',
       fontSizeMedium: '15px',
-      fontSizeLarge: '16px',
-      fontSizeHuge: '18px',
+      fontSizeLarge: '17px',
+      fontSizeHuge: '20px',
       lineHeight: '1.6',
 
       // 参考站的面板圆角是 12px、主按钮是方角；这里圆角给中等值，
@@ -216,25 +237,25 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       borderRadius: '12px',
       thPaddingMedium: '10px 14px',
       tdPaddingMedium: '12px 14px',
-      fontSizeMedium: '14px',
+      fontSizeMedium: '13px',
     },
     Input: {
       borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
-      borderHover: `1px solid ${derive(t.primary, isDark).hover}`,
-      borderFocus: `1px solid ${p.base}`,
-      boxShadowFocus: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
+      borderHover: `1px solid ${at.hover}`,
+      borderFocus: `1px solid ${t.accentText}`,
+      boxShadowFocus: focusRing,
     },
     InternalSelection: {
       borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
-      borderHover: `1px solid ${derive(t.primary, isDark).hover}`,
-      borderFocus: `1px solid ${p.base}`,
-      borderActive: `1px solid ${p.base}`,
-      boxShadowFocus: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
-      boxShadowActive: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
+      borderHover: `1px solid ${at.hover}`,
+      borderFocus: `1px solid ${t.accentText}`,
+      borderActive: `1px solid ${t.accentText}`,
+      boxShadowFocus: focusRing,
+      boxShadowActive: focusRing,
     },
     Tag: {
       borderRadius: '999px',
@@ -254,7 +275,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
     Tabs: {
       tabTextColorActiveLine: t.foreground,
       tabTextColorHoverLine: t.foreground,
-      barColor: p.base,
+      /* 标签指示条是「线」不是「面」，走 accentText —— 荧光黄当线在浅色下 1.05:1，会消失。 */
+      barColor: t.accentText,
       tabFontWeightActive: '700',
       tabFontWeight: '600',
     },
@@ -267,11 +289,13 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
     Upload: {
       draggerColor: 'transparent',
       draggerBorder: `1px dashed ${t.border}`,
-      draggerBorderHover: `1px dashed ${p.base}`,
+      draggerBorderHover: `1px dashed ${t.accentText}`,
       borderRadius: '12px',
     },
     Statistic: {
-      valueFontSize: '28px',
+      /* 指标值是全站字号落差的顶端（正文 13、面板小标题 11，这里是 44）。
+       * 目标风格靠这种极端落差建立层级，而不是靠卡片与阴影。 */
+      valueFontSize: '44px',
       labelFontSize: '12px',
       labelTextColor: t.textTertiary,
       valueTextColor: t.textPrimary,
@@ -308,7 +332,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       feedbackHeightMedium: '22px',
     },
     Empty: {
-      iconColor: t.textQuaternary,
+      /* 空态的插图是「图形」，WCAG 要 3:1；textQuaternary 只有 2.61:1。 */
+      iconColor: t.textTertiary,
       textColor: t.textTertiary,
     },
   }

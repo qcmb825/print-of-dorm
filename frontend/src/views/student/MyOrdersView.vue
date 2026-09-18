@@ -160,7 +160,7 @@ async function withdraw(order: Order): Promise<void> {
       </div>
       <div class="panel panel-raised border-primary/40 px-3 py-2.5">
         <div class="tech-label text-ink-4">可取了</div>
-        <div class="tnum font-heading text-xl font-bold" style="color: var(--primary)">
+        <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
           {{ summary.ready }}
         </div>
       </div>
@@ -230,7 +230,7 @@ async function withdraw(order: Order): Promise<void> {
             <div class="tech-label mb-0.5 text-ink-4">取件码</div>
             <div
               class="tnum font-heading text-[23px] leading-none font-bold tracking-[0.1em]"
-              :style="order.status === '可取了' ? { color: 'var(--primary)' } : undefined"
+              :style="order.status === '可取了' ? { color: 'var(--accent-text)' } : undefined"
             >
               {{ pickupCodeLabel(order.pickup_code) }}
             </div>

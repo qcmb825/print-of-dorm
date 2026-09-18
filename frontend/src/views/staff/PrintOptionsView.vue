@@ -223,7 +223,7 @@ onMounted(load)
             <component
               :is="editingPresetId === null ? Plus : Pencil"
               :size="15"
-              style="color: var(--primary)"
+              style="color: var(--accent-text)"
             />
             {{ editingPresetId === null ? '新建预设打印服务' : `编辑预设 #${editingPresetId}` }}
           </h3>
@@ -347,7 +347,7 @@ onMounted(load)
             <component
               :is="editingPaperId === null ? Plus : Pencil"
               :size="15"
-              style="color: var(--primary)"
+              style="color: var(--accent-text)"
             />
             {{ editingPaperId === null ? '新增纸张类型' : `编辑纸张 #${editingPaperId}` }}
           </h3>

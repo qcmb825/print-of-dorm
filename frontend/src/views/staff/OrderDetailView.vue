@@ -226,7 +226,7 @@ onMounted(load)
                 color:
                   order.price === null || order.price === undefined
                     ? 'var(--text-quaternary)'
-                    : 'var(--primary)',
+                    : 'var(--accent-text)',
               }"
             >
               {{ priceLabel(order.price) }}

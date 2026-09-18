@@ -175,7 +175,7 @@ onMounted(load)
       <!-- 编辑区 -->
       <section class="panel h-fit p-4">
         <h3 class="mb-3 flex items-center gap-2 font-heading text-[15px] font-bold">
-          <component :is="editingId === null ? Plus : Pencil" :size="15" style="color: var(--primary)" />
+          <component :is="editingId === null ? Plus : Pencil" :size="15" style="color: var(--accent-text)" />
           {{ editingId === null ? '发布新公告' : `编辑公告 #${editingId}` }}
         </h3>
 

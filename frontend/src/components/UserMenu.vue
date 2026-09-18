@@ -92,7 +92,7 @@ async function onSelect(key: string): Promise<void> {
       <span class="flex w-full min-w-0 items-center gap-2">
         <span
           class="grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold"
-          style="background-color: var(--muted); color: var(--primary)"
+          style="background-color: var(--muted); color: var(--accent-text)"
           aria-hidden="true"
         >
           {{ initial }}

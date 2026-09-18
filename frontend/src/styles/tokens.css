@@ -1,4 +1,13 @@
-/* 设计令牌 —— 视觉语言取自 maaend.com（黄 + 青、细边框、磨砂面板、方角主按钮）。
+/* 设计令牌 —— 工业平面语言：工业黄 + 高对比黑白 + 少量青，细描边、纯平、方角。
+ *
+ * 强调色的用法有一条硬分工，改任何一处都要先读：
+ *   --primary      **只用于可承载深色内容的大面积填充**（主按钮、菜单/分页激活块、
+ *                  徽标底）。它自己不是「可读的颜色」，是「可垫在深色下面的颜色」。
+ *   --accent-text  一切**文字、图标、描边、细线、色条、图表序列**。
+ * 这条分工不是审美选择，是测量结果：荧光黄 #fffa00 压在本主题的浅底上只有 1.01~1.10:1，
+ * 当文字、当描边、当图表线都是看不见的；而压在它上面的黑字有 18.93:1。
+ * 整条黄谱都救不回描边——#c9b800 1.93、#b3a300 2.45、#a89a00 2.74，全都到不了非文本图形的 3:1，
+ * 要到 3:1 就得压成橄榄/芥末色，那已经不是黄了。所以线状用途一律走 --accent-text。
  *
  * 分两层：
  *   1) 原始层（--background / --primary / --industrial-yellow ...）在此声明，浅深各一套；
@@ -28,33 +37,42 @@
   --foreground: #111111;
   --card: #ffffffcc;
   --card-foreground: #111111;
-  --primary: #d4a017;
+  /* 主色指向原始层的 --industrial-yellow（见文件末尾的「原始层」一节）。
+   * 深色主题那一支也指向同一个名字，改强调色只需要动 --industrial-yellow 一处。 */
+  --primary: var(--industrial-yellow);
   --primary-foreground: #000000;
-  --secondary: #008fa6;
+  --secondary: var(--tech-cyan);
   --secondary-foreground: #ffffff;
-  --muted: #f4f4f4;
+  --muted: var(--deep-void);
   --muted-foreground: #71717a;
-  --accent: #c49102;
+  /* 通用强调色。全站零消费（只映射到 Tailwind 的 --color-accent），
+   * 留着一处是为了让「强调色」这个概念有名字，值跟着 --primary 走。 */
+  --accent: var(--primary);
   --accent-foreground: #000000;
-  /* 强调色**当文字用**时的深度。（注意它不是「铺在 accent 底上的前景色」，
-   * 那是 --accent-foreground。）
+  /* 强调色**当文字、图标、描边、细线、色条、图表序列用**时的深度。
+   * （注意它不是「铺在 accent 底上的前景色」，那是 --accent-foreground。）
    *
-   * 浅色下 --primary(#d4a017) 和 --accent(#c49102) 都只够做色块与色条：铺在
-   * --muted(#f4f4f4) 上分别只有 2.16:1 / 2.58:1，13px 的侧栏激活项、11px 的底部
-   * 标签栏文字都读不清（WCAG AA 小字要 4.5:1）。但这两支都不能直接压深：
-   * --primary 同时还当背景用（.nav-link::before 的色条、焦点轮廓、换场扫描线、
-   * 排行榜的条形），改了会把色块一起改掉；--accent 是通用强调色（还挂在 Tailwind
-   * 的 --color-accent 上），为了一个「当文字用」的场景压低它，等于顺手改了调色板。
-   * 所以这件事单独给一支令牌。
+   * 这是本主题下强调色的**唯一可见形态**：--primary 的荧光黄 #fffa00 压在浅底上只有
+   * 1.05:1，当文字、当描边、当图表线全都看不见（详见文件头的分工说明）。
+   * 而 --primary 本身不能压深——它还当背景用（主按钮、菜单激活块、分页激活块），
+   * 压深就不再是想要的那个荧光黄了。所以线状用途单独给这一支。
    *
-   * #866400 跟 #d4a017 同属约 44° 的金黄色相，不是随手抓的暗黄。往深里走两档后：
-   * --muted 上 4.98:1、页面底 #f9f9f9 上 5.20:1、.panel 卡面（80% 白的 --card 叠在
-   * #f9f9f9 上 ≈ #fefefe）5.43:1、accent-tint-soft 上 4.82:1、accent-tint 上 5.03:1。
-   * 小字（≥4.5:1）和大字（≥3:1）都在 AA 之上，浅色下看着仍然是「金」而不是「棕」。 */
-  --accent-text: #866400;
-  --border: #e2e2e2;
+   * #756a00 与 #fffa00 同属约 60° 的黄色相（上一版是 #866400，对应旧的 44° 金），
+   * 往深里走是唯一的办法。实测：页面底 #f9f9f9 上 5.22:1、--muted(#f4f4f4) 上 5.00:1、
+   * .panel 卡面（80% 白的 --card 叠在 #f9f9f9 上 ≈ #fefefe）5.45:1、
+   * accent-tint(10% 荧光黄叠页底) 上 5.16:1、accent-tint-soft(13%) 上 5.14:1、
+   * accent-tint-soft 叠在 --muted 上 4.97:1。小字（≥4.5）与大号字（≥3）都过 AA。
+   *
+   * 深色主题不需要这一支：那儿的 --primary 本身就是 #fffa00，在 #050505 上有 18.37:1，
+   * 文字、描边、图表线直接沿用它（见 .dark 块的 --accent-text: var(--primary)）。 */
+  --accent-text: #756a00;
+  --border: var(--technical-grey);
+  /* 浅色下 --border(#e2e2e2) 与 --border-subtle(#00000014 合成 ≈#e5e5e5) 实测不可分辨，
+   * RGB 距离只有 3/255、对比度 1.230 vs 1.191。深色那侧差 13/255 是可分辨的。
+   * 这一档在浅色下等于不存在 —— 保留名字是为了两套主题的令牌清单对齐，
+   * 但不要在浅色下指望「subtle 比 border 更淡」能看出层次。 */
   --border-subtle: #00000014;
-  --input: #e2e2e2;
+  --input: var(--technical-grey);
   --input-foreground: #111111;
 
   --text-primary: #111111;
@@ -63,7 +81,16 @@
   --text-quaternary: #11111166;
   --text-disabled: #1111114d;
 
-  --industrial-yellow: #d4a017;
+  /* ── 原始层 ────────────────────────────────────────────────
+   * 这四个是「色调来源」，只在这里定值，上面那些语义令牌指向它们。
+   * 强调色要换色，改 --industrial-yellow 一处即可（两套主题各一个值）。
+   *
+   * 注意 --deep-void / --technical-grey 这两支在深浅两套主题里承担的**角色不同**：
+   *   浅色：--deep-void 是「比页底稍暗的凹陷面」= --muted；--technical-grey 是分隔线 = --border
+   *   深色：--deep-void 是「最底层」= --background（也是幕布 --veil-mat）；--technical-grey 是凹陷面 = --muted
+   * 这是有意为之，不是写错了：同一支中性色在浅色下最该当边框、在深色下最该当暗面。
+   * 所以别把它们当成「同一个灰的两个主题版本」来用，改值前先确认落在哪个角色上。 */
+  --industrial-yellow: #fffa00;
   --tech-cyan: #008fa6;
   --deep-void: #f4f4f4;
   --technical-grey: #e2e2e2;
@@ -73,7 +100,11 @@
   --status-pending-bg: #f4f4f4;
   --status-printing: #0e7490;
   --status-printing-bg: #ecfeff;
-  --status-ready: #8a6d00;
+  /* 「可取了」的黄与管理员角色徽章的黄，都跟着强调色走。
+   * 它们原来各自写死 #8a6d00（当时与 --primary 的旧值同族），强调色换成荧光黄后
+   * 若不跟着走，调色板里会同时存在三个不同的黄。实测 #756a00 铺在 --status-ready-bg
+   * (#fef9c3) 上是 4.83:1，比原来的 4.58:1 更宽裕。 */
+  --status-ready: var(--accent-text);
   --status-ready-bg: #fef9c3;
   --status-done: #15803d;
   --status-done-bg: #dcfce7;
@@ -90,7 +121,7 @@
    * 颜色不同就是最显眼的记号。所以这里直接指向 admin 那一对，让它肉眼不可区分。 */
   --role-user: #0e7490;
   --role-user-bg: #ecfeff;
-  --role-admin: #8a6d00;
+  --role-admin: var(--accent-text);
   --role-admin-bg: #fef9c3;
   --role-super: var(--role-admin);
   --role-super-bg: var(--role-admin-bg);
@@ -104,10 +135,14 @@
   --err-bg: #fef2f2;
 
   /* 主色的低透明度填充：图标底、自己的消息气泡、提示条等。
-   * 单独做成令牌是因为深色下要用霓虹黄，直接写浅色那支会发闷。 */
-  --accent-tint: rgb(212 160 23 / 0.1);
-  --accent-tint-soft: rgb(212 160 23 / 0.13);
-  --accent-tint-border: rgb(212 160 23 / 0.34);
+   * 填充用荧光黄本身（都是浅底，压在上面的文字一律走 --accent-text，实测 ≥4.97:1）。
+   *
+   * 描边单独走 --accent-text 而不是荧光黄：34% 的荧光黄叠在页底上是 #fbf9a4，
+   * 与页底只有 1.04:1 —— 描边会彻底消失。取 --accent-text 的 34% 得 #ccc8a4（1.61:1），
+   * 仍是「淡黄描边」的观感，但看得见。 */
+  --accent-tint: rgb(255 250 0 / 0.1);
+  --accent-tint-soft: rgb(255 250 0 / 0.13);
+  --accent-tint-border: color-mix(in srgb, var(--accent-text) 34%, transparent);
   --warn-tint: rgb(251 191 36 / 0.1);
   --warn-tint-border: rgb(251 191 36 / 0.4);
 
@@ -125,14 +160,20 @@
   --paper: #ffffff;
   --paper-line: #e7e7e7;
   --paper-ink: #1f2328;
-  --paper-accent: #d4a017;
+  /* 纸面上的强调色（公告条上那些小图标）。纸面在两个主题下都接近纯色，
+   * 所以它属于「线状/小图形」用途，浅色走 --accent-text。#fffa00 铺在白纸上是 1.11:1。 */
+  --paper-accent: var(--accent-text);
   --paper-muted: #71717a;
 
   /* 顶部环境光，对应参考站那层很淡的径向渐变 */
   --ambient: radial-gradient(at 12% 0%, rgb(212 160 23 / 0.1) 0%, transparent 45%),
     radial-gradient(at 88% 8%, rgb(0 143 166 / 0.08) 0%, transparent 40%);
 
-  --glow-primary: 0 0 20px 0 rgb(212 160 23 / 0.35);
+  /* 发光套在**主按钮**上（7 处 shadow-[var(--glow-primary)]），是填充的伴随效果，
+     所以跟着 --primary 走而不是 --accent-text：浅色下它是一圈很淡的黄晕（几乎看不出，
+     这是可接受的 —— 阶段 2 会整体删掉发光），深色下就是主按钮的霓虹光。
+     用 --accent-text 的话浅色下会变成一圈深金，看着像脏了的投影。 */
+  --glow-primary: 0 0 20px 0 color-mix(in srgb, var(--primary) 35%, transparent);
   --glow-secondary: 0 0 20px 0 rgb(0 143 166 / 0.3);
   --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.03), 0 12px 32px rgb(17 17 17 / 0.035);
   --shadow-raised: 0 2px 5px rgb(17 17 17 / 0.05), 0 18px 40px rgb(17 17 17 / 0.07);
@@ -162,6 +203,12 @@
   --veil-mat: color-mix(in srgb, var(--foreground) 90%, var(--background));
   --veil-grid: rgb(255 255 255 / 0.06);
   --veil-hairline: rgb(255 255 255 / 0.14);
+  /* 幕布上的强调色淡档（套准线的发光、读数与代号之间的分隔线）。
+   *
+   * 这一支像上面两条一样**只在浅色块声明、两主题共用**，因为它脚下永远是暗幕布。
+   * 不能用 --accent-tint-border 代替：那一支跟着主题走，浅色主题下是深黄（#756a00 系），
+   * 铺到暗幕布上比幕布本身还暗，发光会变成一块脏斑。 */
+  --veil-accent-tint: rgb(255 250 0 / 0.34);
 
   /* 场记读数里的青色代号。**不能直接用 --secondary**：幕布在两个主题下都是暗底，
      而浅色的 --secondary 是 #008fa6，铺在 #262627 上只有约 3.85:1 —— 11px 小字不达
@@ -174,17 +221,17 @@
 .dark {
   color-scheme: dark;
 
-  --background: #050505;
+  --background: var(--deep-void);
   --foreground: #ffffff;
   --card: #ffffff05;
   --card-foreground: #ffffff;
-  --primary: #ffd000;
+  --primary: var(--industrial-yellow);
   --primary-foreground: #000000;
-  --secondary: #00f0ff;
+  --secondary: var(--tech-cyan);
   --secondary-foreground: #000000;
-  --muted: #27272a;
+  --muted: var(--technical-grey);
   --muted-foreground: #a1a1aa;
-  --accent: #ffe600;
+  --accent: var(--primary);
   --accent-foreground: #000000;
   /* 深色下 --primary 的 #ffd000 铺在任何深色底上都远超 AA（#27272a 上 10.1:1、
    * #050505 上 13.9:1），文字直接沿用它就够了，不需要另造一个更深的值。
@@ -202,7 +249,7 @@
   --text-quaternary: #ffffff66;
   --text-disabled: #ffffff4d;
 
-  --industrial-yellow: #ffd000;
+  --industrial-yellow: #fffa00;
   --tech-cyan: #00f0ff;
   --deep-void: #050505;
   --technical-grey: #27272a;
@@ -211,8 +258,8 @@
   --status-pending-bg: #ffffff0f;
   --status-printing: #22d3ee;
   --status-printing-bg: #00f0ff1a;
-  --status-ready: #ffd000;
-  --status-ready-bg: #ffd0001f;
+  --status-ready: var(--primary);
+  --status-ready-bg: #fffa001f;
   --status-done: #4ade80;
   --status-done-bg: #4ade801f;
   --status-unpriced: #c084fc;
@@ -220,8 +267,8 @@
 
   --role-user: #22d3ee;
   --role-user-bg: #00f0ff1a;
-  --role-admin: #ffd000;
-  --role-admin-bg: #ffd0001f;
+  --role-admin: var(--primary);
+  --role-admin-bg: #fffa001f;
   /* 同浅色那套：跟 admin 完全一致，不靠颜色区分。 */
   --role-super: var(--role-admin);
   --role-super-bg: var(--role-admin-bg);
@@ -232,10 +279,11 @@
   --info: #22d3ee;
   --err-bg: #f871711f;
 
-  /* 深色下换成霓虹黄的填充，浅色那支在深底上会显得发闷 */
-  --accent-tint: rgb(255 208 0 / 0.12);
-  --accent-tint-soft: rgb(255 208 0 / 0.15);
-  --accent-tint-border: rgb(255 208 0 / 0.34);
+  /* 深色下填充与描边都用荧光黄本身：#fffa00 在 #050505 上有 18.37:1、
+   * 在 --muted(#27272a) 上 13.42:1，文字/描边/图表线全都够用（见 --accent-text）。 */
+  --accent-tint: rgb(255 250 0 / 0.12);
+  --accent-tint-soft: rgb(255 250 0 / 0.15);
+  --accent-tint-border: rgb(255 250 0 / 0.34);
   --warn-tint: rgb(251 191 36 / 0.12);
   --warn-tint-border: rgb(251 191 36 / 0.38);
 
@@ -252,13 +300,13 @@
   --paper: #111113;
   --paper-line: #ffffff1a;
   --paper-ink: #ffffff;
-  --paper-accent: #ffd000;
+  --paper-accent: var(--primary);
   --paper-muted: #a1a1aa;
 
   --ambient: radial-gradient(at 12% 0%, rgb(255 208 0 / 0.07) 0%, transparent 45%),
     radial-gradient(at 88% 8%, rgb(0 240 255 / 0.06) 0%, transparent 40%);
 
-  --glow-primary: 0 0 24px 0 rgb(255 208 0 / 0.35);
+  --glow-primary: 0 0 24px 0 rgb(255 250 0 / 0.35);
   --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28), 0 14px 38px rgb(0 0 0 / 0.2);
   --shadow-raised: 0 3px 8px rgb(0 0 0 / 0.38), 0 22px 48px rgb(0 0 0 / 0.32);
@@ -463,6 +511,33 @@
    * `ease-out` 拿到的就是令牌里的强缓动，不需要到处堆 arbitrary value。 */
   --ease-out: var(--motion-ease-out);
   --ease-in-out: var(--motion-ease-in-out);
+
+  /* 强调色的「线状/文字」版本，同样要能从 Tailwind 用（text-accent-text / border-accent-text）。 */
+  --color-accent-text: var(--accent-text);
+
+  /* ── 字号阶梯 ────────────────────────────────────────────────
+   * 目标风格靠**极端的字号落差**建立层级（官方产物实测字号从 .375rem 排到 18rem，
+   * 上下比接近 1:48），而本项目原来正文 15px、面板小标题也是 15px、指标值 26~30px，
+   * 落差不足，层级只能靠卡片与阴影去补 —— 那正是要拆掉的东西。
+   *
+   * 覆盖 Tailwind 自带的 --text-* 是**有意的**：这样既有的 text-sm / text-base 用法
+   * 会一起被收进新阶梯，不需要逐个文件改。改动方向是「正文变紧、标题变大」：
+   *   xs 12（不变）、sm 13（原 14）、base 15（原 16）、lg 17（原 18）、
+   *   xl 20（不变）、2xl 24（不变）、3xl 30（不变）、4xl 44（原 36）
+   * 只覆盖字号、不覆盖 --text-*--line-height，所以 Tailwind 自带的行高比例仍然生效。
+   *
+   * 2xs 是本项目新增的一档，给「面板小标题」用（配合 .tech-label 的大写字距）。
+   * 注意：11px 的中文在复杂字（藏、髓、繁、备）上笔画区分度会下降，
+   * 所以中文小标题有 12px 的下限，只有纯拉丁标签可以用 11px。 */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 44px;
 
   --radius-panel: 12px;
 }

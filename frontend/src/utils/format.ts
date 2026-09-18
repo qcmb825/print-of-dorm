@@ -131,7 +131,7 @@ export const LOG_ACTION_COLOR: Record<OrderLogAction, string> = {
   create: 'var(--text-tertiary)',
   claim: 'var(--info)',
   release: 'var(--warn)',
-  price: 'var(--primary)',
+  price: 'var(--accent-text)',
   reprice: 'var(--warn)',
   status: 'var(--info)',
   withdraw: 'var(--err)',

@@ -37,7 +37,11 @@ const palette = computed<ChartPalette>(() => {
     text: t.textPrimary,
     textMuted: t.textTertiary,
     border: t.border,
-    primary: t.primary,
+    /* 图表序列色属于「线」：它画在图表自己的底上，浅色下是白/近白，
+       荧光黄 #fffa00 铺上去只有 1.11:1 会整条消失。走 --accent-text。
+       注意 options.ts 会在这串色值后面拼十六进制 alpha（如 `${p.primary}59`），
+       所以它必须是 6 位 hex —— --accent-text 在两套主题下都是字面 hex，成立。 */
+    primary: t.accentText,
     secondary: t.secondary,
     ok: t.ok,
     err: t.err,
@@ -144,7 +148,7 @@ onMounted(load)
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div class="panel panel-raised border-primary/40 px-3 py-2.5">
           <div class="tech-label text-ink-4">待我取件</div>
-          <div class="tnum font-heading text-xl font-bold" style="color: var(--primary)">
+          <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ mine?.ready ?? 0 }}
           </div>
         </div>
@@ -212,25 +216,25 @@ onMounted(load)
             class="flex items-center gap-2.5 rounded-lg px-2.5 py-2"
             :style="
               entry.is_me
-                ? { backgroundColor: 'var(--muted)', outline: '1px solid var(--primary)' }
+                ? { backgroundColor: 'var(--muted)', outline: '1px solid var(--accent-text)' }
                 : undefined
             "
           >
             <span
               class="tnum font-heading w-5 shrink-0 text-center text-[13px] font-bold"
-              :style="{ color: entry.rank <= 3 ? 'var(--primary)' : 'var(--text-quaternary)' }"
+              :style="{ color: entry.rank <= 3 ? 'var(--accent-text)' : 'var(--text-quaternary)' }"
             >
               {{ entry.rank }}
             </span>
             <div class="min-w-0 flex-1">
               <div class="truncate text-[13px] font-semibold">
                 {{ entry.nickname }}
-                <span v-if="entry.is_me" class="tech-label ml-1" style="color: var(--primary)">你</span>
+                <span v-if="entry.is_me" class="tech-label ml-1" style="color: var(--accent-text)">你</span>
               </div>
               <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full" style="background-color: var(--muted)">
                 <div
                   class="h-full rounded-full"
-                  :style="{ width: barWidth(entry.count), backgroundColor: 'var(--primary)' }"
+                  :style="{ width: barWidth(entry.count), backgroundColor: 'var(--accent-text)' }"
                 />
               </div>
             </div>

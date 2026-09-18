@@ -229,7 +229,7 @@ onMounted(async () => {
         </div>
         <h1 class="max-w-md font-heading text-[44px] leading-[1.08] font-bold tracking-[-0.04em]">
           从文件到取件，<br />
-          <span style="color: var(--primary)">一张单</span>就够了。
+          <span style="color: var(--accent-text)">一张单</span>就够了。
         </h1>
         <p class="mt-5 max-w-sm text-[15px] leading-7 text-ink-3">
           上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
@@ -249,7 +249,7 @@ onMounted(async () => {
             style="
               background-color: var(--accent-tint-soft);
               border-color: var(--accent-tint-border);
-              color: var(--primary);
+              color: var(--accent-text);
             "
             aria-hidden="true"
           >

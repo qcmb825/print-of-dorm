@@ -249,7 +249,7 @@ onMounted(() => {
           <Menu :size="19" />
         </button>
         <span class="flex items-center gap-2">
-          <Printer :size="16" style="color: var(--primary)" aria-hidden="true" />
+          <Printer :size="16" style="color: var(--accent-text)" aria-hidden="true" />
           <span class="font-heading text-[15px] font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
@@ -258,7 +258,7 @@ onMounted(() => {
             v-if="auth.advanced"
             type="button"
             class="grid size-9 place-items-center rounded-lg"
-            style="color: var(--primary)"
+            style="color: var(--accent-text)"
             title="退出高级视图"
             aria-label="退出高级视图"
             @click="exitAdvanced"
