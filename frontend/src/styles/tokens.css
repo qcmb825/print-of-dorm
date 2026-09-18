@@ -464,6 +464,11 @@
   --color-input: var(--input);
   --color-input-foreground: var(--input-foreground);
 
+  /* ⚠️ 这五支是 **Tailwind 的命名空间**，不是 CSS 变量。
+   * Tailwind 的 `text-ink-3` 类能用；但 `var(--ink-3)` **不存在**，写下去不会报错 ——
+   * 自定义属性缺失时该声明在计算值阶段失效、落到继承色，界面上只是"颜色不对"。
+   * 组件里要取变量请用 `var(--text-tertiary)` / `var(--text-quaternary)` 这一组真名字。
+   * （这个坑在 UsersView / AuditView / OrdersView 各踩过一次，已修。） */
   --color-ink: var(--text-primary);
   --color-ink-2: var(--text-secondary);
   --color-ink-3: var(--text-tertiary);

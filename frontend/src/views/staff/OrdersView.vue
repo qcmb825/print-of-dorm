@@ -1284,7 +1284,9 @@ onBeforeUnmount(() => {
             <span class="font-heading font-bold" style="color: var(--accent-text)">¥</span>
           </template>
         </NInput>
-        <p class="mt-2 text-[11px]" :style="{ color: priceError ? 'var(--err)' : 'var(--ink-4)' }">
+        <!-- 这行是 11px 的操作说明，属于要读的字，走三级文字色而不是四级。
+             原先的 var(--ink-4) 不存在（见 tokens.css 里 --color-ink-* 的说明），静默失效。 -->
+        <p class="mt-2 text-[11px]" :style="{ color: priceError ? 'var(--err)' : 'var(--text-tertiary)' }">
           {{ priceError ?? '最多两位小数。计费完成后订单会从「待计费」进入「待打印」。' }}
         </p>
 

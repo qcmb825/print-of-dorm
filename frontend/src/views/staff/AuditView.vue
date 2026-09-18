@@ -138,7 +138,9 @@ onMounted(load)
             <span
               class="rounded-full px-1.5 py-px text-[11px] font-bold"
               :style="{
-                color: counts[tab.key] ? STATUS_META[tab.key].color : 'var(--ink-4)',
+                // 计数为 0 时刻意弱化（标签名本身已经说明了这一栏是什么），走四级文字色。
+                // 原先的 var(--ink-4) 不存在，静默失效 —— 0 会显示成和计数非 0 一样的颜色。
+                color: counts[tab.key] ? STATUS_META[tab.key].color : 'var(--text-quaternary)',
                 backgroundColor: counts[tab.key] ? STATUS_META[tab.key].bg : 'transparent',
               }"
             >

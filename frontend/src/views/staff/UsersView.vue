@@ -86,7 +86,9 @@ const advanced = computed(() => auth.advanced)
 const STATUS_COLOR: Record<AccountStatus, string> = {
   active: 'var(--ok)',
   disabled: 'var(--err)',
-  closed: 'var(--ink-3)',
+  /* 注销态。原先写的是 var(--ink-3) —— 那支不存在（见 tokens.css 里 --color-ink-* 的说明），
+     声明静默失效、落到行文字色，跟「正常」看着一样。这里是状态标签，要读，走三级文字色。 */
+  closed: 'var(--text-tertiary)',
 }
 
 /* 筛选只列两种：列表接口在 SQL 层就把第三种角色挡在外面了，
