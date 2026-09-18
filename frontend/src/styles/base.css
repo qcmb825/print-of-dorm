@@ -114,12 +114,19 @@
 
 @layer utilities {
   /* 磨砂面板：参考站的 glass-panel，用细边框而非阴影来分层 */
-  /* 面板：一度靠「圆角 + 柔和投影」浮起来，现在只有底色与 1px 描边。
-     层级交给遮罩阶梯（--scrim-*）与描边深浅，不给元素加投影。 */
+  /* 区块（.panel）：**去掉卡片外壳**。
+   *
+   * 这套语言不用「圆角卡片 + 投影」分区，用**编号 + 分隔线 + 留白**：一个区块以一条
+   * 贯穿的 1px 细线开头，边界交给排版而不是框（实测鹰角官网主 CSS 里 box-shadow
+   * 只出现一次、border-radius:0 出现四次）。全站 47 处 .panel 靠改这一处一起换掉，
+   * 不必逐个文件动。
+   *
+   * 保留 position: relative 是给装饰层的绝对定位留宿主。 */
   .panel {
     position: relative;
-    background-color: var(--card);
-    border: 1px solid var(--border);
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--border);
     border-radius: 0;
   }
 
@@ -128,10 +135,14 @@
      backdrop-filter 需要每帧重算背后的内容，滚动时是实打实的合成开销。
      .login-card 这个类保留 —— 它是 .login-card::after 那条双色亮线的定位宿主。 */
 
-  /* 承载数字或主要操作的卡片。原先是「抬升 + 投影 + hover 上浮 2px」，
-     现在投影与位移都去掉了：没有投影之后，2px 的上浮只剩「卡片在抖」，
-     而描边变色本身已经足够说明「这块可关注」。 */
+  /* 数据单元（.panel-raised）：**保留一圈细描边**，但同样无底色、无圆角、无投影。
+   *
+   * 与 .panel 分开是因为角色不同 —— 它是重复网格里的一个格（指标卡、学生端汇总格）。
+   * 去掉框之后相邻格子会连成一片数字，可读性反而下降。给框不给底，正是这套语言的做法：
+   * 用描边分层、不用色块。 */
   .panel-raised {
+    background: none;
+    border: 1px solid var(--border);
     transition: border-color var(--motion-dur-fast) ease;
   }
 
@@ -222,6 +233,114 @@
     font-weight: 700;
     line-height: 1.35;
     white-space: nowrap;
+  }
+
+  /* ══ 装饰层 ════════════════════════════════════════════════════════
+   * 「宣传片」语汇的零件：括角、刻度、斜切、斜纹、技术读数、水印。
+   * 三条纪律，每一条都是坑：
+   *   1) 纹理与斜纹**永不压在文字下面** —— 笔画会和纹理混同（WCAG F83 型失败）。
+   *      所以边带一律做成窄条，并用 padding 把内容让开；
+   *   2) clip-path 只用在**非交互的装饰层**上 —— 它会裁掉描边与 outline，被裁区域还
+   *      不接收指针事件（CSS Masking §5），压在按钮上会让焦点环消失、点不到；
+   *   3) 全部用静态 background-image 或伪元素，不动画、不开新层、不加 will-change。 */
+
+  /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
+     上的伪元素互不打架，也能直接叠在任何容器上。
+     背景图不会接收指针事件，所以这里不需要 pointer-events: none（那会连子元素一起禁掉）。 */
+  .frame-brackets {
+    --fb-size: 16px;
+    --fb-w: 1px;
+    --fb-c: var(--accent-text);
+    background-image:
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c));
+    background-repeat: no-repeat;
+    background-size:
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size);
+    background-position:
+      left top, left top, right top, right top,
+      left bottom, left bottom, right bottom, right bottom;
+  }
+
+  /* 竖向刻度尺：主内容区左缘那把「标尺」。与 .ticks 同一套节奏，只是转了 90°。 */
+  .vticks {
+    width: 5px;
+    background-image:
+      repeating-linear-gradient(to bottom, var(--tick-color) 0 1px, transparent 1px var(--tick, 10px)),
+      repeating-linear-gradient(
+        to bottom,
+        var(--tick-color) 0 1px,
+        transparent 1px var(--tick-major, 50px)
+      );
+    background-position: left top;
+    background-repeat: repeat-y;
+    background-size: 3px 100%, 5px 100%;
+    --tick-color: var(--text-quaternary);
+  }
+
+  /* 斜切色块：平行四边形记号。只做装饰，理由见本节开头第 2 条。 */
+  .cut {
+    clip-path: polygon(28% 0, 100% 0, 72% 100%, 0 100%);
+  }
+
+  /* 超大水印：页面角落那枚几乎看不见的巨号编号。排版装饰，用的时候要配 aria-hidden。 */
+  .watermark {
+    font-family: var(--stack-heading);
+    font-size: clamp(88px, 16vw, 220px);
+    font-weight: 700;
+    line-height: 0.78;
+    letter-spacing: -0.07em;
+    color: color-mix(in srgb, var(--foreground) 5%, transparent);
+    user-select: none;
+    pointer-events: none;
+  }
+
+  /* 技术读数：等宽大写的极小字，用于「SECTOR 01 / GRID 48」这类装饰读数。 */
+  .readout {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-quaternary);
+    white-space: nowrap;
+  }
+
+  /* 边带斜纹：只占 4px 窄条，并用 padding 把内容让开，
+     所以永远不会出现「纹路压在字上」。左右两条边各一个变体，
+     实际用到的是左边（公告条）与底边（窄屏顶栏）。 */
+  .hazard-left {
+    background-image: repeating-linear-gradient(-45deg, var(--hazard-ink) 0 3px, transparent 3px 6px);
+    background-repeat: no-repeat;
+    background-position: left top;
+    background-size: 4px 100%;
+    padding-left: 16px;
+  }
+
+  /* 底边斜纹带（窄屏顶栏那道横贯的危险斜纹）。 */
+  .hazard-bottom {
+    background-image: repeating-linear-gradient(-45deg, var(--hazard-ink) 0 3px, transparent 3px 6px);
+    background-repeat: no-repeat;
+    background-position: left bottom;
+    background-size: 100% 4px;
+    padding-bottom: 14px;
+  }
+
+  /* 细分隔线的强调段：一条 1px 线，左端 40px 用强调色。
+     区块标题下方、表头下方这类地方用来标「线的起点」。 */
+  .rule-accent {
+    height: 1px;
+    background-image: linear-gradient(
+        to right,
+        var(--accent-text) 0 40px,
+        transparent 40px
+      ),
+      linear-gradient(var(--border), var(--border));
+    background-repeat: no-repeat;
   }
 
   .grid-lines {

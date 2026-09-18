@@ -594,7 +594,7 @@ onMounted(load)
     >
       <template #actions>
         <span v-if="advanced" class="flex items-center gap-2">
-          <NSwitch v-model:value="withPassword" size="small" @update:value="load()" />
+          <NSwitch :round="false" v-model:value="withPassword" size="small" @update:value="load()" />
           <button
             type="button"
             class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3 tech-label--cn text-xs"
@@ -624,7 +624,7 @@ onMounted(load)
         aria-label="角色筛选"
       />
       <span v-if="advanced" class="flex items-center gap-2">
-        <NSwitch v-model:value="includeClosed" size="small" @update:value="load()" />
+        <NSwitch :round="false" v-model:value="includeClosed" size="small" @update:value="load()" />
         <span
           class="tech-label cursor-pointer select-none text-ink-3 tech-label--cn text-xs"
           @click="toggleIncludeClosed"
@@ -657,7 +657,7 @@ onMounted(load)
       正在显示全部账号的明文密码。此操作已被记录到安全日志，请勿截图或外传。
     </p>
 
-    <div class="panel overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !users.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 6" :key="index" height="48px" :sharp="false" />
       </div>

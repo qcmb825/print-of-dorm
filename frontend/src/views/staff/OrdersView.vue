@@ -929,7 +929,7 @@ onBeforeUnmount(() => {
           取件核对
         </NButton>
         <span class="flex items-center gap-2">
-          <NSwitch v-model:value="autoRefresh" size="small" aria-label="自动刷新" />
+          <NSwitch :round="false" v-model:value="autoRefresh" size="small" aria-label="自动刷新" />
           <span class="tech-label text-ink-3 tech-label--cn text-xs">自动刷新 10s</span>
         </span>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -1002,7 +1002,7 @@ onBeforeUnmount(() => {
            紧接着 click 冒泡到外层又翻一次，两次抵消，结果就是「点了没反应」。
            分开写之后，点文字翻 ref、点开关走它自己的事件，各自只生效一次。 -->
       <span class="flex items-center gap-1.5">
-        <NSwitch :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
+        <NSwitch :round="false" :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
         <span
           class="tech-label cursor-pointer text-ink-3 tech-label--cn text-xs"
           title="已取件是终态、也是累计数，看活件时它只会把待办的几单顶到下一页"
@@ -1014,7 +1014,7 @@ onBeforeUnmount(() => {
       <span class="tech-label ml-auto text-ink-4 tech-label--cn text-xs">共 {{ total }} 条</span>
     </div>
 
-    <div class="panel overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !orders.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 5" :key="index" height="52px" :sharp="false" />
       </div>

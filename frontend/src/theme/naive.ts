@@ -303,6 +303,25 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       labelTextColor: t.textTertiary,
       valueTextColor: t.textPrimary,
     },
+    Switch: {
+      /* 轨道与按钮的圆角**默认是从轨道高度算出来的**（18/2=9px、14/2=7px），走的是
+       * 「round 为真则取高度一半」那条路 —— 和 Button 的 circle 属性同一个机制，
+       * 所以光把 common.borderRadius 置 0 不够，每个 <NSwitch> 还得显式传 :round="false"
+       * （界面上的 7 处已经都传了）。
+       * 这里再显式置 0 是为了让「圆角归零」在主题里也留个痕 —— 否则后人看到 Switch 没有
+       * 任何圆角配置，会以为我们漏了它。 */
+      railBorderRadiusSmall: '0',
+      railBorderRadiusMedium: '0',
+      railBorderRadiusLarge: '0',
+      buttonBorderRadiusSmall: '0',
+      buttonBorderRadiusMedium: '0',
+      buttonBorderRadiusLarge: '0',
+      /* 旋钮的投影是 naive 里**硬编码**的 `0 1px 4px rgba(0,0,0,.3)`，
+       * 不派生自 boxShadow1/2/3 —— 所以只把那三支置 none 是不够的，实测这处会漏网。 */
+      buttonBoxShadow: 'none',
+      /* 聚焦同样改成 2px 实心环，与 Input / InternalSelection 一致。 */
+      boxShadowFocus: focusRing,
+    },
     Pagination: {
       itemTextColorActive: t.primaryForeground,
       itemColorActive: p.base,

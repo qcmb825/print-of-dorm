@@ -137,14 +137,19 @@ onMounted(() => {
 
 <template>
   <div class="flex min-h-full">
+    <!-- 侧栏同样去掉了卡底（原先是 60% 的 --card 半透明底）。现在全站的区块都只有
+         细线与留白，侧栏也只剩右侧那一条描边 —— 它是页面 chrome 的一部分，不再是一块面板。 -->
     <aside
       class="sticky top-0 hidden h-screen w-[236px] shrink-0 flex-col border-r lg:flex"
-      style="border-color: var(--border); background-color: color-mix(in srgb, var(--card) 60%, transparent)"
+      style="border-color: var(--border)"
     >
+      <span class="vticks pointer-events-none absolute top-0 right-0 bottom-0" aria-hidden="true" />
       <!-- 品牌图标上挂着高级视图的隐藏入口（连点 5 次，见 onBrandClick）。
            .capture 是必须的：要在 RouterLink 自己处理之前决定这一下要不要放行。 -->
-      <div class="px-5 py-5" @click.capture="onBrandClick">
+      <div class="px-5 pt-5 pb-4" @click.capture="onBrandClick">
         <BrandMark />
+        <!-- 状态牌：纯装饰的技术读数，与页面标题下那行同一套字（.readout）。 -->
+        <p class="readout mt-3">STAFF CONSOLE</p>
       </div>
       <!-- 导航一项的文字：激活态走 --accent-text 而不是 --primary ——
            --primary 是给色条/色块用的，#d4a017 铺在 --muted 上只有 2.16:1，
@@ -201,7 +206,7 @@ onMounted(() => {
 
     <div class="flex min-w-0 flex-1 flex-col">
       <header
-        class="sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 lg:hidden"
+        class="hazard-bottom sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 lg:hidden"
         style="
           background-color: color-mix(in srgb, var(--background) 96%, transparent);
           border-color: var(--border);
@@ -271,7 +276,11 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+      <main class="frame-brackets relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+        <span class="vticks pointer-events-none absolute top-0 bottom-0 left-0" aria-hidden="true" />
+      <span class="watermark pointer-events-none absolute right-0 bottom-2" aria-hidden="true">
+        {{ route.meta.code }}
+      </span>
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
              窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
         <RouterView v-slot="{ Component }">

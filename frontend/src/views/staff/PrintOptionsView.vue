@@ -294,7 +294,7 @@ onMounted(load)
                 <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
                   {{ item.content }}
                 </p>
-                <NSwitch
+                <NSwitch :round="false"
                   :value="item.is_active === 1"
                   size="small"
                   @update:value="togglePresetActive(item)"
@@ -429,7 +429,7 @@ onMounted(load)
                     {{ item.remark }}
                   </p>
                 </div>
-                <NSwitch
+                <NSwitch :round="false"
                   :value="item.is_active === 1"
                   size="small"
                   @update:value="togglePaperActive(item)"

@@ -57,7 +57,7 @@ const authorLine = computed(() => {
       <section
         role="status"
         aria-label="站点公告"
-        class="mx-auto flex max-w-6xl items-start gap-3 border p-3 sm:p-4"
+        class="hazard-left mx-auto flex max-w-6xl items-start gap-3 border p-3 sm:p-4"
         :style="{
           backgroundColor: 'var(--paper)',
           borderColor: 'var(--paper-line)',

@@ -70,7 +70,11 @@ onMounted(() => {
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
-    <main class="mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
+    <main class="frame-brackets relative mx-auto w-full min-w-0 max-w-6xl flex-1 px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
+        <span class="vticks pointer-events-none absolute top-0 bottom-0 left-0" aria-hidden="true" />
+      <span class="watermark pointer-events-none absolute right-0 bottom-2" aria-hidden="true">
+        {{ route.meta.code }}
+      </span>
       <!-- profile="inline"：这一层 stage 只包 <main> 里的页面组件，本站唯一的 fixed
            （下面那条底部标签栏）与各条 sticky 顶栏都在它之外，所以可以接回横向接入语汇。
            换场覆盖层的档位由它决定：子页档短、缝窄，外壳档（App.vue）拉满。 -->

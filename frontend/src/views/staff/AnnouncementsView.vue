@@ -308,7 +308,7 @@ onMounted(load)
                   </span>
                 </div>
               </div>
-              <NSwitch
+              <NSwitch :round="false"
                 :value="item.is_active === 1"
                 size="small"
                 @update:value="toggleActive(item)"
