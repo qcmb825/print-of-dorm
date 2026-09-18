@@ -44,7 +44,19 @@ const { phase, profile, target, reentrant } = useRouteVeil()
     >
       <!-- 擦除面板。前缘那 3px（1px 发丝线 + 2px 亮线 + 光晕）挂在它的 ::before 上、
            跟着面板一起走 —— 重绘面积只有那条窄边，而不是「一条线横扫全屏」。 -->
-      <span class="route-veil__wipe" />
+      <span class="route-veil__wipe">
+        <!-- 面板上的读数：**子页档的"为什么"写在这里**。
+             放在面板内部（而不是像场记读数那样铺满视口）是为了让它**跟着面板走** ——
+             面板扫过来时它就位，面板退走时它一起离开，零时序对齐、零额外耗时。
+             子页档整场只有 300ms 且没有停留，所以它没有"停下来给你读"的窗口；
+             它承担的也不是"读清"，而是"这一下是去哪"的那一眼 ——
+             与外壳档中间那条大读数分工：**一个档位只出一条读数，不叠加**。 -->
+        <span class="route-veil__tag">
+          <span class="tnum route-veil__tag-code">{{ target.code }}</span>
+          <i class="route-veil__tag-sep" />
+          <span class="route-veil__tag-title">{{ target.title }}</span>
+        </span>
+      </span>
       <!-- 套准线：全程唯一一次"快"，也是唯一一处发光。 -->
       <span class="route-veil__rule" />
       <!-- 场记读数：等宽大写的目标页名，换场里唯一的文字。
