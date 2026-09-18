@@ -90,12 +90,14 @@ onMounted(() => {
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
           data-parallax
+          data-parallax-x="right"
 style="--depth: 4px"
           aria-hidden="true"
         />
         <span
           class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
           data-parallax
+          data-parallax-x="right"
 style="--depth: 4px"
           aria-hidden="true"
         />
@@ -105,12 +107,14 @@ style="--depth: 4px"
         <span
           class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
           data-parallax
+          data-parallax-x="right"
 style="--depth: 3px"
           aria-hidden="true"
         />
       <span
         class="watermark pointer-events-none absolute right-0 bottom-2"
         data-parallax
+        data-parallax-x="right"
 style="--depth: 20px"
         aria-hidden="true"
       >
@@ -158,6 +162,7 @@ style="--depth: 20px"
       <span
         class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)]"
         data-parallax
+        data-parallax-x="right"
 style="--depth: 6px"
         aria-hidden="true"
       />
