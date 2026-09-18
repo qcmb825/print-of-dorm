@@ -590,152 +590,82 @@
     visibility: visible;
   }
 
-  .route-veil__mat {
+  /* 擦除面板：一块斜切面板**单向穿过整屏**。
+   *
+   * 出相位：从屏幕左侧外滑到「正好完全盖住」；那一帧就是 DOM 换手帧（= @after-leave）。
+   * 入相位：不停留，沿**同一方向**继续滑出右侧，把新页让出来。
+   * 于是「全屏被遮死」的窗口只有换手那一帧，而不是原来那 480/600ms。
+   *
+   * 宽度取 118%、左移 9%：斜切角会让面板上下缘各偏出约 height·tan(4°)，
+   * 不留这个余量，「完全盖住」那一帧会在上下角露出缝隙。
+   *
+   * 材质与 .route-stage 同尺度（48px 网格），换场时网格是"跟着面板一起走"而不是
+   * 被抹平成一块纯色。**不要**换成 .grid-lines —— 那是 32px，两套尺度会打架。 */
+  .route-veil__wipe {
     position: absolute;
-    left: 0;
-    right: 0;
-    /* 两扇各占一半减掉缝宽的一半，合拢之后正中间正好留出 --veil-slit 那道口子。
-       用 50% 而不是 50vh：根元素的高度已经是 100dvh，百分比自动跟随。 */
-    height: calc(50% - var(--veil-slit) / 2);
+    top: 0;
+    bottom: 0;
+    left: -9%;
+    width: 118%;
     background-color: var(--veil-mat);
-    /* 与 .route-stage 同尺度、同起点的 48px 网格：幕布收拢时网格是「跟着幕布一起合」
-       而不是被抹平成一块纯色，材质才连得上。**不要**换成 .grid-lines —— 那是 32px，
-       两套尺度同时出现能看出网格打架。 */
     background-image:
       linear-gradient(var(--veil-grid) 1px, transparent 1px),
       linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
     background-size: 48px 48px;
-    background-position: center top;
+    transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
     /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
        而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
     transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
-    /* 退到屏外要退多远。**不能只按自身高度算（-100%）**：唇（::before）挂在幕布内缘、
-       还要再往外伸 --veil-slit/2 + 1px，只按高度退干净的话，开幕结束那一刻唇会留在
-       屏幕边缘露出 slit/2 + 1px 的一条暗带（外壳档 slit 上限 62px 时正好残留 32px）。
-       末尾那 14px 是给分数缩放（Windows 常见的 125% / 150%）留的余量 —— 原来只留 12px，
-       1% 自高的余量只剩半个像素，边缘会露亮线。 */
-    --veil-mat-exit: calc(100% + var(--veil-slit) / 2 + 14px);
   }
 
-  /* 缝唇那排半调网点：收拢时把缝两唇做成「刚过完纸、还带着墨点的出纸口」。
-     它挂在幕布上而不是挂在缝上 —— 挂在缝上的话幕布一退开，网点会留在原地悬在新页面上方。
-     只有网点加一层向幕布内侧渐隐的遮罩，没有模糊、没有 SVG 滤镜：
-     这个仓库所有边缘都是 1px 直角细线，撕纸纤维那类有机边缘一出现，
-     界面语言就从工业件滑向特效演示。 */
-  .route-veil__mat::after {
+  /* 面板前缘的扫描边：1px 发丝线 + 2px 亮线 + 光晕。
+   * 它挂在面板上、跟着一起走，所以重绘面积只有那条窄边（全屏的百分之几），
+   * 而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘 —— 后者当年被删掉的原因
+   * 正是 560ms 扫过全宽约 9000px/s，观感是闪一下而不是扫一遍。
+   *
+   * 亮度走 --scan-line（浅色主题取 --status-printing，深色是 #67e8f9），
+   * 它在暗面板上是看得见的；光晕用不跟随主题的 --veil-accent-tint。 */
+  .route-veil__wipe::before {
     position: absolute;
-    left: 0;
+    top: 0;
+    bottom: 0;
     right: 0;
-    height: var(--motion-route-dot-lip);
+    width: 3px;
     content: '';
-    /* background-image 里先写的画在上面：第一层是把网点往幕布内侧吃掉的渐隐遮罩，
-       第二层才是网点本身。 */
-    background-image:
-      linear-gradient(to top, transparent, var(--veil-mat)),
-      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
-    background-size: 100% 100%, var(--motion-route-dot) var(--motion-route-dot);
-    opacity: 0;
-    transition: opacity var(--motion-dur-route-sweep) var(--motion-ease-out);
+    background: linear-gradient(
+      to right,
+      var(--veil-hairline) 0 1px,
+      var(--scan-line, var(--secondary)) 1px 3px
+    );
+    box-shadow: 0 0 10px 0 var(--veil-accent-tint);
   }
 
-  .route-veil__mat--top {
-    top: 0;
-    /* 退场位移见 .route-veil__mat 里的 --veil-mat-exit（必须把唇的长度算进去）。 */
-    transform: translate3d(0, calc(-1 * var(--veil-mat-exit)), 0);
-  }
-
-  .route-veil__mat--bottom {
-    bottom: 0;
-    background-position: center bottom;
-    transform: translate3d(0, var(--veil-mat-exit), 0);
-  }
-
-  .route-veil__mat--top::after {
-    bottom: 0;
-  }
-
-  .route-veil__mat--bottom::after {
-    top: 0;
-    /* 下唇的渐隐方向要翻过来，否则网点是在靠外那一侧最浓、贴着缝的地方反而没了。 */
-    background-image:
-      linear-gradient(to bottom, transparent, var(--veil-mat)),
-      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
-  }
-
-  /* 离场：两扇咬合到中线两侧，网点同时显影。 */
-  .route-veil[data-phase='out'] .route-veil__mat--top,
-  .route-veil[data-phase='out'] .route-veil__mat--bottom {
-    transform: translate3d(0, 0, 0);
-  }
-
-  .route-veil[data-phase='out'] .route-veil__mat::after {
-    opacity: 1;
+  /* 离场：面板滑到「正好完全盖住」——这一帧就是换手帧。 */
+  .route-veil[data-phase='out'] .route-veil__wipe {
+    transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
   /* 重入：上一次换场还没走完就又点了一次导航，幕布多半已经在半开位置了，
      再等 --veil-latch 那一段空拍就是一次肉眼看得见的卡顿。
      空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
      闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__mat {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe {
     transition-delay: 0ms;
   }
 
   /* 入场：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
-     新建一条带新 delay 的过渡，于是「先停在闭合位等 --veil-hold，再以 --veil-part 退开」
-     完全由 CSS 排出来，不依赖任何 JS 计时器。
-     停在闭合位的这一段就是休止符，也是 DOM 换手真正发生的地方。 */
-  /* 入场这一侧**不重复写落点**：--veil-mat-exit 那两个值已经在 .route-veil__mat--top /
-     --bottom 的基类里了。
-     之所以能生效，是因为 [data-phase='out'] 那两条（特异度 0,2,0）在 in 相位下不再匹配，
-     于是落回基类（0,1,0）。同一份值写两处只会给以后留一个"改了这处忘了那处"的坑
-     —— 这个文件已经被同类问题咬过一次（见 tokens.css 里 --veil-* 两个档位的注释）。 */
-
-  .route-veil[data-phase='in'] .route-veil__mat {
+     新建一条带新 delay 的过渡，于是「先停在盖住位等 --veil-hold，再以 --veil-part
+     沿同方向滑出去」完全由 CSS 排出来，不依赖任何 JS 计时器。
+     停在盖住位的这一段就是休止符，也是 DOM 换手真正发生的地方。
+   *
+   * 与旧版一处关键差别：这里**必须显式写落点**（+100%）。旧版两扇幕布的落点写在
+   * --top/--bottom 基类里，靠"in 相位下不匹配 out 规则就落回基类"生效；现在基类的
+   * 落点是 -100%（屏外左侧），而入场要去屏外右侧，所以得写出来。 */
+  .route-veil[data-phase='in'] .route-veil__wipe {
+    transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
-  }
-
-  .route-veil[data-phase='in'] .route-veil__mat::after {
-    transition-duration: var(--motion-dur-route-sweep);
-    transition-delay: var(--veil-hold);
-  }
-
-  /* 出纸口的上下唇：每扇幕布从自己的内缘再往外长半道缝，两唇合拢正好填满中间那道口子。
-   *
-   * 这里刻意**不做成一个独立的「缝」元素** —— 那样它就必须靠时间对齐去追幕布，而两边
-   * 都追不上：合拢时幕布是从上下两端爬进来的，独立元素在它到位之前就已经画在屏幕正中
-   * （浅色主题下就是「页面中间突然蹦出一条黑条」，深色下 --veil-mat 与页面底色几乎相同
-   * 所以看不见）；开幕时幕布从中线往两边退，独立元素又留在原地压着新页面，直到整场结束
-   * 才随 visibility 一起消失。做成幕布自己的内缘之后，这两个问题从结构上就不存在：
-   * 合拢时它被幕布带进来，拉开时它跟着幕布退走，**零时序对齐**。
-   *
-   * 填充必须是**实色**而不是半透明的 --card（#ffffffcc / #ffffff05）：后者会透出底下的
-   * 页面，幕布就不「实」了，换手那一帧直接露馅。
-   *
-   * 两唇与幕布本体的交界处各压一条 1px 发丝线，合拢后相距正好 --veil-slit ——
-   * 那是闭合状态下唯一看得出结构的东西，也是「出纸口」这个读法的来源。
-   *
-   * 尺寸比半道缝各多 1px、并且互相越过中线 1px：两唇在正中重叠 2px，避免分数缩放
-   * （Windows 常见的 125% / 150%）下正中漏出一条亚像素亮缝。同色重叠，看不出接痕。 */
-  .route-veil__mat::before {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: calc(var(--veil-slit) / 2 + 1px);
-    background-color: var(--veil-mat);
-    content: '';
-  }
-
-  .route-veil__mat--top::before {
-    /* 负的 bottom = 从幕布下缘继续往中线长。 */
-    bottom: calc(-0.5 * var(--veil-slit) - 1px);
-    border-top: 1px solid var(--veil-hairline);
-  }
-
-  .route-veil__mat--bottom::before {
-    top: calc(-0.5 * var(--veil-slit) - 1px);
-    border-bottom: 1px solid var(--veil-hairline);
   }
 
   /* 套准线：全程唯一一次「快」，也是唯一一处发光。
@@ -772,10 +702,7 @@
      它是信息不是装饰，所以整场只有这一处文字，也没有第二块浮出的面板。 */
   .route-veil__hud {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: calc(50% - var(--veil-slit) / 2);
-    height: var(--veil-slit);
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -814,6 +741,12 @@
     width: 1px;
     height: 16px;
     background: var(--veil-accent-tint);
+  }
+
+  /* **读数只挂外壳档。** 子页档的 --veil-hold 是 0，读数动画时长也就为 0、整段不可见；
+     与其留一个"算出来是 0"的动画，不如显式关掉 —— 高频导航本来就不该有演出。 */
+  .route-veil[data-profile='inline'] .route-veil__hud {
+    display: none;
   }
 
   .route-veil[data-phase='in'] .route-veil__hud {
@@ -992,9 +925,13 @@
  * 等于两帧全屏闪，比不做动画还难看。
  */
 @media (prefers-reduced-motion: reduce) {
-  /* 位移与扫掠类动作整层撤掉。display:none 在这里是安全的 ——
-     这些层本来就不该动，而且覆盖层里唯一需要保留的信息（读数）挂在 .route-veil__hud 上。 */
-  .route-veil__mat,
+  /* 位移与扫掠类动作**整层撤掉**，不是变慢。
+     一块横扫全屏的暗面板同时踩两类风险：它是「大面积 pan」（前庭触发器），
+     又是一次全屏亮度反转（闪阈）。对这类元素，减少动效的正确降级是让它不存在，
+     而不是把同样的动作放慢 —— 放宽慢的一秒比没有过渡更难接受。
+     display:none 在这里安全：这些层本来就不该动，覆盖层里唯一需要保留的信息（读数）
+     挂在 .route-veil__hud 上。 */
+  .route-veil__wipe,
   .route-veil__rule {
     display: none !important;
   }
