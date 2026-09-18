@@ -115,6 +115,17 @@ const activeNav = computed(() => {
   return navItems.value.some((item) => item.to === parent) ? parent : path
 })
 
+/** 页码读数：`P.03/07`。取的是**当前栏位在导航里的序号**（activeNav 已经把
+ *  "详情页算在它所属的栏目下"这件事处理掉了），不是路由序号 ——
+ *  订单详情那种子页面如果按路由序号走，序号会跟着订单 id 变，那就不是页码了。
+ *  不在任何栏目下时给 `--/--`，不猜一个数字出来。 */
+const pageNo = computed(() => {
+  const index = navItems.value.findIndex((item) => item.to === activeNav.value)
+  if (index < 0) return '--/--'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(index + 1)}/${pad(navItems.value.length)}`
+})
+
 /** 导航成功就清掉品牌连点定时器：连点 logo 1-4 下之后立刻点侧栏导航，
  *  那个 700ms 的 setTimeout 并不会因为换了页就失效 —— 到点仍会把用户拽回首页。
  *  这里用路由变化当作「导航成功」的信号，侧栏、抽屉、程序化跳转都能覆盖到。 */
@@ -291,10 +302,11 @@ onMounted(() => {
           style="--depth: 4px"
           aria-hidden="true"
         />
-        <!-- 右边是穿孔边：左尺右孔，像一叠被装订过的纸。两件东西分列纸的两缘，
-             所以不会像之前括角与竖刻度那样叠在一起。 -->
+        <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
+             所以不会像之前括角与竖刻度那样叠在一起。
+             （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
         <span
-          class="decor-holes pointer-events-none absolute top-8 right-1.5 bottom-8 w-5"
+          class="decor-rail pointer-events-none absolute top-2 right-2 bottom-2 w-4"
           data-parallax
           style="--depth: 2px"
           aria-hidden="true"
@@ -314,13 +326,21 @@ onMounted(() => {
             <component :is="Component" />
           </RouteTransition>
         </RouterView>
-            <!-- 底部状态带：把"这一页属于哪个扇区"和刻度摊在页面底部。
-           不是新增信息，是同一块牌子在两处出现 —— 终端叙事里那种重复本身就是语言的一部分。
-           右侧那串数字是尺子的刻度读数，纯装饰（aria-hidden）。 -->
-      <div class="mt-8 flex items-center gap-3 border-t pt-1" style="border-color: var(--border)">
-        <span class="readout">{{ route.meta.code ?? '--' }} // PRINT SERVICE</span>
+            <!-- 底部状态带：与用户端同一块状态栏 —— 活的灯 + 当前栏位 + 导航序号。
+           两侧共用同一件东西是有意的：它是这套界面的"外壳"，而外壳在两端应当是同一个。 -->
+      <div class="mt-8 flex items-center gap-3 border-t pt-1.5" style="border-color: var(--border)">
+        <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
+             不是一条要读的信息（"已登录"从页面本身就看得出）——
+             而会呼吸的读数进朗读流只会变成噪声。 -->
+        <span class="flex shrink-0 items-center gap-1.5" aria-hidden="true">
+          <span class="status-led" />
+          <span class="readout">SESSION ACTIVE</span>
+        </span>
+        <span class="readout hidden shrink-0 sm:inline">
+          {{ route.meta.code ?? '--' }} // PRINT SERVICE
+        </span>
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
-        <span class="readout hidden sm:inline" aria-hidden="true">01 02 03 04 05 06 07 08</span>
+        <span class="readout shrink-0" aria-hidden="true">P.{{ pageNo }}</span>
       </div>
       <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
            放在文档流末尾，所以永远不会压到内容上。 -->

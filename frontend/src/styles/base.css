@@ -285,22 +285,32 @@
     transition: transform 280ms var(--motion-ease-out);
   }
 
-  /* ── 纸面（.sheet）════════════════════════════════════════════════
-   * **网格是"制图台"，内容是一张"纸"。** 网格只在纸外可见：页边、侧栏、栏距；
-   * 纸面本身是干净的纯色，正文永远落在实底上。
+  /* ── 显示面（.sheet）══════════════════════════════════════════════
+   * **网格是"工作台"，内容是一块"屏"。** 网格只在屏外可见：页边、侧栏、栏距；
+   * 屏面本身是近实底，正文永远落在实底上。
    *
    * 这条分工是这套视觉里 figure/ground 的根。之前把内容做成透明、让网格从底下透上来，
    * 结果是三层东西同层竞争：网格线（3%/5.5%）、元素边框（--border 1.23:1）、
    * 以及本该"浮在上面"的内容块 —— 谁也读不出谁是元素，内容看起来是浮在背景**里**
-   * 而不是浮在背景**上**。方舟的网格底下从不放正文，所以这里把纸面补回来。
+   * 而不是浮在背景**上**。方舟的网格底下从不放正文，所以这里把实底面补回来。
    *
-   * 注意它不是"把卡片又加回来"：纸面是**整块内容区**的底，不是每个块各给一个卡片；
-   * 块与块之间仍然是 1px 分隔线 + 留白那套语言。 */
+   * 注意它不是"把卡片又加回来"：这一层是**整块内容区**的底，不是每个块各给一个卡片；
+   * 块与块之间仍然是 1px 分隔线 + 留白那套语言。
+   *
+   * 2026-09-18：从"纸"改成"屏"。纸与屏的差别在做设计时只落在三件事上 ——
+   * 光的方向（纸是对角打光、屏是纵向背光）、材质（纸是纤维、屏是像元阵列）、
+   * 边缘（纸被裁切、屏被边框框住）。这里改的是前两件，第三件由 .frame-brackets 承担。
+   * 两者共用 --surface-sheen 这个变量名，因为它们的**职责**完全相同：
+   * 给一大片纯色一个方向感与材质。 */
   .sheet {
     background-color: var(--background);
-    /* 对角打光挂在纸面上：挂 body 上会被这块纸挡掉，而打光正是要给内容区那一片
-       纯色面一个方向感。它只有 ±2% 亮度、**不产生线条结构**，所以不碰"纹理压文字"那条红线。 */
-    background-image: var(--surface-sheen);
+    /* 两层底：像元栅格在最上（它必须逐格平铺，所以要给 background-size），
+       背光渐变在下面（单张铺满，size 给 auto）。 */
+    background-image:
+      radial-gradient(var(--raster-dot) 0.5px, transparent 0.6px),
+      var(--surface-sheen);
+    background-size: 4px 4px, auto;
+    background-position: 0 0, 0 0;
   }
 
   /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
@@ -433,28 +443,53 @@
     clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
   }
 
-  /* 大网点块：半调网点，从一个角向外渐隐 —— 做的是"印上去的底纹"，
-     不是一块硬边方块。 */
-  .decor-dots {
-    background-image: radial-gradient(var(--hazard-ink) 1.2px, transparent 1.5px);
-    background-size: 6px 6px;
-    mask-image: linear-gradient(to bottom right, #000, transparent 72%);
-    -webkit-mask-image: linear-gradient(to bottom right, #000, transparent 72%);
+  /* 条码块：三层周期互质的竖条（3px / 7px / 11px 步长）叠在一起，
+     叠出来的疏密在整段长度里不重复 —— 观感就是一条真条形码，但不需要生成编码。
+     它替代的是原来的半调网点块：网点做的是"油墨印在纸上"，
+     而屏幕上的同类记号是条码/扫描条（摄像头、扫码枪、标签机都在屏幕上画这个）。
+     整块纯装饰、不承载可扫的编码，调用方负责 aria-hidden。 */
+  .decor-bars {
+    background-image:
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 2px, transparent 2px 11px),
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 7px);
   }
 
-  /* 穿孔边：像一叠被装订过的纸。沿一条竖线排一列圆环。
-     透明的是孔心 —— 那是纸背后的东西，在这套视觉里就是纸自己的底色。 */
-  .decor-holes {
-    background-image: radial-gradient(
-      circle at 50% 50%,
-      transparent 4px,
-      var(--border) 4.4px,
-      var(--border) 5px,
-      transparent 5.2px
-    );
-    background-size: 100% 44px;
+  /* 右缘读数沟（替代原来的穿孔边）：一条 1px 竖槽 + 一列长短交替的刻度，
+     做的是**电子文档的滚动沟 / 代码编辑器的行号沟**。
+     穿孔是纸的记号（装订线），沟槽是屏幕的记号（这一页在文档里有多长）——
+     同一块空白位置，换一件东西就把语汇从"纸"扳到"屏"。
+     background-clip: padding-box 不能省：背景默认画到边框下面，
+     刻度会压在槽线上，看着像脏了。 */
+  .decor-rail {
+    border-right: 1px solid var(--border);
+    background-image:
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 12px),
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 60px);
     background-repeat: repeat-y;
-    background-position: center top;
+    background-position: right top;
+    background-clip: padding-box;
+    background-size: 3px 100%, 7px 100%;
+  }
+
+  /* 数据转储块：等宽十六进制，越往下越淡。
+     这一件是整套语汇里**最能分辨"屏"与"纸"**的一件 —— 纸上不会印十六进制转储，
+     而屏幕上到处都是（调试面板、诊断输出、设备状态）。
+     内容是真的（调用方传进来的字符串的 UTF-8 字节），不是随机数：
+     装饰件可以"无意义"，但不该"假"——假数据在截图里和真数据长得一样，
+     可一旦有人真去数，它就会露馅。 */
+  .data-dump {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    letter-spacing: 0.08em;
+    color: var(--text-quaternary);
+    overflow: hidden;
+    /* 不折行：一行 16 字节是这个图案的**形状**，折了就不是转储了。
+       窄屏上被截断留在屏幕外，正好读成"后面还有"——真转储在窗格里也是这么被切的。 */
+    white-space: pre;
+    mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
   }
 
   /* 大号读数：尺码更大、字距更宽的技术读数，用于文件头/版号这类"铭牌"位置。 */
@@ -465,6 +500,139 @@
     text-transform: uppercase;
     color: var(--text-quaternary);
     white-space: nowrap;
+  }
+
+  /* ══ 电子件（"终端/在线文档"语汇）═══════════════════════════════════
+   * 这一批回答的是"为什么它看起来像屏幕上的东西，而不是印出来的东西"。
+   * 纸与屏最本质的差别不在材质，在**状态**：纸是死的（印完就定了），
+   * 屏是活的（有光标、有连接状态、有正在走的时间）。所以这里的每件东西
+   * 都对应一种"屏上的活状态"，而不是一种图案。
+   *
+   * 共同约束有两条，都来自前面那三条纪律：
+   *   ① 动的东西一律只出现在**没有正文**的位置 —— 扫描高光走分隔基线、
+   *      光标与状态灯跟在等宽读数旁边。会动的亮点扫过正文比"纹理压文字"更该避免；
+   *   ② 每件动效都必须有一个**静态的等价形态**（reduced-motion 下退成常亮或整件撤掉），
+   *      而不是"变慢"—— 慢扫一条横贯全宽的亮线仍然踩前庭敏感。 */
+
+  /* 扫描基线：一条 1px 分隔线，上面有一段强调色高光慢慢掠过（7 秒一遍）。
+     只在**不载正文的基线**上用（标题区收尾线、区块间的分隔线）。 */
+  .scan-rule {
+    position: relative;
+    height: 1px;
+    background-color: var(--border);
+  }
+  .scan-rule::after {
+    position: absolute;
+    top: -1px;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    background-image: linear-gradient(90deg, transparent, var(--scan-ink) 50%, transparent);
+    background-repeat: no-repeat;
+    background-size: 96px 100%;
+    content: '';
+    opacity: 0.75;
+    pointer-events: none;
+    /* 走 background-position 而不是 transform：元素只有 1px 高、宽度是一个内容列，
+       每帧重绘一条 1px 线可以忽略；换成 transform 反而要多包一层元素来承载位移。
+       两端都落在可视区之外（-96px 与 100% + 96px），所以循环处不会出现
+       "高光从左边凭空冒出来"这一眼能看出破绽的接缝。 */
+    animation: scan-pass var(--motion-dur-scan) linear infinite;
+  }
+
+  @keyframes scan-pass {
+    from {
+      background-position: -96px 0;
+    }
+    to {
+      background-position: calc(100% + 96px) 0;
+    }
+  }
+
+  /* 光标：一个半字宽的方块，0.9Hz 明灭。
+     它只跟在**状态读数**（等宽小字）后面，语义是"这条通道是活的"，
+     不是"这里可以打字"（本站没有终端输入），所以不要放进表单里。 */
+  .caret {
+    display: inline-block;
+    width: 0.5em;
+    height: 0.85em;
+    vertical-align: -0.08em;
+    background-color: var(--scan-ink);
+    animation: caret-blink var(--motion-dur-blink) linear infinite;
+  }
+
+  @keyframes caret-blink {
+    0%,
+    54% {
+      opacity: 1;
+    }
+    55%,
+    100% {
+      opacity: 0.12;
+    }
+  }
+
+  /* 状态灯：4px 方块，与光标同一节奏但**错开半拍**（负 delay 推半个周期），
+     所以一行里不会两件东西一起亮 —— 同频的两个亮点会读成一处频闪。
+     不用 box-shadow 做外圈：全站投影归零的验收把 box-shadow 收成了白名单，
+     为一个 4px 的灯破例不值。 */
+  .status-led {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    background-color: var(--accent-text);
+    animation: led-pulse var(--motion-dur-blink) linear infinite;
+    animation-delay: calc(var(--motion-dur-blink) / -2);
+  }
+
+  @keyframes led-pulse {
+    0%,
+    40% {
+      opacity: 1;
+    }
+    60%,
+    100% {
+      opacity: 0.25;
+    }
+  }
+
+  /* 数据字段行：等宽标签 + 点线引导 + 等宽值。
+     这是"电子文档"最省力的一件记号 —— 屏幕上记录视图就是这个形状（表单、属性面板、
+     诊断输出），而纸上同类信息的形状是**实线格子**。换句话说：点线引导不是装饰，
+     它正是"这条信息是某个进程吐出来的、不是印刷出来的"那个视觉差别本身。
+     点线由 border 画，不载文字，所以不碰"纹理压文字"那条红线。 */
+  .field {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .field__k {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-quaternary);
+    white-space: nowrap;
+  }
+
+  .field__lead {
+    height: 1px;
+    min-width: 10px;
+    flex: 1 1 auto;
+    margin-bottom: 3px;
+    border-bottom: 1px dotted var(--border);
+  }
+
+  .field__v {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* 细分隔线的强调段：一条 1px 线，左端 40px 用强调色。
@@ -939,8 +1107,16 @@
   animation: decor-drift 520ms var(--motion-ease-out);
 }
 
-:root[data-veil-phase='out'] .cut {
+:root[data-veil-phase='out'] .cut,
+:root[data-veil-phase='out'] .data-dump {
   animation: decor-nudge 420ms var(--motion-ease-out);
+}
+
+/* 读数沟的刻度和左边的尺子是同一件东西转了 90°，所以它也要"重新量一遍"，
+   但方向朝下：复用 decor-measure 会把刻度**横向**推出去，那在一条竖沟上
+   表现为"刻度被拉长又缩回"，是另一种观感（也更像故障）。 */
+:root[data-veil-phase='out'] .decor-rail {
+  animation: decor-measure-y 420ms var(--motion-ease-out);
 }
 
 /* 刻度尺"重新量一遍"：刻度纹从左往右扫过来落位。尺子很短（96×5），重绘可以忽略。 */
@@ -950,6 +1126,16 @@
   }
   to {
     background-position-x: 0;
+  }
+}
+
+/* 刻度沟"重新量一遍"：刻度纹从上往下落位（与尺子同样的行为，只是转了 90°）。 */
+@keyframes decor-measure-y {
+  from {
+    background-position-y: -28px;
+  }
+  to {
+    background-position-y: 0;
   }
 }
 
@@ -1209,7 +1395,23 @@
   :root[data-veil-phase='out'] .ticks,
   :root[data-veil-phase='out'] .vticks,
   :root[data-veil-phase='out'] .watermark,
-  :root[data-veil-phase='out'] .cut {
+  :root[data-veil-phase='out'] .cut,
+  :root[data-veil-phase='out'] .decor-rail,
+  :root[data-veil-phase='out'] .data-dump {
     animation: none !important;
+  }
+
+  /* 电子件走的是同一条纪律：减少动效下不是"放慢"，而是各自退到一个**静态的、
+     仍然读得出功能**的形态。
+     扫描高光整段撤掉（它是纯装饰，而且是横贯一条线的位移，正是最该撤的那一类）；
+     光标与状态灯改成常亮 —— 它们的语义是"这条通道活着"，不是"在闪"。 */
+  .scan-rule::after {
+    display: none !important;
+  }
+
+  .caret,
+  .status-led {
+    animation: none !important;
+    opacity: 1 !important;
   }
 }

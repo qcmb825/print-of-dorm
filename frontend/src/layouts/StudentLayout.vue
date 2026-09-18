@@ -27,6 +27,17 @@ const navItems = computed(() => [
 
 const currentPath = computed(() => route.path)
 
+/** 页码读数：`P.02/05`。它是**导航序号**，不是虚构的文档页码 ——
+ *  学生端这一栏就是终端里的五个视图，读数说的是"你在第几个"。
+ *  当前路径不在导航里时给 `--/--`（比如从别处落到某个学生路由），
+ *  不猜一个数字出来。 */
+const pageNo = computed(() => {
+  const index = navItems.value.findIndex((item) => item.to === currentPath.value)
+  if (index < 0) return '--/--'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(index + 1)}/${pad(navItems.value.length)}`
+})
+
 onMounted(() => {
   void announcement.load()
 })
@@ -88,10 +99,11 @@ onMounted(() => {
           style="--depth: 4px"
           aria-hidden="true"
         />
-        <!-- 右边是穿孔边：左尺右孔，像一叠被装订过的纸。两件东西分列纸的两缘，
-             所以不会像之前括角与竖刻度那样叠在一起。 -->
+        <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
+             所以不会像之前括角与竖刻度那样叠在一起。
+             （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
         <span
-          class="decor-holes pointer-events-none absolute top-8 right-1.5 bottom-8 w-5"
+          class="decor-rail pointer-events-none absolute top-2 right-2 bottom-2 w-4"
           data-parallax
           style="--depth: 2px"
           aria-hidden="true"
@@ -112,13 +124,25 @@ onMounted(() => {
           <component :is="Component" />
         </RouteTransition>
       </RouterView>
-          <!-- 底部状态带：把"这一页属于哪个扇区"和刻度摊在页面底部。
-           不是新增信息，是同一块牌子在两处出现 —— 终端叙事里那种重复本身就是语言的一部分。
-           右侧那串数字是尺子的刻度读数，纯装饰（aria-hidden）。 -->
-      <div class="mt-8 flex items-center gap-3 border-t pt-1" style="border-color: var(--border)">
-        <span class="readout">{{ route.meta.code ?? '--' }} // PRINT SERVICE</span>
+          <!-- 底部状态带：一块**状态栏**，不是一行页码装饰。
+           三件事各自对上一个真实的量：状态灯对"已登录的会话"（这一整层本来就在
+           路由守卫后面，能渲染出来就是活的）、编号对当前页、P.nn/NN 对导航序号。
+           之所以把它做成这个形状：纸上的页脚是静止的（页码、版号），
+           而屏幕上的页脚是**活的**（连接、进度、时间）—— 一只会呼吸的灯
+           比任何纹理都更快地说明"这是一块屏"。 -->
+      <div class="mt-8 flex items-center gap-3 border-t pt-1.5" style="border-color: var(--border)">
+        <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
+             不是一条要读的信息（"已登录"从页面本身就看得出）——
+             而会呼吸的读数进朗读流只会变成噪声。 -->
+        <span class="flex shrink-0 items-center gap-1.5" aria-hidden="true">
+          <span class="status-led" />
+          <span class="readout">SESSION ACTIVE</span>
+        </span>
+        <span class="readout hidden shrink-0 sm:inline">
+          {{ route.meta.code ?? '--' }} // PRINT SERVICE
+        </span>
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
-        <span class="readout hidden sm:inline" aria-hidden="true">01 02 03 04 05 06 07 08</span>
+        <span class="readout shrink-0" aria-hidden="true">P.{{ pageNo }}</span>
       </div>
       <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
            放在文档流末尾，所以永远不会压到内容上。 -->
