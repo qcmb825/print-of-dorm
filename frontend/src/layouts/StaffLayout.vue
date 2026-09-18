@@ -288,19 +288,17 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="sheet relative min-w-0 flex-1 overflow-hidden px-3 py-4 sm:px-5 sm:py-6">
+      <main class="sheet relative min-w-0 flex-1 overflow-hidden px-3 py-4 sm:px-5 sm:py-6 lg:pl-8">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
           data-parallax
-          data-parallax-x="right"
 style="--depth: 4px"
           aria-hidden="true"
         />
         <span
-          class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
+          class="vticks pointer-events-none absolute top-0 bottom-0 left-0 lg:left-2"
           data-parallax
-          data-parallax-x="right"
 style="--depth: 4px"
           aria-hidden="true"
         />
@@ -310,14 +308,12 @@ style="--depth: 4px"
         <span
           class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
           data-parallax
-          data-parallax-x="right"
 style="--depth: 3px"
           aria-hidden="true"
         />
       <span
         class="watermark pointer-events-none absolute right-0 bottom-2"
         data-parallax
-        data-parallax-x="right"
 style="--depth: 20px"
         aria-hidden="true"
       >
@@ -358,9 +354,8 @@ style="--depth: 20px"
       <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
            它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
       <span
-        class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)]"
+        class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)] lg:left-2.5"
         data-parallax
-        data-parallax-x="right"
 style="--depth: 6px"
         aria-hidden="true"
       />
