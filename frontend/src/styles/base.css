@@ -53,6 +53,20 @@
     letter-spacing: -0.01em;
   }
 
+  /* 裸 <a> 的颜色。
+   *
+   * 项目刻意不引 tailwind preflight（免得 reset 掉 Naive 的组件样式），代价是没有任何规则
+   * 给 <a> 定色 —— 于是盒子里的文件名链接拿的是**浏览器默认链接蓝**：浅色下 #0000EE，
+   * 深色下由 UA 的 color-scheme 给一个浅蓝。它既不在调色板里，深色下 #0000EE 压在 #050505 上
+   * 只有约 1.6:1，几乎读不出来。受影响的是订单台 / 账号管理表格里那些「→ 详情」的 router-link。
+   *
+   * 只在 @layer base 里定色，所以任何写了颜色工具类的链接（侧栏 .nav-link、品牌区那个
+   * style="color: inherit"）都照旧赢它。**不动 text-decoration** —— 那几个链接靠默认下划线
+   * 表示可点，去掉会减少一处可用线索。 */
+  a {
+    color: var(--accent-text);
+  }
+
   /* 数字、编号、取件码、时间戳一律走等宽，这是参考站最出效果的一处细节 */
   .tnum,
   code,

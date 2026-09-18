@@ -178,12 +178,25 @@
   --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.03), 0 12px 32px rgb(17 17 17 / 0.035);
   --shadow-raised: 0 2px 5px rgb(17 17 17 / 0.05), 0 18px 40px rgb(17 17 17 / 0.07);
 
-  --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', ui-sans-serif, system-ui,
+  /* 字体栈：**拉丁在前、中文在后**。
+   *
+   * 前面三支是拉丁字体（Space Grotesk / DM Sans / JetBrains Mono），'Noto Sans SC' 排在它们
+   * 之后 —— 字体匹配是按字符逐个回落的，拉丁字符在前面的字体里就能命中，走不到中文字体；
+   * 汉字则一路回落到 'Noto Sans SC'。反过来放会让拉丁也走思源黑体，丢掉 Space Grotesk 的
+   * 工业感字形。
+   *
+   * 思源黑体是切片自托管的（见 scripts/build-cn-font.mjs），只覆盖 6763 个常用汉字。
+   * 它后面的 'Microsoft YaHei' / 'PingFang SC' 是兜底：生僻字（人名、专业术语）会落到系统字体，
+   * 同一行里出现两种字形 —— 这是切片方案已知的取舍。
+   *
+   * --stack-mono 也要带中文字族：换场场记读数里有中文页名，而它走的是等宽栈。少了这一支，
+   * 那几个汉字会落到浏览器默认的衬线字体上，字号字距与旁边的西文代号断裂。 */
+  --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', 'Noto Sans SC', ui-sans-serif,
+    system-ui, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --stack-body: 'DM Sans Variable', 'DM Sans', 'Noto Sans SC', ui-sans-serif, system-ui,
     'Microsoft YaHei', 'PingFang SC', sans-serif;
-  --stack-body: 'DM Sans Variable', 'DM Sans', ui-sans-serif, system-ui, 'Microsoft YaHei',
-    'PingFang SC', sans-serif;
-  --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Consolas,
-    'Courier New', monospace;
+  --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Noto Sans SC', ui-monospace,
+    Consolas, 'Courier New', monospace;
 
   /* 换场扫描/网点专用的青色。
    * 这条令牌原先只在 .dark 里定义过 —— 浅色下引用它会静默变成无效值（图层凭空消失或
