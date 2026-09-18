@@ -33,7 +33,7 @@ import { useRouteVeil } from '@/composables/route-veil'
 const { phase, profile, target, reentrant } = useRouteVeil()
 
 /** 三角阵列的八个格子：两行 × 四列，**第七格刻意空着**（理由见 base.css 的 .route-veil__tri）。
- *  写成数据而不是复制八份 <i>：错峰要用的序号也在同一个循环里给。 */
+ *  写成数据而不是复制八份 <i>：位置与格子数一一对应，改阵列形状只要改这一行。 */
 const TRI_CELLS = [true, true, true, true, true, true, false, true]
 </script>
 
@@ -52,20 +52,28 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       <span class="route-veil__wipe-under" />
       <!-- 黑层。前缘那条 3px 扫描边挂在它的 ::before 上、跟着一起走。 -->
       <span class="route-veil__wipe" />
-      <!-- 中心读数：整场唯一的文字。三层 —— 英文引导行、页名 + 代号、三角阵列。 -->
+      <!-- 版面上的字与图案：**跟着面板一起走**（同一套时长与曲线，位移按视口宽度换算）。
+           所以它们不是"浮现"出来的一层浮层，而是印在板上的内容，面板滑到位它们就在那儿。 -->
       <span class="route-veil__hud">
-        <span class="route-veil__hud-lead">TRANSITION TO</span>
-        <span class="route-veil__hud-line">
-          <span class="route-veil__hud-title">{{ target.title }}</span>
-          <span v-if="target.code" class="route-veil__hud-code">{{ target.code }}</span>
+        <span class="route-veil__read">
+          <span class="hazard route-veil__hazard" />
+          <span class="route-veil__hud-lead">REDIRECTING TO:</span>
+          <span class="route-veil__hud-line">
+            <span class="route-veil__hud-title">{{ target.title }}</span>
+            <span v-if="target.code" class="route-veil__hud-code">{{ target.code }}</span>
+          </span>
         </span>
-        <span class="route-veil__tri">
-          <i
-            v-for="(on, i) in TRI_CELLS"
-            :key="i"
-            :class="{ 'is-blank': !on }"
-            :style="{ '--tri-i': i }"
-          />
+        <!-- 右下角：位置对着页面自己的水印大字（那份也是右下角贴边的巨号编号）。 -->
+        <span class="route-veil__corner">
+          <span class="route-veil__tri">
+            <i
+              v-for="(on, i) in TRI_CELLS"
+              :key="i"
+              :class="{ 'is-blank': !on }"
+              :style="{ '--tri-i': i }"
+            />
+          </span>
+          <span class="route-veil__hud-code route-veil__corner-label">REDIRECT PROTOCOL</span>
         </span>
       </span>
     </div>
