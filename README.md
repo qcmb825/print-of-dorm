@@ -265,7 +265,7 @@
 | 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
 | 前端图标 | Lucide |
 | 字体（拉丁） | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、取件码），@fontsource 随产物自带，不走外部 CDN |
-| 字体（中文） | 思源黑体（OFL-1.1），由 `cn-font-split` 切成带 `unicode-range` 的分片放在 `src/assets/fonts/`（约 2.7MB，随产物入库，首次访问即全部用到） |
+| 字体（中文） | 思源黑体（OFL-1.1），由 `cn-font-split` 切成带 `unicode-range` 的分片放在 `src/assets/fonts/`（数 MB，随产物入库；中文覆盖广，首次访问就会取到全部分片） |
 | 前端构建 | Vite（产物直接落进 `static/app/`，由 Flask 托管） |
 | 图表 | ECharts（按需引入，只有看板页会加载） |
 
@@ -485,7 +485,7 @@ npm run dev          # 开发服务器 :5173，已把 /api 反代到 :8080
 ```powershell
 npm run typecheck        # 只做类型检查，可选
 npm run build            # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
-npm run audit:contrast   # 对比度断言：58 条 must 全过；未登记的 must 不达标会返回非零码
+npm run audit:contrast   # 对比度断言：全部 must 通过；未登记的不达标会返回非零码
 ```
 
 `audit:contrast` 是**改界面时的验收门槛**，不是可选项：它解析 `styles/tokens.css`，
