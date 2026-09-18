@@ -23,6 +23,7 @@ import {
   Upload,
   X,
 } from '@lucide/vue'
+import PageHeader from '@/components/PageHeader.vue'
 import {
   NButton,
   NFormItem,
@@ -337,13 +338,16 @@ onMounted(async () => {
       </NButton>
     </section>
 
-    <div class="panel p-4 sm:p-5">
-      <h1 class="font-heading text-xl font-bold sm:text-2xl">下单打印</h1>
-      <p class="mt-1 mb-4 text-sm text-ink-3">
-        {{ usingPreset
+    <PageHeader
+      title="下单打印"
+      :subtitle="
+        usingPreset
           ? '选一项预设打印服务下单，管理员按它的说明打印，不需要上传文件。'
-          : '支持 PDF、Word 和图片。上传后由管理员接单打印。' }}
-      </p>
+          : '支持 PDF、Word 和图片。上传后由管理员接单打印。'
+      "
+    />
+
+    <div class="p-4 sm:p-5">
 
       <!-- 下单方式。两个按钮而不是下拉框：这是两条完全不同的流程（一个有文件、
            一个没有），下拉框会让人以为「选了预设之后还能再补个文件」。 -->

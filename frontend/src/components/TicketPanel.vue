@@ -2,6 +2,7 @@
 /** 工单面板：左侧列表 + 右侧详情（窄屏收进抽屉）。两个角色共用，靠 staff 开关区分行为。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
+import { useRoute } from 'vue-router'
 import { Inbox, MessageSquarePlus, Plus } from '@lucide/vue'
 import {
   NBadge,
@@ -24,6 +25,9 @@ import { TICKET_STATUS_LABEL, shortTime } from '@/utils/format'
 
 const props = defineProps<{ staff: boolean; currentUserId: number }>()
 const message = useMessage()
+// 页面编号取自路由 meta（与 PageHeader 同一个事实来源）。这个组件同时服务
+// 学生端「问题反馈」与管理端「工单处理」两条路由，所以只能运行时读，不能写死。
+const pageCode = computed(() => useRoute().meta.code as string | undefined)
 
 const tickets = ref<Ticket[]>([])
 const unreadTotal = ref(0)
@@ -104,8 +108,11 @@ onMounted(async () => {
   <div class="mx-auto max-w-6xl">
     <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="flex items-center gap-2 font-heading text-xl font-bold sm:text-2xl">
-          {{ staff ? '工单处理' : '问题反馈' }}
+        <h1 class="flex items-baseline gap-2 font-heading text-xl font-bold sm:text-2xl">
+          <!-- 编号内联在这里而不是走 PageHeader：这个 h1 里嵌着未读角标，套不进那个组件的结构。
+               编号同样取自 route.meta.code，两条路由（学生端 04 / 管理端 07）各自不同。 -->
+          <span v-if="pageCode" class="tech-label shrink-0 text-2xs text-ink-3">{{ pageCode }} //</span>
+          <span class="flex items-center gap-2">{{ staff ? '工单处理' : '问题反馈' }}</span>
           <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
         </h1>
         <p class="mt-0.5 text-sm text-ink-3">

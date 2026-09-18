@@ -9,6 +9,7 @@ import { ApiError } from '@/api/client'
 import { orderApi } from '@/api/endpoints'
 import type { Order } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import {
   COLOR_TYPE_LABEL,
   DUPLEX_LABEL,
@@ -142,16 +143,14 @@ async function withdraw(order: Order): Promise<void> {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <header class="mb-4 flex items-center justify-between gap-3">
-      <div>
-        <h1 class="font-heading text-xl font-bold sm:text-2xl">我的订单</h1>
-        <p class="mt-0.5 text-sm text-ink-3">每 20 秒自动刷新，切走页面时暂停</p>
-      </div>
-      <NButton size="small" quaternary :loading="loading" @click="load()">
-        <template #icon><RefreshCw :size="15" /></template>
-        刷新
-      </NButton>
-    </header>
+    <PageHeader title="我的订单" subtitle="每 20 秒自动刷新，切走页面时暂停">
+      <template #actions>
+        <NButton size="small" quaternary :loading="loading" @click="load()">
+          <template #icon><RefreshCw :size="15" /></template>
+          刷新
+        </NButton>
+      </template>
+    </PageHeader>
 
     <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <div class="panel panel-raised px-3 py-2.5">

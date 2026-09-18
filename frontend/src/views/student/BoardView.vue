@@ -19,6 +19,7 @@ import type { Board, ServiceBoard } from '@/api/types'
 import { trendOption } from '@/charts/options'
 import type { ChartPalette } from '@/charts/setup'
 import ChartBox from '@/components/charts/ChartBox.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { notify } from '@/composables/feedback'
 import { useThemeStore } from '@/stores/theme'
 import { STATUS_COLOR_VAR } from '@/utils/format'
@@ -129,16 +130,14 @@ onMounted(load)
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <header class="mb-4 flex items-center justify-between gap-3">
-      <div>
-        <h1 class="font-heading text-xl font-bold sm:text-2xl">服务数据</h1>
-        <p class="mt-0.5 text-sm text-ink-3">排队情况 · 下单榜 · 我的进度</p>
-      </div>
-      <NButton size="small" quaternary :loading="loading" @click="load()">
-        <template #icon><RefreshCw :size="15" /></template>
-        刷新
-      </NButton>
-    </header>
+    <PageHeader title="服务数据" subtitle="排队情况 · 下单榜 · 我的进度">
+      <template #actions>
+        <NButton size="small" quaternary :loading="loading" @click="load()">
+          <template #icon><RefreshCw :size="15" /></template>
+          刷新
+        </NButton>
+      </template>
+    </PageHeader>
 
     <div v-if="loading && !board" class="flex flex-col gap-3">
       <NSkeleton v-for="index in 3" :key="index" height="96px" :sharp="false" />

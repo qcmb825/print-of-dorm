@@ -635,14 +635,19 @@ const columns = computed<DataTableColumns<Order>>(() => [
     width: 92,
     // 未计费时金额是 null 而不是 0（老库遗留订单也走这条路）——
     // 显示成「￥0.00」会让人以为这单免费。
-    render: (row) =>
-      h(
-        'span',
-        {
-          class: row.price === null || row.price === undefined ? 'text-xs opacity-50' : 'tnum text-sm font-bold',
-        },
-        priceLabel(row.price),
-      ),
+    render: (row) => {
+      const unpriced = row.price === null || row.price === undefined
+      if (!unpriced) return h('span', { class: 'tnum text-sm font-bold' }, priceLabel(row.price))
+      // 未计费：旁边挂一小段危险斜纹。
+      // 斜纹是「这块有约束 / 待处理」的记号，**不铺在文字下面** —— 纹理压在文字上会让
+      // 笔画与纹理混同（WCAG F83 型失败），所以只作为独立的色标。
+      // 文字色从原来的 opacity-50（等效对比度约 2.6:1）提到三级文字色（4.86:1）：
+      // 「未计费」是要读的状态，不是装饰。
+      return h('span', { class: 'flex items-center gap-1.5' }, [
+        h('span', { class: 'hazard h-3 w-2 shrink-0', 'aria-hidden': 'true' }),
+        h('span', { class: 'text-xs text-ink-3' }, priceLabel(row.price)),
+      ])
+    },
   },
   {
     title: '取件码',

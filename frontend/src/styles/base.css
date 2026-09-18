@@ -230,6 +230,66 @@
     background-size: 32px 32px;
   }
 
+  /* ── 四个装饰元件 ────────────────────────────────────────────────
+   * 都是「用编号、刻度、括角、斜纹来分区」这套做法的零件，替代卡片边界。
+   * 共同纪律：一律用静态 background-image / 伪元素，不动画、不开新层。 */
+
+  /* 括角：两条直角短线。**pointer-events: none 是必须的** —— 伪元素默认堆在内容之上，
+     不吃掉这一条的话，压在角上的按钮与链接会点不动、hover 也不响应。 */
+  .bracket {
+    position: relative;
+  }
+  .bracket::before,
+  .bracket::after {
+    position: absolute;
+    width: var(--bracket-size, 12px);
+    height: var(--bracket-size, 12px);
+    border: 1px solid var(--accent-text);
+    content: '';
+    pointer-events: none;
+  }
+  .bracket::before {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .bracket::after {
+    right: 0;
+    bottom: 0;
+    border-left: 0;
+    border-top: 0;
+  }
+
+  /* 刻度尺：两层 repeating-linear-gradient。
+     长刻度必须落在第 5 条小刻度上 —— repeating-linear-gradient 自己不会计数，
+     靠两层都从 left 起算、且 --tick-major 恰为 --tick 的整数倍来实现。 */
+  .ticks {
+    height: 5px;
+    background-image:
+      repeating-linear-gradient(to right, var(--tick-color) 0 1px, transparent 1px var(--tick, 8px)),
+      repeating-linear-gradient(
+        to right,
+        var(--tick-color) 0 1px,
+        transparent 1px var(--tick-major, 40px)
+      );
+    background-position: bottom left;
+    background-repeat: repeat-x;
+    background-size: 100% 3px, 100% 5px;
+    /* 刻度是装饰，走四级文字色（浅色 2.6:1），不抢内容的注意力。 */
+    --tick-color: var(--text-quaternary);
+  }
+
+  /* 危险斜纹：45°、3px 条纹 + 3px 间隙。只用于「待计费 / 已取消异常」这类状态标记
+     与不可逆操作的提示区，**不做背景装饰** —— 铺满就变成廉价科技感滤镜了。 */
+  .hazard {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--hazard-ink) 0 3px,
+      transparent 3px 6px
+    );
+  }
+
   /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
   .login-shell {
     background-image:

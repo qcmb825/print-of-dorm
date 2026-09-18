@@ -178,6 +178,12 @@
    *   --ambient                         顶部径向环境光
    * 弹层（Dialog / Drawer / Dropdown / Select / Message）现在靠**遮罩压暗下层 + 1px 硬描边**
    * 与背景分离，而不是给上层加投影。 */
+  /* 危险斜纹的墨色。鹰角官网实测是 `#1f1f22`（**近黑**，不是通用工业符号那种亮黄黑），
+   * 铺在中性面上只是「这块有约束」的暗示。这里从 --foreground 派生而不是写死：
+   * 浅色主题得到近黑条纹（同官网），深色主题得到近白条纹 —— 写死 #1f1f22 的话
+   * 在深色面板上等于看不见。 */
+  --hazard-ink: color-mix(in srgb, var(--foreground) 34%, transparent);
+
   --scrim-05: rgb(0 0 0 / 0.05);
   --scrim-10: rgb(0 0 0 / 0.1);
   --scrim-15: rgb(0 0 0 / 0.15);

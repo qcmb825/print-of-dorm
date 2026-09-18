@@ -12,6 +12,10 @@ declare module 'vue-router' {
     /** 未登录才能进（登录页） */
     guest?: boolean
     title?: string
+    /** 页面编号，界面上的「01 // 订单台」取自这里。
+     *  放在路由表里而不是各页写死：页面增删时编号不会和导航对不上。
+     *  学生端与管理端各自从 01 起；详情页沿用所属栏目的编号（它属于那一栏）。 */
+    code?: string
   }
 }
 
@@ -20,7 +24,7 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'login',
     component: () => import('@/views/LoginView.vue'),
-    meta: { guest: true, title: '登录' },
+    meta: { guest: true, title: '登录', code: '00' },
   },
   {
     // 学生端：手机优先
@@ -33,25 +37,25 @@ const routes: RouteRecordRaw[] = [
         path: 'upload',
         name: 'student-upload',
         component: () => import('@/views/student/UploadView.vue'),
-        meta: { title: '下单打印' },
+        meta: { title: '下单打印', code: '01' },
       },
       {
         path: 'my-orders',
         name: 'student-orders',
         component: () => import('@/views/student/MyOrdersView.vue'),
-        meta: { title: '我的订单' },
+        meta: { title: '我的订单', code: '02' },
       },
       {
         path: 'board',
         name: 'student-board',
         component: () => import('@/views/student/BoardView.vue'),
-        meta: { title: '服务数据' },
+        meta: { title: '服务数据', code: '03' },
       },
       {
         path: 'tickets',
         name: 'student-tickets',
         component: () => import('@/views/student/TicketsView.vue'),
-        meta: { title: '问题反馈' },
+        meta: { title: '问题反馈', code: '04' },
       },
     ],
   },
@@ -66,7 +70,7 @@ const routes: RouteRecordRaw[] = [
         path: 'orders',
         name: 'staff-orders',
         component: () => import('@/views/staff/OrdersView.vue'),
-        meta: { title: '订单台' },
+        meta: { title: '订单台', code: '01' },
       },
       {
         // 详情页是订单台的子页面，所以 `staff: true` 从父级继承，这里不用再写一遍。
@@ -75,31 +79,31 @@ const routes: RouteRecordRaw[] = [
         path: 'orders/:id',
         name: 'staff-order-detail',
         component: () => import('@/views/staff/OrderDetailView.vue'),
-        meta: { title: '订单详情' },
+        meta: { title: '订单详情', code: '01' },
       },
       {
         path: 'dashboard',
         name: 'staff-dashboard',
         component: () => import('@/views/staff/DashboardView.vue'),
-        meta: { title: '数据看板' },
+        meta: { title: '数据看板', code: '02' },
       },
       {
         path: 'audits',
         name: 'staff-audits',
         component: () => import('@/views/staff/AuditView.vue'),
-        meta: { title: '身份审核' },
+        meta: { title: '身份审核', code: '03' },
       },
       {
         path: 'users',
         name: 'staff-users',
         component: () => import('@/views/staff/UsersView.vue'),
-        meta: { title: '账号管理' },
+        meta: { title: '账号管理', code: '04' },
       },
       {
         path: 'announcements',
         name: 'staff-announcements',
         component: () => import('@/views/staff/AnnouncementsView.vue'),
-        meta: { title: '公告管理' },
+        meta: { title: '公告管理', code: '05' },
       },
       {
         // 打印选项对所有管理员开放，**不是** `super: true`：
@@ -109,13 +113,13 @@ const routes: RouteRecordRaw[] = [
         path: 'print-options',
         name: 'staff-print-options',
         component: () => import('@/views/staff/PrintOptionsView.vue'),
-        meta: { title: '打印选项' },
+        meta: { title: '打印选项', code: '06' },
       },
       {
         path: 'tickets',
         name: 'staff-tickets',
         component: () => import('@/views/staff/TicketsView.vue'),
-        meta: { title: '工单处理' },
+        meta: { title: '工单处理', code: '07' },
       },
     ],
   },
