@@ -1027,25 +1027,45 @@
      ③ 延迟 = 进场 + 那 90ms 错帧，所以它恰好落在"字刚停稳"那一刻；
         减少动效下由全局兜底把时长压成 0，这一下自动消失（不会变成对光敏用户的闪烁）。 */
   .receipt[data-kind='event'] .receipt__ink {
-    animation: receipt-flicker 260ms var(--motion-ease-out)
+    animation: receipt-flicker 420ms linear
       calc(var(--motion-dur-band) + var(--motion-dur-band-lag)) both;
   }
 
+  /* 关键帧的写法是"**停住**"，不是"划过"。
+     第一版把低谷写成 260ms 里的 10% —— 那是 26ms，一帧半，谁也看不见
+     （实测采样到 0.2 只维持约 20ms，用户反馈"没看到闪烁"）。
+     现在低谷各停 40~60ms（2~4 帧），才是能看见的"闪"：
+     两下实的（0.15 一下、0.45 一下）+ 一下轻的（0.78）—— 电子屏重新同步的手感。
+     仍然是一次性、仍然只打在字上、减少动效下仍被全局兜底压掉。 */
   @keyframes receipt-flicker {
     0%,
-    14% {
+    10% {
       opacity: 1;
     }
-    24% {
-      opacity: 0.2;
+    16% {
+      opacity: 0.15;
     }
-    38% {
+    30% {
+      opacity: 0.15;
+    }
+    42%,
+    50% {
       opacity: 1;
     }
-    48% {
-      opacity: 0.72;
+    56% {
+      opacity: 0.45;
     }
-    60%,
+    66% {
+      opacity: 0.45;
+    }
+    78%,
+    86% {
+      opacity: 1;
+    }
+    90% {
+      opacity: 0.78;
+    }
+    96%,
     100% {
       opacity: 1;
     }
