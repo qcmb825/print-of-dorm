@@ -6,6 +6,7 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -70,9 +71,10 @@ onMounted(() => {
             {{ item.label }}
           </RouterLink>
         </nav>
-        <!-- 这里原本还有一个主题切换按钮，已经拆掉：主题跟着系统偏好走。
-             少了一个固定宽度的按钮，账号区在窄屏上也不那么挤了。 -->
+        <!-- 主题切换原来拆掉过一次（主题跟系统偏好走），2026-09-18 补回来 ——
+             系统偏好是对的默认值，但不是所有人都会去改系统设置。 -->
         <div class="ml-auto flex items-center gap-2">
+          <ChromeActions />
           <!-- 终端读数：与学生端这一页的编号同源，也是四角装饰里"右上角那一件"。
                窄屏藏起来 —— 顶栏在 375px 上已经很挤。 -->
           <span class="readout hidden lg:inline" aria-hidden="true">STUDENT TERMINAL</span>

@@ -17,6 +17,7 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -185,9 +186,9 @@ onMounted(() => {
           {{ item.label }}
         </RouterLink>
       </nav>
-      <!-- 这里原本还有一个主题切换按钮。主题系统本身留着（tokens.css 的 .dark、
-           theme/naive.ts 都还在用），拆掉的只是这个入口 —— 深色由系统偏好决定。
-           账号区现在整行都是它，所以允许收缩（min-w-0）。 -->
+      <!-- 账号区下面一行是外壳动作（主题、去学生端）。原来这里只有账号那一个按钮，
+           主题入口拆掉过一次；现在两个都回来了 —— 管理端还有一个反方向的缺口：
+           学生端那边早就有一项「管理控制台」，管理端却只能手敲 URL 才能过去。 -->
       <!-- 高级视图开着的时候给一条可见的提示。不给提示的话，管理员会分不清
            自己看到的界面是不是别人也这样 —— 而这两个界面恰恰是不同的。
            退出按钮只对已经打开的人可见，所以它不算泄露入口。
@@ -209,10 +210,11 @@ onMounted(() => {
         </button>
       </div>
       <div
-        class="mt-auto flex items-center gap-1 border-t px-3 py-3"
+        class="mt-auto flex flex-col gap-1 border-t px-3 py-3"
         style="border-color: var(--border)"
       >
-        <UserMenu stacked class="min-w-0 flex-1" />
+        <UserMenu stacked class="min-w-0" />
+        <ChromeActions student-switch />
       </div>
     </aside>
 
@@ -270,6 +272,7 @@ onMounted(() => {
           <span class="font-heading text-base font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
+          <ChromeActions student-switch />
           <!-- 窄屏没有侧栏那条提示带，所以把标识收成一颗图标 —— 点它就退出。 -->
           <button
             v-if="auth.advanced"
