@@ -85,7 +85,7 @@ onMounted(() => {
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
-    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-hidden px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
+    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-x-clip px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
@@ -109,7 +109,7 @@ style="--depth: 3px"
           aria-hidden="true"
         />
       <span
-        class="watermark pointer-events-none absolute right-0 bottom-2"
+        class="watermark pointer-events-none fixed right-0 bottom-2"
         data-parallax
 style="--depth: 20px"
         aria-hidden="true"
@@ -135,7 +135,19 @@ style="--depth: 20px"
            之所以把它做成这个形状：纸上的页脚是静止的（页码、版号），
            而屏幕上的页脚是**活的**（连接、进度、时间）—— 一只会呼吸的灯
            比任何纹理都更快地说明"这是一块屏"。 -->
-      <div class="mt-8 flex items-center gap-3 border-t pt-1.5" style="border-color: var(--border)">
+            <!-- 状态带**浮在视口底部**（md 起 sticky bottom-0），不随内容滚走 ——
+           它本来就是终端的状态行，功能上等于"这一屏现在是什么状态"。
+           实底不能省：它压着滚动中的内容。窄屏不粘：那里底部已经有了标签栏，
+           两条带子叠在一起只会互相打架。视差照旧（浮着也跟指针微微漂）。 -->
+      <div
+        class="mt-8 flex items-center gap-3 border-t pt-1.5 md:sticky md:bottom-0"
+        style="
+          border-color: var(--border);
+          background-color: var(--background);
+          --depth: 5px;
+        "
+        data-parallax
+      >
         <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
              不是一条要读的信息（"已登录"从页面本身就看得出）——
              而会呼吸的读数进朗读流只会变成噪声。 -->

@@ -288,7 +288,7 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="sheet relative min-w-0 flex-1 overflow-hidden px-3 py-4 sm:px-5 sm:py-6 lg:pl-8">
+      <main class="sheet relative min-w-0 flex-1 overflow-x-clip px-3 py-4 sm:px-5 sm:py-6 lg:pl-8">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
           class="frame-brackets pointer-events-none absolute inset-1.5"
@@ -312,7 +312,7 @@ style="--depth: 3px"
           aria-hidden="true"
         />
       <span
-        class="watermark pointer-events-none absolute right-0 bottom-2"
+        class="watermark pointer-events-none fixed right-0 bottom-2"
         data-parallax
 style="--depth: 20px"
         aria-hidden="true"
@@ -333,7 +333,19 @@ style="--depth: 20px"
         </div>
             <!-- 底部状态带：与用户端同一块状态栏 —— 活的灯 + 当前栏位 + 导航序号。
            两侧共用同一件东西是有意的：它是这套界面的"外壳"，而外壳在两端应当是同一个。 -->
-      <div class="mt-8 flex items-center gap-3 border-t pt-1.5" style="border-color: var(--border)">
+            <!-- 状态带**浮在视口底部**（md 起 sticky bottom-0），不随内容滚走 ——
+           它本来就是终端的状态行，功能上等于"这一屏现在是什么状态"。
+           实底不能省：它压着滚动中的内容。窄屏不粘：那里底部已经有了标签栏，
+           两条带子叠在一起只会互相打架。视差照旧（浮着也跟指针微微漂）。 -->
+      <div
+        class="mt-8 flex items-center gap-3 border-t pt-1.5 md:sticky md:bottom-0"
+        style="
+          border-color: var(--border);
+          background-color: var(--background);
+          --depth: 5px;
+        "
+        data-parallax
+      >
         <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
              不是一条要读的信息（"已登录"从页面本身就看得出）——
              而会呼吸的读数进朗读流只会变成噪声。 -->
