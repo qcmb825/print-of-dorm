@@ -1014,7 +1014,7 @@ onBeforeUnmount(() => {
       <span class="tech-label ml-auto text-ink-4 tech-label--cn text-xs">共 {{ total }} 条</span>
     </div>
 
-    <div class="bracket panel data-surface overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !orders.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 5" :key="index" height="52px" :sharp="false" />
       </div>

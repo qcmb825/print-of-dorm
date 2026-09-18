@@ -12,9 +12,6 @@
 :root body {
   margin: 0;
   background-color: var(--background);
-  /* 对角打光。挂在 body 上而不是 .route-stage 上：它是整页的底光，
-     而 stage 会因为换场被 transform，背景跟着动会露馅。 */
-  background-image: var(--surface-sheen);
   color: var(--foreground);
   font-family: var(--stack-body);
   font-size: 15px;
@@ -288,10 +285,22 @@
     transition: transform 280ms var(--motion-ease-out);
   }
 
-  /* 密排数据的实底。网格虽然已经降到 3%/5.5%，但表格是唯一"每一行都要逐列对齐"的地方，
-     再淡的线也会分神 —— 给它一块干净的底。 */
-  .data-surface {
+  /* ── 纸面（.sheet）════════════════════════════════════════════════
+   * **网格是"制图台"，内容是一张"纸"。** 网格只在纸外可见：页边、侧栏、栏距；
+   * 纸面本身是干净的纯色，正文永远落在实底上。
+   *
+   * 这条分工是这套视觉里 figure/ground 的根。之前把内容做成透明、让网格从底下透上来，
+   * 结果是三层东西同层竞争：网格线（3%/5.5%）、元素边框（--border 1.23:1）、
+   * 以及本该"浮在上面"的内容块 —— 谁也读不出谁是元素，内容看起来是浮在背景**里**
+   * 而不是浮在背景**上**。方舟的网格底下从不放正文，所以这里把纸面补回来。
+   *
+   * 注意它不是"把卡片又加回来"：纸面是**整块内容区**的底，不是每个块各给一个卡片；
+   * 块与块之间仍然是 1px 分隔线 + 留白那套语言。 */
+  .sheet {
     background-color: var(--background);
+    /* 对角打光挂在纸面上：挂 body 上会被这块纸挡掉，而打光正是要给内容区那一片
+       纯色面一个方向感。它只有 ±2% 亮度、**不产生线条结构**，所以不碰"纹理压文字"那条红线。 */
+    background-image: var(--surface-sheen);
   }
 
   /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel

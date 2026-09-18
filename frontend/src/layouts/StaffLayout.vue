@@ -277,10 +277,10 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+      <main class="sheet relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
-          class="frame-brackets pointer-events-none absolute inset-0"
+          class="frame-brackets pointer-events-none absolute inset-4"
           data-parallax
           style="--depth: 5px"
           aria-hidden="true"

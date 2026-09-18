@@ -657,7 +657,7 @@ onMounted(load)
       正在显示全部账号的明文密码。此操作已被记录到安全日志，请勿截图或外传。
     </p>
 
-    <div class="bracket panel data-surface overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !users.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 6" :key="index" height="48px" :sharp="false" />
       </div>
