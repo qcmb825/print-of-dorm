@@ -40,4 +40,13 @@ defineProps<{ code?: string | number }>()
     <span class="ticks mb-1 min-w-8 flex-1" />
     <span class="readout mb-0.5 hidden shrink-0 sm:inline">REV 2.006 / GRID 48</span>
   </div>
+  <!-- 大号装饰组：这一页尺度最大的几件，压在纸面底部的空处。
+      全部在文档流里（内容末尾），所以永远不会和正文抢位置。
+      版号走自家产品名 NEKO PRINT SERVICE —— 版式学的是技术档案那套（密级/版号/页码），
+      名字用系统自己的，不借别的作品。 -->
+  <div class="mt-5 flex flex-wrap items-end gap-x-6 gap-y-3" aria-hidden="true">
+    <span class="decor-dots h-16 w-44 shrink-0" />
+    <span class="decor-band h-11 min-w-40 flex-1" />
+    <span class="readout-lg pb-1">NEKO PRINT SERVICE / SEC {{ code ?? '--' }}</span>
+  </div>
 </template>

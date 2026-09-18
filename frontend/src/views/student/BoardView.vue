@@ -130,7 +130,7 @@ onMounted(load)
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <PageHeader title="服务数据" subtitle="排队情况 · 下单榜 · 我的进度">
+    <PageHeader heading="md" title="服务数据" subtitle="排队情况 · 下单榜 · 我的进度">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>

@@ -88,6 +88,14 @@ onMounted(() => {
           style="--depth: 4px"
           aria-hidden="true"
         />
+        <!-- 右边是穿孔边：左尺右孔，像一叠被装订过的纸。两件东西分列纸的两缘，
+             所以不会像之前括角与竖刻度那样叠在一起。 -->
+        <span
+          class="decor-holes pointer-events-none absolute top-8 right-1.5 bottom-8 w-5"
+          data-parallax
+          style="--depth: 2px"
+          aria-hidden="true"
+        />
       <span
         class="watermark pointer-events-none absolute right-0 bottom-2"
         data-parallax
@@ -145,17 +153,26 @@ onMounted(() => {
       }"
       aria-label="主导航"
     >
+      <!-- 顶边刻度带：与页面里的刻度尺同一套节奏，让标签栏也属于这份"文件"。 -->
+      <span class="ticks pointer-events-none absolute inset-x-0 top-0" aria-hidden="true" />
       <RouterLink
         v-for="item in navItems"
         :key="item.to"
         :to="item.to"
-        class="flex flex-col items-center gap-1 py-2.5 no-underline"
+        class="relative flex flex-col items-center gap-1 py-2.5 no-underline"
         :style="
           currentPath === item.to
             ? { color: 'var(--accent-text)' }
             : { color: 'var(--text-tertiary)' }
         "
       >
+        <!-- 激活记号：一小段斜切色条，压在格子顶边。
+             比"整块填充"轻，但因为它斜着，比一条直线更像"贴上去的标签"。 -->
+        <span
+          v-if="currentPath === item.to"
+          class="cut absolute -top-px h-1 w-7 bg-[var(--accent-text)]"
+          aria-hidden="true"
+        />
         <component :is="item.icon" :size="19" />
         <!-- w-full + truncate 是给「管理员看学生端」那种情形兜底的：
              他的标签栏比别人多一格（6 列），320px 屏上每列只剩 ~52px，

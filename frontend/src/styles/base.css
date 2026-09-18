@@ -389,6 +389,84 @@
     padding-bottom: 14px;
   }
 
+  /* ══ 大号装饰件（"技术档案/工作文件"语汇）════════════════════════════
+   * 这一批是**大尺度**的：长臂角标、大面积斜切色带、大网点块、穿孔边、大号读数。
+   * 它们承担的是"这份文件被认真整理过"的观感 —— 小号的刻度与括角负责细节，
+   * 大号的这几件负责让整页一眼看出是档案而不是普通网页。
+   *
+   * 约束仍然只有一条：**不压在正文上**。所以它们只占空白区（页边、纸角、内容末尾），
+   * 要么就只是极低对比度的底纹。 */
+
+  /* 长臂角标框：与小号 .bracket 语 义相同（替代圆角容器），只是臂长与线宽都加大。
+     用于把一块内容框成"取景框里的东西"—— 取件码、登录卡这类需要被单独标示的块。 */
+  .bracket-lg {
+    position: relative;
+  }
+  .bracket-lg::before,
+  .bracket-lg::after {
+    position: absolute;
+    width: var(--bracket-arm, 34px);
+    height: var(--bracket-arm, 34px);
+    border: 2px solid var(--accent-text);
+    content: '';
+    /* 必须：伪元素默认堆在内容之上，不吃掉这一条会让压在线上的东西点不动 */
+    pointer-events: none;
+  }
+  .bracket-lg::before {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .bracket-lg::after {
+    right: 0;
+    bottom: 0;
+    border-left: 0;
+    border-top: 0;
+  }
+
+  /* 大斜切色带：一条很长的平行四边形，横过纸面的空角。
+     用 clip-path 切 —— 它是纯装饰、不载文字、不可交互，所以不违反那两条禁令
+     （cut 会裁掉描边与 outline、被裁区域不接收指针事件）。 */
+  .decor-band {
+    background-color: var(--accent-tint);
+    clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
+  }
+
+  /* 大网点块：半调网点，从一个角向外渐隐 —— 做的是"印上去的底纹"，
+     不是一块硬边方块。 */
+  .decor-dots {
+    background-image: radial-gradient(var(--hazard-ink) 1.2px, transparent 1.5px);
+    background-size: 6px 6px;
+    mask-image: linear-gradient(to bottom right, #000, transparent 72%);
+    -webkit-mask-image: linear-gradient(to bottom right, #000, transparent 72%);
+  }
+
+  /* 穿孔边：像一叠被装订过的纸。沿一条竖线排一列圆环。
+     透明的是孔心 —— 那是纸背后的东西，在这套视觉里就是纸自己的底色。 */
+  .decor-holes {
+    background-image: radial-gradient(
+      circle at 50% 50%,
+      transparent 4px,
+      var(--border) 4.4px,
+      var(--border) 5px,
+      transparent 5.2px
+    );
+    background-size: 100% 44px;
+    background-repeat: repeat-y;
+    background-position: center top;
+  }
+
+  /* 大号读数：尺码更大、字距更宽的技术读数，用于文件头/版号这类"铭牌"位置。 */
+  .readout-lg {
+    font-family: var(--stack-mono);
+    font-size: var(--text-base);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-quaternary);
+    white-space: nowrap;
+  }
+
   /* 细分隔线的强调段：一条 1px 线，左端 40px 用强调色。
      区块标题下方、表头下方这类地方用来标「线的起点」。 */
   .rule-accent {

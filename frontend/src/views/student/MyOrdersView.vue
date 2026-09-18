@@ -143,7 +143,7 @@ async function withdraw(order: Order): Promise<void> {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <PageHeader title="我的订单" subtitle="每 20 秒自动刷新，切走页面时暂停">
+    <PageHeader heading="md" title="我的订单" subtitle="每 20 秒自动刷新，切走页面时暂停">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -225,7 +225,9 @@ async function withdraw(order: Order): Promise<void> {
               <span class="text-xs">· 等管理员确认</span>
             </div>
           </div>
-          <div>
+          <!-- 取件码：列表里也给它角标框，只是臂长小一档 —— 它和回执上那个是同一件
+               东西的两个尺度，框住是为了让"这是凭证"这件事在列表里也读得出来。 -->
+          <div class="bracket-lg px-2.5 py-1.5" style="--bracket-arm: 16px">
             <div class="tech-label mb-0.5 text-ink-4 tech-label--cn text-xs">取件码</div>
             <div
               class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"

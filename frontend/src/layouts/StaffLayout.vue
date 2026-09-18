@@ -291,6 +291,14 @@ onMounted(() => {
           style="--depth: 4px"
           aria-hidden="true"
         />
+        <!-- 右边是穿孔边：左尺右孔，像一叠被装订过的纸。两件东西分列纸的两缘，
+             所以不会像之前括角与竖刻度那样叠在一起。 -->
+        <span
+          class="decor-holes pointer-events-none absolute top-8 right-1.5 bottom-8 w-5"
+          data-parallax
+          style="--depth: 2px"
+          aria-hidden="true"
+        />
       <span
         class="watermark pointer-events-none absolute right-0 bottom-2"
         data-parallax

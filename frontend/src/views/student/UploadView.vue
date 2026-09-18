@@ -281,14 +281,17 @@ onMounted(async () => {
               订单 #{{ receipt.orderId }} · {{ receipt.filename }}
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
-              <div>
-                <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">取件码</div>
+              <!-- 取件码是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
+                   给它长臂角标框 + 底下一整条刻度尺 —— 像一张被框起来的凭证。 -->
+              <div class="bracket-lg px-4 py-3" style="--bracket-arm: 26px">
+                <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">取件码</div>
                 <div
                   class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
                   style="color: var(--accent-text)"
                 >
                   {{ pickupCodeLabel(receipt.code) }}
                 </div>
+                <span class="ticks mt-2.5 block w-full" aria-hidden="true" />
               </div>
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
@@ -339,6 +342,7 @@ onMounted(async () => {
     </section>
 
     <PageHeader
+      heading="md"
       title="下单打印"
       :subtitle="
         usingPreset

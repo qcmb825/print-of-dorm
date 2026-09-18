@@ -108,7 +108,7 @@ onMounted(async () => {
   <div class="mx-auto max-w-6xl">
     <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="flex items-baseline gap-2 font-heading text-xl font-bold sm:text-2xl">
+        <h1 class="flex items-baseline gap-2 font-heading text-xl font-bold sm:text-3xl">
           <!-- 编号内联在这里而不是走 PageHeader：这个 h1 里嵌着未读角标，套不进那个组件的结构。
                编号同样取自 route.meta.code，两条路由（学生端 04 / 管理端 07）各自不同。 -->
           <span v-if="pageCode" class="tech-label shrink-0 text-2xs text-ink-3">{{ pageCode }} //</span>
