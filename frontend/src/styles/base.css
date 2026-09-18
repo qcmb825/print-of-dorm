@@ -272,17 +272,29 @@
   }
 
   /* ── 视差 ────────────────────────────────────────────────────────
-   * **只动 transform**（合成属性）。JS 每帧只写 --px / --py，位移由这里的 calc() 算，
-   * 所以"谁动多少"完全在 CSS 里：各元素给自己的 --depth 即可。
-   * 那条短过渡是刻意的 —— 它把逐帧的指针更新抹平，观感是"跟过来"而不是"黏在指针上"。
-   * 减少动效下由下面的媒体查询整条撤掉（JS 那边也压根不装监听器）。 */
+   * **只动 transform**（合成属性）。JS 只写 --px / --py（已经是平滑后的值），
+   * 位移由这里的 calc() 算，所以"谁动多少"完全在 CSS 里：各元素给自己的 --depth。
+   *
+   * 这里**不再有 transition**。上一版挂了一条 280ms 的过渡，那是两层平滑叠在一起：
+   * CSS 的过渡每帧被一个新目标重新触发，等于每帧重来一次"快起步慢收尾"，
+   * 而且实际响应取决于指针事件的密度（不同设备不同）。平滑现在只由 JS 的
+   * 指数阻尼负责，帧率无关 —— 详见 composables/motion.ts。两层同时留着只会互相打架。
+   *
+   * `--parallax-gain` 是全局闸门：整套视差"感觉太晃"时只改 tokens.css 里这一支，
+   * 不用去翻每个 data-parallax 的 --depth。
+   *
+   * `will-change: transform` 是给 .decor-layer__grid 那种**铺满视口**的元素留的：
+   * 它带着四层背景图，不提到独立图层的话，每帧位移都要重绘整屏。
+   * 代价要说清楚：这几件都是空壳元素（span / svg，没有后代），
+   * 所以不会撞上"will-change 给 fixed 后代换掉包含块"那个坑 —— 换成有内容的
+   * 容器前要先确认里面没有 fixed / sticky。 */
   [data-parallax] {
     transform: translate3d(
-      calc(var(--px, 0) * var(--depth, 6px)),
-      calc(var(--py, 0) * var(--depth, 6px)),
+      calc(var(--px, 0) * var(--depth, 6px) * var(--parallax-gain, 1)),
+      calc(var(--py, 0) * var(--depth, 6px) * var(--parallax-gain, 1)),
       0
     );
-    transition: transform 280ms var(--motion-ease-out);
+    will-change: transform;
   }
 
   /* ── 显示面（.sheet）══════════════════════════════════════════════
@@ -1533,6 +1545,9 @@
   [data-parallax] {
     transform: none !important;
     transition: none !important;
+    /* will-change 也要撤：它会把元素永久提成独立图层，而这里它永远不会动 ——
+       那是一块白占显存、还可能让文字在缩放时落在半像素上的图层。 */
+    will-change: auto !important;
   }
 
   :root[data-veil-phase='out'] .ticks,

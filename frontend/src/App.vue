@@ -65,7 +65,7 @@ const shellLabel = computed(() => {
          固定定位的后代换掉包含块，这一层就会跟着内容一起飘。
          它是 aria-hidden 且 pointer-events: none 的，不参与交互。 -->
     <div class="decor-layer" aria-hidden="true">
-      <span class="decor-layer__grid" data-parallax style="--depth: 10px" />
+      <span class="decor-layer__grid" data-parallax style="--depth: 4px" />
     </div>
 
     <NMessageProvider :max="3" placement="top">

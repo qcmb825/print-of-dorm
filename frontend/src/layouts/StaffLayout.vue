@@ -291,30 +291,30 @@ onMounted(() => {
       <main class="sheet relative min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
         <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
         <span
-          class="frame-brackets pointer-events-none absolute inset-4"
+          class="frame-brackets pointer-events-none absolute inset-1.5"
           data-parallax
-          style="--depth: 5px"
+style="--depth: 6px"
           aria-hidden="true"
         />
         <span
           class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
           data-parallax
-          style="--depth: 4px"
+style="--depth: 6px"
           aria-hidden="true"
         />
         <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
              所以不会像之前括角与竖刻度那样叠在一起。
              （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
         <span
-          class="decor-rail pointer-events-none absolute top-2 right-2 bottom-2 w-4"
+          class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
           data-parallax
-          style="--depth: 2px"
+style="--depth: 4px"
           aria-hidden="true"
         />
       <span
         class="watermark pointer-events-none absolute right-0 bottom-2"
         data-parallax
-        style="--depth: 22px"
+style="--depth: 20px"
         aria-hidden="true"
       >
         {{ route.meta.code }}
@@ -349,9 +349,9 @@ onMounted(() => {
       <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
            它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
       <span
-        class="cut pointer-events-none absolute bottom-6 left-1.5 h-3.5 w-10 bg-[var(--accent-tint)]"
+        class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)]"
         data-parallax
-        style="--depth: 16px"
+style="--depth: 9px"
         aria-hidden="true"
       />
     </main>

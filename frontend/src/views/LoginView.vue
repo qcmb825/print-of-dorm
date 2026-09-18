@@ -278,6 +278,8 @@ onMounted(async () => {
             viewBox="0 0 200 200"
             fill="none"
             aria-hidden="true"
+            data-parallax
+            style="--depth: 11px"
           >
             <!-- 外圈刻度盘：缓慢自转的那一圈。dasharray 划出刻度，
                  它同时是"量程"（同心环）与"正在扫描"（转动）两件事的载体。 -->
