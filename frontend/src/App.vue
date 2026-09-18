@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, dateZhCN, zhCN } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
-import AuthBanner from '@/components/AuthBanner.vue'
+import TransitionReceipt from '@/components/TransitionReceipt.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import RouteVeil from '@/components/RouteVeil.vue'
+import { showReceipt } from '@/composables/transition-receipt'
 import { useThemeStore } from '@/stores/theme'
 import { usePointerParallax } from '@/composables/motion'
 
@@ -41,6 +42,29 @@ const routed = computed(() => route.matched.length > 0)
 /** 外壳档的场记读数。必须在这里写死，不能从 route.meta 取：换场那一刻读到的 meta
  *  是**目标页**的，登录 → 学生端会读到「下单打印」，而这一层换掉的是整个外壳，
  *  说「学生终端」才对。代号走等宽大写，是站内 .tech-label 既有的语气。 */
+
+/** 每一次路由落定都给一条 pass 回执：说清"这一下是去哪"。
+ *
+ *  三条边界都必要：
+ *   · **冷启动不出**（first 标记）：首屏不是"用户去某处"，进来就弹一条回执是噪音；
+ *   · **event 刚出过时不出**（composable 里的 eventShield）：登录成功先出 event 回执、
+ *     紧接着就是一次路由跳转，那次跳转想出的 pass 回执说的正是同一件事；
+ *   · **内容没变也不出**：同一路由重复导航（例如点当前所在的标签）不该再报一次。
+ */
+const firstRoute = ref(true)
+watch(
+  () => route.fullPath,
+  () => {
+    if (firstRoute.value) {
+      firstRoute.value = false
+      return
+    }
+    const code = (route.meta.code as string | undefined) ?? '--'
+    const title = (route.meta.title as string | undefined) ?? '页面'
+    showReceipt({ code: `SECTOR ${code}`, title, target: title })
+  },
+)
+
 const shellLabel = computed(() => {
   switch (shellTransitionKey.value) {
     case 'guest':
@@ -89,8 +113,9 @@ const shellLabel = computed(() => {
           <!-- 换场覆盖层：全站唯一实例，Teleport 到 body。
                放在 provider 里只是为了拿到应用上下文，DOM 上它不在 #app 内。 -->
           <RouteVeil />
-          <!-- 认证回执：登录成功后从右侧入场，跨换场留在屏幕上（理由见组件顶部）。 -->
-          <AuthBanner />
+          <!-- 转场回执：每一次转场都出一条，说清"刚才发生了什么 / 你现在去哪"。
+               跨换场留在屏幕上（理由见组件顶部）。 -->
+          <TransitionReceipt />
         </NLoadingBarProvider>
       </NDialogProvider>
     </NMessageProvider>

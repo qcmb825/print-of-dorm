@@ -913,24 +913,17 @@
     transition-duration: var(--motion-dur-fast);
   }
 
-  /* ══ 认证回执条（登录成功）═════════════════════════════════════
-   * 一条**贯穿屏幕、走在垂直中线上的横条**，从右缘进来、从左边出去 —— 它是穿过去的，
-   * 不是弹一下。z-index 300（换场幕布 100、布局 sticky 顶栏 20、Naive 弹层 2000）。
+  /* ══ 转场回执条 ═════════════════════════════════════════════════
+   * **每一次转场都出一条**，说清"刚才发生了什么 / 你现在去哪"。两档，动效与权重匹配：
+   *   [data-kind='event']  两层：黄承载带（慢进、殿后）+ 数据带 + 底边排空线，有停留；
+   *   [data-kind='pass']   只有数据带、更薄、不停留：从右进、接着从左边出去。
+   * 为什么分两档：一次 2.4 秒的停留挂在每次点导航上，界面就成了老虎机 ——
+   * 高频动作要的是"一眼看见去哪"，不是"停下来看演出"。
    *
-   * 两层，**底下那层是黄色装饰，先进后出**：
-   *   .auth-band__mat    黄承载带，满高（56px），先动、后走；
-   *   .auth-band__strip  数据带，上下各缩 6px，所以黄带永远从上下露出边 ——
-   *                      读起来是"一条黄色承载带 + 压在上面的一条数据带"，
-   *                      而不是两条错帧的同一个东西。
-   * 外层 overflow: hidden 让两层在带内被裁切，于是"穿过屏幕"这件事成立：
-   * 进场时先看到一条黄带扫进来，数据带随后压上去；退场时数据带先走，黄带殿后。
-   *
-   * 为什么是横条不是角标卡片：这一下发生在外壳换场期间，屏幕上正有一块擦除面板
-   * 横着切过去 —— 横贯全宽的条子和那块面板是同一套语汇（都是"截断屏幕的一道"）。
-   * 整条 pointer-events: none：盖着也点得到下面的一切，到点自己退场。
-   *
-   * 动效只有 opacity + transform（合成属性）；时长与曲线走令牌，组件里不写裸毫秒。 */
-  .auth-band {
+   * 位置与分层：走在垂直中线上、贯穿全宽、z-index 300（换场幕布 100、布局 sticky 顶栏 20、
+   * Naive 弹层 2000）。整层 pointer-events: none —— 盖着也点得到下面的一切。
+   * 它活着的时候幕布的场记读数让位（见文件末尾 :root[data-receipt] 那条）。 */
+  .receipt {
     position: fixed;
     top: 50%;
     right: 0;
@@ -942,25 +935,27 @@
     pointer-events: none;
     /* 这条 transition **不是给眼睛看的**（它的值在离场前后不变）：Vue 判断"离场演了多久"
        读的是被过渡的那个根元素上的 transition-duration/delay —— 只写在子层上的话它读到 0，
-       于是当场卸载元素，这就是"回执没有出场"的全部原因。时长取两层里最长的那个
-       （数据带 300ms + 黄带的 90ms 错帧 = 390ms，这里给 400ms 兜住）。 */
+       于是当场卸载元素，表现就是"回执没有出场"。 */
     transition: transform var(--motion-dur-band) linear;
   }
 
-  .auth-band__mat {
+  /* pass 档更薄：它承载的信息更轻（只是"去哪"），厚度跟着信息量走。 */
+  .receipt[data-kind='pass'] {
+    height: 40px;
+  }
+
+  .receipt__mat {
     position: absolute;
     inset: 0;
     background-color: var(--primary);
-    /* 进场用**挂载即播的 keyframes**，不用 <Transition> 的类：后者靠 rAF 摘掉
-       enter-from 那一帧，而这条回执正好出现在一次外壳换场进行中（主线程在加载
-       chunk、换整棵树），rAF 可能被节流（实测后台标签页里 500ms 只有 1 帧）——
-       那时 enter-from 永远摘不掉，回执会一直停在屏外。keyframes 没有这个两帧时序。 */
-    /* 不加 fill（尤其不能用 both/forwards）：动画结束后它的终值会以动画级优先
-       一直压着 transform，离场那条 transition 就再也动不了 —— 黄层会原地不动。 */
-    animation: auth-band-mat-in var(--motion-dur-band) var(--motion-ease-drawer);
+    animation: receipt-mat-in var(--motion-dur-band) var(--motion-ease-drawer);
   }
 
-  .auth-band__strip {
+  .receipt[data-kind='pass'] .receipt__mat {
+    display: none;
+  }
+
+  .receipt__strip {
     position: absolute;
     top: 6px;
     right: 0;
@@ -977,41 +972,56 @@
     border-bottom: 1px solid var(--border);
     /* backwards 不能省：数据带比黄带晚 90ms，缺了它这 90ms 里数据带会先出现在
        落点上（屏外滑入变成"凭空出现再动一下"）。 */
-    animation: auth-band-strip-in var(--motion-dur-band) var(--motion-ease-drawer)
+    animation: receipt-strip-in var(--motion-dur-band) var(--motion-ease-drawer)
       var(--motion-dur-band-lag) backwards;
   }
 
-  @keyframes auth-band-mat-in {
+  .receipt[data-kind='pass'] .receipt__strip {
+    top: 4px;
+    bottom: 4px;
+    animation-duration: var(--motion-dur-band-out);
+    animation-delay: 0ms;
+  }
+
+  @keyframes receipt-mat-in {
     from {
       transform: translate3d(100%, 0, 0);
     }
   }
 
-  @keyframes auth-band-strip-in {
+  @keyframes receipt-strip-in {
     from {
       transform: translate3d(100%, 0, 0);
     }
   }
 
   /* 退场：数据带先走、黄带殿后，方向朝左 —— 与进场反向，所以观感是"穿过去"。
-     退场仍走 <Transition> 的类：那一帧没赶上最坏只是没有退场动画，
-     元素照样会被卸掉（Vue 按计算出的时长收尾），不会像进场那样卡住。 */
-  .auth-band-leave-active .auth-band__strip {
+     退场仍走 <Transition> 的类：根元素那条 transition 负责把时长报给 Vue。 */
+  .receipt-leave-active .receipt__strip {
     transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out);
   }
 
-  .auth-band-leave-active .auth-band__mat {
+  .receipt-leave-active .receipt__mat {
     transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out)
       var(--motion-dur-band-lag);
   }
 
-  .auth-band-leave-to .auth-band__strip,
-  .auth-band-leave-to .auth-band__mat {
+  .receipt-leave-to .receipt__strip,
+  .receipt-leave-to .receipt__mat {
     transform: translate3d(-100%, 0, 0);
   }
 
-  /* 数据带里那句等宽代号：字距比 .readout 稍收，因为它更长（19 个字母）。 */
-  .auth-band__code {
+  .receipt__mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    background-color: var(--status-done-bg);
+    color: var(--status-done);
+  }
+
+  .receipt__code {
     font-family: var(--stack-mono);
     font-size: var(--text-2xs);
     letter-spacing: 0.1em;
@@ -1019,7 +1029,7 @@
     white-space: nowrap;
   }
 
-  .auth-band__drain {
+  .receipt__drain {
     position: absolute;
     right: 0;
     bottom: 6px;
@@ -1027,12 +1037,10 @@
     height: 2px;
     background-color: var(--status-done);
     transform-origin: left center;
-    /* 时长从组件传进来（--auth-hold），与 composable 里那个 hold 同一份事实来源 ——
-       写死 2400ms 就会变成第二处需要同步的真相。 */
-    animation: auth-drain var(--auth-hold, 2400ms) linear both;
+    animation: receipt-drain var(--receipt-hold, 2400ms) linear both;
   }
 
-  @keyframes auth-drain {
+  @keyframes receipt-drain {
     from {
       transform: scaleX(1);
     }
@@ -1041,10 +1049,9 @@
     }
   }
 
-  /* 回执条占着中线的那几秒里，**幕布的场记读数让位**。
-     两条读数说的是同一件事（都报目标页），挤在同一条中线上只是噪音；
-     这一下的主角是回执条。传信号的方式与 data-veil-phase 同源（根属性）。 */
-  :root[data-auth-band] .route-veil__hud {
+  /* 回执占着中线的那几秒里，**幕布的场记读数让位**。
+     两条读数说的是同一件事（都报目标页），挤在同一条中线上只是噪音。 */
+  :root[data-receipt] .route-veil__hud {
     display: none;
   }
 
@@ -1316,47 +1323,6 @@
     transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
-  }
-
-  /* 面板上的读数（子页档的"为什么"）。
-     贴在面板的左下区域：面板 118% 宽、左移 9%，所以它的左下方在"正好盖住"那一帧
-     落在屏幕左下角附近 —— 读数在那里出现、随面板一起往右退走。
-     字号比外壳档的场记读数小一档：它是"扫过一眼"的，不是给人停下来读的。
-     只走 --veil-ink-code / --veil-accent-tint 这套暗底上的色（幕布两个主题都是暗底）。 */
-  .route-veil__tag {
-    position: absolute;
-    bottom: 15%;
-    left: 12%;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    white-space: nowrap;
-  }
-
-  .route-veil__tag-code {
-    font-family: var(--stack-mono);
-    font-size: var(--text-2xs);
-    letter-spacing: 0.14em;
-    color: var(--veil-ink-code);
-  }
-
-  .route-veil__tag-sep {
-    width: 1px;
-    height: 12px;
-    background: var(--veil-accent-tint);
-  }
-
-  .route-veil__tag-title {
-    font-family: var(--stack-heading);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    color: var(--primary);
-  }
-
-  /* 外壳档不出这条：那一档中间已经有一条大读数，一档只出一条。 */
-  .route-veil[data-profile='shell'] .route-veil__tag {
-    display: none;
   }
 
   /* 套准线：全程唯一一次「快」，也是唯一一处发光。
