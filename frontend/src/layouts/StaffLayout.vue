@@ -318,7 +318,7 @@ style="--depth: 3px"
           aria-hidden="true"
         />
       <span
-        class="watermark pointer-events-none fixed right-0 bottom-2"
+        class="watermark"
         data-parallax
 style="--depth: 20px"
         aria-hidden="true"

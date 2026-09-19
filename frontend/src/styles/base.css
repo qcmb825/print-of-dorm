@@ -468,8 +468,13 @@
     clip-path: polygon(28% 0, 100% 0, 72% 100%, 0 100%);
   }
 
-  /* 超大水印：页面角落那枚几乎看不见的巨号编号。排版装饰，用的时候要配 aria-hidden。 */
+  /* 超大水印：页面角落那枚几乎看不见的巨号编号。排版装饰，用的时候要配 aria-hidden。
+     定位写在类里而不是调用处：底距在窄屏要变（见下），分散在两个 layout 的 class 上
+     迟早改漏一处，改漏的表现是它被下面的栏切掉一截。 */
   .watermark {
+    position: fixed;
+    right: 0;
+    bottom: 0.5rem;
     font-family: var(--stack-heading);
     font-size: clamp(88px, 16vw, 220px);
     font-weight: 700;
@@ -478,6 +483,18 @@
     color: color-mix(in srgb, var(--foreground) 5%, transparent);
     user-select: none;
     pointer-events: none;
+  }
+
+  /* 窄屏：右下角这一角被底部标签栏占了，编号的**下半截会被栏切掉** ——
+     屏幕上只剩十几个像素高的字头露在栏上方，读起来不像排版，像渲染坏了。
+     所以让它抬到栏上面去，而不是把它藏掉：它本来就是「右下角那枚编号」，
+     而窄屏这个角只有栏上方是空的（栏以上那一段，正好是页面自己留出的底部留白）。
+     让位距离与栏高共用 --chrome-tabbar-h —— 栏长高而水印不动，就是同一个 bug 回来。
+     只管学生端：管理端窄屏没有底部栏（导航在顶栏里），那枚编号该留在原来的角上。 */
+  @media (width < 48rem) {
+    [data-shell='student'] .watermark {
+      bottom: calc(var(--chrome-tabbar-h) + env(safe-area-inset-bottom) + 0.5rem);
+    }
   }
 
   /* 技术读数：等宽大写的极小字，用于「SECTOR 01 / GRID 48」这类装饰读数。 */
@@ -1483,7 +1500,10 @@
 
   /* 右下角：三角阵列 + 协议号。**位置对着页面自己的水印大字**（那份也是右下角贴边的
      巨号编号），所以面板盖住的那一帧，这里正好是原本放大数字的地方 ——
-     换场读起来是"同一块版面上的装饰换了内容"，而不是凭空冒出一组图案。 */
+     换场读起来是"同一块版面上的装饰换了内容"，而不是凭空冒出一组图案。
+     窄屏那一档对不上，是有意的：学生端窄屏的右下角被底部标签栏占着，水印让到栏上方
+     （见上面的 .watermark），而这一层是全屏覆盖，盖住的那一帧连栏一起盖了 ——
+     真正的屏幕角落在这时候是空的，三角就该压在角上。 */
   .route-veil__corner {
     position: absolute;
     right: 32px;

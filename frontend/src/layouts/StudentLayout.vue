@@ -46,9 +46,12 @@ onMounted(() => {
 
 <template>
   <!-- 安全区：viewport-fit=cover 之下页面会铺到刘海/圆角/home 指示条底下，
-       所以顶部与左右两边的内边距交给环境变量。底部标签栏那条在它自己身上。 -->
+       所以顶部与左右两边的内边距交给环境变量。底部标签栏那条在它自己身上。
+       data-shell：只有这一端的窄屏有固定底栏，所以「页面底下那一角要留给谁」是按外壳
+       分的（见 base.css 的 .watermark）。 -->
   <div
     class="flex min-h-full flex-col"
+    data-shell="student"
     style="
       padding-left: env(safe-area-inset-left);
       padding-right: env(safe-area-inset-right);
@@ -123,7 +126,7 @@ style="--depth: 3px"
           aria-hidden="true"
         />
       <span
-        class="watermark pointer-events-none fixed right-0 bottom-2"
+        class="watermark"
         data-parallax
 style="--depth: 20px"
         aria-hidden="true"
@@ -194,12 +197,16 @@ style="--depth: 6px"
          （5.20:1）与 --text-tertiary（等效 #6e6e6e，4.84:1）。
          这一栏没有色条/下划线，激活态本来就只靠颜色区分，因此必须真的过 AA。
          上面那排横向导航不同：它的文字是 --foreground，本来就合格，不动。 -->
+    <!-- 高度写死（含安全区），而不是让内容把它撑出来：它读 tokens.css 的 --chrome-tabbar-h，
+         页面右下角那枚编号水印的让位距离读的也是它。栏高由内容撑的话，这一对角上的两件
+         东西就各自漂了 —— 而漂开的表现只是"水印被切掉半截"，没人会想到是这里。 -->
     <nav
       class="fixed inset-x-0 bottom-0 z-20 grid border-t md:hidden"
       :style="{
         gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))`,
         backgroundColor: 'color-mix(in srgb, var(--background) 96%, transparent)',
         borderColor: 'var(--border)',
+        height: 'calc(var(--chrome-tabbar-h) + env(safe-area-inset-bottom))',
         paddingBottom: 'env(safe-area-inset-bottom)',
         paddingLeft: 'env(safe-area-inset-left)',
         paddingRight: 'env(safe-area-inset-right)',
