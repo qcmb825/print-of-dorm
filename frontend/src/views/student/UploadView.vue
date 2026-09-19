@@ -39,7 +39,9 @@ import {
   useMessage,
   type UploadFileInfo,
 } from 'naive-ui'
+import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
+import { showReceipt } from '@/composables/transition-receipt'
 import { chunkApi, orderApi, printOptionsApi } from '@/api/endpoints'
 import type { ChunkSession, PaperType, PrintPreset } from '@/api/types'
 import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
@@ -64,6 +66,7 @@ const copies = ref<number>(COPIES_DEFAULT)
 const paperTypeId = ref<number | null>(null)
 /** 选中的预设 id。null = 还没选，这时不允许提交（不能替学生挑一条）。 */
 const presetId = ref<number | null>(null)
+const router = useRouter()
 const submitting = ref(false)
 const progress = ref(0)
 const uploadedBytes = ref(0)
@@ -178,6 +181,29 @@ function reset(): void {
   totalBytes.value = 0
 }
 
+type OrderInfo = { orderId: number; code: string; filename: string }
+
+/** 下单成功后的那一套：先出跨换场的回执，再跳到我的订单。
+ *
+ *  和登录成功走的是同一条（components/TransitionReceipt.vue 的 event 档）：
+ *  回执压在换场覆盖层之上、跨过换场留在屏幕上，覆盖层自己的中心读数在回执期间让位
+ *  （:root[data-receipt] 那条），所以整场只有一句话。
+ *
+ *  取件码写在回执的补充行上，而不是只留在这一页的成功面板里 ——
+ *  面板会跟着跳转一起消失，而回执**跨过换场还在**，学生至少多一秒看清它。
+ *  目标页名从路由表取，和守卫算的是同一份事实来源（与 LoginView 一致）。 */
+function announceOrder(info: OrderInfo): void {
+  showReceipt({
+    code: 'ORDER SUBMITTED',
+    title: '下单成功',
+    detail: `取件码 ${pickupCodeLabel(info.code)} · ${info.filename}`,
+    target: (router.resolve('/my-orders').meta.title as string | undefined) ?? '我的订单',
+  })
+  // **不 await**：路由守卫要是抛出来，会被下面那个 catch 逮成"提交失败，请稍后重试" ——
+  // 单已经下成了，报一个假的失败比什么都不报更糟。
+  void router.push('/my-orders')
+}
+
 async function submit(): Promise<void> {
   if (blockReason.value) {
     message.warning(blockReason.value)
@@ -201,13 +227,14 @@ async function submit(): Promise<void> {
       const preset = selectedPreset.value
       if (!preset) return
       const data = await orderApi.createPresetOrder({ preset_id: preset.id, ...common })
-      receipt.value = {
+      const info = {
         orderId: data.order_id,
         code: data.pickup_code,
         filename: preset.content,
       }
+      receipt.value = info
       reset()
-      message.success('下单成功，请记住取件码')
+      announceOrder(info)
       return
     }
 
@@ -226,9 +253,10 @@ async function submit(): Promise<void> {
       },
     )
     activeChunkUploadId.value = null
-    receipt.value = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
+    const info = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
+    receipt.value = info
     reset()
-    message.success('下单成功，请记住取件码')
+    announceOrder(info)
   } catch (error) {
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
@@ -283,7 +311,9 @@ onMounted(async () => {
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
               <!-- 取件码是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
-                   给它长臂角标框 + 底下一整条刻度尺 —— 像一张被框起来的凭证。 -->
+                   给它长臂角标框 + 底下一整条刻度尺 —— 像一张被框起来的凭证。
+                   下单成功后这一页会立刻跳去我的订单（回执跨换场留着），所以这块面板平时
+                   只是"跳转失败时还在原地"的兜底；取件码另外写进了那条回执的补充行。 -->
               <div class="bracket-lg px-4 py-3" style="--bracket-arm: 26px">
                 <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">取件码</div>
                 <div
