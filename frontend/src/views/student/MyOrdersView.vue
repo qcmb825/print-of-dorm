@@ -260,10 +260,16 @@ async function withdraw(order: Order): Promise<void> {
         </div>
 
         <div class="mt-1.5 flex flex-wrap items-end gap-x-5 gap-y-3">
-          <div class="min-w-0 flex-1">
+          <!-- basis-[60%] 是给窄屏用的：这一块收缩到 0 也不会换行（flex-wrap 只在**基准宽度**
+               放不下时才折行），于是 390px 上文件名被右侧那对读数挤成 95px —— 实测
+               「VRChat_2026-09…」只剩自然宽度的 24%。给它 60% 的基准，右侧那对读数就整体换到
+               下一行，第一行整行留给文件名。 -->
+          <div class="min-w-0 flex-1 basis-[60%] sm:basis-0">
             <!-- 预设单没有文件名（后端存的是空串哨兵值），直接插值会得到一片空白，
                  学生会以为自己的订单没记录上。 -->
-            <p class="truncate text-base font-bold">{{ orderFileLabel(order) }}</p>
+            <p class="truncate text-base font-bold" :title="orderFileLabel(order)">
+              {{ orderFileLabel(order) }}
+            </p>
 
             <!-- ② 规格标签：左强调边的小条，不是药丸。它们说的是"这份文件怎么打"，
                  所以紧跟在文件名下面。 -->

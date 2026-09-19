@@ -575,7 +575,12 @@ onMounted(async () => {
         />
       </div>
 
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- 按钮禁用时把原因**写在脸上**：title 提示在触摸端出不来（禁用的按钮连 hover 都没有），
+             学生只会看到一颗按不动的按钮，还以为是自己点得不对。 -->
+        <p v-if="blockReason" class="basis-full text-xs font-semibold" style="color: var(--warn)">
+          {{ blockReason }}
+        </p>
         <NButton
           type="primary"
           size="large"

@@ -209,7 +209,7 @@ onMounted(async () => {
           @changed="load(true)"
         />
         <div v-else class="grid h-full place-items-center py-16">
-          <EmptyState code="— / 待选择" title="从左侧选一个工单查看详情" hint="窄屏会以抽屉形式打开">
+          <EmptyState code="00 / NO TICKET" title="从左侧选一个工单查看详情" hint="窄屏会以抽屉形式打开">
             <template #icon><MessageSquarePlus :size="28" /></template>
           </EmptyState>
         </div>
