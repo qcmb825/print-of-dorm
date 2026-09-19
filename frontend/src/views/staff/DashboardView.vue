@@ -162,9 +162,9 @@ onMounted(load)
           :value="orderStats?.unpriced ?? 0"
           :icon="CircleDollarSign"
           accent
-          hint="待接单后填金额"
+          hint="接单后填金额"
         />
-        <StatCard label="累计计费" :value="revenueLabel" :icon="Wallet" hint="已定价订单的金额合计" />
+        <StatCard label="累计计费" :value="revenueLabel" :icon="Wallet" hint="已定价订单合计" />
         <StatCard label="账号总数" :value="userStats?.total ?? 0" :icon="Users" />
         <StatCard label="启用中" :value="userStats?.active ?? 0" />
         <StatCard label="已禁用" :value="userStats?.disabled ?? 0" />
@@ -211,7 +211,7 @@ onMounted(load)
             <div class="tnum font-heading text-2xl font-bold">{{ count }}</div>
           </div>
           <p v-if="!Object.keys(userStats?.by_role ?? {}).length" class="text-sm text-ink-3">
-            暂无账号数据
+            无账号数据
           </p>
         </div>
       </section>

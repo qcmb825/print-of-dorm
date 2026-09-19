@@ -52,7 +52,7 @@ export async function uploadFile(
 ): Promise<UploadResponse> {
   if (file.size > MAX_UPLOAD_BYTES) {
     throw new ApiError(
-      `文件太大，单个文件不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
+      `单个文件不得超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`,
       413,
       413,
     )

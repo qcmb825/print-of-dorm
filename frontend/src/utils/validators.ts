@@ -25,14 +25,14 @@ export function validateContact(type: ContactType, value: string): boolean {
 }
 
 export const CONTACT_HINT: Record<ContactType, string> = {
-  wechat: '微信号需为 5-20 位、以字母开头（可含字母、数字、_ 和 -）',
-  qq: 'QQ 号需为 5-12 位数字，且不能以 0 开头',
-  email: '邮箱格式不正确，例：name@example.com',
+  wechat: '微信号 5-20 位，字母开头，可含数字、_ 与 -',
+  qq: 'QQ 号 5-12 位数字，不以 0 开头',
+  email: '邮箱格式不对 · 例 name@example.com',
 }
 
 export function passwordIssue(password: string): string | null {
-  if (password.length < 8 || password.length > 64) return '密码长度需为 8-64 位'
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码需同时包含字母和数字'
+  if (password.length < 8 || password.length > 64) return '密码 8-64 位'
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码要同时有字母和数字'
   return null
 }
 

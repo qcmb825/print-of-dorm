@@ -51,7 +51,7 @@ const STATUS_META: Record<AuditStatus, { label: string; color: string; bg: strin
 /** 待审核 0 条时给一句解释，否则管理员会以为是页面坏了 */
 const emptyHint = computed(() =>
   status.value === 'pending'
-    ? '没有待处理的申请。学生注册时学号不在名单上，才会进来一条。'
+    ? '没有待处理的申请。'
     : '这个状态下还没有记录。',
 )
 
@@ -100,7 +100,7 @@ async function confirm(): Promise<void> {
   reviewing.value = true
   try {
     await auditApi.review(target.id, dialog.action, note.value.trim())
-    message.success(dialog.action === 'approve' ? '已通过，对方现在可以注册了' : '已驳回')
+    message.success(dialog.action === 'approve' ? '已通过 · 对方可以注册了' : '已驳回')
     dialog.show = false
     // 处理完刷新：这条会从当前页签消失（待审核 → 已通过/已驳回），三个角标也跟着变。
     await load(true)
@@ -126,8 +126,8 @@ onMounted(load)
     </PageHeader>
 
     <NAlert type="info" :bordered="false" class="mb-4" :show-icon="true">
-      通过只是给予「可以用这个学号注册」的资格，账号仍由本人注册产生 ——
-      这里不代替任何人设密码，也不会自动建号。一个学号只有一条申请记录，处理过的可以改判。
+      通过只给「可以用这个学号注册」的资格，账号仍由本人注册；
+      这里不设密码、不自动建号。一个学号一条记录，处理过可以改判。
     </NAlert>
 
     <NTabs v-model:value="status" type="line" animated @update:value="load()">
@@ -256,11 +256,11 @@ onMounted(load)
         </p>
 
         <NAlert v-if="dialog.action === 'approve'" type="default" :bordered="false" class="mb-3">
-          通过后这个人就能用该学号完成注册。备注可以不填，会一并展示给申请人。
+          通过后对方可以用该学号注册。备注可不填，会一并展示给申请人。
         </NAlert>
         <NAlert v-else type="warning" :bordered="false" class="mb-3">
-          驳回必须填理由 —— <strong>申请人看得到这段字</strong>，请写清楚缺什么、或者去哪补。
-          写「不符合条件」对方只会再交一次。
+          驳回必须填理由，<strong>申请人看得到</strong>：写清缺什么、去哪补。
+          「不符合条件」只会让对方再交一次。
         </NAlert>
 
         <NInput
@@ -272,7 +272,7 @@ onMounted(load)
           :placeholder="
             dialog.action === 'approve'
               ? '例：已核对 2025 级新生名单，属实'
-              : '例：名单里这个学号对应的是「李四」，请确认学号是否填错'
+              : '例：名单里这个学号对应的是「李四」，请确认是否填错'
           "
         />
       </template>

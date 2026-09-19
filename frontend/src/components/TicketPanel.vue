@@ -76,7 +76,7 @@ async function createTicket(): Promise<void> {
   creating.value = true
   try {
     const data = await ticketApi.create(form.subject.trim(), form.body.trim())
-    message.success('工单已提交，等待管理员回复')
+    message.success('工单已提交 · 等待回复')
     createOpen.value = false
     form.subject = ''
     form.body = ''
@@ -143,7 +143,7 @@ onMounted(async () => {
         <div v-else-if="!tickets.length" class="grid place-items-center py-12">
           <EmptyState
             code="00 / NO TICKET"
-            :title="staff ? '暂无工单' : '还没有工单'"
+            :title="staff ? '无工单' : '还没有工单'"
             :hint="staff ? '学生提交后会自动出现在这里' : '有打印相关的问题，点右上角新建'"
           >
             <template #icon><Inbox :size="28" /></template>
@@ -250,7 +250,7 @@ onMounted(async () => {
           :maxlength="1000"
           show-count
           :autosize="{ minRows: 4, maxRows: 8 }"
-          placeholder="请写清订单号、遇到的问题和期望的处理方式"
+          placeholder="写清订单号、遇到的问题、期望的处理方式"
         />
       </NFormItem>
       <template #footer>

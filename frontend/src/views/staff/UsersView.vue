@@ -186,7 +186,7 @@ async function toggleStatus(user: AdminUser): Promise<void> {
 async function closeUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '注销账号',
-    content: `确定注销「${user.nickname}」吗？该账号会立刻失去登录资格，昵称和学号也会被让出来（别人可以注册同名）。订单与工单全部保留，之后可以从这里恢复。`,
+    content: `注销「${user.nickname}」后立刻失去登录资格，昵称与学号会让出来（别人可以注册同名）。订单与工单全部保留，之后可以恢复。`,
     positiveText: '注销',
   })
   if (!ok) return
@@ -203,13 +203,13 @@ async function closeUser(user: AdminUser): Promise<void> {
 async function restoreUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '恢复账号',
-    content: `确定恢复「${user.nickname}」吗？恢复后这个账号重新可以登录。若昵称或学号已被别人占用，本次恢复会被拒绝。`,
+    content: `恢复「${user.nickname}」后重新可以登录。若昵称或学号已被占用，本次恢复会被拒绝。`,
     positiveText: '恢复',
   })
   if (!ok) return
   try {
     await adminApi.restoreUser(user.id)
-    message.success('账号已恢复，现在可以用原学号登录')
+    message.success('账号已恢复 · 可以用原学号登录')
     await load(true)
   } catch (error) {
     if (error instanceof ApiError) {
@@ -304,11 +304,11 @@ function openDialog(user: AdminUser, kind: DialogKind): void {
  *  两边不一致时以后端为准，但前端先拦一道能省一次往返。 */
 const profileIssue = computed<string | null>(() => {
   if (!NICKNAME_RE.test(profileForm.nickname.trim()))
-    return '昵称需为 2-20 位中文、字母、数字或下划线'
-  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名需为 2-20 位中文或字母'
-  if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号需为 4-20 位数字'
+    return '昵称 2-20 位：中文、字母、数字或下划线'
+  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名 2-20 位中文或字母'
+  if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号 4-20 位数字'
   const dorm = profileForm.dorm.trim()
-  if (dorm.length < 2 || dorm.length > 50) return '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
+  if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符，写到门牌号'
   if (!validateContact(profileForm.contact_type, profileForm.contact.trim()))
     return CONTACT_HINT[profileForm.contact_type]
   return null
@@ -318,7 +318,7 @@ const profileIssue = computed<string | null>(() => {
  *  确认框是注册（自己打字）防手滑用的，管理员重置是打一串临时密码交给本人。 */
 const passwordIssueText = computed<string | null>(() => {
   const pwd = newPassword.value
-  if (!pwd) return '请填写新密码'
+  if (!pwd) return '填写新密码'
   const issue = passwordIssue(pwd)
   if (issue) return issue
   const target = dialog.target
@@ -376,7 +376,7 @@ async function saveProfile(target: AdminUser): Promise<void> {
 async function savePassword(target: AdminUser): Promise<void> {
   await adminApi.resetPassword(target.id, newPassword.value)
   // 回执里绝不重复密码本身：提示会挂在屏幕上，密码就跟着被截图了。
-  message.success(`已重置「${target.nickname}」的密码，请把新密码转告本人`)
+  message.success(`已重置「${target.nickname}」的密码 · 请转告本人`)
 }
 
 async function sendTicket(target: AdminUser): Promise<void> {
@@ -590,7 +590,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="账号管理"
-      subtitle="名单对所有管理员可见；改角色、禁用、注销等操作会写入审计日志"
+      subtitle="名单对所有管理员可见；改角色、禁用、注销会写入审计日志"
     >
       <template #actions>
         <span v-if="advanced" class="flex items-center gap-2">
@@ -654,7 +654,7 @@ onMounted(load)
         color: var(--warn);
       "
     >
-      正在显示全部账号的明文密码。此操作已被记录到安全日志，请勿截图或外传。
+      正在显示全部账号的明文密码。此操作已记入安全日志，勿截图、勿外传。
     </p>
 
     <div class="bracket panel overflow-hidden">
@@ -716,7 +716,7 @@ onMounted(load)
             </label>
             <label class="flex flex-col gap-1">
               <span class="tech-label text-ink-3 tech-label--cn text-xs">宿舍</span>
-              <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="请写到门牌号" />
+              <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="写到门牌号" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="tech-label text-ink-3 tech-label--cn text-xs">联系方式</span>
@@ -735,14 +735,14 @@ onMounted(load)
             </label>
           </div>
           <p class="mt-3 text-xs leading-5 text-ink-4">
-            学号是登录名，改完本人必须用新学号登录。这里不核对学生名单 ——
-            名单是注册的闸门，而改资料是人工介入，名单本身就可能落后于现实。
+            学号是登录名，改完本人必须用新学号登录。这里不核对名单：
+            名单是注册的闸门，改资料是人工介入。
           </p>
         </template>
 
         <template v-else-if="dialog.kind === 'password'">
           <NAlert type="warning" :bordered="false" class="mb-3">
-            新密码立即生效，请当面或通过可靠方式转告本人。此操作会记入审计日志，
+            新密码立即生效，当面或可靠方式转告本人。此操作记入审计日志，
             但日志里不会出现密码本身。
           </NAlert>
           <NInput
@@ -757,8 +757,8 @@ onMounted(load)
 
         <template v-else>
           <NAlert type="info" :bordered="false" class="mb-3">
-            工单归属这个学生，第一条消息以他的名义发出 ——
-            学生端打开会话看到的就是自己提的问题，接着回复即可。
+            工单归属这个学生，第一条消息以他的名义发出；
+            学生端打开会话看到的就是自己提的问题。
           </NAlert>
           <div class="flex flex-col gap-3">
             <NInput
@@ -773,7 +773,7 @@ onMounted(load)
               :rows="4"
               :maxlength="BODY_MAX"
               show-count
-              placeholder="把情况写清楚：订单号、文件名、时间……"
+              placeholder="写清订单号、文件名、时间…"
             />
           </div>
         </template>
@@ -802,8 +802,8 @@ onMounted(load)
       :bordered="false"
     >
       <NAlert v-if="conflicts.target" type="warning" :bordered="false" class="mb-3">
-        「{{ conflicts.target.nickname }}」注销时把昵称和学号让了出去，现在被下面这些账号占着。
-        请先和对方确认怎么处理（改名，或者就这样算了），系统不会替任何人改名。
+        「{{ conflicts.target.nickname }}」注销时把昵称与学号让了出去，现在被下面这些账号占着。
+        先和对方确认怎么处理（改名，或就这样）；系统不会替任何人改名。
       </NAlert>
       <ul class="flex flex-col gap-2">
         <li

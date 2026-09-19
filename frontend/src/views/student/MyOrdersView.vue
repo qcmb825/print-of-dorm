@@ -102,8 +102,8 @@ onMounted(async () => {
 /** 撤回按钮点不动的原因；null 表示可以点。
  *  两句话分别对应后端的 400「订单已经被接取，无法撤回」和 400「订单已完成，不能撤回」。 */
 function withdrawBlockReason(order: Order): string | null {
-  if (order.status === '已取件') return '这单已经取走了，不能再撤回'
-  if (order.claimed_by !== null) return '已经有管理员接单了，需要撤回请到工单里说一声'
+  if (order.status === '已取件') return '已取件 · 不能再撤回'
+  if (order.claimed_by !== null) return '已被接单 · 要撤回请到工单里说一声'
   return null
 }
 
@@ -129,7 +129,7 @@ async function withdraw(order: Order): Promise<void> {
       ? `「${orderFileLabel(order)}」#${order.id} 会被整条删除，无法恢复。这一单没有文件，不会动到任何文件。`
       : `「${orderFileLabel(order)}」#${order.id} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
     positiveText: '撤回订单',
-    negativeText: '再想想',
+    negativeText: '取消',
   })
   if (!ok) return
 
@@ -212,7 +212,7 @@ async function withdraw(order: Order): Promise<void> {
         </div>
         <p class="mt-3 text-sm font-semibold">还没有订单</p>
         <p class="mt-1 text-xs text-ink-4">
-          去「下单打印」提交第一份文件，提交后会立刻生成取件码
+          去「下单打印」提交第一份文件 · 提交后立刻生成取件码
         </p>
         <span class="ticks mx-auto mt-4 block w-32" aria-hidden="true" />
       </div>
@@ -312,7 +312,7 @@ async function withdraw(order: Order): Promise<void> {
               </div>
               <div v-else class="text-sm leading-[23px] text-ink-4">
                 {{ priceLabel(order.price) }}
-                <span class="text-xs">· 等管理员确认</span>
+                <span class="text-xs">· 待管理员确认</span>
               </div>
             </div>
             <div class="bracket-lg px-2.5 py-1.5" style="--bracket-arm: 16px">

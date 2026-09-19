@@ -9,7 +9,7 @@ import EmptyState from '@/components/EmptyState.vue'
 
 const props = withDefaults(
   defineProps<{ option: EChartsOption; height?: number; empty?: boolean; emptyText?: string }>(),
-  { height: 260, empty: false, emptyText: '暂无数据' },
+  { height: 260, empty: false, emptyText: '无数据' },
 )
 
 const boxHeight = computed(() => `${props.height}px`)

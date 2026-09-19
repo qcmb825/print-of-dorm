@@ -142,7 +142,7 @@ async function toggleActive(item: Announcement): Promise<void> {
 async function remove(item: Announcement): Promise<void> {
   const ok = await confirmAction({
     title: '删除公告',
-    content: '确定删除这条公告吗？删除后不可恢复。',
+    content: '这条公告会被删除，不可恢复。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -225,7 +225,7 @@ onMounted(load)
                 </p>
               </div>
               <p v-if="item.overridden" class="mt-1 text-xs text-ink-4">
-                所选颜色与{{ item.label }}纸面对比度不足，实际会回落到主题文字色
+                对比度不足 · 会回落到主题文字色
               </p>
             </div>
           </div>
@@ -245,7 +245,7 @@ onMounted(load)
           <NButton v-if="editingId !== null" quaternary @click="resetForm">取消编辑</NButton>
         </div>
         <p v-if="editingId === null" class="mt-3 text-xs text-ink-4">
-          保存后立即对所有用户生效，并自动停用上一条公告。
+          保存后立即生效，并停用上一条公告。
         </p>
       </section>
 

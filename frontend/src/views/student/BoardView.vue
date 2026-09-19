@@ -97,8 +97,8 @@ function barWidth(count: number): string {
 const myLine = computed(() => {
   const me = current.value?.me
   if (!me) return ''
-  if (!me.count) return '你还没有下过单 —— 榜上给你留着一个位置'
-  return `你在这张榜上共 ${me.count} 单，排在第 ${me.rank} 名（共 ${me.ranked} 人上榜）`
+  if (!me.count) return '还没下过单 · 榜上留着一个位置'
+  return `共 ${me.count} 单 · 第 ${me.rank} 名（共 ${me.ranked} 人上榜）`
 })
 
 /** 「我的名次」那格。**没下过单时不报名次**：后端为了让「比我多的有几个人 + 1」

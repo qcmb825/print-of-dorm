@@ -87,57 +87,57 @@ const clock = useClock()
 const loginRules: FormRules = {
   // 登录只用学号（后端也拿 STUDENT_ID_RE 卡一道）。这里不再提「昵称」：
   // 提示文案里写着昵称、后端又不收，用户会先把昵称输一遍才被告知不行。
-  identifier: [{ required: true, message: '请输入学号', trigger: ['blur', 'input'] }],
-  password: [{ required: true, message: '请输入密码', trigger: ['blur', 'input'] }],
+  identifier: [{ required: true, message: '填写学号', trigger: ['blur', 'input'] }],
+  password: [{ required: true, message: '填写密码', trigger: ['blur', 'input'] }],
 }
 
 const registerRules = computed<FormRules>(() => ({
   nickname: [
-    { required: true, message: '请输入昵称', trigger: ['blur', 'input'] },
+    { required: true, message: '填写昵称', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => NICKNAME_RE.test(value),
-      message: '昵称需为 2-20 位中文、字母、数字或下划线',
+      message: '昵称 2-20 位：中文、字母、数字或下划线',
       trigger: ['blur', 'input'],
     },
   ],
   real_name: [
-    { required: true, message: '请输入姓名', trigger: ['blur', 'input'] },
+    { required: true, message: '填写姓名', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => REALNAME_RE.test(value),
-      message: '姓名需为 2-20 位中文或字母',
+      message: '姓名 2-20 位中文或字母',
       trigger: ['blur', 'input'],
     },
   ],
   student_id: [
-    { required: true, message: '请输入学号', trigger: ['blur', 'input'] },
+    { required: true, message: '填写学号', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => STUDENT_ID_RE.test(value),
-      message: '学号需为 4-20 位数字',
+      message: '学号 4-20 位数字',
       trigger: ['blur', 'input'],
     },
   ],
   dorm: [
-    { required: true, message: '请填写宿舍位置', trigger: ['blur', 'input'] },
+    { required: true, message: '填写宿舍', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => value.trim().length >= 2 && value.trim().length <= 50,
-      message: '宿舍位置需为 2-50 个字符（写到门牌号）',
+      message: '宿舍 2-50 字符，写到门牌号',
       trigger: ['blur', 'input'],
     },
   ],
   contact: [
-    { required: true, message: '请填写联系方式', trigger: ['blur', 'input'] },
+    { required: true, message: '填写联系方式', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) =>
         value.length <= 50 && validateContact(registerForm.contact_type, value),
-      message: '联系方式格式不正确',
+      message: '联系方式格式不对',
       trigger: ['blur', 'input'],
     },
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: ['blur', 'input'] },
+    { required: true, message: '填写密码', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => passwordIssue(value) === null,
-      message: '密码需 8-64 位且同时包含字母和数字',
+      message: '密码 8-64 位，含字母与数字',
       trigger: ['blur', 'input'],
     },
     {
@@ -148,10 +148,10 @@ const registerRules = computed<FormRules>(() => ({
     },
   ],
   confirm_password: [
-    { required: true, message: '请再次输入密码', trigger: ['blur', 'input'] },
+    { required: true, message: '再输一次密码', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => value === registerForm.password,
-      message: '两次输入的密码不一致',
+      message: '两次密码不一致',
       trigger: ['blur', 'input'],
     },
   ],
@@ -190,7 +190,7 @@ async function submitLogin(): Promise<void> {
     })
     await router.replace(target)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '登录失败，请稍后重试')
+    message.error(error instanceof ApiError ? error.message : '登录失败 · 稍后重试')
   } finally {
     submitting.value = false
   }
@@ -225,7 +225,7 @@ async function submitRegister(): Promise<void> {
       message.warning(error.message)
       auditOpen.value = true
     } else {
-      message.error(error instanceof ApiError ? error.message : '注册失败，请稍后重试')
+      message.error(error instanceof ApiError ? error.message : '注册失败 · 稍后重试')
     }
   } finally {
     submitting.value = false
@@ -285,10 +285,10 @@ onMounted(async () => {
         <div class="mt-7">
           <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
             从文件到取件，<br />
-            <span style="color: var(--accent-text)">一张单</span>就够了。
+            <span style="color: var(--accent-text)">只隔一张单</span>。
           </p>
           <p class="mt-4 max-w-sm text-base leading-7 text-ink-3">
-            上传文件、查看进度、凭取件码领取。打印流程清楚，等待也有回应。
+            上传文件 → 接单打印 → 凭码取件。
           </p>
         </div>
 
@@ -396,8 +396,8 @@ onMounted(async () => {
         <p class="mt-1.5 mb-5 text-sm text-ink-3">
           {{
             tab === 'login'
-              ? '用学号登录，提交文件后凭取件码取件。'
-              : '注册后即可上传文件下单。学号与学校名单不一致时，会引导你提交审核申请。'
+              ? '用学号登录。提交文件后凭取件码取件。'
+              : '注册后即可下单。学号与名单不一致时，会引导你提交审核申请。'
           }}
         </p>
 
@@ -414,7 +414,7 @@ onMounted(async () => {
               <NFormItem label="学号" path="identifier">
                 <NInput
                   v-model:value="loginForm.identifier"
-                  placeholder="请输入学号"
+                  placeholder="4-20 位数字"
                   autocomplete="username"
                   :input-props="{ autocapitalize: 'off', autocorrect: 'off' }"
                 />
@@ -424,7 +424,7 @@ onMounted(async () => {
                   v-model:value="loginForm.password"
                   type="password"
                   show-password-on="click"
-                  placeholder="请输入密码"
+                  placeholder="登录密码"
                   autocomplete="current-password"
                   @keydown.enter="submitLogin"
                 />

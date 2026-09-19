@@ -292,10 +292,10 @@ function canDownload(order: Order): boolean {
 
 /** 改状态按钮点不动的原因；null 表示可以点。分支与后端 `api_update_status` 一一对应。 */
 function statusBlockReason(order: Order): string | null {
-  if (order.status === WAIT_PRICE) return '这单还没计费，先填好金额'
+  if (order.status === WAIT_PRICE) return '还没计费 · 先填金额'
   if (!canReachOrder(order)) {
     // 未接单和「别人接的」是两回事：一个是还没轮到自己，一个是轮不到自己
-    return order.claimed_by === null ? '请先接单，再接单后才能改状态' : '这单是别人接的'
+    return order.claimed_by === null ? '先接单才能改状态' : '这单是别人接的'
   }
   return null
 }
@@ -315,8 +315,8 @@ function canReachOrder(order: Order): boolean {
  *  管理员得知道下一步该干什么 —— 是去接单，还是去找揽下这单的人。 */
 function priceBlockReason(order: Order): string | null {
   if (order.status === DONE) return '订单已取件，金额不再改动'
-  if (order.claimed_by === null) return '请先接单，看过文件后再填金额'
-  if (!canReachOrder(order)) return '这单是别人接的，只有接单人能给它计费'
+  if (order.claimed_by === null) return '先接单，看过文件后再填金额'
+  if (!canReachOrder(order)) return '这单是别人接的 · 只有接单人能计费'
   return null
 }
 
@@ -337,7 +337,7 @@ const pricing = ref(false)
 /** 空输入不算错（用户刚开始输），填了东西才给格式提示 */
 const priceError = computed(() =>
   priceInput.value.trim() === '' ? null : normalizePrice(priceInput.value) === null
-    ? '金额需为不超过 99999.99 元的数字，最多两位小数'
+    ? '金额 ≤ 99999.99，最多两位小数'
     : null,
 )
 
@@ -359,7 +359,7 @@ async function submitPrice(): Promise<void> {
   if (!order) return
   const amount = normalizePrice(priceInput.value)
   if (amount === null) {
-    message.error('请填写正确的金额')
+    message.error('金额格式不对')
     return
   }
   pricing.value = true
@@ -477,8 +477,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
             to: `/staff/orders/${row.id}`,
             class: 'block truncate text-sm font-semibold hover:underline',
             title: row.preset_content
-              ? `${row.preset_content} — 点开看详情`
-              : `${row.filename} — 点开看详情`,
+              ? `${row.preset_content} · 点开看详情`
+              : `${row.filename} · 点开看详情`,
           },
           { default: () => orderFileLabel(row) },
         ),
@@ -513,7 +513,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
                 class:
                   'mt-1 inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap',
                 style: NOTIFY_BADGE_STYLE,
-                title: '这位学生推不出邮箱（填的是微信、或者没填），取件邮件发不出去，需要你手动联系他',
+                title: '推不出邮箱（填的是微信或没填）· 取件邮件发不出去，需手动联系',
               },
               '需人工通知',
             )
@@ -602,7 +602,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
                     ? '打印服务名单没取到，去「打印服务」页看看是不是一条都没有'
                     : hasGroup(row)
                       ? '改分组 / 取消归类'
-                      : '把这一单归入某条打印服务，按服务筛选时就能和同一批单一起看到',
+                      : '归入某条打印服务后，按服务筛选就能和同一批单一起看到',
                 },
                 { icon: () => h(FolderPlus, { size: 13 }) },
               ),
@@ -818,7 +818,7 @@ const hasFilter = computed(
 
 const emptyText = computed(() =>
   hasFilter.value
-    ? '没有匹配的订单，换个条件或清除筛选试试'
+    ? '没有匹配的订单，换个条件或清除筛选'
     : scope.value === 'pool'
       ? '待接单池是空的，都处理完了'
       : '没有符合条件的订单',
@@ -1005,7 +1005,7 @@ onBeforeUnmount(() => {
         <NSwitch :round="false" :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
         <span
           class="tech-label cursor-pointer text-ink-3 tech-label--cn text-xs"
-          title="已取件是终态、也是累计数，看活件时它只会把待办的几单顶到下一页"
+          title="已取件是终态与累计数，看活件时它只会把待办的单顶到下一页"
           @click="onExcludeDoneChange(!excludeDone)"
         >
           隐藏已取件
@@ -1064,7 +1064,7 @@ onBeforeUnmount(() => {
               <RouterLink
                 :to="`/staff/orders/${order.id}`"
                 class="block truncate text-sm font-bold hover:underline"
-                :title="`${orderFileLabel(order)} — 点开看详情`"
+                :title="`${orderFileLabel(order)} · 点开看详情`"
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
@@ -1093,7 +1093,7 @@ onBeforeUnmount(() => {
             >
               需人工通知
             </span>
-            <span class="text-ink-3">没有可用邮箱，取件邮件发不出去，麻烦手动联系一下</span>
+            <span class="text-ink-3">没有可用邮箱 · 取件邮件发不出去，手动联系一下</span>
           </p>
 
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
@@ -1281,7 +1281,7 @@ onBeforeUnmount(() => {
         <NInput
           v-model:value="priceInput"
           size="large"
-          placeholder="例如 3.50"
+          placeholder="例 3.50"
           :status="priceError ? 'error' : undefined"
           @keydown.enter="submitPrice"
         >
@@ -1292,7 +1292,7 @@ onBeforeUnmount(() => {
         <!-- 这行是 11px 的操作说明，属于要读的字，走三级文字色而不是四级。
              原先的 var(--ink-4) 不存在（见 tokens.css 里 --color-ink-* 的说明），静默失效。 -->
         <p class="mt-2 text-xs" :style="{ color: priceError ? 'var(--err)' : 'var(--text-tertiary)' }">
-          {{ priceError ?? '最多两位小数。计费完成后订单会从「待计费」进入「待打印」。' }}
+          {{ priceError ?? '最多两位小数。计费后订单从「待计费」进入「待打印」。' }}
         </p>
 
         <NAlert
@@ -1301,7 +1301,7 @@ onBeforeUnmount(() => {
           :bordered="false"
           class="mt-3"
         >
-          这单当前金额是 ¥{{ priceOrder.price.toFixed(2) }}，修改后学生端会立即看到新金额。
+          当前 ¥{{ priceOrder.price.toFixed(2) }} · 改完学生端立即看到新金额。
         </NAlert>
       </template>
 

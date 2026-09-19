@@ -134,13 +134,13 @@ http.interceptors.response.use(
     if (data?.msg) {
       message = data.msg
     } else if (status === 0) {
-      message = error.code === 'ECONNABORTED' ? '请求超时，请重试' : '网络连接失败，请检查网络后重试'
+      message = error.code === 'ECONNABORTED' ? '请求超时 · 重试' : '网络不可达 · 检查连接后重试'
     } else if (status === 413) {
-      message = '文件太大，请换一个更小的文件'
+      message = '文件过大 · 换一份更小的'
     } else if (status >= 500) {
-      message = '服务器内部错误，请稍后重试'
+      message = '服务器错误 · 稍后重试'
     } else {
-      message = `请求失败（HTTP ${status}）`
+      message = `请求失败 · HTTP ${status}`
     }
 
     if (status === 401) unauthorizedHandler?.()

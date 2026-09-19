@@ -180,7 +180,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1000px]">
     <PageHeader
       :title="order ? `订单 #${order.id}` : '订单详情'"
-      subtitle="完整的订单信息与操作记录"
+      subtitle="订单信息与操作记录"
     >
       <template #actions>
         <NButton size="small" quaternary @click="back">
@@ -251,7 +251,7 @@ onMounted(load)
           class="mt-3"
           title="服务器上找不到这份文件了"
         >
-          订单记录还在，但落盘的文件已经不在上传目录里。请先确认是不是被人手工清理过，
+          订单记录还在，落盘的文件已经不在上传目录。先确认是不是被手工清理过，
           再决定这一单怎么处理。
         </NAlert>
       </div>
@@ -265,8 +265,8 @@ onMounted(load)
           {{ order.preset_content }}
         </p>
         <p class="mt-2 text-xs text-ink-4">
-          这一单没有上传文件。上面这段话是下单当时从预设里抄下来的快照，
-          即使后来预设被改动或删掉了，这里显示的仍是学生当时看到的原文。
+          这一单没有上传文件。上面那段是下单当时的快照，
+          预设后来改了或删了，这里显示的仍是学生当时看到的原文。
         </p>
       </section>
 
@@ -387,8 +387,8 @@ onMounted(load)
         <!-- 老订单在这张表里本来就是空的：留痕是这次升级才加的，
              不能拿 orders 那几个时间戳倒推补几条（倒推出来的操作人只会是错的）。 -->
         <p v-else class="text-xs leading-6 text-ink-4">
-          这一单还没有操作记录。留痕功能是后加的，升级之前发生的步骤不会被倒推补录 ——
-          与其显示一条猜出来的记录，不如明确告诉你这里没有。
+          这一单还没有操作记录。留痕是后加的，升级前的步骤不会被倒推补录 ——
+          与其显示一条猜出来的记录，不如说清这里没有。
         </p>
       </section>
 

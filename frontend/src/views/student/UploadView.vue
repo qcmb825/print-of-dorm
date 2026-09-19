@@ -113,8 +113,8 @@ const chunkCount = computed(() => {
 })
 
 const progressHint = computed(() => {
-  if (progress.value >= 99) return '正在生成订单，请不要关闭页面'
-  return '正在上传，请不要关闭页面或断网'
+  if (progress.value >= 99) return '正在生成订单 · 别关页面'
+  return '正在上传 · 别关页面、别断网'
 })
 
 /** 能不能提交。分两种模式各算一次，别合成一个布尔表达式 ——
@@ -123,10 +123,10 @@ const blockReason = computed<string | null>(() => {
   if (submitting.value) return null
   if (usingPreset.value) {
     if (!presets.value.length) return '还没有可用的预设打印服务'
-    if (presetId.value === null) return '请选择一项预设打印服务'
+    if (presetId.value === null) return '选一项预设打印服务'
     return null
   }
-  if (!selected.value) return '请先选择要打印的文件'
+  if (!selected.value) return '先选择要打印的文件'
   return null
 })
 
@@ -153,10 +153,10 @@ async function cancelSession(uploadId: string): Promise<void> {
   try {
     await chunkApi.cancel(uploadId)
     if (activeChunkUploadId.value === uploadId) activeChunkUploadId.value = null
-    message.success('已放弃该上传，额度已释放')
+    message.success('已放弃该上传 · 额度已释放')
     await refreshPending()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '取消失败，请稍后重试')
+    message.error(error instanceof ApiError ? error.message : '取消失败 · 稍后重试')
   }
 }
 
@@ -261,9 +261,9 @@ async function submit(): Promise<void> {
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
       void refreshPending()
-      message.error('额度已满，请先放弃一份未完成的上传')
+      message.error('额度已满 · 先放弃一份未完成的上传')
     } else {
-      message.error(error instanceof ApiError ? error.message : '提交失败，请稍后重试')
+      message.error(error instanceof ApiError ? error.message : '提交失败 · 稍后重试')
     }
   } finally {
     submitting.value = false
@@ -327,7 +327,7 @@ onMounted(async () => {
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
             <p class="mt-3 text-xs text-ink-4">
-              管理员接单并打印完成后，凭上面的取件码到打印点取件。
+              管理员接单打印后，凭上面的取件码到打印点取件。
             </p>
           </div>
         </div>
@@ -377,8 +377,8 @@ onMounted(async () => {
       title="下单打印"
       :subtitle="
         usingPreset
-          ? '选一项预设打印服务下单，管理员按它的说明打印，不需要上传文件。'
-          : '支持 PDF、Word 和图片。上传后由管理员接单打印。'
+          ? '选一项预设服务下单，管理员按它的说明打印，不需要上传文件。'
+          : 'PDF / Word / 图片 · 上传后由管理员接单打印。'
       "
     />
 
@@ -412,7 +412,7 @@ onMounted(async () => {
             :options="presetOptions"
             :loading="optionsLoading"
             :disabled="submitting || !presets.length"
-            placeholder="选一项已经配置好的打印服务"
+            placeholder="选一项已配置好的打印服务"
             class="w-full"
           />
         </NFormItem>
@@ -535,8 +535,8 @@ onMounted(async () => {
         </NFormItem>
       </div>
       <p class="mt-2 text-xs text-ink-4">
-        份数范围 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
-        不确定就用「不指定」，打印时会按常规纸走。
+        份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
+        不确定就用「不指定」，会按常规纸走。
       </p>
 
       <NFormItem label="备注（可选）" :show-feedback="false" class="mt-4">
@@ -594,7 +594,7 @@ onMounted(async () => {
             <Layers v-if="usingPreset" :size="16" />
             <Rocket v-else :size="16" />
           </template>
-          {{ submitting ? (usingPreset ? '提交中…' : '上传中…') : '提交订单' }}
+          {{ submitting ? (usingPreset ? '提交中' : '上传中') : '提交订单' }}
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-4 tech-label--cn text-xs">
           <Hash :size="12" />

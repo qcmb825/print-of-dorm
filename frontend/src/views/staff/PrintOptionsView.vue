@@ -163,8 +163,8 @@ async function removePreset(item: PrintPreset): Promise<void> {
   const ok = await confirmAction({
     title: '删除预设打印服务',
     content: used
-      ? `这项预设已经被 ${used} 个订单用过。删除后学生不能再选它，但那些订单里记着的文字不受影响。确定删除吗？`
-      : '确定删除这项预设打印服务吗？删除后不可恢复。',
+      ? `已被 ${used} 个订单用过。删除后学生不能再选它；那些订单里记着的文字不受影响。`
+      : '删除后不可恢复。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -183,8 +183,8 @@ async function removePaper(item: PaperType): Promise<void> {
   const ok = await confirmAction({
     title: '删除纸张类型',
     content: used
-      ? `这种纸已经被 ${used} 个订单用过。删除后学生不能再选它，但那些订单里记着的名字不受影响。确定删除吗？`
-      : '确定删除这种纸张吗？删除后不可恢复。',
+      ? `已被 ${used} 个订单用过。删除后学生不能再选它；那些订单里记着的名字不受影响。`
+      : '删除后不可恢复。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -205,7 +205,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="打印选项"
-      subtitle="预设打印服务与纸张类型都在这里维护，学生下单时可选。停用后只对新订单消失，旧订单记录不受影响。"
+      subtitle="预设打印服务与纸张类型在这里维护，学生下单时可选。停用只对新订单生效，旧订单记录不变。"
     >
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -239,7 +239,7 @@ onMounted(load)
             />
           </NFormItem>
           <p class="mb-3 text-xs text-ink-4">
-            预设只有这一句话，没有名字 —— 再加一个「名称」字段，两处说法迟早会对不上。
+            预设只有这一句话，没有名字。
             这句话会原样显示给学生，也会被订单存下来。
           </p>
 
@@ -372,7 +372,7 @@ onMounted(load)
             />
           </NFormItem>
           <p class="mb-3 text-xs text-ink-4">
-            备注主要是给打印的人看的（哪台机器、多少克重）。学生端只在名称后面带一句，
+            备注是给打印的人看的（哪台机器、多少克重）；学生端只在名称后面带一句。
             不选纸张也能下单。
           </p>
 

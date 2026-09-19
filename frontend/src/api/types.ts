@@ -42,9 +42,9 @@ export const DUPLEX_LABELS: Record<Duplex, string> = { single: '单面', double:
 export type ContactType = 'wechat' | 'qq' | 'email'
 
 export const CONTACT_LABELS: Record<ContactType, string> = {
-  wechat: '微信号',
-  qq: 'QQ 号',
-  email: '邮箱地址',
+  wechat: '微信',
+  qq: 'QQ',
+  email: '邮箱',
 }
 
 /** 账号状态。三种都要写全：'closed' 是注销 ——

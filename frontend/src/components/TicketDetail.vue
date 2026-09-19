@@ -184,7 +184,7 @@ onBeforeUnmount(pause)
     <header class="flex items-start justify-between gap-3 border-b px-4 py-3" style="border-color: var(--border)">
       <div class="min-w-0">
         <h3 class="truncate font-heading text-base font-bold">
-          {{ ticket?.subject ?? '加载中…' }}
+          {{ ticket?.subject ?? '读取中' }}
         </h3>
         <p class="tech-label mt-1 text-ink-4 tech-label--cn text-xs">
           #{{ ticketId }}
@@ -250,7 +250,7 @@ onBeforeUnmount(pause)
         type="textarea"
         :maxlength="1000"
         :autosize="{ minRows: 2, maxRows: 5 }"
-        :placeholder="closed ? '工单已关闭，先重新打开再回复' : '输入回复内容，Enter 发送'"
+        :placeholder="closed ? '工单已关闭 · 先重开再回复' : '写回复，Enter 发送'"
         :disabled="closed || sending"
         @keydown.enter.exact.prevent="send"
       />

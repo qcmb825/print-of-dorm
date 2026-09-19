@@ -67,7 +67,7 @@ async function onSelect(key: string): Promise<void> {
   if (key !== 'logout') return
   const ok = await confirmAction({
     title: '退出登录',
-    content: '确定要退出当前账号吗？',
+    content: '退出后需要重新用学号登录。',
     positiveText: '退出',
   })
   if (!ok) return

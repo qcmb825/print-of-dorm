@@ -94,7 +94,7 @@ async function lookup(): Promise<void> {
     order.value = data.order
     if (data.order.status !== READY) missHint.value = ''
   } catch (error) {
-    missHint.value = error instanceof ApiError ? error.message : '查不到这一单，核对一下取件码'
+    missHint.value = error instanceof ApiError ? error.message : '查不到这一单 · 核对取件码'
   } finally {
     looking.value = false
   }
@@ -109,8 +109,8 @@ async function lookup(): Promise<void> {
  *  本来就已经显示着这一单的状态了。 */
 function confirmBlockReason(current: PickupOrder): string | null {
   if (current.status === DONE) return '这一单已经取走了'
-  if (current.status === WAIT_PRICE) return '这一单还没计费，先在订单台把金额填上'
-  if (current.status !== READY) return `现在是「${current.status}」，还没到可取件那一步`
+  if (current.status === WAIT_PRICE) return '还没计费 · 先在订单台填金额'
+  if (current.status !== READY) return `当前「${current.status}」· 还不能交件`
   return null
 }
 
@@ -151,7 +151,7 @@ function close(): void {
     :bordered="false"
   >
     <p class="mb-3 text-xs leading-5 text-ink-4">
-      输入取件码后回车。核一眼姓名、学号、份数再交件 —— 交错了，纸就找不回来了。
+      输入取件码回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
     </p>
 
     <NInput
@@ -159,7 +159,7 @@ function close(): void {
       v-model:value="code"
       size="large"
       clearable
-      placeholder="取件码，例如 0012"
+      placeholder="取件码 · 例 0012"
       :status="missHint ? 'error' : undefined"
       @keydown.enter="lookup"
     >
@@ -260,7 +260,7 @@ function close(): void {
       </div>
 
       <NAlert v-if="justPicked" type="success" :bordered="false" class="mt-3">
-        这一单已标记为「已取件」，可以交给同学了。
+        已标记「已取件」，可以交件了。
       </NAlert>
       <NAlert v-else-if="blockReason" type="warning" :bordered="false" class="mt-3">
         {{ blockReason }}
