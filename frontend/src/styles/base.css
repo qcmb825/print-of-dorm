@@ -1539,6 +1539,19 @@
       calc(var(--veil-latch) + var(--veil-gate) * 0.08) both;
   }
 
+  /* 打断（连点导航）时走另一条：读数**已经在屏幕上亮着了**，再演一遍"从零浮现"
+     就是一次肉眼可见的闪。这里换成"重新对准" —— 从半亮起、很快回到满亮，
+     文字在同一个动作里换成新的目标页（retarget 已经把 target 改写过了）。
+     三角阵列晚一点点，与正常进场保持同一条节奏；特异性比上面那条高，所以自然胜出。 */
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__read {
+    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
+  }
+
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__corner {
+    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
+      calc(var(--veil-gate) * 0.06) both;
+  }
+
   .route-veil[data-phase='in'] .route-veil__read {
     animation: veil-read-out var(--veil-part) var(--motion-ease-out) var(--veil-hold) both;
   }
@@ -1605,26 +1618,30 @@
  *
  * **不写 fill 模式**：动画结束后 transform 要回到视差那条规则算出来的值，
  * 用 forwards/both 会把视差的位移冻在动画的终值上。
+ *
+ * **回响的时长必须短于面板盖住屏幕的那一拍**（--motion-dur-decor 就是为此定的）：
+ * 过了那一帧整屏都盖住了，动画再长也没人看得见。这几个回响原来各写 200/420/520ms，
+ * 比滑动（320ms）还长，等于每一场都有一截是在幕布后面空跑。
  */
 :root[data-veil-phase='out'] .ticks,
 :root[data-veil-phase='out'] .vticks {
-  animation: decor-measure 420ms var(--motion-ease-out);
+  animation: decor-measure var(--motion-dur-decor) var(--motion-ease-out);
 }
 
 :root[data-veil-phase='out'] .watermark {
-  animation: decor-drift 520ms var(--motion-ease-out);
+  animation: decor-drift var(--motion-dur-decor) var(--motion-ease-out);
 }
 
 :root[data-veil-phase='out'] .cut,
 :root[data-veil-phase='out'] .data-dump {
-  animation: decor-nudge 420ms var(--motion-ease-out);
+  animation: decor-nudge var(--motion-dur-decor) var(--motion-ease-out);
 }
 
 /* 读数沟的刻度和左边的尺子是同一件东西转了 90°，所以它也要"重新量一遍"，
    但方向朝下：复用 decor-measure 会把刻度**横向**推出去，那在一条竖沟上
    表现为"刻度被拉长又缩回"，是另一种观感（也更像故障）。 */
 :root[data-veil-phase='out'] .decor-rail {
-  animation: decor-measure-y 420ms var(--motion-ease-out);
+  animation: decor-measure-y var(--motion-dur-decor) var(--motion-ease-out);
 }
 
 /* 刻度尺"重新量一遍"：刻度纹从左往右扫过来落位。尺子很短（96×5），重绘可以忽略。 */
@@ -1649,7 +1666,7 @@
  *  范围也收着：只挂在 .readout 上（页头铭牌、扇区读数、状态栏代号）。
  *  表格内容、表单标签、金额、取件码都不是 .readout —— 那些是要读准的东西。 */
 :root[data-veil-phase='out'] .readout {
-  animation: readout-reread 200ms var(--motion-ease-out);
+  animation: readout-reread var(--motion-dur-decor) var(--motion-ease-out);
 }
 
 @keyframes readout-reread {
@@ -1723,6 +1740,19 @@
 
 /* 读数退场。与面板退场同时开始，14% 内退干净 —— 面板的尾边回到屏幕中线大约就在那一刻，
  * 再晚就会留下一段"字浮在新页面上"。 */
+/* 读数"重新对准"（连点打断时用）。起点不是 0 而是 0.35：字本来就在那儿，
+ * 要换的只是目标与落位，所以它只淡一下、不上浮。 */
+@keyframes veil-read-resync {
+  from {
+    opacity: 0.35;
+    transform: translate3d(-6px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 @keyframes veil-read-out {
   0% {
     opacity: 1;
@@ -1884,6 +1914,19 @@
 .n-modal,
 .n-drawer {
   border: 1px solid var(--border) !important;
+}
+
+/* Naive 浮层自带一套进出场：150ms + cubic-bezier(0,0,.2,1)。时长碰巧和
+   --motion-dur-fast 一样，曲线不一样 —— 它起步慢、收尾平，站内的 --motion-ease-out
+   是起步快、尾段长。两者在同一屏上挨着出现时（点开下拉、接着切页）能看出不是一台
+   机器上的动作，所以在这里拉平。缩放（scale(.85) → 1）保留：它是"从按钮上长出来"
+   的暗示，去掉就变成凭空出现。
+   无层级 + !important 的理由同上：Naive 插进 head 的规则不是 important，压不过它就只剩层序问题。 */
+.popover-transition-enter-active,
+.popover-transition-leave-active {
+  transition:
+    opacity var(--motion-dur-fast) var(--motion-ease-out),
+    transform var(--motion-dur-fast) var(--motion-ease-out) !important;
 }
 
 .n-popover-arrow {
