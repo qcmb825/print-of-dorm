@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /** 学生端布局：手机优先 —— 顶部栏 + 内容区 + 底部标签栏，宽屏时标签栏挪到顶部。 */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ClipboardList, LayoutDashboard, MessageSquare, TrendingUp, Upload } from '@lucide/vue'
+import { NAlert } from 'naive-ui'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
@@ -13,6 +14,43 @@ import { useAuthStore } from '@/stores/auth'
 const route = useRoute()
 const auth = useAuthStore()
 const announcement = useAnnouncementStore()
+const qqReminderDismissed = ref(false)
+
+const needsQq = computed(
+  () => auth.ready && auth.isLoggedIn && !!auth.user && !auth.user.qq?.trim(),
+)
+
+function qqReminderKey(userId: number): string {
+  return `pod.missing-qq.${userId}`
+}
+
+function syncQqReminder(): void {
+  const userId = auth.user?.id
+  if (!userId) {
+    qqReminderDismissed.value = false
+    return
+  }
+  try {
+    qqReminderDismissed.value = sessionStorage.getItem(qqReminderKey(userId)) === '1'
+  } catch {
+    // 隐私模式禁用 sessionStorage 时，提醒仍应正常显示。
+    qqReminderDismissed.value = false
+  }
+}
+
+function dismissQqReminder(): void {
+  const userId = auth.user?.id
+  if (userId) {
+    try {
+      sessionStorage.setItem(qqReminderKey(userId), '1')
+    } catch {
+      // 存储不可用时只在当前渲染周期内关闭，不影响资料保存。
+    }
+  }
+  qqReminderDismissed.value = true
+}
+
+const showQqReminder = computed(() => needsQq.value && !qqReminderDismissed.value)
 
 const navItems = computed(() => [
   { to: '/upload', label: '下单打印', icon: Upload },
@@ -25,6 +63,8 @@ const navItems = computed(() => [
 ])
 
 const currentPath = computed(() => route.path)
+
+watch(() => auth.user?.id, syncQqReminder, { immediate: true })
 
 onMounted(() => {
   void announcement.load()
@@ -67,6 +107,19 @@ onMounted(() => {
     </header>
 
     <AnnouncementBar />
+
+    <div v-if="showQqReminder" class="mx-auto w-full max-w-6xl px-3 pt-3 sm:px-5 sm:pt-4">
+      <NAlert type="warning" :bordered="false" closable @close="dismissQqReminder">
+        这个账号还没有 QQ 号，取件邮件提醒将无法送达；补充 QQ 后，其他资料也才能正常保存。
+        <RouterLink
+          :to="{ name: 'student-settings' }"
+          class="ml-1 font-semibold underline underline-offset-2"
+          style="color: var(--warning-text)"
+        >
+          去设置补充
+        </RouterLink>
+      </NAlert>
+    </div>
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->

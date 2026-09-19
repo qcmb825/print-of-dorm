@@ -83,12 +83,29 @@ def contact_mailbox(contact_type, contact):
 def user_mailbox(row):
     """把一行 users 记录翻成收件地址，返回值和 contact_mailbox 一样。
 
-    存在的意义是让调用方不必记住「联系方式在这两个列里」——
+    存在的意义是让调用方不必记住「收件信息在哪几个列里」——
     列名散落在各个调用点，改名时总会漏掉一处，而漏掉的地方不报错。
+
+    优先用 qq 列，它是**必填**的那一栏、也是取件提醒的正路；
+    contact 那组（微信 / 邮箱）是选填的补充联系方式，只在前者缺失时才兜底。
+    顺序反过来（先 contact）会让「QQ 号填了、微信也填了」的人
+    被按微信处理 —— 结果就是推不出邮箱、转人工，
+    而他明明填了 QQ、本该直接收到取件码。必修一栏永远优先于选修一栏。
     """
     if row is None:
         return None, NO_MAILBOX_EMPTY
     # Row 工厂出来的对象用下标取，sqlite3.Row 没有 get()
+    try:
+        qq = row['qq']
+    except (IndexError, KeyError):
+        qq = None
+    if (qq or '').strip():
+        mailbox = qq_mailbox(qq)
+        # QQ 号填了但形状不对（历史上人工改库、或更早版本漏了校验）：
+        # 记成「填错了」而不是继续往下兜底到联系方式。
+        # 继续兜底会把一个「该修的数据」悄悄替换成另一个渠道的结果，
+        # 而界面上看不出 QQ 那一栏有问题。
+        return (mailbox, '') if mailbox else (None, NO_MAILBOX_INVALID)
     try:
         contact_type = row['contact_type']
     except (IndexError, KeyError):
@@ -116,7 +133,7 @@ def admin_mailboxes(conn):
     而真出事的时候没人会去分辨哪几个是死的。
     """
     rows = conn.execute('''
-        SELECT nickname, contact_type, contact FROM users
+        SELECT nickname, qq, contact_type, contact FROM users
         WHERE role IN (?, ?) AND status = ?
         ORDER BY id
     ''', (ROLE_ADMIN, ROLE_SUPER, STATUS_ACTIVE)).fetchall()

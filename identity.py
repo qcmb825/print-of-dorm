@@ -63,6 +63,68 @@ class RosterUnavailable(Exception):
     """名单库读不出来：文件不在、结构不对、或者被别的进程锁着。"""
 
 
+# students 表**必须**长这四列，一个不多一个不少。
+#
+# 为什么把这个结构写进代码、再在启动时对一遍：
+# 这张表的写入方只有一处 —— fill_missing_name 的 UPDATE，而它整条语句
+# 包在 `except sqlite3.Error` 里，失败只记一条 warning 就 `return False`。
+# 这个设计本身是有意的（名单写不进去不能连带把注册搞失败），但它有个副作用：
+# **表结构一旦对不上（比如名单是旧格式、少了 name_source 那一列），
+# 回填就永远静默失败** —— 注册照常成功、日志里只有一行 warning，
+# 「名单里缺姓名的学号」那一千多条就这么一直空着，没人会发现。
+# 所以启动时把结构对一遍并**响亮地报出来**：让它在服务起来的那一刻就
+# 出现在日志里，而不是等哪天有人去查「为什么补不上名字」。
+#
+# 用 tuple 而不是 set：顺序也一起钉住，将来真要加列，这里必须显式改。
+EXPECTED_STUDENT_COLUMNS = ('num', 'real_name', 'name_source', 'update_time')
+
+
+def check_roster_schema():
+    """启动自检：名单库的 students 表结构是不是代码认的那一副。
+
+    返回 (ok, message)：
+      (True,  '')             结构对得上，或者名单库本来就没配（不算错）
+      (False, '中文说明')      对不上，调用方负责**醒目地**记下来
+
+    刻意不抛异常、也不阻断启动：名单库只服务「注册」这一条路径，
+    订单、取件、管理端都不碰它。为了它把整个服务拒之门外，
+    等于让一件局部故障升级成全体不可用 —— 那才是真的坏了。
+    但也不能不出声：返回的 message 就是给日志用的，写清是哪一列对不上。
+
+    这里用只读连接（和 lookup 同一口径）：自检不该有能力改动名单。
+    """
+    path = Path(ROSTER_DB_PATH)
+    if not path.is_file():
+        # 「没配名单库」是一种合法状态（本地开发、或先用审核通道顶着），
+        # 但它有代价：注册闸门会走 RosterUnavailable 分支，谁都注册不了。
+        # 所以既不算通过、也不算结构错，交给调用方决定用什么级别记。
+        return None, '名单库文件不存在：%s' % path
+
+    conn = _connect()
+    try:
+        rows = conn.execute('PRAGMA table_info(students)').fetchall()
+    except sqlite3.Error as exc:
+        return False, '名单库结构读不出来（%s）：%s' % (path, exc)
+    finally:
+        conn.close()
+
+    if not rows:
+        return False, '名单库里没有 students 表（%s）' % path
+
+    actual = tuple(row['name'] for row in rows)
+    if actual == EXPECTED_STUDENT_COLUMNS:
+        return True, ''
+
+    missing = [c for c in EXPECTED_STUDENT_COLUMNS if c not in actual]
+    extra = [c for c in actual if c not in EXPECTED_STUDENT_COLUMNS]
+    detail = '实际 %s / 期望 %s' % (list(actual), list(EXPECTED_STUDENT_COLUMNS))
+    if missing:
+        detail += '；缺少 %s' % missing
+    if extra:
+        detail += '；多出 %s' % extra
+    return False, detail
+
+
 
 def _connect(writable=False):
     """连名单库（默认只读）。每次调用都开关一个连接，不留长连接。

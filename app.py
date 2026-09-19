@@ -47,6 +47,7 @@ from config import (
     logger,
 )
 from db import db_conn, ensure_database_directory, init_database, seed_super_admin
+from identity import check_roster_schema
 from mail import mask_address
 from notifier import start_claim_watcher
 from pickup_notifier import start_pickup_watcher
@@ -124,6 +125,24 @@ def log_startup_summary():
                        '上线前请把 .env 的 DEBUG 改为 false')
     if not app.config['SESSION_COOKIE_SECURE']:
         logger.info('  会话 Cookie : 未启用 Secure 标记（HTTP 环境正常；接入 HTTPS 后建议设为 true）')
+
+    # 名单库结构自检。放在横幅最后，因为它是唯一一条可能报 error 的 ——
+    # 前面全是「配了什么」，读日志的人一眼就能看出这一条不在同一个层级上。
+    roster_ok, roster_detail = check_roster_schema()
+    if roster_ok is None:
+        # 文件就没在：这不算配置错误（本地开发常常不配），但必须说清代价 ——
+        # 闸门读不到名单时会一律不放行，也就是**谁都没法注册**。
+        logger.warning('  身份名单 : 未配置（%s）；注册闸门将一律拒绝', roster_detail)
+    elif roster_ok:
+        logger.info('  身份名单 : 结构正常（students 四列齐备）')
+    else:
+        # ★ 这一条要足够刺眼：结构对不上时，回填姓名那条路径会**静默失败**
+        #   （只记 warning、不抛异常），症状是「注册都成功，但名单里的空名字
+        #   一个都补不上」。不在这里报出来，就只能等哪天有人手工去查。
+        logger.error('  身份名单 : 结构对不上，姓名回填将一直静默失败 —— %s', roster_detail)
+        logger.error('  身份名单 : 请用 build_roster_db.py 重新生成名单库，'
+                     '或在服务停止后按 EXPECTED_STUDENT_COLUMNS 补齐列')
+
     logger.info('=' * 62)
 
 
@@ -188,11 +207,7 @@ def load_current_user():
     if not uid:
         return
     with db_conn() as conn:
-        row = conn.execute('''
-            SELECT id, nickname, real_name, student_id, dorm, contact_type, contact,
-                   pay_qr_file, role, status, create_time, last_login, session_epoch
-            FROM users WHERE id = ?
-        ''', (uid,)).fetchone()
+        row = conn.execute('SELECT id, nickname, real_name, student_id, dorm, qq, contact_type, contact, pay_qr_file, role, status, create_time, last_login, session_epoch FROM users WHERE id = ?', (uid,)).fetchone()
     if row is None or row['status'] != STATUS_ACTIVE:
         session.clear()  # 账号被注销、被禁用之后，已登录的 Cookie 立刻失效
         logger.info('会话已失效：uid=%s 账号不存在、已禁用或已注销 ip=%s', uid, client_ip())

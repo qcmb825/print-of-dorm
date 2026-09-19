@@ -531,6 +531,21 @@ CONTACT_TYPES = ('wechat', 'qq', 'email')
 
 CONTACT_LABELS = {'wechat': '微信号', 'qq': 'QQ 号', 'email': '邮箱地址'}
 
+
+# 「其他联系方式」：QQ 号单列一栏必填之后，这一栏只剩微信和邮箱，而且是**选填**。
+#
+# 为什么不干脆继续用 CONTACT_TYPES ——
+# 那一份里带着 qq，把它当「其他联系方式」的候选，界面上就会出现两处填 QQ 的地方
+# （一处必填、一处选填），而两处填的值一旦不一样，谁也说不清取件邮件该发给哪一个。
+# 分成两份之后，「QQ 号」这件事全系统只有一处入口。
+#
+# 但 CONTACT_TYPES 本身不能删：身份审核申请（routes/audit.py）收的还是老形状
+# （还没账号的人，学号姓名都不在名单上，让他填 QQ 是唯一能联系到他的办法），
+# 而且历史数据的 contact_type 里确实存着 'qq'，CONTACT_LABELS 得认得它。
+OTHER_CONTACT_TYPES = ('wechat', 'email')
+
+OTHER_CONTACT_LABELS = {key: CONTACT_LABELS[key] for key in OTHER_CONTACT_TYPES}
+
 WECHAT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{4,19}$')  # 5-20 位，字母开头
 
 QQ_RE = re.compile(r'^[1-9]\d{4,11}$')  # 5-12 位数字，不以 0 开头
@@ -712,19 +727,6 @@ QQ_MAIL_SUFFIX = '@qq.com'
 # 发信超时（秒）。外网 SMTP 握手慢的时候不少，给短了会把能成功的信掐掉；
 # 给长了又会把守护线程卡住 —— 卡住的是它自己，不影响请求处理，但仍然别太久。
 SMTP_TIMEOUT = max(3, env_int('SMTP_TIMEOUT', 15))
-
-
-# ---- QQ 机器人（LLOneBot / OneBot v11）----
-# bot 是**另一个进程**，而且跑在另一台机器上（境内）：QQ 客户端 + LLOneBot 必须在
-# 一起，后端留在美国。它靠出站 HTTPS 调 /api/bot/*，见 memoryandtest/QQbot对接大纲.md。
-#
-# 它不能复用浏览器的 session + CSRF（没有浏览器，也接不住令牌轮换），
-# 所以另开一条通道：请求头带 Authorization: Bearer <BOT_TOKEN> 即视为通过。
-#
-# **留空 = 整组 /api/bot/* 返回 503**，不是「不校验」。
-# 「没配就不校验」是最危险的一种默认值：.env 漏一行、键名拼错一个字母，
-# 写接口就对着全网敞开，而所有日志看起来都正常。
-BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
 
 
 # 密钥

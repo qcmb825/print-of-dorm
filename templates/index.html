@@ -2577,30 +2577,12 @@
             charts.appendChild(barCard('我的每日下单量（近 14 天）',
                                        (data.daily || []).map(d => ({ label: d.date, value: d.count }))));
 
-            // 「趣味」这一块是有意做的：一个纯功能的工具，用户没有理由再打开第二次。
-            // 全站累计单量是最合适公开的一个数 —— 它说明「这个服务本身有多忙」，
-            // 不涉及谁是谁、谁打了什么，所以给所有登录用户看也不越界。
-            const siteTotal = (data.site || {}).orders_total || 0;
-            const mineTotal = Number(m.total) || 0;
-            const share = siteTotal > 0 ? (mineTotal / siteTotal * 100) : 0;
-            const doneRate = mineTotal > 0 ? (Number(m.done) / mineTotal * 100) : 0;
-            const fun = el('div', { class: 'card' });
-            fun.appendChild(el('h3', { text: '✨ 顺便一提' }));
-            const lines = [
-                ['全站累计订单', siteTotal + ' 单'],
-                ['你贡献了', share.toFixed(1) + '%'],
-                ['你的取件完成率', doneRate.toFixed(0) + '%'],
-            ];
-            lines.forEach((pair, i) => {
-                fun.appendChild(el('div', {
-                    style: 'display:flex;gap:var(--sp-3);padding:7px 0;'
-                           + (i ? 'border-top:1px solid var(--line-soft,rgba(127,127,127,.18));' : ''),
-                }, [
-                    el('span', { class: 'muted', style: 'flex:1;', text: pair[0] }),
-                    el('span', { style: 'flex:none;font-variant-numeric:tabular-nums;', text: pair[1] }),
-                ]));
-            });
-            charts.appendChild(fun);
+            // 「✨ 顺便一提」那块（全站累计订单 / 你贡献了 / 你的取件完成率）已整块撤掉：
+            // 前两行来自 /api/my-stats 的 site.orders_total，那是**站点规模**、业主的经营数据，
+            // 后端已经不再发这个字段了。第三行「取件完成率」虽然是自己的数，
+            // 但它跟另外两行同属一个叙事 —— 留着会变成一个只剩一行的孤卡片，
+            // 反而让人以为是加载失败。要恢复这类「趣味数字」，得先想清楚哪些数
+            // 是服务方能公开的，而不是从界面上把它捞回来。
             box.appendChild(charts);
         }
 

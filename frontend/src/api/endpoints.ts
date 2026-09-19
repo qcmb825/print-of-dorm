@@ -12,18 +12,20 @@ import type {
   AuditStatusResponse,
   ChunkPendingResponse,
   ChunkSession,
-  ContactType,
   DashboardStats,
+  MeOverviewResponse,
   MeResponse,
   MyOrdersResponse,
   OrderDetailResponse,
   OrderListResponse,
   OrderStatus,
+  OtherContactType,
   PaperTypeListResponse,
   PickupLookupResponse,
   PresetOrderRequest,
   PrintOptionsResponse,
   PrintPresetListResponse,
+  ProfileUpdateResponse,
   RestoreResponse,
   Role,
   ServiceBoard,
@@ -44,6 +46,28 @@ export const authApi = {
   register: (payload: Record<string, unknown>) => post<MeResponse>('/api/register', payload),
   logout: () => post<{ code: number; msg: string }>('/api/logout'),
 
+  /** 设置页要的那一份汇总：我的资料 + 我的订单概况 + 在盘用量。
+   *
+   *  为什么不动用现成的两个接口 ——
+   *  /api/my-stats 是柱状图 + 分布的形状，塞进设置页等于挂一屏图表；
+   *  /api/board 是公开口径，里面**刻意不含金额**，而设置页要显示「我花了多少」。
+   *  所以后端单开一份最小集合（routes/account.py: api_me_overview）。 */
+  overview: () => get<MeOverviewResponse>('/api/me/overview'),
+
+  /** 自助改资料。只能改昵称 / 宿舍 / QQ / 其他联系方式 ——
+   *  姓名和学号由服务端从当前会话带进来，改不了（那是身份核验的依据）。 */
+  updateProfile: (payload: ProfilePayload) =>
+    put<ProfileUpdateResponse>('/api/me/profile', payload),
+
+  /** 自助改密码。改完服务端会把 session_epoch +1（其它设备全部掉线），
+   *  但当前会话会跟着更新，所以这里不需要重新登录。
+   *  响应里带回**新的 CSRF 令牌**，client.ts 会照常轮换。 */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    put<{ code: number; msg: string; csrf?: string }>('/api/me/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
   /* 微信收款码：每个管理员只管自己那一张。谁接的单，学生就付给谁，
      所以邮件里嵌的必须是接单人自己的码，不是全局一张。
 
@@ -63,6 +87,16 @@ export const authApi = {
      *  也就不需要 CSRF 令牌（它是个纯 GET 读接口）。 */
     url: (version?: string) => `/api/me/pay-qr?v=${encodeURIComponent(version || '')}`,
   },
+}
+
+/** 自助改资料提交的字段。学号/姓名不在其中 —— 后端从会话里取，这里不传。 */
+export interface ProfilePayload {
+  nickname: string
+  dorm: string
+  qq: string
+  /** 其他联系方式的类型。整组留空时传 null（后端也接受空串，会归一成 NULL）。 */
+  contact_type: OtherContactType | null
+  contact: string | null
 }
 
 /* 订单：学生端 */
@@ -240,14 +274,18 @@ export const adminApi = {
 }
 
 /** 改资料提交的字段。和注册表单是同一批字段、同一套校验规则
- *  （utils.validate_identity_fields 与这里的 validators.ts 互为镜像）。 */
+ *  （utils.validate_identity_fields 与这里的 validators.ts 互为镜像）。
+ *
+ *  QQ 单独一栏且必填，contact 那组（微信 / 邮箱）整组选填 ——
+ *  与后端 utils.validate_qq / validate_other_contact 的分工一一对应。 */
 export interface AdminProfilePayload {
   nickname: string
   real_name: string
   student_id: string
   dorm: string
-  contact_type: ContactType
-  contact: string
+  qq: string
+  contact_type: OtherContactType | null
+  contact: string | null
 }
 
 /* 打印选项：预设打印服务 + 纸张类型

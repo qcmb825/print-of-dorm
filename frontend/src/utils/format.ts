@@ -146,12 +146,18 @@ export const LOG_ACTION_COLOR: Record<OrderLogAction, string> = {
 }
 
 /** 文件大小。打印店的场景里没人关心它是 12.3 KB 还是 12.4 KB，
- *  所以到 KB / MB 就到头了，不做到字节。null 是「文件已经不在了」。 */
+ *  所以到 KB / MB 就到头了，不做到字节。null 是「文件已经不在了」。
+ *
+ *  GB 那一档是给配额显示用的（配额已经放宽到 5GB）：只到 MB 的话，
+ *  5GB 的额度会写成「5120.0 MB」，设置页上没人能一眼看出还剩多少。
+ *  这里刻意**不做成两个函数** —— 同一份字节数在两处显示成不同的写法，
+ *  以后调精度就得记着改两处，漏一处的症状只是数字不好看，没人会去查。 */
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined) return '—'
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
 export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {

@@ -2,11 +2,16 @@
 /** 服务数据：这台打印机上的排队情况、下单榜，以及**我自己的进度**。
  *
  *  界线由后端划（routes/orders.py 的 api_board），页面只画后端给的那几个数：
- *  **响应里没有金额，也没有站点规模**（总单数 / 近 7 天 / 账号数）—— 后端就没查那几列，
- *  所以这个页面不是「不画它们」，而是根本拿不到。别为了「卡片好看」在前端补算：
+ *  **响应里没有金额，也没有站点规模**（总单数 / 近 7 天 / 账号数 / 全站单量趋势）——
+ *  后端就没查那几列，所以这个页面不是「不画它们」，而是根本拿不到。别为了「卡片好看」在前端补算：
  *  前端能算出来的东西，网络面板里也就看得见；算不出来才是防线。
  *  同样地，别人昵称是服务端打的码（张*三），这里拿到什么画什么，
  *  不在前端再补一层打码：前端能解出来的东西，网络面板里也解得出。
+ *
+ *  原先这里挂过一张「近 14 天单量」走势图，数据是全站所有人的单量（后端那条 SQL
+ *  没有 user_id 条件），属业主的经营数据，已随站点规模一起撤回 —— 所以本页现在
+ *  没有图表，也就不需要 ECharts 那一套令牌与配色了，一起删掉，免得留下一段
+ *  谁也不调用的死代码。要看自己的趋势得后端另开按 user_id 过滤的口径。
  *
  *  不复用 /api/my-stats：那条只查我自己，而管理端的 /api/admin/stats 又带
  *  账号数、工作量分布和营业额，整条开给学生会一并漏出去。 */
@@ -16,39 +21,14 @@ import { NButton, NEmpty, NSkeleton } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { boardApi } from '@/api/endpoints'
 import type { Board, ServiceBoard } from '@/api/types'
-import { trendOption } from '@/charts/options'
-import type { ChartPalette } from '@/charts/setup'
-import ChartBox from '@/components/charts/ChartBox.vue'
 import { notify } from '@/composables/feedback'
-import { useThemeStore } from '@/stores/theme'
 import { STATUS_COLOR_VAR } from '@/utils/format'
-
-const theme = useThemeStore()
 
 const board = ref<ServiceBoard | null>(null)
 const loading = ref(true)
 /** 当前看的是哪张榜。两张榜后端一次响应就都给了（两个查询都很小），
  *  切换只换本地数据 —— 切一下就要转圈的样子更像页面卡住了，不像在切榜单。 */
 const tab = ref<Board['key']>('recent')
-
-const palette = computed<ChartPalette>(() => {
-  const t = theme.tokens
-  return {
-    text: t.textPrimary,
-    textMuted: t.textTertiary,
-    border: t.border,
-    primary: t.primary,
-    secondary: t.secondary,
-    ok: t.ok,
-    err: t.err,
-    warn: t.warn,
-    info: t.info,
-    // 提示框要实心，半透明的 --card 在深色下几乎全透
-    surface: t.surfaceOverlay,
-  }
-})
-
-const trend = computed(() => trendOption(board.value?.daily ?? [], palette.value))
 
 const mine = computed(() => board.value?.mine)
 const queue = computed(() => board.value?.queue)
@@ -103,8 +83,6 @@ const mineRankText = computed(() => {
   if (!me || !me.total) return '—'
   return `第 ${me.rank} 名`
 })
-
-const hasTrendData = computed(() => (board.value?.daily ?? []).some((item) => item.count > 0))
 
 /** 这个页面刻意不自动刷新（订单列表那种轮询不适合它）：
  *  排队情况和榜单一天也变不了几次，而它每次访问都要算两遍榜单，
@@ -165,9 +143,9 @@ onMounted(load)
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
         <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 class="font-heading text-[14px] font-bold">排队情况</h2>
-          <span class="text-[12px] text-ink-3">
-            {{ queue?.unclaimed ?? 0 }} 单还没人接
-          </span>
+          <!-- 这里原先还有一句「N 单还没人接」，那个数是**全站**未接单数、属站点规模，
+               已随 /api/board 一起撤回（后端不再发 unclaimed，类型里也没有了）。
+               不改成「前端数各档之和」替补：那仍然是在汇报站点总量。 -->
         </div>
         <ul class="mt-3 grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-4">
           <li
@@ -251,16 +229,6 @@ onMounted(load)
         >
           {{ myLine }}
         </p>
-      </section>
-
-      <section class="panel panel-raised p-3.5 sm:p-4">
-        <h2 class="font-heading mb-2 text-[14px] font-bold">近 14 天单量</h2>
-        <ChartBox
-          :option="trend"
-          :height="200"
-          :empty="!hasTrendData"
-          empty-text="近两周还没有订单"
-        />
       </section>
     </template>
   </div>

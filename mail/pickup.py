@@ -202,7 +202,15 @@ def compose_manual_body(rows, total):
     blocks = []
     for row in shown:
         contact = (row['owner_contact'] or '').strip()
-        if contact:
+        qq = (row.get('owner_qq') or '').strip()
+        if qq:
+            # QQ 是必填那一栏、也是取件提醒的正路。走到这封信里通常意味着
+            # 「QQ 号填了但形状不对」—— 那更该把它原样摆出来：
+            # 接单人照着这一行就能看出学生填错了，让他改完下次就收得到信了。
+            how = 'QQ 号 %s' % qq
+            if contact:
+                how += '（另有%s %s）' % (row['owner_contact_label'] or '联系方式', contact)
+        elif contact:
             how = '%s %s' % (row['owner_contact_label'] or '联系方式', contact)
         else:
             how = '未填写联系方式（订单台上也看不到，可能要在宿舍找他）'

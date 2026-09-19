@@ -17,16 +17,18 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import { ApiError } from '@/api/client'
-import { CONTACT_LABELS, type ContactType } from '@/api/types'
+import { OTHER_CONTACT_LABELS, type ContactType, type OtherContactType } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import {
-  CONTACT_HINT,
-  CONTACT_PLACEHOLDER,
   NICKNAME_RE,
+  OTHER_CONTACT_HINT,
+  OTHER_CONTACT_PLACEHOLDER,
+  OTHER_CONTACT_TYPES,
   REALNAME_RE,
   STUDENT_ID_RE,
+  otherContactIssue,
   passwordIssue,
-  validateContact,
+  qqIssue,
 } from '@/utils/validators'
 
 const auth = useAuthStore()
@@ -47,15 +49,20 @@ const registerForm = reactive({
   real_name: '',
   student_id: '',
   dorm: '',
-  contact_type: 'wechat' as ContactType,
+  // QQ 号是单列的**必填**项，其他联系方式（微信 / 邮箱）整组选填。
+  // 这里刻意不再给 contact_type 一个 'wechat' 默认值：默认选中微信会让人
+  // 以为「必须留一个联系方式」，于是随手填个微信号 —— 而他真正需要填的是 QQ，
+  // 因为取件邮件只能发到 <QQ号>@qq.com（见后端 utils.validate_qq 的说明）。
+  qq: '',
+  contact_type: null as OtherContactType | null,
   contact: '',
   password: '',
   confirm_password: '',
 })
 const registerRef = ref<FormInst | null>(null)
 
-const contactOptions = (Object.keys(CONTACT_LABELS) as ContactType[]).map((value) => ({
-  label: CONTACT_LABELS[value],
+const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
+  label: OTHER_CONTACT_LABELS[value],
   value,
 }))
 
@@ -99,12 +106,23 @@ const registerRules = computed<FormRules>(() => ({
       trigger: ['blur', 'input'],
     },
   ],
-  contact: [
-    { required: true, message: '请填写联系方式', trigger: ['blur', 'input'] },
+  qq: [
+    { required: true, message: '请填写 QQ 号', trigger: ['blur', 'input'] },
     {
+      // 文案直接取 qqIssue() 的返回值，别在这里另抄一句：
+      // 提示语抄两份时，改一处就会出现「框里说 5-12 位、红字说别的」。
+      validator: (_rule, value: string) => qqIssue(value) === null,
+      message: '请填写 QQ 号（用来给你发送取件邮件提醒）',
+      trigger: ['blur', 'input'],
+    },
+  ],
+  contact: [
+    {
+      // 这一栏整组选填，所以**没有 required**：QQ 才是必填的那个。
+      // 但填了一半要拦住 —— 只选类型不填号码，库里会留下一个说不清是什么的东西。
       validator: (_rule, value: string) =>
-        value.length <= 50 && validateContact(registerForm.contact_type, value),
-      message: '联系方式格式不正确',
+        otherContactIssue(registerForm.contact_type, value ?? '') === null,
+      message: '其他联系方式格式不正确，或者把它整组留空',
       trigger: ['blur', 'input'],
     },
   ],
@@ -175,8 +193,11 @@ async function submitRegister(): Promise<void> {
       real_name: registerForm.real_name.trim(),
       student_id: registerForm.student_id.trim(),
       dorm: registerForm.dorm.trim(),
+      qq: registerForm.qq.trim(),
       contact_type: registerForm.contact_type,
-      contact: registerForm.contact.trim(),
+      // 类型空着就必须回 null（整组留空的唯一表达方式）。空串在库里
+      // 和「填了个空白」分不开，而已选的类型配空号码后端会直接判 400。
+      contact: registerForm.contact_type ? registerForm.contact.trim() : null,
       password: registerForm.password,
       confirm_password: registerForm.confirm_password,
     })
@@ -199,13 +220,23 @@ async function submitRegister(): Promise<void> {
 }
 
 /** 审核申请弹窗。预填注册表单里的四样东西 —— 用户刚要提交的正是这些，
- *  让他重新输一遍没有道理（尤其学号，输错一位就得等管理员打回来）。 */
+ *  让他重新输一遍没有道理（尤其学号，输错一位就得等管理员打回来）。
+ *
+ *  ⚠️ 这里**不能带 QQ 那一段**：申请表单走的是老的「联系方式三选一」
+ *  （微信 / QQ / 邮箱，见 AuditRequestDialog 与 utils.validate_contact），
+ *  因为它服务的是「名单里根本没有的人」，那种人完全可能只有微信号。
+ *  所以只把用户已经选好的那一组带过去；没选就留空、让他自己定 ——
+ *  硬塞一个空的 contact_type 会把申请表单的下拉框顶成空白选项。 */
 const auditOpen = ref(false)
 const auditPrefill = computed(() => ({
   student_id: registerForm.student_id.trim(),
   real_name: registerForm.real_name.trim(),
-  contact_type: registerForm.contact_type,
-  contact: registerForm.contact.trim(),
+  ...(registerForm.contact_type
+    ? {
+        contact_type: registerForm.contact_type as ContactType,
+        contact: registerForm.contact.trim(),
+      }
+    : {}),
 }))
 
 onMounted(async () => {
@@ -359,23 +390,49 @@ onMounted(async () => {
                 </NFormItem>
               </div>
 
-              <NFormItem label="联系方式" path="contact">
+              <!-- QQ 号单列、必填、放在联系方式上面：取件提醒是发邮件到
+                   <QQ号>@qq.com，缺了它这个账号一条通知都收不到。
+                   所以它跟「姓名 / 学号」是一个级别的东西，不该混在选填的那一组里。 -->
+              <NFormItem label="QQ 号（取件提醒用）" path="qq">
+                <NInput
+                  v-model:value="registerForm.qq"
+                  :maxlength="12"
+                  placeholder="5-12 位数字，不能以 0 开头"
+                />
+              </NFormItem>
+              <p class="-mt-3 mb-3 text-[11px] text-ink-4">
+                打印完成后系统会往这个 QQ 邮箱发取件提醒；微信号推不出邮箱地址，所以不能替代。
+              </p>
+
+              <NFormItem label="其他联系方式（选填）" path="contact">
                 <div class="flex w-full gap-2">
+                  <!-- 可以清空回「不填」：这一组整组选填，没有退路的必选下拉
+                       会让「只留 QQ」变成存不进来的状态。 -->
                   <NSelect
                     v-model:value="registerForm.contact_type"
                     :options="contactOptions"
                     class="!w-[112px] shrink-0"
+                    clearable
+                    placeholder="不填"
                     :consistent-menu-width="false"
                   />
                   <NInput
                     v-model:value="registerForm.contact"
-                    :placeholder="CONTACT_PLACEHOLDER[registerForm.contact_type]"
+                    :disabled="!registerForm.contact_type"
+                    :placeholder="
+                      registerForm.contact_type
+                        ? OTHER_CONTACT_PLACEHOLDER[registerForm.contact_type]
+                        : '先选类型，或留空'
+                    "
                     class="min-w-0 flex-1"
                   />
                 </div>
               </NFormItem>
               <p class="-mt-3 mb-3 text-[11px] text-ink-4">
-                {{ CONTACT_HINT[registerForm.contact_type] }}
+                <template v-if="registerForm.contact_type">
+                  {{ OTHER_CONTACT_HINT[registerForm.contact_type] }}
+                </template>
+                <template v-else>微信 / 邮箱只是备用线索，留空也行 —— QQ 号必填。</template>
               </p>
 
               <div class="grid gap-x-3 sm:grid-cols-2">

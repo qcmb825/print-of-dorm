@@ -413,9 +413,10 @@ PASSWORD_ENC_KEY=把上面第二个命令的输出粘这里
 # 必填：初始超级管理员。密码至少 8 位
 SUPER_ADMIN_NICKNAME=superadmin
 SUPER_ADMIN_PASSWORD=自己想一个至少 8 位的密码
-SUPER_ADMIN_REALNAME=张三
-SUPER_ADMIN_STUDENT_ID=2024001
-SUPER_ADMIN_DORM=3号楼512
+SUPER_ADMIN_STUDENT_ID=2024001      # 它现在**就是登录名**，不能留空
+# 下面两项可留空 = 存成空字符串
+SUPER_ADMIN_REALNAME=
+SUPER_ADMIN_DORM=
 
 # 数据库默认落在项目根的 data/ 目录（DATA_DIR），一般不用改这两项
 DATABASE_PATH=data/print_service.db
@@ -562,9 +563,12 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 接口统一返回 `{"code": 0, "msg": "..."}`，`code != 0` 即失败。写操作（POST/PUT/PATCH/DELETE）
 需要带上 `X-CSRF-Token` 请求头，令牌由页面入口和 `/api/me` 下发。
 
-> 例外：上传与分片上传那一支（`routes/orders.py` / `routes/upload_chunks.py`）共 16 处失败时写的是
-> `'code': 1`，不是 HTTP 状态码那个数字 —— 别把 `code` 当成 HTTP 状态码读。另外 `/hello` 返回的是
-> 纯文本，`/api/order/<id>/download` 返回的是文件二进制，这两个都不套上面这层信封。
+> 失败时 `code` 取**与 HTTP 状态码同一个值**（400/401/403/404/409/413/429/500/503），
+> 前端只判 `code !== 0`，所以这个数字本身不参与判断、只用来对照日志。
+> **不要**写成 `'code': 1` —— 上传与分片那一支（`routes/orders.py` / `routes/upload_chunks.py`）
+> 早先正是这么写的，那是迁移期的遗留：它既不是 HTTP 状态码，也不是协议里任何约定的值，
+> 照抄到新接口上会让「看 code 就知道出了什么事」这个用法彻底失效（29 处已统一）。
+> 另外 `/hello` 返回纯文本，`/api/order/<id>/download` 返回文件二进制，这两个都不套上面这层信封。
 
 只列主流程上用到的几个：
 
@@ -579,8 +583,8 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `GET`/`PUT`/`POST`/`DELETE` | `/api/upload/chunked*` | 登录 | 大文件分片：建会话 / 列未完成会话 / 查进度 / 传分片 / 合并 / 取消（路径见 `routes/upload_chunks.py`） |
 | `POST` | `/api/order/<id>/withdraw` | 登录 | 学生自助撤回**自己还没被接单**的订单 —— 唯一会真正 DELETE 订单行的接口，会在留痕里记一条指向已删订单的「本人撤回」 |
 | `GET` | `/api/my-orders` | 登录 | 自己的订单列表（含金额） |
-| `GET` | `/api/my-stats` | 登录 | 自己的下单汇总（各状态笔数 / 彩色单双面分布 / 近 14 天趋势 / 全站累计单数）；**目前没有前端消费方**，保留原因由作者决定 |
-| `GET` | `/api/board` | 登录 | 学生端「服务数据」：**我的概览**（我的单数 / 进行中 / 待我取件 / 名次）+ 排队情况（**有序数组**，还在流程里的四档，已取件的单已经出队）+ 近 14 天趋势 + 下单榜（近 30 天 / 累计两张）。**响应里既没有金额、也没有站点规模**（总单数 / 近 7 天 / 今日 / 账号数 / 已取件数，SQL 就没查那几列）；榜上别人的昵称由服务端打码（`张*三`），只有自己那一行是完整的 |
+| `GET` | `/api/my-stats` | 登录 | 自己的下单汇总（各状态笔数 / 彩色单双面分布 / 近 14 天趋势）。**只有自己的数**：原先附带的「全站累计单数」属站点规模，已撤回（后端不再查该列）。**目前没有前端消费方**，保留原因由作者决定 |
+| `GET` | `/api/board` | 登录 | 学生端「服务数据」：**我的概览**（我的单数 / 进行中 / 待我取件 / 名次）+ 排队情况（**有序数组**，还在流程里的四档，已取件的单已经出队）+ 下单榜（近 30 天 / 累计两张）。**响应里既没有金额、也没有站点规模**（总单数 / 近 7 天 / 今日 / 账号数 / 已取件数 / **全站单量趋势** / **全站未接单数**，SQL 就没查那几列）；榜上别人的昵称由服务端打码（`张*三`），只有自己那一行是完整的 |
 | `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池）。支持 `q=` 关键词（**一个框搜完**取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式，其中订单号与学号是**精确相等**，其余模糊匹配）、`preset=` 按打印服务分组筛（数字 = 分组 id，`none` = 未归类；分组键是 `COALESCE(preset_group_id, preset_id)`，所以下单选了预设的单和事后被归进去的单会一起出来）、`exclude_done=1` 隐藏已取件 |
 | `POST` | `/api/order/<id>/claim` | 管理员 | 接单（已取件的单会被拒绝；待计费的单**可以**接） |
 | `POST` | `/api/order/<id>/price` | 管理员 | **计费 / 改价**。**必须先接单，且只有接单人（或超管）能调**；待计费 → 原子置为待打印，老单直接改金额；已取件的单拒绝改价 |
@@ -609,7 +613,7 @@ SQLite 单库，共 10 张表：
 
 | 表 | 用途 |
 | :--- | :--- |
-| `users` | 账号（v11 加了 `pay_qr_file`，存收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定） |
+| `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段） |
 | `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
 | `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么） |
 | `audit_requests` | 身份审核申请（学号唯一，只允许提一次） |
@@ -860,7 +864,7 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 - [ ] **钱只记了金额，没记支付状态**。现在只能“订单一笔款已收/未收”全靠人工对账，订单表里没有 `paid` 之类的字段，也没有任何对账单据导出。
 - [ ] **没有自动化测试**。主要流程靠手工验证；前端有 `vue-tsc` 类型检查兜底，后端没有。（#6）
 - [ ] **限流只在单进程内有效**。所有限流都落在 `security.py` 的两个**模块级字典**里：登录失败计数 `_login_failures`（键是「IP + 学号」，默认 5 次 / 锁 300 秒；只服务登录）和通用计数器 `_hits`（按窗口内的次数挡手抖与刷量）。两者都不落盘、不共享。`_hits` 里目前有 7 组键：注册 `register:`（1 小时 20 次提交；只数「提交」这一件事，字段格式没过的请求不计入 —— 昵称或学号填重了再改一次，不该把自己那栋楼的出口 IP 封掉）、上传与预设下单 `upload:`（60 秒 20 次）、分片建会话 `chunkinit:`（60 秒 30 次）、分片上传 `chunkpart:`（60 秒 240 次）、工单轮询 `ticketpoll:`（60 秒 240 次），以及**两个未登录也能调的接口** —— 提交身份审核申请 `audit:`（1 小时 3 次）和查审核进度 `auditquery:`（1 小时 20 次）。所以单进程的 `waitress` 是对的；一旦换成多进程（如 `gunicorn -w 4`），每个进程各算各的，阈值会被成倍放宽且毫无提示。真要多进程，得先把这些计数器挪到 Redis。（#33）
-- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）。都是纯加列，没有重建表，也没有回填 —— 所以 `SCHEMA_VERSION` 现在是 `'13'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
+- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据 —— 所以 `SCHEMA_VERSION` 现在是 `'14'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
 - [ ] **窄屏没有专门放大触控目标**。新版组件尺寸沿用 Naive UI 的默认高度，手机上的按钮偏小，要补得先覆写组件库的尺寸令牌。（#35）
 - [ ] **两套前端要各自维护**。新版已经拆成模块（`frontend/src/`），经典版仍是单文件 `templates/index.html`。长期打算是让经典版退役，短期内改公共逻辑（比如后端字段改名）必须**两边同时改** —— 漏掉一边的典型症状是图表静默空白，不报错。（#46）
 

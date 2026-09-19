@@ -98,7 +98,7 @@ def upload_pay_qr():
     """上传（或替换）本人收款码。只收 PNG / JPG，且不超过 PAY_QR_MAX_BYTES。"""
     upload = request.files.get('file')
     if upload is None or not upload.filename:
-        return jsonify({'code': 1, 'msg': '请选择要上传的收款码图片'}), 400
+        return jsonify({'code': 400, 'msg': '请选择要上传的收款码图片'}), 400
 
     # basename 一次再去扩展名：上传方可能塞进 'a/b/c.png' 甚至 '..\\x.png'
     original_name = os.path.basename(upload.filename)
@@ -112,7 +112,7 @@ def upload_pay_qr():
         # 这里再写一次，日志就会变成「user=#2/小明 #2/小明 上传了……」。
         security_event('pay_qr_blocked_type', '上传了不在白名单内的收款码文件「%s」' % original_name[:80])
         return jsonify({
-            'code': 1,
+            'code': 400,
             'msg': '只支持图片格式：' + '、'.join('.' + e for e in PAY_QR_EXTENSIONS)
         }), 400
 
@@ -123,10 +123,10 @@ def upload_pay_qr():
     if not data:
         # 0 字节的图在各个界面上都表现为「收款码没显示出来」，用户只会认为功能坏了。
         # 在门口说清楚比他回头去猜为什么邮件里没图要省事。
-        return jsonify({'code': 1, 'msg': '这个图片是空的（0 字节），换一张再试'}), 400
+        return jsonify({'code': 400, 'msg': '这个图片是空的（0 字节），换一张再试'}), 400
     if len(data) > PAY_QR_MAX_BYTES:
         return jsonify({
-            'code': 1,
+            'code': 400,
             'msg': '图片太大了（上限 %d MB），请压缩后再上传'
                    % (PAY_QR_MAX_BYTES // (1024 * 1024))
         }), 400
@@ -138,14 +138,14 @@ def upload_pay_qr():
     # 有人把这里改成沿用用户传来的原始文件名 —— 那时这一行就是最后一道拦网。
     if Path(save_path).resolve().parent != _qr_dir():
         security_event('pay_qr_path_blocked', '收款码落盘路径不在收款码目录内')
-        return jsonify({'code': 1, 'msg': '上传失败，请稍后重试'}), 400
+        return jsonify({'code': 400, 'msg': '上传失败，请稍后重试'}), 400
 
     try:
         with open(save_path, 'wb') as fh:
             fh.write(data)
     except OSError:
         logger.exception('收款码：写文件失败（name=%s）', new_filename)
-        return jsonify({'code': 1, 'msg': '保存失败，请稍后重试'}), 500
+        return jsonify({'code': 500, 'msg': '保存失败，请稍后重试'}), 500
 
     with db_conn() as conn:
         try:
@@ -157,7 +157,7 @@ def upload_pay_qr():
             # 库没写进去，刚落盘的那张图就是孤儿，必须自己收拾掉
             logger.exception('收款码：写库失败，回滚已落盘的文件（name=%s）', new_filename)
             _remove_qr_file(new_filename)
-            return jsonify({'code': 1, 'msg': '保存失败，请稍后重试'}), 500
+            return jsonify({'code': 500, 'msg': '保存失败，请稍后重试'}), 500
 
     # 到这一步库里已经是新文件名了，旧图才允许删
     if old_filename and old_filename != new_filename:
@@ -180,7 +180,7 @@ def delete_pay_qr():
             conn.commit()
         except sqlite3.Error:
             logger.exception('收款码：删除时写库失败')
-            return jsonify({'code': 1, 'msg': '删除失败，请稍后重试'}), 500
+            return jsonify({'code': 500, 'msg': '删除失败，请稍后重试'}), 500
 
     _remove_qr_file(old_filename)
     logger.info('收款码：%s 已删除 ip=%s', actor_label(), client_ip())
