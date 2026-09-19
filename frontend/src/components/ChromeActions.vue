@@ -37,7 +37,7 @@ const theme = useThemeStore()
          月亮图标配"切换到深色主题"，这是按钮的读法。 -->
     <button
       type="button"
-      class="grid size-9 place-items-center"
+      class="tap-area grid size-9 place-items-center"
       style="color: var(--text-secondary)"
       :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
       :aria-label="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
@@ -52,7 +52,7 @@ const theme = useThemeStore()
     <RouterLink
       v-if="studentSwitch"
       to="/upload"
-      class="grid size-9 place-items-center no-underline"
+      class="tap-area grid size-9 place-items-center no-underline"
       style="color: var(--text-secondary)"
       title="切换到学生端"
       aria-label="切换到学生端"

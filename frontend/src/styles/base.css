@@ -1988,3 +1988,88 @@
   }
 
 }
+
+/* ══ 移动端：手指能碰到、按下去有回应、聚焦不缩放 ════════════════════
+ *
+ * 三条都是"只在手指上成立"的问题，所以主块挂在 `pointer: coarse` 下 ——
+ * 桌面鼠标不该因为这几条多出任何手感差异。宽度那条单独挂 640px 以下。
+ *
+ * 1. **触点补到 44px。** 站内最小的几颗控件在手指上偏小：名单里的「撤回」是 28px 高，
+ *    顶栏的图标按钮 36px。这里只扩**命中区**（伪元素向外铺），不动视觉尺寸、不动行高 ——
+ *    列表里那一排小按钮不会因此把行撑开。**破坏性操作优先**：撤回单子点错的代价比
+ *    点不到大得多。（Naive 的按钮不用 ::before/::after 画边框，那两个伪元素是空的，可以借。）
+ *
+ * 2. **按下去要有回应。** Tailwind 的 preflight 已经把 -webkit-tap-highlight-color
+ *    设成透明，于是触摸下按下没有任何反馈：点击要么立刻生效（导航），要么要等一次往返
+ *    （提交），中间那段是空的。这里补一层随主题走的按压底色（--muted 的同族），
+ *    不改尺寸也不加动画 —— 手指覆盖的本来就是那块地方。
+ *
+ * 3. **touch-action: manipulation。** 去掉双击缩放的判定窗口：连点两颗开关，
+ *    不该被解释成"放大"。双击缩放留给系统级手势，页面这一层不需要。
+ *
+ * 4. **表单控件在窄屏不小于 16px。** iOS Safari 在聚焦 font-size < 16px 的输入框时
+ *    会把整页放大一次，而放大之后**不会自己缩回来** —— 用户提交完发现页面歪了。
+ *    Naive 的控件字号走 --n-font-size，就地改写它即可（自定义属性就近生效，
+ *    不必动 themeOverrides 里那套桌面值）。 */
+@media (pointer: coarse) {
+  a[href],
+  button,
+  label,
+  [role='button'],
+  .n-switch,
+  .n-checkbox,
+  .n-radio,
+  .n-base-selection {
+    touch-action: manipulation;
+  }
+
+  a[href]:active,
+  button:active,
+  [role='button']:active {
+    background-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  }
+
+  /* 28px 的 tiny → 44px；34px 的 small → 44px。
+     position: relative 必须自己写：伪元素是绝对定位的，宿主不定位就会跑去认别的祖先。 */
+  .n-button--tiny-type,
+  .n-button--small-type,
+  .tap-area {
+    position: relative;
+  }
+
+  /* **只往上下扩，不往左右扩**：一排小按钮的左右间隔只有 4~6px，横向一扩就会盖住邻居，
+     而名单里那排恰好是「编辑 / 删除」这种破坏性组合 —— 点错一颗的代价比点不到大。
+     上下扩没有这个问题（行高 56px 上下，扩 8px 也不会碰到相邻行），
+     而一颗 56×28 的按钮补到 56×44 之后，手指的落点已经够宽了。 */
+  .n-button--tiny-type::after,
+  .n-button--small-type::after {
+    position: absolute;
+    inset: -8px 0;
+    content: '';
+  }
+
+  .n-button--small-type::after {
+    inset: -5px 0;
+  }
+
+  /* 站内自己的小图标按钮（顶栏那几颗）用这个类补命中区：36px 高 → 44px。 */
+  .tap-area::after {
+    position: absolute;
+    inset: -4px 0;
+    content: '';
+  }
+}
+
+@media (max-width: 640px) {
+  /* 输入控件 ≥16px：见上面第 4 条。
+     为什么必须 !important：Naive 那一支字号**写在组件的行内 style 上**（--n-font-size: 15px），
+     而它的元素规则又是 `.n-input .n-input__textarea-el` 这种两层写法 —— 不喊这一声，
+     无论怎么写选择器都差一层。实测过一次只有 input 变 16、textarea 留在 15 的样子。 */
+  .n-input input,
+  .n-input textarea,
+  .n-input .n-input__placeholder,
+  .n-base-selection .n-base-selection-label,
+  .n-base-selection-input {
+    font-size: 16px !important;
+  }
+}

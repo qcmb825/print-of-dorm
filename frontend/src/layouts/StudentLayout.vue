@@ -45,10 +45,22 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex min-h-full flex-col">
+  <!-- 安全区：viewport-fit=cover 之下页面会铺到刘海/圆角/home 指示条底下，
+       所以顶部与左右两边的内边距交给环境变量。底部标签栏那条在它自己身上。 -->
+  <div
+    class="flex min-h-full flex-col"
+    style="
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    "
+  >
     <header
       class="sticky top-0 z-20 border-b"
-      style="background-color: color-mix(in srgb, var(--background) 96%, transparent); border-color: var(--border)"
+      style="
+        background-color: color-mix(in srgb, var(--background) 96%, transparent);
+        border-color: var(--border);
+        padding-top: env(safe-area-inset-top);
+      "
     >
       <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:h-16 sm:px-5">
         <BrandMark />
@@ -189,6 +201,8 @@ style="--depth: 6px"
         backgroundColor: 'color-mix(in srgb, var(--background) 96%, transparent)',
         borderColor: 'var(--border)',
         paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'env(safe-area-inset-left)',
+        paddingRight: 'env(safe-area-inset-right)',
       }"
       aria-label="主导航"
     >

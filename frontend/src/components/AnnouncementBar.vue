@@ -79,7 +79,7 @@ const authorLine = computed(() => {
         </div>
         <NButton
           quaternary
-          class="!h-8 !w-8 !p-0"
+          class="tap-area !h-8 !w-8 !p-0"
           size="small"
           aria-label="关闭公告"
           style="color: var(--paper-muted)"

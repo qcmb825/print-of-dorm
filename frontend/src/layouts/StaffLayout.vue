@@ -224,6 +224,9 @@ onMounted(() => {
         style="
           background-color: color-mix(in srgb, var(--background) 96%, transparent);
           border-color: var(--border);
+          padding-top: env(safe-area-inset-top);
+          padding-left: calc(0.75rem + env(safe-area-inset-left));
+          padding-right: calc(0.75rem + env(safe-area-inset-right));
         "
       >
         <NDrawer v-model:show="drawerOpen" :width="248" placement="left">
