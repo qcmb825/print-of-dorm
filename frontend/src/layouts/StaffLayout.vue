@@ -263,7 +263,7 @@ onMounted(() => {
 
         <button
           type="button"
-          class="grid size-9 place-items-center"
+          class="icon-btn grid size-9 place-items-center"
           style="color: var(--text-secondary)"
           aria-label="打开导航菜单"
           @click="drawerOpen = true"
@@ -280,7 +280,7 @@ onMounted(() => {
           <button
             v-if="auth.advanced"
             type="button"
-            class="grid size-9 place-items-center"
+            class="icon-btn grid size-9 place-items-center"
             style="color: var(--accent-text)"
             title="退出高级视图"
             aria-label="退出高级视图"

@@ -65,6 +65,28 @@
     color: var(--accent-text);
   }
 
+  /* 裸 <button> 的外观重置。
+   *
+   * 与上面 <a> 那条同一个根源：项目刻意不引 tailwind preflight，于是**没接 Naive 的
+   * 原生 <button>** 全都带着浏览器默认的按钮皮肤 —— 浅色下是一块灰底、一圈描边、
+   * 还有 Win32 时代那种凸起的斜面（管理端窄屏顶栏的菜单键与主题键当时就是这个样子，
+   * 用户截图报的"太丑"就是它）。凡是这类按钮，模板里都只写了布局与颜色，
+   * 没人写背景 —— 因为谁都没想起来 UA 皮肤的存在。
+   *
+   * 必须留在 @layer base：Naive 的组件样式在层外，永远赢过这里，
+   * 所以 NButton 一根汗毛都不少；赢它的只有 UA，而这正是目的。
+   * 不动 text-align —— UA 给的居中恰好是工具条图标想要的，
+   * 要左对齐的地方（工单列表行）自己写了 text-left。 */
+  button {
+    appearance: none;
+    background-color: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
   /* 数字、编号、取件码、时间戳一律走等宽，这是参考站最出效果的一处细节 */
   .tnum,
   code,
@@ -185,6 +207,21 @@
   .nav-link:active,
   .n-button:not(.n-button--disabled):active {
     transform: scale(0.98);
+  }
+
+  /* 方形图标按钮：外壳上的小动作（亮暗切换、去学生端、抽屉、退出高级视图）。
+   * 尺寸与图标由调用处给（size-9 + place-items-center），这里只负责**悬停**：
+   * 裸 <button> 的 UA 皮肤被上面那条重置剥掉之后，桌面上没有任何"这里可以按"的回应，
+   * 图标会读成一张静态插图。铺一层 --muted —— 与导航激活项、抽屉选中行同一块底。
+   * 触屏那半边不用它：pointer:coarse 的 :active 已经给了按压反馈。 */
+  .icon-btn {
+    transition: background-color var(--motion-dur-fast) ease;
+  }
+
+  @media (hover: hover) {
+    .icon-btn:hover {
+      background-color: var(--muted);
+    }
   }
 
   /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理。

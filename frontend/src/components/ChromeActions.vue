@@ -5,7 +5,9 @@
  *  管理端窄屏顶栏 —— 而"外壳在两端应当是同一个"是这套界面的既定规矩（见两个布局里状态带
  *  那处注释）。分开写三遍，下一次调尺寸或换图标就一定会漏掉一个。
  *
- *  形态跟着站内既有的那颗图标按钮走：36px 方框、无边框、颜色走 --text-secondary。
+ *  形态：36px 方框、颜色走 --text-secondary。**无边框、无底色不是这里写的** ——
+ *  那是 base.css 里对裸 <button> 的外观重置（这条注释原来写着"无边框"，
+ *  但样式从没落地，浏览器默认的那层灰斜面一直都在，直到被截图报出来）。
  *  不写圆角也不写阴影 —— 这套界面里所有圆形与投影都已经清掉了（见 DESIGN_RULES）。
  *
  *  主题那一个**两个端都出**：它原本在两端都有一份，阶段 2 连同圆形按钮一起被拆掉，
@@ -37,7 +39,7 @@ const theme = useThemeStore()
          月亮图标配"切换到深色主题"，这是按钮的读法。 -->
     <button
       type="button"
-      class="tap-area grid size-9 place-items-center"
+      class="tap-area icon-btn grid size-9 place-items-center"
       style="color: var(--text-secondary)"
       :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
       :aria-label="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
@@ -52,7 +54,7 @@ const theme = useThemeStore()
     <RouterLink
       v-if="studentSwitch"
       to="/upload"
-      class="tap-area grid size-9 place-items-center no-underline"
+      class="tap-area icon-btn grid size-9 place-items-center no-underline"
       style="color: var(--text-secondary)"
       title="切换到学生端"
       aria-label="切换到学生端"
