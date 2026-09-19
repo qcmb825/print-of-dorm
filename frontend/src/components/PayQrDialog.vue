@@ -122,11 +122,15 @@ async function onRemove(): Promise<void> {
         class="grid min-h-[200px] place-items-center border border-dashed p-4"
         style="border-color: var(--border); background-color: var(--muted)"
       >
+        <!-- 底板永远是白的，且留出 8px 静区（二维码规范里四周必须留白，不然扫不出来）。
+             上传的图可能带透明通道，本身也可能是深色底截图 —— 压在暗色面上这些都会读不出。
+             二维码是**印刷件**，扫的是黑白关系，所以这一处的白不跟随主题。 -->
         <img
           v-if="hasQr"
           :src="previewUrl"
           alt="我的微信收款码"
-          class="max-h-[260px] w-auto max-w-full object-contain"
+          class="max-h-[260px] w-auto max-w-full object-contain p-2"
+          style="background-color: #fff"
           @error="broken = true"
         />
         <div v-else class="flex flex-col items-center gap-2 text-center">

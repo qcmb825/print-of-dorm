@@ -724,7 +724,10 @@
     font-size: var(--text-2xs);
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--text-quaternary);
+    /* 走次要文字档而不是装饰档：PATH / CODE / SYNC 是**要读的**（读数靠它对应到哪一栏），
+       而装饰档（--text-quaternary）在浅色下只有约 2.9:1、暗色下 3.71:1，都不达小字门槛。
+       装饰档那条"只作纯装饰"的注解，靠这一类用法搬走才算真的成立。 */
+    color: var(--text-tertiary);
     white-space: nowrap;
   }
 

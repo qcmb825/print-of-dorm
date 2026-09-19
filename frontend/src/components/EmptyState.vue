@@ -38,7 +38,7 @@ withDefaults(
         <slot name="icon" />
       </div>
       <p class="mt-3 text-sm font-semibold" role="status">{{ title }}</p>
-      <p v-if="hint" class="mt-1 text-xs text-ink-4">{{ hint }}</p>
+      <p v-if="hint" class="mt-1 text-xs text-ink-3">{{ hint }}</p>
       <span class="ticks mx-auto mt-3.5 block w-28" aria-hidden="true" />
       <div v-if="$slots.action" class="mt-4 flex justify-center">
         <slot name="action" />
