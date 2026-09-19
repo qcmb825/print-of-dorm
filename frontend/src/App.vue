@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, dateZhCN, zhCN } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
 import TransitionReceipt from '@/components/TransitionReceipt.vue'
@@ -37,6 +37,35 @@ const shellTransitionKey = computed(() => {
  *  不能改用「等 router.isReady() 再 mount」——那会让 #app 一直是空的，
  *  后端慢或不可达时用户连环境光背景都看不到。 */
 const routed = computed(() => route.matched.length > 0)
+
+/** 给开屏层放行：index.html 里那一层盖着屏幕，它等的是这里这一下。
+ *
+ *  时机是「第一帧内容真的画出来了」，而不是「路由解析完了」—— 两者之间还隔着一次渲染，
+ *  早一帧放行就会让开屏层在应用还没画出东西时开始让位，中间那一帧是一屏白。
+ *  所以等下一次绘制（rAF 一次还在当前帧里，两次之后才是新的一帧）。
+ *
+ *  通信走 <html> 上的 data-boot，与 data-veil-phase / data-receipt 同一套做法。
+ *  用属性而不是事件，是因为开屏层比应用先执行：它没法订阅一个"还没发生过"的事件，
+ *  由它轮询属性反而与加载顺序无关。 */
+function releaseBootLayer(): void {
+  if (document.documentElement.dataset.boot === 'ready') return
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.dataset.boot = 'ready'
+      })
+    })
+  })
+}
+
+// 只管第一次：路由落定之后放行一次就够，之后的导航是换场层的事。
+watch(
+  routed,
+  (isRouted) => {
+    if (isRouted) releaseBootLayer()
+  },
+  { immediate: true },
+)
 
 /** 外壳档的场记读数。必须在这里写死，不能从 route.meta 取：换场那一刻读到的 meta
  *  是**目标页**的，登录 → 学生端会读到「下单打印」，而这一层换掉的是整个外壳，

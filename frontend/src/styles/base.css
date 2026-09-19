@@ -1632,6 +1632,73 @@
   }
 }
 
+/* ══ 开屏层的出场 ══════════════════════════════════════════════════
+ * 开屏层的结构与它自己的样子写在 index.html 里（它必须在样式表之前就能画出来），
+ * **只有出场这一段在这儿** —— 因为出场必须与换场面板是同一件事：一块宽出两侧的
+ * 斜切面板单向穿过屏幕，黄层殿后一个 --motion-route-wipe-lead。写在这里才读得到
+ * 那几支令牌；两处各写一份的话，斜角与时长迟早对不上，而「启动的最后一下和一次
+ * 切页不是同一个动作」这件事，看的人是能感觉出来的。
+ *
+ * 节拍与换场同构：先一拍，再让面板走。换场那一拍是 --veil-latch（留给"旧页先自己
+ * 淡掉一点"），这里那一拍是读数退场。面板让开用的是换场的**入相位**那一段
+ * （--motion-dur-route-enter）：开屏层本来就是"盖着"的状态，它只需要让开。
+ */
+.boot__mat,
+.boot__under {
+  /* 静止时就带上斜角（换场面板也是常驻斜角），出场才是纯平移 ——
+     斜角在出场过程中由 0 渐变到 4deg 的话，那条让开中的边会一边走一边转。
+     **两层必须同时带上**：只给黑层的话，黄层的斜角是从 0 度渐变的，
+     整段扫动里两条边都不平行 —— 那条黄边会变成一头宽一头窄的楔形（实测差 17px）。 */
+  transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
+}
+
+.boot[data-phase='exit'] {
+  /* 出场期间不再吃指针：面板还在扫开的时候，页面已经该能点了 ——
+     与换场层一样是"盖着但不当路"（那一层也一直 pointer-events: none）。 */
+  pointer-events: none;
+}
+
+.boot[data-phase='exit'] .boot__hud {
+  opacity: 0;
+  transition: opacity var(--motion-dur-fast) var(--motion-ease-out);
+}
+
+.boot[data-phase='exit'] .boot__mat,
+.boot[data-phase='exit'] .boot__under {
+  transition: transform var(--motion-dur-route-enter) var(--motion-ease-out) var(--motion-dur-fast);
+  will-change: transform;
+}
+
+.boot[data-phase='exit'] .boot__mat {
+  transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
+}
+
+/* 黄层比黑层少走一个 --motion-route-wipe-lead，于是它殿后：黑层让开的每一寸里，
+   最先露出来的都是那条黄边（与换场入相位、回执条同一条规矩：黄带先进后出）。 */
+.boot[data-phase='exit'] .boot__under {
+  transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
+    skewX(var(--motion-route-wipe-skew));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动效下不做横扫：一块全屏面板斜着划过、外加一条黄带闪过，正好踩在前庭与闪阈
+     那两条上（与换场那一段同一个判断）。这里只留一次明暗 —— 就地淡掉，黄层整块不出现。 */
+  .boot__under {
+    display: none;
+  }
+
+  .boot[data-phase='exit'] {
+    opacity: 0;
+    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out);
+  }
+
+  .boot[data-phase='exit'] .boot__mat,
+  .boot[data-phase='exit'] .boot__under {
+    transform: none;
+    transition: none;
+  }
+}
+
 /* ══ 切页时装饰元素动起来 ══════════════════════════════════════════
  * 换场相位被镜像到 <html> 的 data-veil-phase 上（见 composables/route-veil.ts），
  * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块斜切面板在动。
