@@ -50,6 +50,6 @@ const valueStyle = computed(() => (props.accent || ticking.value ? { color: 'var
     >
       {{ value }}
     </div>
-    <div v-if="hint" class="text-xs text-ink-4">{{ hint }}</div>
+    <div v-if="hint" class="text-xs text-ink-3">{{ hint }}</div>
   </div>
 </template>

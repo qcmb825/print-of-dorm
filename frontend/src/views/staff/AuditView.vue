@@ -173,17 +173,17 @@ onMounted(load)
                   >
                     {{ item.status_label ?? STATUS_META[item.status].label }}
                   </span>
-                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-4 tech-label--cn text-xs">
+                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-3 tech-label--cn text-xs">
                     由 {{ item.reviewer_nickname }} 处理
                   </span>
-                  <span v-else class="tech-label text-ink-4 text-2xs">#{{ item.id }}</span>
+                  <span v-else class="tech-label text-ink-3 text-2xs">#{{ item.id }}</span>
                 </div>
 
                 <p class="mt-2 text-xs text-ink-3">
                   {{ CONTACT_LABELS[item.contact_type] }}：
                   <span class="font-mono">{{ item.contact }}</span>
                 </p>
-                <p class="mt-1 text-xs text-ink-4">提交于 {{ fullTime(item.create_time) }}</p>
+                <p class="mt-1 text-xs text-ink-3">提交于 {{ fullTime(item.create_time) }}</p>
               </div>
 
               <div class="flex shrink-0 items-center gap-2">
@@ -215,7 +215,7 @@ onMounted(load)
             </div>
 
             <div v-if="item.note" class="mt-3 border-l-2 pl-3 text-sm leading-6" style="border-color: var(--border)">
-              <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">申请人说明</div>
+              <div class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">申请人说明</div>
               <p class="whitespace-pre-wrap break-words">{{ item.note }}</p>
             </div>
 

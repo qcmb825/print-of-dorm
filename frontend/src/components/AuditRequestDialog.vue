@@ -217,7 +217,7 @@ async function check(): Promise<void> {
 
         <p class="mb-4 text-sm leading-6 text-ink-3">
           名单上查不到学号时才需要提交。填一份能联系到你的资料，由管理员人工核对。
-          <span class="text-ink-4">一个学号只能提交一次。</span>
+          <span class="text-ink-3">一个学号只能提交一次。</span>
         </p>
 
         <NForm
@@ -252,7 +252,7 @@ async function check(): Promise<void> {
               />
             </div>
           </NFormItem>
-          <p class="-mt-3 mb-3 text-xs text-ink-4">
+          <p class="-mt-3 mb-3 text-xs text-ink-3">
             {{ CONTACT_HINT[form.contact_type] }}
           </p>
 
@@ -356,7 +356,7 @@ async function check(): Promise<void> {
           </p>
         </div>
 
-        <p v-else class="mt-5 flex items-center gap-1.5 text-xs text-ink-4">
+        <p v-else class="mt-5 flex items-center gap-1.5 text-xs text-ink-3">
           <CircleHelp :size="13" />
           没有查到记录。学号与联系方式都对才查得到。
         </p>

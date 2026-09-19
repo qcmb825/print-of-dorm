@@ -38,7 +38,7 @@ const options = computed<DropdownOption[]>(() => [
         h('div', { class: 'text-sm font-bold' }, auth.user?.real_name || auth.displayName),
         h(
           'div',
-          { class: 'tnum mt-0.5 text-xs opacity-60' },
+          { class: 'tnum mt-0.5 text-xs text-ink-3' },
           `学号 ${auth.user?.student_id || '—'}`,
         ),
       ]),

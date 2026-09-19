@@ -326,7 +326,7 @@ onMounted(async () => {
               </div>
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
-            <p class="mt-3 text-xs text-ink-4">
+            <p class="mt-3 text-xs text-ink-3">
               管理员接单打印后，凭上面的取件码到打印点取件。
             </p>
           </div>
@@ -458,7 +458,7 @@ onMounted(async () => {
               <Upload :size="20" />
             </span>
             <p class="text-base font-semibold">点击选择文件，或拖到这里</p>
-            <p class="tech-label text-ink-4 text-2xs">PDF · JPG · PNG · DOC · DOCX</p>
+            <p class="tech-label text-ink-3 text-2xs">PDF · JPG · PNG · DOC · DOCX</p>
           </div>
         </NUploadDragger>
       </NUpload>
@@ -478,7 +478,7 @@ onMounted(async () => {
         </span>
         <div class="min-w-0 flex-1">
           <p class="truncate text-sm font-semibold">{{ selected.name }}</p>
-          <p class="tnum text-2xs text-ink-4">
+          <p class="tnum text-2xs text-ink-3">
             {{ selectedFile ? prettySize(selectedFile.size) : '' }}
           </p>
         </div>
@@ -534,7 +534,7 @@ onMounted(async () => {
           />
         </NFormItem>
       </div>
-      <p class="mt-2 text-xs text-ink-4">
+      <p class="mt-2 text-xs text-ink-3">
         份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
         不确定就用「不指定」，会按常规纸走。
       </p>
@@ -561,7 +561,7 @@ onMounted(async () => {
       <div v-if="submitting && !usingPreset" class="mt-4">
         <div class="mb-1.5 flex items-center justify-between gap-3 text-xs">
           <span class="text-ink-3">{{ progressHint }}</span>
-          <span class="tnum shrink-0 text-ink-4">
+          <span class="tnum shrink-0 text-ink-3">
             {{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}
           </span>
         </div>
@@ -596,7 +596,7 @@ onMounted(async () => {
           </template>
           {{ submitting ? (usingPreset ? '提交中' : '上传中') : '提交订单' }}
         </NButton>
-        <span class="tech-label flex items-center gap-1.5 text-ink-4 tech-label--cn text-xs">
+        <span class="tech-label flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
           <Hash :size="12" />
           <template v-if="usingPreset">不需要上传文件，提交后立即生成取件码</template>
           <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>

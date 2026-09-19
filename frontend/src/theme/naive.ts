@@ -236,6 +236,39 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColorPressedPrimary: t.primaryForeground,
       textColorFocusPrimary: t.primaryForeground,
       paddingMedium: '0 18px',
+      /* 禁用态。Naive 的默认是「主按钮仍然黄底，字换成 baseColor（浅色下就是白）」，
+       * 再乘一层 --n-opacity-disabled（0.5）—— 实测 1.03:1，浅色下那颗禁用的「提交订单」
+       * 整个读不出来（用户截图报的就是它）。
+       * 改成：黄让位给中性底、字用三级文字色、描边透明。
+       * 「不可点」由颜色不再冒充动作来表达，不由看不清来表达。 */
+      colorDisabledPrimary: t.muted,
+      textColorDisabledPrimary: t.textTertiary,
+      borderDisabledPrimary: '1px solid transparent',
+      /* 文字型 / quaternary 按钮的禁用态走同一支。仓库里有几颗「禁用但保留可见 + title 写明
+       * 原因」的按钮（我的订单那颗「撤回」就是）——那种标签是特意留着给人读的，
+       * 掉到 2.5:1 等于白留。 */
+      textColorDisabled: t.textTertiary,
+      textColorTextDisabled: t.textTertiary,
+      textColorGhostDisabled: t.textTertiary,
+    },
+    Radio: {
+      /* 选中态。Naive 的默认是 buttonColorActive=baseColor（白）、buttonTextColorActive=
+       * primaryColor —— 也就是「白底 + 荧光黄的字」，浅色下 1.11:1，「黑白」「单面」这些
+       * 选项名直接看不见（配色的老规矩：primary 只做能承载深色内容的面，从来不当字用）。
+       * 改成「黄底 + 深色内容」，与导航激活项、主按钮同一条规矩。 */
+      buttonColorActive: t.primary,
+      buttonTextColorActive: t.primaryForeground,
+      buttonBorderColorActive: t.primary,
+      /* 悬停态 Naive 同样给 primaryColor 当字，铺在白底上同样读不出。 */
+      buttonTextColorHover: t.accentText,
+      /* 焦点环也是它给的 primaryColor —— 荧光黄当环只有约 1.05:1，
+       * 键盘用户看不到焦点落在哪个选项上（WCAG 2.4.11）。 */
+      buttonBoxShadowFocus: `inset 0 0 0 1px ${t.accentText}, 0 0 0 2px ${t.border}`,
+      boxShadowFocus: `inset 0 0 0 1px ${t.accentText}, 0 0 0 2px ${t.border}`,
+      /* 圆点型（NRadio）虽然眼下没用，但同样的坑：黄点在白底上不可见。 */
+      dotColorActive: t.accentText,
+      /* 禁用但仍是选项名（「使用预设打印服务」在没有预设时），读得出来才知道有这条路。 */
+      textColorDisabled: t.textTertiary,
     },
     DataTable: {
       borderColor: t.border,

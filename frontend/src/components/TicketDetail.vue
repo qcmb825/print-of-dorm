@@ -186,7 +186,7 @@ onBeforeUnmount(pause)
         <h3 class="truncate font-heading text-base font-bold">
           {{ ticket?.subject ?? '读取中' }}
         </h3>
-        <p class="tech-label mt-1 text-ink-4 tech-label--cn text-xs">
+        <p class="tech-label mt-1 text-ink-3 tech-label--cn text-xs">
           #{{ ticketId }}
           <template v-if="staff && ticket"> · 提交人 {{ ticket.owner_nickname }}</template>
           <template v-if="ticket"> · {{ TICKET_STATUS_LABEL[ticket.status] }}</template>
@@ -219,7 +219,7 @@ onBeforeUnmount(pause)
           >
             <div class="max-w-[86%]">
               <div
-                class="mb-1 flex items-center gap-2 text-xs text-ink-4"
+                class="mb-1 flex items-center gap-2 text-xs text-ink-3"
                 :class="item.sender_id === currentUserId ? 'justify-end' : ''"
               >
                 <span class="font-semibold">{{ item.sender_nickname ?? '（已注销）' }}</span>
@@ -255,7 +255,7 @@ onBeforeUnmount(pause)
         @keydown.enter.exact.prevent="send"
       />
       <div class="mt-2 flex items-center justify-between gap-3">
-        <span class="tnum text-2xs text-ink-4">{{ replyBody.length }} / 1000</span>
+        <span class="tnum text-2xs text-ink-3">{{ replyBody.length }} / 1000</span>
         <NButton
           type="primary"
           size="small"

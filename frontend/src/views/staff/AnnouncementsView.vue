@@ -209,13 +209,13 @@ onMounted(load)
 
         <!-- 实时预览：深浅两套都给出，与顶部公告条共用同一套字体映射和同一道对比度判定 -->
         <div class="mb-3">
-          <div class="tech-label mb-1.5 flex items-center gap-1.5 text-ink-4 tech-label--cn text-xs">
+          <div class="tech-label mb-1.5 flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
             <Eye :size="12" />
             预览
           </div>
           <div class="grid gap-2 sm:grid-cols-2">
             <div v-for="item in previews" :key="item.key">
-              <div class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">{{ item.label }}</div>
+              <div class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">{{ item.label }}</div>
               <div
                 class="border p-3"
                 :style="{ backgroundColor: item.paper, borderColor: item.line }"
@@ -224,7 +224,7 @@ onMounted(load)
                   {{ form.content.trim() || '公告内容会显示在这里' }}
                 </p>
               </div>
-              <p v-if="item.overridden" class="mt-1 text-xs text-ink-4">
+              <p v-if="item.overridden" class="mt-1 text-xs text-ink-3">
                 对比度不足 · 会回落到主题文字色
               </p>
             </div>
@@ -244,7 +244,7 @@ onMounted(load)
           </NButton>
           <NButton v-if="editingId !== null" quaternary @click="resetForm">取消编辑</NButton>
         </div>
-        <p v-if="editingId === null" class="mt-3 text-xs text-ink-4">
+        <p v-if="editingId === null" class="mt-3 text-xs text-ink-3">
           保存后立即生效，并停用上一条公告。
         </p>
       </section>
@@ -254,7 +254,7 @@ onMounted(load)
       <section class="lg:border-l lg:border-[var(--border)] lg:pl-4">
         <h3 class="mb-3 font-heading text-base font-bold">
           历史公告
-          <span class="tech-label ml-2 text-ink-4 tech-label--cn text-xs">最近 50 条</span>
+          <span class="tech-label ml-2 text-ink-3 tech-label--cn text-xs">最近 50 条</span>
         </h3>
 
         <div v-if="loading && !list.length" class="flex flex-col gap-2">
@@ -296,17 +296,17 @@ onMounted(load)
                     :style="
                       item.is_active === 1
                         ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
-                        : { backgroundColor: 'var(--muted)', color: 'var(--text-quaternary)' }
+                        : { backgroundColor: 'var(--muted)', color: 'var(--text-tertiary)' }
                     "
                   >
                     {{ item.is_active === 1 ? '生效中' : '已停用' }}
                   </span>
-                  <span class="tnum text-xs text-ink-4">
+                  <span class="tnum text-xs text-ink-3">
                     #{{ item.id }} · {{ ANNOUNCE_FONTS[item.font_family]?.label ?? item.font_family }}
                     {{ item.font_size }}px ·
                     <span :style="{ color: item.font_color }">{{ item.font_color }}</span>
                   </span>
-                  <span class="text-xs text-ink-4">
+                  <span class="text-xs text-ink-3">
                     {{ item.author ?? '系统' }} · {{ shortTime(item.update_time) }}
                   </span>
                 </div>

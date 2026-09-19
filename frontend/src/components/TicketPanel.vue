@@ -179,13 +179,13 @@ onMounted(async () => {
                 <span
                   v-else
                   class="tech-label shrink-0 tech-label--cn text-xs"
-                  :style="{ color: ticket.status === 'open' ? 'var(--secondary)' : 'var(--text-quaternary)' }"
+                  :style="{ color: ticket.status === 'open' ? 'var(--status-printing)' : 'var(--text-tertiary)' }"
                 >
                   {{ TICKET_STATUS_LABEL[ticket.status] }}
                 </span>
               </div>
               <p class="mt-1 line-clamp-2 text-xs text-ink-3">{{ ticket.last_body }}</p>
-              <p class="tech-label mt-1.5 text-ink-4 tech-label--cn text-xs">
+              <p class="tech-label mt-1.5 text-ink-3 tech-label--cn text-xs">
                 #{{ ticket.id }}
                 <template v-if="staff && ticket.owner_nickname"> · {{ ticket.owner_nickname }}</template>
                 · {{ shortTime(ticket.update_time) }} · {{ ticket.msg_count }} 条

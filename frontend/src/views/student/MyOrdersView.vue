@@ -165,7 +165,7 @@ async function withdraw(order: Order): Promise<void> {
          读起来像仪表读数窗。pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
     <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
+        <div class="tech-label text-ink-3 tech-label--cn text-xs">进行中</div>
         <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
           {{ summary.active }}
         </div>
@@ -173,20 +173,20 @@ async function withdraw(order: Order): Promise<void> {
       <!-- 「可取了」那格的数字本来就是强调色，所以这一跳在它身上看不见 ——
            不给它另发明第二种信号（同一页里两种变化反馈比少一种更容易误读）。 -->
       <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-4 tech-label--cn text-xs">可取了</div>
+        <div class="tech-label text-ink-3 tech-label--cn text-xs">可取了</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
           {{ summary.ready }}
         </div>
       </div>
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-4 tech-label--cn text-xs">已取件</div>
+        <div class="tech-label text-ink-3 tech-label--cn text-xs">已取件</div>
         <div class="value-tick tnum font-heading text-xl font-bold" :class="tickDone && 'value-tick--on'">
           {{ summary.done }}
         </div>
       </div>
       <!-- 合计只统计当前这一页拉到的订单（此接口不带分页，学生自己能看到全部） -->
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-4 tech-label--cn text-xs">已计费合计</div>
+        <div class="tech-label text-ink-3 tech-label--cn text-xs">已计费合计</div>
         <div class="value-tick tnum font-heading text-xl font-bold" :class="tickSpent && 'value-tick--on'">
           ￥{{ spent.toFixed(2) }}
         </div>
@@ -211,7 +211,7 @@ async function withdraw(order: Order): Promise<void> {
           <Inbox :size="30" />
         </div>
         <p class="mt-3 text-sm font-semibold">还没有订单</p>
-        <p class="mt-1 text-xs text-ink-4">
+        <p class="mt-1 text-xs text-ink-3">
           去「下单打印」提交第一份文件 · 提交后立刻生成取件码
         </p>
         <span class="ticks mx-auto mt-4 block w-32" aria-hidden="true" />
@@ -301,7 +301,7 @@ async function withdraw(order: Order): Promise<void> {
                  在列表里也读得出来。 -->
           <div class="flex shrink-0 items-end gap-x-5">
             <div>
-              <div class="tech-label mb-0.5 text-ink-4 tech-label--cn text-xs">费用</div>
+              <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">费用</div>
               <!-- 未计费显示「未计费」而不是「￥0.00」：刚提交的订单本来就是 null，
                    写成 0 元会让学生以为这单不要钱。 -->
               <div
@@ -310,13 +310,13 @@ async function withdraw(order: Order): Promise<void> {
               >
                 ￥{{ order.price.toFixed(2) }}
               </div>
-              <div v-else class="text-sm leading-[23px] text-ink-4">
+              <div v-else class="text-sm leading-[23px] text-ink-3">
                 {{ priceLabel(order.price) }}
                 <span class="text-xs">· 待管理员确认</span>
               </div>
             </div>
             <div class="bracket-lg px-2.5 py-1.5" style="--bracket-arm: 16px">
-              <div class="tech-label mb-0.5 text-ink-4 tech-label--cn text-xs">取件码</div>
+              <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">取件码</div>
               <div
                 class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"
                 :style="order.status === '可取了' ? { color: 'var(--accent-text)' } : undefined"
@@ -340,7 +340,7 @@ async function withdraw(order: Order): Promise<void> {
           备注：{{ order.remark }}
         </p>
 
-        <div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-4">
+        <div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-3">
           <span class="flex items-center gap-1">
             <Clock :size="12" />
             提交 {{ fullTime(order.create_time) }}

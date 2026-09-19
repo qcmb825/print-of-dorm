@@ -220,7 +220,7 @@ onMounted(load)
             >
               {{ orderFileLabel(order) }}
             </h2>
-            <p class="tech-label mt-1 text-ink-4 tech-label--cn text-xs">
+            <p class="tech-label mt-1 text-ink-3 tech-label--cn text-xs">
               提交于 {{ fullTime(order.create_time) }}
             </p>
           </div>
@@ -264,7 +264,7 @@ onMounted(load)
         <p class="whitespace-pre-wrap break-words text-sm leading-6">
           {{ order.preset_content }}
         </p>
-        <p class="mt-2 text-xs text-ink-4">
+        <p class="mt-2 text-xs text-ink-3">
           这一单没有上传文件。上面那段是下单当时的快照，
           预设后来改了或删了，这里显示的仍是学生当时看到的原文。
         </p>
@@ -283,7 +283,7 @@ onMounted(load)
               class="flex items-baseline justify-between gap-3 py-1.5"
               style="border-color: var(--border)"
             >
-              <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+              <dt class="shrink-0 text-xs text-ink-3">{{ field.label }}</dt>
               <dd class="min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                 {{ field.value ?? '—' }}
               </dd>
@@ -292,7 +292,7 @@ onMounted(load)
 
           <!-- 备注单独一块、不截断：它是学生自己写的原话，
                截一半反而更容易看错（「只打第 1 页」和「只打第 1 页到第 3 页」）。 -->
-          <p class="mt-2 text-xs text-ink-4">备注</p>
+          <p class="mt-2 text-xs text-ink-3">备注</p>
           <p
             v-if="order.remark"
             class="mt-1 whitespace-pre-wrap break-words p-2 text-sm leading-6"
@@ -300,7 +300,7 @@ onMounted(load)
           >
             {{ order.remark }}
           </p>
-          <p v-else class="mt-1 text-sm text-ink-4">学生没有填写备注</p>
+          <p v-else class="mt-1 text-sm text-ink-3">学生没有填写备注</p>
         </section>
 
         <div class="flex flex-col gap-3">
@@ -313,7 +313,7 @@ onMounted(load)
                 class="flex items-baseline justify-between gap-3 py-1.5"
                 style="border-color: var(--border)"
               >
-                <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+                <dt class="shrink-0 text-xs text-ink-3">{{ field.label }}</dt>
                 <dd class="min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                   {{ field.value ?? '—' }}
                 </dd>
@@ -330,7 +330,7 @@ onMounted(load)
                 class="flex items-baseline justify-between gap-3 py-1.5"
                 style="border-color: var(--border)"
               >
-                <dt class="shrink-0 text-xs text-ink-4">{{ field.label }}</dt>
+                <dt class="shrink-0 text-xs text-ink-3">{{ field.label }}</dt>
                 <dd class="tnum min-w-0 truncate text-right text-sm" :title="field.value ?? ''">
                   {{ field.value ?? '—' }}
                 </dd>
@@ -348,7 +348,7 @@ onMounted(load)
               <template #icon><Download :size="14" /></template>
               下载文件（{{ formatBytes(order.file_size) }}）
             </NButton>
-            <p v-else-if="order.claimed_by === null" class="mt-3 text-xs text-ink-4">
+            <p v-else-if="order.claimed_by === null" class="mt-3 text-xs text-ink-3">
               接单后才能下载文件。
             </p>
           </section>
@@ -358,7 +358,7 @@ onMounted(load)
       <section class="panel p-4">
         <h3 class="tech-label mb-4 flex flex-wrap items-center gap-2 text-ink-3 tech-label--cn text-xs">
           操作记录
-          <span class="text-ink-4">{{ logs.length }} 条</span>
+          <span class="text-ink-3">{{ logs.length }} 条</span>
         </h3>
 
         <NTimeline v-if="logs.length">
@@ -386,13 +386,13 @@ onMounted(load)
 
         <!-- 老订单在这张表里本来就是空的：留痕是这次升级才加的，
              不能拿 orders 那几个时间戳倒推补几条（倒推出来的操作人只会是错的）。 -->
-        <p v-else class="text-xs leading-6 text-ink-4">
+        <p v-else class="text-xs leading-6 text-ink-3">
           这一单还没有操作记录。留痕是后加的，升级前的步骤不会被倒推补录 ——
           与其显示一条猜出来的记录，不如说清这里没有。
         </p>
       </section>
 
-      <p class="tech-label mt-3 text-ink-4 tech-label--cn text-xs">最后更新 {{ shortTime(order.update_time) }}</p>
+      <p class="tech-label mt-3 text-ink-3 tech-label--cn text-xs">最后更新 {{ shortTime(order.update_time) }}</p>
     </template>
   </div>
 </template>

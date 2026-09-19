@@ -150,7 +150,7 @@ function close(): void {
     title="取件核对"
     :bordered="false"
   >
-    <p class="mb-3 text-xs leading-5 text-ink-4">
+    <p class="mb-3 text-xs leading-5 text-ink-3">
       输入取件码回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
     </p>
 
@@ -191,7 +191,7 @@ function close(): void {
             >
               {{ orderFileLabel(order) }}
             </p>
-            <p class="tnum mt-0.5 text-2xs text-ink-4">
+            <p class="tnum mt-0.5 text-2xs text-ink-3">
               #{{ order.id }} · {{ shortTime(order.create_time) }}
             </p>
           </div>
@@ -217,7 +217,7 @@ function close(): void {
         <!-- 姓名和学号放在最显眼的一格：这一屏存在的理由就是「把纸交对人」，
              昵称是学生自己起的、重名和改名都很常见，对不上柜台前的人。 -->
         <div class="mt-3 border-t pt-3" style="border-color: var(--border)">
-          <p class="tech-label mb-1 text-ink-4 tech-label--cn text-xs">核对领取人</p>
+          <p class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">核对领取人</p>
           <p class="text-base leading-6 font-bold">
             {{ order.owner_real_name ?? order.owner_nickname ?? '（账号已注销）' }}
             <span class="tnum ml-1 text-xs font-normal text-ink-3">
@@ -236,7 +236,7 @@ function close(): void {
         <div class="mt-3 flex flex-wrap items-center gap-x-3 border-t pt-3 text-xs" style="border-color: var(--border)">
           <span
             :class="
-              order.price === null || order.price === undefined ? 'text-ink-4' : 'tnum font-bold'
+              order.price === null || order.price === undefined ? 'text-ink-3' : 'tnum font-bold'
             "
           >
             费用 {{ priceLabel(order.price) }}
@@ -244,7 +244,7 @@ function close(): void {
           <span class="tnum text-ink-3">
             取件码 {{ pickupCodeLabel(order.pickup_code) }}
           </span>
-          <span v-if="order.claimer_nickname" class="text-ink-4">
+          <span v-if="order.claimer_nickname" class="text-ink-3">
             接单 {{ order.claimer_nickname }}
           </span>
         </div>

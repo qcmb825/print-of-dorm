@@ -138,7 +138,7 @@ async function onRemove(): Promise<void> {
           <p class="text-sm font-semibold">
             {{ broken ? '这张图读不到了' : '还没有上传收款码' }}
           </p>
-          <p class="text-xs opacity-60">
+          <p class="text-xs text-ink-3">
             {{
               broken
                 ? '服务端还有记录，文件已经不在，重传一张即可。'
@@ -169,7 +169,7 @@ async function onRemove(): Promise<void> {
         </NButton>
       </div>
 
-      <p class="text-xs leading-relaxed opacity-60">
+      <p class="text-xs leading-relaxed text-ink-3">
         PNG / JPG，≤ 2 MB。用微信「收付款 · 二维码收款」里保存的原图最好，
         截图也行，但别裁掉四周留白 —— 裁了有些手机扫不出来。
       </p>

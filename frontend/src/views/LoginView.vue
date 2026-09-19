@@ -341,7 +341,7 @@ onMounted(async () => {
           </span>
           <span class="flex flex-col leading-none">
             <span class="font-heading text-base font-bold">猫娘打印服务</span>
-            <span class="tech-label mt-0.5 text-ink-4 text-2xs">Neko Print</span>
+            <span class="tech-label mt-0.5 text-ink-3 text-2xs">Neko Print</span>
           </span>
         </span>
       </div>
@@ -482,7 +482,7 @@ onMounted(async () => {
                   />
                 </div>
               </NFormItem>
-              <p class="-mt-3 mb-3 text-xs text-ink-4">
+              <p class="-mt-3 mb-3 text-xs text-ink-3">
                 {{ CONTACT_HINT[registerForm.contact_type] }}
               </p>
 
@@ -540,12 +540,12 @@ onMounted(async () => {
         </div>
       </div>
 
-      <p class="mt-4 text-center text-xs text-ink-4">
+      <p class="mt-4 text-center text-xs text-ink-3">
         管理员账号由管理端开通，注册一律为普通用户。
       </p>
       <!-- 这里曾经还有一个「换个界面」链接。全站已经锁死新版（app.py 的
            UI_SWITCH_ENABLED），点过去也只会回到同一套外壳，留着反而像是坏了。 -->
-      <p class="mt-2 text-center text-xs text-ink-4">
+      <p class="mt-2 text-center text-xs text-ink-3">
         <button
           type="button"
           class="underline decoration-dotted underline-offset-2 hover:text-ink-2"

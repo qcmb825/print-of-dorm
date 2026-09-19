@@ -431,9 +431,9 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
             row.nickname,
             // 标注自己那一行不是装饰：对自己，改角色/禁用/注销在菜单里都是灰的
             // （后端一律 400），不标出来会让人以为是页面坏了。
-            row.is_self ? h('span', { class: 'ml-1 text-xs opacity-60' }, '（你自己）') : null,
+            row.is_self ? h('span', { class: 'ml-1 text-xs text-ink-3' }, '（你自己）') : null,
           ]),
-          h('div', { class: 'tnum text-2xs opacity-60' }, `#${row.id}`),
+          h('div', { class: 'tnum text-2xs text-ink-3' }, `#${row.id}`),
         ]),
     },
     {
@@ -443,7 +443,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h('div', { class: 'min-w-0' }, [
           h('div', { class: 'truncate text-sm' }, row.real_name || '—'),
-          h('div', { class: 'tnum truncate text-2xs opacity-60' }, row.student_id || '—'),
+          h('div', { class: 'tnum truncate text-2xs text-ink-3' }, row.student_id || '—'),
         ]),
     },
     {
@@ -492,7 +492,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       key: 'last_login',
       width: 140,
       render: (row) =>
-        h('div', { class: 'tnum text-2xs opacity-70' }, [
+        h('div', { class: 'tnum text-2xs text-ink-3' }, [
           h('div', {}, shortTime(row.create_time)),
           h('div', {}, shortTime(row.last_login)),
         ]),
@@ -636,7 +636,7 @@ onMounted(load)
            会变成一场谁也说不清的争执。
            开关打开时不能再报这条：那些账号此刻就在列表里，
            再说一句「未列出」等于自己打自己（浏览器里看到过这条自相矛盾的文案）。 -->
-      <span class="tech-label ml-auto text-ink-4 tech-label--cn text-xs">
+      <span class="tech-label ml-auto text-ink-3 tech-label--cn text-xs">
         显示 {{ filtered.length }} / {{ users.length }} 个账号<span
           v-if="closedTotal && !includeClosed"
         >
@@ -734,7 +734,7 @@ onMounted(load)
               </div>
             </label>
           </div>
-          <p class="mt-3 text-xs leading-5 text-ink-4">
+          <p class="mt-3 text-xs leading-5 text-ink-3">
             学号是登录名，改完本人必须用新学号登录。这里不核对名单：
             名单是注册的闸门，改资料是人工介入。
           </p>
@@ -812,11 +812,11 @@ onMounted(load)
           class="flex flex-wrap items-center gap-x-2 border px-3 py-2 text-sm"
           style="border-color: var(--border)"
         >
-          <span class="tech-label text-ink-4 tech-label--cn text-xs">{{ item.label }}</span>
+          <span class="tech-label text-ink-3 tech-label--cn text-xs">{{ item.label }}</span>
           <span class="font-mono">{{ item.value }}</span>
-          <span class="text-ink-4">已被</span>
+          <span class="text-ink-3">已被</span>
           <span class="font-semibold">{{ item.owner_nickname }}</span>
-          <span class="font-mono text-xs text-ink-4">#{{ item.owner_id }}</span>
+          <span class="font-mono text-xs text-ink-3">#{{ item.owner_id }}</span>
           <NButton size="tiny" quaternary class="!ml-auto" @click="locateOwner(item.owner_nickname)">
             在列表里找它
           </NButton>

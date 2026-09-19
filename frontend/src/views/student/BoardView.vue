@@ -155,25 +155,25 @@ onMounted(load)
            pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
       <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-4 tech-label--cn text-xs">待我取件</div>
+          <div class="tech-label text-ink-3 tech-label--cn text-xs">待我取件</div>
           <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ mine?.ready ?? 0 }}
           </div>
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-4 tech-label--cn text-xs">进行中</div>
+          <div class="tech-label text-ink-3 tech-label--cn text-xs">进行中</div>
           <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
             {{ mine?.active ?? 0 }}
           </div>
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-4 tech-label--cn text-xs">我的单数</div>
+          <div class="tech-label text-ink-3 tech-label--cn text-xs">我的单数</div>
           <div class="value-tick tnum font-heading text-xl font-bold" :class="tickTotal && 'value-tick--on'">
             {{ mine?.total ?? 0 }}
           </div>
         </div>
         <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-4 tech-label--cn text-xs">我的名次</div>
+          <div class="tech-label text-ink-3 tech-label--cn text-xs">我的名次</div>
           <div class="value-tick tnum font-heading text-xl font-bold" :class="tickRank && 'value-tick--on'">
             {{ mineRankText }}
           </div>
@@ -264,7 +264,7 @@ onMounted(load)
               <Inbox :size="28" />
             </div>
             <p class="mt-3 text-sm font-semibold">这张榜还空着</p>
-            <p class="mt-1 text-xs text-ink-4">第 1 单就是你</p>
+            <p class="mt-1 text-xs text-ink-3">第 1 单就是你</p>
             <span class="ticks mx-auto mt-3.5 block w-28" aria-hidden="true" />
           </div>
         </div>

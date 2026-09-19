@@ -482,7 +482,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
           },
           { default: () => orderFileLabel(row) },
         ),
-        h('div', { class: 'tnum text-2xs opacity-60' }, `#${row.id} · ${shortTime(row.create_time)}`),
+        h('div', { class: 'tnum text-2xs text-ink-3' }, `#${row.id} · ${shortTime(row.create_time)}`),
       ]),
   },
   {
@@ -494,13 +494,13 @@ const columns = computed<DataTableColumns<Order>>(() => [
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
         h('div', { class: 'truncate text-sm' }, row.owner_nickname ?? '（账号已注销）'),
-        h('div', { class: 'truncate text-xs opacity-60' }, row.owner_dorm ?? '—'),
+        h('div', { class: 'truncate text-xs text-ink-3' }, row.owner_dorm ?? '—'),
         // 联系方式：名字和宿舍都定位不到人（宿舍楼里几十号人，
         // 而昵称本来就是自填的），出事了得有个能直接喊到人的号码。
         h(
           'div',
           {
-            class: 'truncate text-2xs opacity-60',
+            class: 'truncate text-2xs text-ink-3',
             title: contactLabel(row.owner_contact_type, row.owner_contact),
           },
           contactLabel(row.owner_contact_type, row.owner_contact),
@@ -545,7 +545,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
         h(
           'div',
           {
-            class: 'mt-0.5 truncate text-xs opacity-60',
+            class: 'mt-0.5 truncate text-xs text-ink-3',
             title: row.paper_remark ?? undefined,
           },
           `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} · ${paperLabel(row.paper_name)}`,
@@ -664,7 +664,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
       h(
         'span',
         { class: 'text-xs' },
-        row.claimer_nickname ?? h('span', { class: 'opacity-50' }, '未接单'),
+        row.claimer_nickname ?? h('span', { class: 'text-ink-3' }, '未接单'),
       ),
   },
   {
@@ -1011,7 +1011,7 @@ onBeforeUnmount(() => {
           隐藏已取件
         </span>
       </span>
-      <span class="tech-label ml-auto text-ink-4 tech-label--cn text-xs">共 {{ total }} 条</span>
+      <span class="tech-label ml-auto text-ink-3 tech-label--cn text-xs">共 {{ total }} 条</span>
     </div>
 
     <div class="bracket panel overflow-hidden">
@@ -1068,7 +1068,7 @@ onBeforeUnmount(() => {
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
-              <p class="tnum mt-0.5 text-2xs text-ink-4">
+              <p class="tnum mt-0.5 text-2xs text-ink-3">
                 #{{ order.id }} · {{ shortTime(order.create_time) }}
               </p>
             </div>
@@ -1110,14 +1110,14 @@ onBeforeUnmount(() => {
 
           <!-- 预设服务那一句话。没有文件名可看，这句话就是这一单的全部内容 -->
           <p v-if="order.preset_content" class="mt-2 text-xs leading-5">
-            <span class="text-ink-4">预设</span>
+            <span class="text-ink-3">预设</span>
             <span class="ml-1.5 text-ink-3">{{ order.preset_content }}</span>
           </p>
 
           <!-- 事后被归入的服务分组。下单选了预设的单不显示这一行：它上面「预设」
                那一句就是它的服务，同一件事写两遍会让人以为是两回事。 -->
           <p v-if="!order.preset_id && order.preset_group_content" class="mt-2 text-xs leading-5">
-            <span class="text-ink-4">服务分组</span>
+            <span class="text-ink-3">服务分组</span>
             <span class="ml-1.5 text-ink-3">{{ order.preset_group_content }}</span>
           </p>
 
@@ -1125,7 +1125,7 @@ onBeforeUnmount(() => {
                窄屏之前哪都没有 —— 管理员拿手机接单时完全看不到。
                没有备注就不占位：一排卡片每张都多一行「无备注」，扫视时全是噪声。 -->
           <p v-if="order.remark" class="mt-2 text-xs leading-5">
-            <span class="text-ink-4">备注</span>
+            <span class="text-ink-3">备注</span>
             <span class="ml-1.5 text-ink-3">{{ order.remark }}</span>
           </p>
 
@@ -1134,13 +1134,13 @@ onBeforeUnmount(() => {
             <span
               :class="
                 order.price === null || order.price === undefined
-                  ? 'text-ink-4'
+                  ? 'text-ink-3'
                   : 'tnum font-bold'
               "
             >
               费用 {{ priceLabel(order.price) }}
             </span>
-            <span v-if="order.pricer_nickname" class="text-ink-4">
+            <span v-if="order.pricer_nickname" class="text-ink-3">
               由 {{ order.pricer_nickname }} 定价 {{ order.price_time ? shortTime(order.price_time) : '' }}
             </span>
           </p>
