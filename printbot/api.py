@@ -125,14 +125,18 @@ def ping():
 
 
 def orders(qq):
-    """这个 QQ 的最近订单（含状态与取件码）。"""
+    """这个 QQ 的最近订单（含状态与单号）。"""
     return _request('GET', '/api/bot/orders?%s' % urllib.parse.urlencode({'qq': qq}))
 
 
-def code(qq, order_id):
-    """查一张单的取件码。"""
-    return _request('GET', '/api/bot/code?%s' % urllib.parse.urlencode(
-        {'qq': qq, 'order_id': order_id}))
+def order(qq, handle):
+    """按**单号**查一张单（状态 + 单号）。
+
+    2026-09-21 起用户面前只有一个标识：单号（4 位数字）。
+    内部自增 ID 不再出库，查询与撤回都拿它来。
+    """
+    return _request('GET', '/api/bot/order?%s' % urllib.parse.urlencode(
+        {'qq': qq, 'handle': handle}))
 
 
 def presets():
@@ -168,6 +172,16 @@ def card(kind, qq=None):
     return _request_bytes('/api/bot/card?%s' % urllib.parse.urlencode(query))
 
 
+def prefs(qq):
+    """读用户偏好（「设置」命令用）。"""
+    return _request('GET', '/api/bot/prefs?%s' % urllib.parse.urlencode({'qq': qq}))
+
+
+def save_prefs(qq, fields):
+    """改用户偏好。字段白名单在服务端（prefs.EDITABLE），这里原样透传。"""
+    return _request('PUT', '/api/bot/prefs', {'qq': qq, 'prefs': fields})
+
+
 def help_sections():
     """使用说明的结构（**服务端是唯一来源**，见 routes/bot.py 的 BOT_HELP_SECTIONS）。
 
@@ -177,10 +191,10 @@ def help_sections():
     return _request('GET', '/api/bot/help')
 
 
-def withdraw_order(qq, order_id):
-    """撤回自己未接单的订单。**不重试**：这是删除类操作，重试没有意义还有风险。"""
+def withdraw_order(qq, handle):
+    """按单号撤回自己未接单的订单。**不重试**：删除类操作，重试没有意义还有风险。"""
     return _request('POST', '/api/bot/order/withdraw',
-                    {'qq': qq, 'order_id': order_id}, retries=0)
+                    {'qq': qq, 'handle': handle}, retries=0)
 
 
 def order_preset(qq, preset_id, color='black', duplex='single', copies=1,

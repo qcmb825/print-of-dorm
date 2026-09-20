@@ -165,10 +165,17 @@ export const TICKET_STATUS_LABEL: Record<TicketStatus, string> = {
   closed: '已关闭',
 }
 
-/** 取件码在后端是数字，前端固定 4 位展示（兼容退化成短码的情况）。 */
+/** 单号展示。
+ *
+ *  2026-09-21：单号从 4 位升到 **5 位**（首位非 0，见 utils.generate_pickup_code），
+ *  所以这里补到 5 位；老单的 4 位号原样显示（位数不足 5 才补，不是一律改写）——
+ *  一律 padStart(5) 会把老单的 0622 显示成 00622，跟库里存的对不上。
+ *  极端冲突时后端会退化成 6 位短码（含字母），那种也原样返回。
+ */
 export function pickupCodeLabel(code: string | null): string {
   if (!code) return '—'
-  return /^\d+$/.test(code) ? code.padStart(4, '0') : code
+  if (!/^\d+$/.test(code)) return code
+  return code.length < 5 ? code.padStart(5, '0') : code
 }
 
 /** 金额展示。`null` 和 `undefined` 都是「还没计费」——

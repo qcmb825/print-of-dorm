@@ -6,7 +6,7 @@
 
 这里其实是两种信：
 
-  ① 主角给下单学生：「你的单子打好了，取件码 XXXX，来 2 号北 201 拿」，
+  ① 主角给下单学生：「你的单子打好了，单号 XXXX，来 2 号北 201 拿」，
      带金额和**接单人那张**微信收款码 —— 谁接的单钱就归谁，所以图不是全站共用的。
   ② 兜底给接单管理员：「这几笔单的学生填的是微信号，系统发不出邮件，你去说一声」。
 
@@ -79,14 +79,14 @@ def _spec_text(order):
 
 
 def compose_pickup_subject(order):
-    """主题里必须带取件码。
+    """主题里必须带单号。
 
     这是整个功能的要点：学生在收件箱列表里不点开就能看到码，
     省掉「打开邮件 -> 找码 -> 回去输码」这一串动作。
-    所以取件码没有时不能退化成一句话了事 —— 那种情况本来就该在发信前被拦掉。
+    所以单号没有时不能退化成一句话了事 —— 那种情况本来就该在发信前被拦掉。
     """
     code = (order['pickup_code'] or '').strip()
-    return '[打印服务] 订单 #%s 已可取件，取件码 %s' % (order['id'], code or '（缺失）')
+    return '[打印服务] 订单 #%s 已可取件，单号 %s' % (order['id'], code or '（缺失）')
 
 
 def compose_pickup_body(order):
@@ -97,7 +97,7 @@ def compose_pickup_body(order):
         '',
         '你在小猫娘打印服务提交的订单已经打印完成，可以来取了。',
         '',
-        '取件码：%s' % (order['pickup_code'] or '（缺失，请联系管理员）'),
+        '单号：%s' % (order['pickup_code'] or '（缺失，请联系管理员）'),
         '取件地点：%s' % PICKUP_ADDRESS,
         '应付金额：%s' % _price_text(order['price']),
         '',
@@ -112,7 +112,7 @@ def compose_pickup_body(order):
         lines.append('  纸张：%s' % order['paper_name'])
     lines += [
         '',
-        '请到取件点用微信扫描下方收款码支付，然后凭取件码取件。',
+        '请到取件点用微信扫描下方收款码支付，然后凭单号取件。',
         '（本邮件由系统自动发出，请勿直接回复。）',
     ]
     return '\n'.join(lines)
@@ -166,7 +166,7 @@ def compose_pickup_html(order, has_qr=True):
         'font-size:14px;line-height:1.7;color:#222;max-width:560px">'
         '<p style="margin:0 0 12px">你好%s：</p>'
         '<p style="margin:0 0 16px">你在小猫娘打印服务提交的订单已经打印完成，可以来取了。</p>'
-        '<p style="margin:0 0 4px">取件码</p>'
+        '<p style="margin:0 0 4px">单号</p>'
         '<p style="margin:0 0 16px;font-size:28px;font-weight:700;letter-spacing:4px">%s</p>'
         '<p style="margin:0 0 4px">取件地点</p>'
         '<p style="margin:0 0 16px;font-weight:600">%s</p>'
@@ -215,7 +215,7 @@ def compose_manual_body(rows, total):
         else:
             how = '未填写联系方式（订单台上也看不到，可能要在宿舍找他）'
         blocks.append('\n'.join([
-            '订单 #%s（取件码 %s）' % (row['id'], row['pickup_code'] or '（缺失）'),
+            '订单 #%s（单号 %s）' % (row['id'], row['pickup_code'] or '（缺失）'),
             '  学生：%s' % (row['owner'] or '（账号已注销）'),
             '  联系：%s' % how,
             '  金额：%s' % _price_text(row['price']),

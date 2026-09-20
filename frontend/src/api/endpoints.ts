@@ -24,6 +24,7 @@ import type {
   OtherContactType,
   PaperTypeListResponse,
   PickupLookupResponse,
+  PrefsResponse,
   PresetOrderRequest,
   PrintOptionsResponse,
   PrintPresetListResponse,
@@ -37,6 +38,7 @@ import type {
   TicketStatus,
   UploadOptions,
   UploadResponse,
+  UserPrefs,
 } from './types'
 
 /* 账号 */
@@ -69,6 +71,18 @@ export const authApi = {
       current_password: currentPassword,
       new_password: newPassword,
     }),
+
+  /** 我的偏好（通知开关、免打扰、默认打印参数、订单列表显示）。
+   *
+   *  与机器人「设置」命令读写的是**同一份**（服务端 prefs.py）。返回里的 `lines`
+   *  是服务端翻好的人话，两个入口共用 —— 页面自己再拼一套解释文案，
+   *  迟早与机器人那边对不上，而且谁都不会发现。
+   *
+   *  保存接口只认白名单里的键，多余字段静默忽略（所以拼错键名不会报错，
+   *  只会「保存成功但没变」—— 加字段时务必与 api/types.ts 的 UserPrefs 对齐）。 */
+  prefs: () => get<PrefsResponse>('/api/me/prefs'),
+
+  savePrefs: (payload: Partial<UserPrefs>) => put<PrefsResponse>('/api/me/prefs', payload),
 
   /* 微信收款码：每个管理员只管自己那一张。谁接的单，学生就付给谁，
      所以邮件里嵌的必须是接单人自己的码，不是全局一张。
@@ -189,7 +203,7 @@ export const staffOrderApi = {
     size: number
     status?: string
     scope?: string
-    /** 关键词。一个框搜完：取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
+    /** 关键词。一个框搜完：单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
      *
      *  订单号和学号在服务端走**精确相等**（搜「12」要的是第 12 单，而不是
      *  #12、#120 一起上来），其余是模糊匹配 —— 匹配方式由服务端定，前端不要
@@ -218,7 +232,7 @@ export const staffOrderApi = {
   download: (id: number, filename: string, sizeBytes?: number) =>
     download(`/api/order/${id}/download`, filename, sizeBytes),
 
-  /* ---- 凭取件码核对取件（柜台那一步）----
+  /* ---- 凭单号核对取件（柜台那一步）----
    *
    *  为什么单开两条接口，而不是复用「改成已取件」那颗按钮：
    *  ① 柜台核对只认「可取件」。改状态那个接口是给订单台推进流程用的，
@@ -228,7 +242,7 @@ export const staffOrderApi = {
    *     常常**不是**接单人（接单那个在里屋打印）。卡在这里的话，
    *     最该用这个功能的那个人反而用不了。服务端的留痕会写明「这是代谁交接的」。 */
 
-  /** 按取件码取一单，用于柜台核对。一位数、两位数都收，客户端不用补零
+  /** 按单号取一单，用于柜台核对。一位数、两位数都收，客户端不用补零
    *  （服务端会顺带试 4 位那一份）。找不到回 404。 */
   lookupPickup: (code: string) => get<PickupLookupResponse>('/api/order/pickup', { code }),
   /** 确认取件：把这一单置为「已取件」。只对「可取件」的单生效，

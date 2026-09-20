@@ -7,6 +7,8 @@ from flask import Blueprint, g, jsonify, request, session
 from config import (ROLE_LABELS, ROLE_SUPER, ROLE_USER, STATUS_ACTIVE, STATUS_CLOSED,
                     ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED,
                     STUDENT_ID_RE, logger, public_role, public_role_label)
+import prefs
+
 from db import db_conn
 from auth import login_required
 from identity import (GATE_CAN_APPLY_AUDIT, GATE_ROSTER_UNAVAILABLE, check_registration,
@@ -436,6 +438,39 @@ def api_me_overview():
         'usage': usage,
     })
 
+
+
+@bp.route('/api/me/prefs')
+@login_required
+def api_me_prefs():
+    """我的偏好（网页设置页用）。与机器人那边是**同一份数据**（prefs.py）。
+
+    返回里带 `lines`：把偏好翻成人话的那几句 —— 网页与机器人都用它，
+    两边话术就不会各写一套（改一处、另一处还留着旧说法是最常见的漂移）。
+    """
+    current = prefs.get_prefs(g.user['id'])
+    return jsonify({'code': 0, 'msg': 'ok', 'prefs': current, 'lines': prefs.describe(current)})
+
+
+@bp.route('/api/me/prefs', methods=['PUT'])
+@login_required
+def api_me_prefs_save():
+    """改偏好。字段白名单在 prefs.EDITABLE，不认的键直接忽略（不报错）。"""
+    data = request.get_json(silent=True) or {}
+    fields = {k: v for k, v in data.items() if k in prefs.EDITABLE}
+    if not fields:
+        return jsonify({'code': 400, 'msg': '没有要保存的偏好项'}), 400
+    # 免打扰时段要成对、格式要对：只给一头等于没设，格式错会让夜里照旧被吵
+    # （静默忽略比报错更糟，所以这里明确拒绝）。
+    for key in ('quiet_from', 'quiet_to'):
+        value = fields.get(key)
+        if value and prefs.parse_clock(value) is None:
+            return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
+    if ('quiet_from' in fields) != ('quiet_to' in fields):
+        return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
+    saved = prefs.save_prefs(g.user['id'], fields)
+    return jsonify({'code': 0, 'msg': '偏好已保存', 'prefs': saved,
+                    'lines': prefs.describe(saved)})
 
 
 @bp.route('/api/me/profile', methods=['PUT'])

@@ -69,7 +69,7 @@
 
 一个轻量的**小猫娘打印服务**，把「提交任务 → 接单处理 → 完成取件」这条流程搬到网页上：
 
-- **普通用户**：选文件 → 选黑白/彩色、单面/双面 → 留个备注 → 提交。提交后能随时看到任务卡在哪一步，还会拿到一个取件码。
+- **普通用户**：选文件 → 选黑白/彩色、单面/双面 → 留个备注 → 提交。提交后能随时看到任务卡在哪一步，还会拿到一个单号。
 - **管理员**：看到所有待接单的任务，**先到先得地接单**，处理完点一下把状态推到「可取件」。在此之上还能发布公告、查看数据看板、处理用户工单。
 
 后端是**几个职责分明的 Python 模块**，前端是一个 **Vue 单页应用**（登录页、学生端、管理端都在同一个包里，按登录账号的角色切换界面）。
@@ -112,7 +112,7 @@
   登录态给出，伪造不了）
 - 发文件（pdf / word / 图片）即下单：机器人**追问打印方式 → 份数 → 纸张**，
   过程中随时可发「备注 内容」；也可以「打印服务」按预设服务下单
-- 查「订单」「取件码 单号」「我的」「公告」；订单变成**可取件会主动推送**取件码
+- 查「订单」「单号 单号」「我的」「公告」；订单变成**可取件会主动推送**单号
 - 有疑问发「反馈 内容」提工单，「工单」看进展、「回复工单 单号 内容」接着聊；
   「撤回 单号」撤回还没被接单的单（删除类操作会再要一遍完整命令当二次确认）
 - 没注册的 QQ 会被引导去网页注册（**机器人不代注册**，否则绕开了学号名单核验）；
@@ -282,7 +282,7 @@
 | 前端组件库 | Naive UI |
 | 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
 | 前端图标 | Lucide |
-| 字体（拉丁） | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、取件码），@fontsource 随产物自带，不走外部 CDN |
+| 字体（拉丁） | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、单号），@fontsource 随产物自带，不走外部 CDN |
 | 字体（中文） | 思源黑体（OFL-1.1），由 `cn-font-split` 切成带 `unicode-range` 的分片放在 `src/assets/fonts/`（数 MB，随产物入库；中文覆盖广，首次访问就会取到全部分片） |
 | 前端构建 | Vite（产物直接落进 `static/app/`，由 Flask 托管） |
 | 图表 | ECharts（按需引入，只有看板页会加载） |
@@ -612,16 +612,17 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `POST` | `/api/order/<id>/withdraw` | 登录 | 学生自助撤回**自己还没被接单**的订单 —— 唯一会真正 DELETE 订单行的接口，会在留痕里记一条指向已删订单的「本人撤回」 |
 | `GET` | `/api/my-orders` | 登录 | 自己的订单列表（含金额） |
 | `GET` | `/api/my-stats` | 登录 | 自己的下单汇总（各状态笔数 / 彩色单双面分布 / 近 14 天趋势）。**只有自己的数**：原先附带的「全站累计单数」属站点规模，已撤回（后端不再查该列）。**目前没有前端消费方**，保留原因由作者决定 |
+| `GET`/`PUT` | `/api/me/prefs` | 登录 | **我的偏好**（通知开关 / 免打扰时段 / 默认打印参数 / 订单列表显示 / 机器人是否用卡片回）。与机器人「设置」命令读写的是**同一份**（`prefs.py` 是唯一事实来源），响应里带 `lines`（服务端把偏好翻成人话，网页与机器人共用同一套说法）。免打扰时段要成对给、格式 `HH:MM` |
 | `GET` | `/api/board` | 登录 | 学生端「服务数据」：**我的概览**（我的单数 / 进行中 / 待我取件 / 名次）+ 排队情况（**有序数组**，还在流程里的四档，已取件的单已经出队）+ 下单榜（近 30 天 / 累计两张）。**响应里既没有金额、也没有站点规模**（总单数 / 近 7 天 / 今日 / 账号数 / 已取件数 / **全站单量趋势** / **全站未接单数**，SQL 就没查那几列）；榜上别人的昵称由服务端打码（`张*三`），只有自己那一行是完整的 |
-| `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池）。支持 `q=` 关键词（**一个框搜完**取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式，其中订单号与学号是**精确相等**，其余模糊匹配）、`preset=` 按打印服务分组筛（数字 = 分组 id，`none` = 未归类；分组键是 `COALESCE(preset_group_id, preset_id)`，所以下单选了预设的单和事后被归进去的单会一起出来）、`exclude_done=1` 隐藏已取件 |
+| `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池）。支持 `q=` 关键词（**一个框搜完**单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式，其中订单号与学号是**精确相等**，其余模糊匹配）、`preset=` 按打印服务分组筛（数字 = 分组 id，`none` = 未归类；分组键是 `COALESCE(preset_group_id, preset_id)`，所以下单选了预设的单和事后被归进去的单会一起出来）、`exclude_done=1` 隐藏已取件 |
 | `POST` | `/api/order/<id>/claim` | 管理员 | 接单（已取件的单会被拒绝；待计费的单**可以**接） |
 | `POST` | `/api/order/<id>/price` | 管理员 | **计费 / 改价**。**必须先接单，且只有接单人（或超管）能调**；待计费 → 原子置为待打印，老单直接改金额；已取件的单拒绝改价 |
 | `POST` | `/api/order/<id>/release` | 接单人 / 超管 | 放弃接单，退回待接单池（金额保留） |
 | `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态（普通管理员只能改自己接的单；不接受待计费） |
 | `GET` | `/api/order/<id>/detail` | 管理员 | 订单详情 / 时间线（含 `order_logs` 的操作留痕） |
 | `GET` | `/api/order/<id>/download` | 接单人 / 超管 | 下载订单文件 |
-| `GET` | `/api/order/pickup` | 管理员 | **凭取件码核对**（柜台用）：只读，回这一单的完整信息，比列表多 `owner_real_name` / `owner_student_id` 两个字段（核对「来的是不是本人」靠的就是它们）。取件码会补零重试，同时命中多单时优先回还没取件的那张 |
-| `POST` | `/api/order/pickup` | 管理员 | **凭取件码确认取件**。**只接受「可取件」的单**（打印中的单被柜台取走等于纸没出来就记账）；带条件的原子 UPDATE，同一份件不会被交给两个人；**不要求是接单人**（柜台交件的人常常不是接单那个），留痕里会写明是代谁交接的 |
+| `GET` | `/api/order/pickup` | 管理员 | **凭单号核对**（柜台用）：只读，回这一单的完整信息，比列表多 `owner_real_name` / `owner_student_id` 两个字段（核对「来的是不是本人」靠的就是它们）。单号会补零重试，同时命中多单时优先回还没取件的那张 |
+| `POST` | `/api/order/pickup` | 管理员 | **凭单号确认取件**。**只接受「可取件」的单**（打印中的单被柜台取走等于纸没出来就记账）；带条件的原子 UPDATE，同一份件不会被交给两个人；**不要求是接单人**（柜台交件的人常常不是接单那个），留痕里会写明是代谁交接的 |
 | `PUT` | `/api/order/<id>/preset-group` | 管理员 | 把订单**归入 / 移出**某条打印服务分组（`preset_id` 传数字，传 `none` / `null` 取消归类）。改的是 `preset_group_id` 而不是 `preset_id`，因为后者含义是「下单时选了这条预设」；不限制给内置账号，它只动分组、不碰金额与状态 |
 | `GET` | `/api/admin/audit-requests` | 管理员 | 身份审核列表（按状态筛，带三类计数） |
 | `POST` | `/api/admin/audit-requests/<id>/review` | 管理员 | 审核（`approve` / `reject`，驳回必填理由） |
@@ -631,7 +632,8 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `POST` | `/api/admin/user/<id>/restore` | 内置账号 | 恢复已注销账号；昵称或学号被占走时 409，响应里列出占用者 |
 | `POST` | `/api/admin/user/<id>/ticket` | 内置账号 | 代发工单，首条消息以该学生的名义入库 |
 
-| `GET` | `/api/bot/orders` `/api/bot/code` `/api/bot/me` `/api/bot/presets` `/api/bot/print-options` `/api/bot/announcement` | Bot | 机器人只读接口，都带 `?qq=` 认身份（该 QQ 的在用账号）。**整组挂在 `/api/bot/` 前缀下**，闸门在 `app.py` 的 `identify_bot_request`：没配 `BOT_TOKEN` 返回 503、令牌不对 401 并记安全事件 |
+| `GET` | `/api/bot/orders` `/api/bot/order` `/api/bot/me` `/api/bot/presets` `/api/bot/print-options` `/api/bot/announcement` `/api/bot/card` `/api/bot/help` | Bot | 机器人只读接口，都带 `?qq=` 认身份（该 QQ 的在用账号）。**整组挂在 `/api/bot/` 前缀下**，闸门在 `app.py` 的 `identify_bot_request`：没配 `BOT_TOKEN` 返回 503、令牌不对 401 并记安全事件。查单走 `handle=`（单号，`order_id` 作兼容保留）；`card=` 渲染数据卡（没有中文字体时回 501，机器人退回文本）；`help` 是帮助内容的**唯一来源**（文本与卡片同一份） |
+| `GET`/`PUT` | `/api/bot/prefs` | Bot | 机器人读写用户偏好（与 `/api/me/prefs` 同一份数据、同一套校验） |
 | `POST` | `/api/bot/order/file` `/api/bot/order/preset` | Bot | 机器人下单（文件 / 预设），复用网页端同一套建单函数与**同一把上传频控**，留痕里操作人是学生本人 |
 | `POST` | `/api/bot/order/withdraw` | Bot | 机器人代学生撤回未接单的订单（守卫逐条对齐网页端） |
 | `GET`/`POST` | `/api/bot/events` | Bot | 「可取件」等事件的轮询游标，机器人据此推送 |
@@ -694,7 +696,7 @@ PNG（`botcard.py` + `GET /api/bot/card`），printbot 收到后当图片发出�
 全大写宽字距的英文小标签）。字体随仓库走（`assets/fonts/`，OFL，思源黑体 + Space Grotesk + JetBrains Mono），
 部署端不需要装字体；也可以用 `.env` 的 `CARD_FONT_PATH` 等覆盖。
 
-一句话能说清的内容（取件码、下单成功、追问）仍然是文字 —— 手机里点开一张图比读一行字慢。
+一句话能说清的内容（单号、下单成功、追问）仍然是文字 —— 手机里点开一张图比读一行字慢。
 **服务器没有中文字体时自动退回纯文字**（接口回 501），不会发出一张全是方块的图。
 
 > 机器人一侧的纪律（改代码前先读）：只理私聊、群消息一律忽略；**建单类 POST 绝不自动重试**
@@ -709,6 +711,7 @@ SQLite 单库，共 10 张表：
 | :--- | :--- |
 | `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段，v15 起 `qq` 上有一条部分唯一索引：`qq <> '' AND status <> 'closed'` 的行里一个 QQ 只能绑一个在用账号） |
 | `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
+| `user_prefs` | 用户偏好（v18 加，PRIMARY KEY = `user_id`）：通知开关、免打扰时段、默认打印参数、订单列表显示、机器人是否用卡片回。**没有行 = 全默认**，读的时候由 `prefs.py` 补齐，所以新用户不必先写一行 |
 | `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么）。v16 加 `to_status`：这一单被改成了哪个状态，历史记录页据此筛「改成可取件 / 已取件」；**不倒推历史数据**，老留痕按 detail 里的「「旧」→「新」」认 |
 | `audit_requests` | 身份审核申请（学号唯一，只允许提一次） |
 | `announcements` | 公告 |
@@ -844,7 +847,7 @@ print-of-dorm/
 ├── db.py                  # SQLite 连接、建表与迁移、内置管理账号
 ├── auth.py                # login_required / roles_required 装饰器
 ├── identity.py            # 学生名单库（只读）：学号 → 姓名 核验，注册关口
-├── utils.py               # 上传校验、取件码、分页、注册与审核校验、金额解析
+├── utils.py               # 上传校验、单号、分页、注册与审核校验、金额解析
 ├── notifier.py            # 未接单提醒：定时检查 + 同一笔单只提醒一次
 ├── mail/                  # 未接单提醒的邮件（发信凭证在 orders.claim_alert_time）
 │   ├── __init__.py
@@ -965,7 +968,12 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 - [ ] **钱只记了金额，没记支付状态**。现在只能“订单一笔款已收/未收”全靠人工对账，订单表里没有 `paid` 之类的字段，也没有任何对账单据导出。
 - [ ] **没有自动化测试**。主要流程靠手工验证；前端有 `vue-tsc` 类型检查兜底，后端没有。（#6）
 - [ ] **限流只在单进程内有效**。所有限流都落在 `security.py` 的两个**模块级字典**里：登录失败计数 `_login_failures`（键是「IP + 学号」，默认 5 次 / 锁 300 秒；只服务登录）和通用计数器 `_hits`（按窗口内的次数挡手抖与刷量）。两者都不落盘、不共享。`_hits` 里目前有 7 组键：注册 `register:`（1 小时 20 次提交；只数「提交」这一件事，字段格式没过的请求不计入 —— 昵称或学号填重了再改一次，不该把自己那栋楼的出口 IP 封掉）、上传与预设下单 `upload:`（60 秒 20 次）、分片建会话 `chunkinit:`（60 秒 30 次）、分片上传 `chunkpart:`（60 秒 240 次）、工单轮询 `ticketpoll:`（60 秒 240 次），以及**两个未登录也能调的接口** —— 提交身份审核申请 `audit:`（1 小时 3 次）和查审核进度 `auditquery:`（1 小时 20 次）。所以单进程的 `waitress` 是对的；一旦换成多进程（如 `gunicorn -w 4`），每个进程各算各的，阈值会被成倍放宽且毫无提示。真要多进程，得先把这些计数器挪到 Redis。（#33）
-- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据。`v14 → v15` 给 `users.qq` 加部分唯一索引（`qq <> '' AND status <> 'closed'`，于是「一个 QQ 至多绑一个在用账号」由数据库保证；建失败只记 error 不推进版本号）。`v15 → v16` 给 `order_logs` 加 `to_status` 列与 `idx_order_logs_time` 索引 —— **加列的那句 `ALTER TABLE` 必须排在 `order_logs` 建表之后**：老库的 `CREATE TABLE IF NOT EXISTS` 是空操作，顺序颠倒会让服务直接起不来，而所有回归脚本跑的都是全新库、发现不了（`memoryandtest/check_old_db_upgrade.py` 就是为此存在的）。两步都是纯加列 / 加索引，没有重建表 —— 所以 `SCHEMA_VERSION` 现在是 `'16'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
+- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据。`v14 → v15` 给 `users.qq` 加部分唯一索引（`qq <> '' AND status <> 'closed'`，于是「一个 QQ 至多绑一个在用账号」由数据库保证；建失败只记 error 不推进版本号）。`v15 → v16` 给 `order_logs` 加 `to_status` 列与 `idx_order_logs_time` 索引 —— **加列的那句 `ALTER TABLE` 必须排在 `order_logs` 建表之后**：老库的 `CREATE TABLE IF NOT EXISTS` 是空操作，顺序颠倒会让服务直接起不来，而所有回归脚本跑的都是全新库、发现不了（`memoryandtest/check_old_db_upgrade.py` 就是为此存在的）。`v16 → v17` 是**数据迁移**（不是结构）：状态值「可取了」改名为「可取件」，`orders.status`、
+`order_logs.to_status`、`order_logs.detail` 三处一起改（留痕的 detail 是给人看的句子，不改的话
+历史记录页按结果状态筛那一档会对不上）。**这段迁移必须排在所有建表补列之后** ——
+它要读 `order_logs.to_status`，放在建表之前老库会直接 `no such column`（踩过一次）。
+`v17 → v18` 新建 `user_prefs` 表（用户偏好：通知开关 / 免打扰 / 默认打印参数 / 订单列表显示），
+纯加表。三步都没有重建表 —— 所以 `SCHEMA_VERSION` 现在是 `'18'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
 - [ ] **窄屏没有专门放大触控目标**。新版组件尺寸沿用 Naive UI 的默认高度，手机上的按钮偏小，要补得先覆写组件库的尺寸令牌。（#35）
 - [ ] **两套前端要各自维护**。新版已经拆成模块（`frontend/src/`），经典版仍是单文件 `templates/index.html`。长期打算是让经典版退役，短期内改公共逻辑（比如后端字段改名）必须**两边同时改** —— 漏掉一边的典型症状是图表静默空白，不报错。（#46）
 
@@ -981,7 +989,7 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 - [x] ~~**账目闭环（一半）**~~ —— 已完成：订单表有金额与定价人/时间，看板有累计计费
 - [ ] **自动计价**——按页数 × 黑白/彩色 × 单面/双面算钱，单价做成配置项，下单时就给出预估金额。
   做这个的前提是能在服务端数出页数：PDF 可以直接读，Office 文档得先转成 PDF 才准。
-- [ ] **付款联动**——生成收款码（或对接校园支付），到账后自动推进订单状态，取件仍用现有取件码核验。
+- [ ] **付款联动**——生成收款码（或对接校园支付），到账后自动推进订单状态，取件仍用现有单号核验。
 - [ ] **支付状态与对账**——订单表加 `paid` / `paid_time`，配上按天/按月导出流水。
 主线只有一件事：**让系统自己算得出该收多少钱、收得到钱、并且能把文件直接送到打印机上**——
 自动计价 → 付款联动 → 打印机下发。
@@ -994,7 +1002,7 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 | [`阶段B-计价`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5B-%E8%AE%A1%E4%BB%B7) | 自动计价 | 份数与纸张规格、价目表、计费规则、下单页预估金额 |
 | [`阶段C-付款`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5C-%E4%BB%98%E6%AC%BE) | 付款联动 | 支付状态、余额与扣款原子性、流水对账、渠道适配层 |
 | [`阶段D-打印`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5D-%E6%89%93%E5%8D%B0) | 打印机联动 | 管理端一键下发、防重复、参数映射、命令行注入防护 |
-| [`阶段E-闭环`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5E-%E9%97%AD%E7%8E%AF) | 闭环与异常 | 取件码核验、状态流转约束、退款、自助取消 |
+| [`阶段E-闭环`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5E-%E9%97%AD%E7%8E%AF) | 闭环与异常 | 单号核验、状态流转约束、退款、自助取消 |
 | [`阶段F-配套`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E9%98%B6%E6%AE%B5F-%E9%85%8D%E5%A5%97) | 配套 | 通知、分页、清理、备份、前端欠账 |
 | [`候选池`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E5%80%99%E9%80%89%E6%B1%A0) | 候选池 | 想到过、没排期 |
 | [`待拍板`](https://github.com/qcmb825/print-of-dorm/issues?q=label%3A%E5%BE%85%E6%8B%8D%E6%9D%BF) | 待拍板 | 需要需求方决定，不该由实现者单方面拍板 |

@@ -29,7 +29,7 @@ def _describe(row):
         what = what[:_FILENAME_MAX] + '…'
     parts = ['%s 份' % (row['copies'] or 1), row['color_type'] or '', row['duplex'] or '']
     options = ' · '.join(part for part in parts if part)
-    lines = ['订单 #%s%s' % (row['id'], '（取件码 %s）' % row['pickup_code'] if row['pickup_code'] else '')]
+    lines = ['订单 #%s%s' % (row['id'], '（单号 %s）' % row['pickup_code'] if row['pickup_code'] else '')]
     lines.append('  内容：%s（%s）' % (what, options))
     preset = (row['preset_content'] or '').strip()
     if preset:

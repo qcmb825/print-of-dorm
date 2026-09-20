@@ -4,9 +4,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useDocumentVisibility, useIntervalFn } from '@vueuse/core'
 import { Clock, Inbox, RefreshCw, Trash2 } from '@lucide/vue'
-import { NButton, NSkeleton } from 'naive-ui'
+import { NButton, NSkeleton, NSwitch } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { orderApi } from '@/api/endpoints'
+import { authApi, orderApi } from '@/api/endpoints'
 import type { Order } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -27,6 +27,52 @@ import { useValueTick } from '@/composables/motion'
 
 const orders = ref<Order[]>([])
 const loading = ref(true)
+
+/* ---------- 「隐藏已取件」----------
+ *
+ *  这是**偏好**（服务端 prefs.py 的 hide_done_orders），不是这一页的临时开关：
+ *  在设置页打开、在这里点一下、或者在机器人里发「隐藏已取件 开」，改的都是同一份。
+ *  所以这里点完要落库，不能只改本地 ref —— 否则刷新一下它又回来了，
+ *  而用户以为自己的设置没保存上。
+ *
+ *  过滤落在**前端**是有意的：这一页的汇总格子（进行中 / 已取件 / 合计金额）
+ *  要的正是全量数据，让服务端把已取件剔掉就没法算了。机器人那边反过来，
+ *  它是 SQL 收口（列表要分页，不能先全量拿回来再筛）。
+ */
+const hideDone = ref(false)
+const savingHideDone = ref(false)
+
+const visibleOrders = computed(() =>
+  hideDone.value ? orders.value.filter((o) => o.status !== '已取件') : orders.value,
+)
+
+/** 切换并落库。失败时**把开关翻回去** —— 界面显示的和库里存的不一致，
+ *  是这类「显示偏好」最难受的一种坏法（下次打开就变回去，像抽风）。 */
+async function toggleHideDone(value: boolean): Promise<void> {
+  if (savingHideDone.value) return
+  const previous = hideDone.value
+  hideDone.value = value
+  savingHideDone.value = true
+  try {
+    await authApi.savePrefs({ hide_done_orders: value })
+  } catch (error) {
+    hideDone.value = previous
+    notify.error(error instanceof ApiError ? error.message : '设置没保存上 · 稍后再试')
+  } finally {
+    savingHideDone.value = false
+  }
+}
+
+/** 一进页面就把偏好读出来（含设置页改过的那份）。读不到就保持默认（不隐藏）——
+ *  这一条读失败不该拦住订单列表本身。 */
+async function loadPrefs(): Promise<void> {
+  try {
+    const response = await authApi.prefs()
+    hideDone.value = response.prefs.hide_done_orders
+  } catch {
+    // 静默：订单列表照常显示，隐藏与否只是个显示偏好
+  }
+}
 
 const refreshMs = 20_000
 const visibility = useDocumentVisibility()
@@ -88,7 +134,7 @@ watch(visibility, (state) => {
 })
 
 onMounted(async () => {
-  await load()
+  await Promise.all([load(), loadPrefs()])
   resume()
 })
 
@@ -123,11 +169,14 @@ async function withdraw(order: Order): Promise<void> {
   // 确认框只写「确定要撤回吗」等于没问。文件和记录都会没，先把后果说清楚。
   // 预设单没有文件，「上传的文件也会一并删掉」在那时候是假的 ——
   // 后果说错比少说更糟，所以两种说法分开写。
+  // 号一律写**单号**（`pickup_code`），不写数据库主键：那是两套编号，
+  // 确认框里印一个用户在页面上找不到的号，只会让人以为撤错了单。
+  const code = pickupCodeLabel(order.pickup_code)
   const ok = await confirmAction({
     title: '撤回这份订单？',
     content: order.preset_content
-      ? `「${orderFileLabel(order)}」#${order.id} 会被整条删除，无法恢复。这一单没有文件，不会动到任何文件。`
-      : `「${orderFileLabel(order)}」#${order.id} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
+      ? `「${orderFileLabel(order)}」单号 ${code} 会被整条删除，无法恢复。这一单没有文件，不会动到任何文件。`
+      : `「${orderFileLabel(order)}」单号 ${code} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
     positiveText: '撤回订单',
     negativeText: '取消',
   })
@@ -154,6 +203,17 @@ async function withdraw(order: Order): Promise<void> {
   <div class="mx-auto max-w-3xl">
     <PageHeader heading="md" title="我的订单" subtitle="每 20 秒自动刷新，切走页面时暂停">
       <template #actions>
+        <!-- 「隐藏已取件」是个**偏好**（存在服务端），所以这里是个开关而不是页内筛选：
+             点完就落库，下次进来还是这个状态，机器人「订单」也跟着变。 -->
+        <label class="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-3">
+          <NSwitch
+            :value="hideDone"
+            size="small"
+            :loading="savingHideDone"
+            @update:value="toggleHideDone"
+          />
+          隐藏已取件
+        </label>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
           刷新
@@ -193,6 +253,7 @@ async function withdraw(order: Order): Promise<void> {
       </div>
     </div>
 
+    <!-- 空态之一：真的没有订单 -->
     <div v-if="loading && !orders.length" class="flex flex-col gap-3">
       <NSkeleton v-for="index in 3" :key="index" height="96px" :sharp="false" />
     </div>
@@ -212,9 +273,26 @@ async function withdraw(order: Order): Promise<void> {
         </div>
         <p class="mt-3 text-sm font-semibold">还没有订单</p>
         <p class="mt-1 text-xs text-ink-3">
-          去「下单打印」提交第一份文件 · 提交后立刻生成取件码
+          去「下单打印」提交第一份文件 · 提交后立刻生成单号
         </p>
         <span class="ticks mx-auto mt-4 block w-32" aria-hidden="true" />
+      </div>
+    </div>
+
+    <!-- 空态之二：有订单，但都被「隐藏已取件」筛掉了。
+         **不能**复用上面那个「还没有订单」—— 那是在说谎：单子就在库里斯，
+         只是被自己的一个开关挡住了。这里给的是「把开关关掉」的出口。 -->
+    <div v-else-if="!visibleOrders.length" class="grid place-items-center py-8">
+      <div class="bracket-lg w-full max-w-md px-6 py-8 text-center" style="--bracket-arm: 22px">
+        <span class="readout">FILTERED / {{ orders.length }} HIDDEN</span>
+        <div class="mt-3 flex justify-center text-ink-4">
+          <Inbox :size="30" />
+        </div>
+        <p class="mt-3 text-sm font-semibold">已取件的单都收起来了</p>
+        <p class="mt-1 text-xs text-ink-3">
+          {{ orders.length }} 份订单都已完成 —— 想看就把上面的「隐藏已取件」关掉
+        </p>
+        <NButton class="mt-3" size="small" @click="toggleHideDone(false)">显示全部订单</NButton>
       </div>
     </div>
 
@@ -242,7 +320,7 @@ async function withdraw(order: Order): Promise<void> {
       move-class="transition duration-[var(--motion-dur-base)] ease-out"
     >
       <li
-        v-for="order in orders"
+        v-for="order in visibleOrders"
         :key="order.id"
         class="wo"
         :style="{ '--wo-accent': STATUS_COLOR_VAR[order.status] }"
@@ -250,11 +328,13 @@ async function withdraw(order: Order): Promise<void> {
         <!-- 左缘状态色条：把「这一单在哪一步」从"读标签"降到"扫一眼"。 -->
         <span class="wo__bar" aria-hidden="true" />
 
-        <!-- ① 读数行：单号与提交时刻走等宽，位置固定在右端 —— 扫视时不会因为
-             文件名长短而错位。状态标签也钉在这一行上。 -->
+        <!-- ① 读数行：提交时刻与状态。这里**不再印订单的内部编号** ——
+             用户面前只有一个标识：右边那串单号（取件、查单、撤回都用它）。
+             早先这里写着 `#12`，是数据库主键，学生照着念叨给打印员听，
+             两边都找不到那张纸。 -->
         <div class="flex items-center justify-between gap-3">
           <span class="readout">
-            #{{ order.id }} · {{ shortTime(order.create_time) }}
+            SUBMIT {{ shortTime(order.create_time) }}
           </span>
           <StatusTag :status="order.status" />
         </div>
@@ -295,8 +375,8 @@ async function withdraw(order: Order): Promise<void> {
             </div>
           </div>
 
-          <!-- ③ 右侧两块读数并排：费用与取件码。它们都是"查得到的数"，
-                 所以用同一个形状（等宽大字 + 上方小标签），只是取件码多一层角标框 ——
+          <!-- ③ 右侧两块读数并排：费用与单号。它们都是"查得到的数"，
+                 所以用同一个形状（等宽大字 + 上方小标签），只是单号多一层角标框 ——
                  它和回执上那个是同一件东西的两个尺度，框住是为了让"这是凭证"
                  在列表里也读得出来。 -->
           <div class="flex shrink-0 items-end gap-x-5">
@@ -316,7 +396,7 @@ async function withdraw(order: Order): Promise<void> {
               </div>
             </div>
             <div class="bracket-lg px-2.5 py-1.5" style="--bracket-arm: 16px">
-              <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">取件码</div>
+              <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">单号</div>
               <div
                 class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"
                 :style="order.status === '可取件' ? { color: 'var(--accent-text)' } : undefined"

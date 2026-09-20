@@ -1589,7 +1589,7 @@
                   desc: '选文件、挑颜色和单双面，提交后等取件通知。',
                   render: uploadCard },
                 { key: 'myorders', icon: '📋', label: '我的订单',
-                  desc: '自己提交过的订单和取件码。',
+                  desc: '自己提交过的订单和单号。',
                   render: myOrdersCard, load: loadMyOrders },
                 { key: 'mystats', icon: '📊', label: '我的数据',
                   desc: '自己一共打了多少、取件进度，还有全站的累计数字。',
@@ -1877,12 +1877,12 @@
                 setMsg('uploadMsg', '⏳ 正在上传…', '');
                 const data = await api('/api/upload', { method: 'POST', body: new FormData(form) });
                 if (data.code === 0) {
-                    const okText = '下单成功！订单号 ' + data.order_id + '，取件码 ' + data.pickup_code;
+                    const okText = '下单成功！订单号 ' + data.order_id + '，单号 ' + data.pickup_code;
                     setMsg('uploadMsg', '✅ ' + okText, 'ok');
-                    // 取件码只在这里完整出现一次，往后得回「我的订单」里翻。
+                    // 单号只在这里完整出现一次，往后得回「我的订单」里翻。
                     // 所以这一条给得久一点（8 秒），而不是默认的 4 秒。
                     // 默认时长是给「改了个状态」这种一眼就看完的消息的，
-                    // 一单一个取件码不一样，多停几秒很值。
+                    // 一单一个单号不一样，多停几秒很值。
                     toast('✅ ' + okText, 'ok', 8000);
                     form.reset();
                     await loadMyOrders();
@@ -1906,7 +1906,7 @@
 
             const table = el('table', { style: 'margin-top:12px;' });
             table.appendChild(el('thead', {}, [el('tr', {}, [
-                '订单号', '文件名', '打印参数', '备注', '状态', '取件码', '接单情况', '下单时间', '操作',
+                '订单号', '文件名', '打印参数', '备注', '状态', '单号', '接单情况', '下单时间', '操作',
             ].map(t => el('th', { text: t })))]));
             table.appendChild(el('tbody', { id: 'myOrderBody' }));
             const scroller = tableScroller('我的订单');

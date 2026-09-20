@@ -1,4 +1,4 @@
-"""utils.py —— 上传/取件码/分页/注册校验等通用辅助函数。"""
+"""utils.py —— 上传/单号/分页/注册校验等通用辅助函数。"""
 
 import re
 import uuid
@@ -17,13 +17,15 @@ from config import (
     EMAIL_RE,
     NICKNAME_RE,
     OTHER_CONTACT_TYPES,
+    PICKUP_CODE_COOLDOWN,
+    PICKUP_CODE_DIGITS,
     PRICE_MAX_YUAN,
     PRICE_RE,
     QQ_RE,
     REALNAME_RE,
-    ST_DONE,
     STATUS_CLOSED,
     STUDENT_ID_RE,
+    ST_DONE,
     WECHAT_RE,
     logger,
 )
@@ -194,18 +196,41 @@ def mask_nickname(nickname):
 
 
 
-def generate_pickup_code(conn, length=4):
-    """生成不重复的数字取件码。"""
-    for _ in range(50):
-        code = ''.join(secrets.choice('0123456789') for _ in range(length))
-        if conn.execute(
-            'SELECT 1 FROM orders WHERE pickup_code = ? AND status <> ?',
-            (code, ST_DONE),
-        ).fetchone() is None:
+def generate_pickup_code(conn, length=PICKUP_CODE_DIGITS):
+    """生成一个能当**单号**用的数字码（默认 5 位，首位非 0）。
+
+    2026-09-21 从 4 位升到 5 位，理由是**跨时间歧义**而不是"会用完"：
+      · 号码是回收复用的（见 db.py 的 idx_orders_pickup_live：只保证未取件的单之间不重复），
+        所以 4 位的一万个码在"同时在途几十单"的规模下永远够用 —— 把一万个各用一遍
+        要九万多单；
+      · 但一天 40 单时，新码有约 30% 的概率与最近 90 天**用过并已释放**的码同名，
+        老聊天记录里的"单号 0622"就可能指向新的一单。4 位撑不住「一年内不重用」
+        （一年 1.46 万单 > 1 万），5 位只用掉 14.6%。
+    首位非 0：老数据里「622」曾被补零成「0622」，首位留空会和「00622」这种形态打岔。
+
+    **冷却期是软规则**（一年内不放同一个号）：SQLite 的部分索引里不允许
+    `datetime('now')` 这种非确定性函数，所以硬约束仍是"未取件不重复"，
+    冷却这里用一次查询保证 —— 一天几十单的规模下这点开销可以忽略。
+    """
+    for enforce_cooldown in (True, False):
+        for _ in range(50):
+            first = secrets.choice('123456789')          # 首位非 0
+            rest = ''.join(secrets.choice('0123456789') for _ in range(length - 1))
+            code = first + rest
+            if conn.execute(
+                'SELECT 1 FROM orders WHERE pickup_code = ? AND status <> ?',
+                (code, ST_DONE),
+            ).fetchone() is not None:
+                continue
+            if enforce_cooldown and conn.execute(
+                "SELECT 1 FROM orders WHERE pickup_code = ? "
+                "AND create_time > datetime('now', ?)", (code, PICKUP_CODE_COOLDOWN),
+            ).fetchone() is not None:
+                continue
             return code
     # 数字码极端冲突时退化成短码，保证下单不被卡住
     logger.warning(
-        '取件码空间紧张：50 次随机数字码全部冲突，已回退为 uuid 前缀取件码（形态变化）'
+        '单号空间紧张：随机数字码连续冲突，已回退为 uuid 前缀单号（形态变化）'
     )
     return uuid.uuid4().hex[:6].upper()
 
@@ -374,7 +399,7 @@ def validate_qq(data):
     原来「联系方式三选一」的时候，填了微信的学生收不到取件提醒，
     而库里、界面上、日志里都看不出这件事 —— 他只是永远收不到信。
     把 QQ 提成必填、并且只此一处，是把「能不能收到提醒」变成一件
-    **注册那一刻就能确定**的事，而不是等有人投诉「我没收到取件码」才发现。
+    **注册那一刻就能确定**的事，而不是等有人投诉「我没收到单号」才发现。
 
     没有 allow_missing 这种「这次就先放行」的口子 —— 校验层一旦能被告知
     「情况特殊、跳过吧」，早晚有个调用方图省事就传上了，然后库里开始出现

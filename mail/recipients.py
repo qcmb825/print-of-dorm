@@ -90,7 +90,7 @@ def user_mailbox(row):
     contact 那组（微信 / 邮箱）是选填的补充联系方式，只在前者缺失时才兜底。
     顺序反过来（先 contact）会让「QQ 号填了、微信也填了」的人
     被按微信处理 —— 结果就是推不出邮箱、转人工，
-    而他明明填了 QQ、本该直接收到取件码。必修一栏永远优先于选修一栏。
+    而他明明填了 QQ、本该直接收到单号。必修一栏永远优先于选修一栏。
     """
     if row is None:
         return None, NO_MAILBOX_EMPTY

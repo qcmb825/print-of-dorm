@@ -116,7 +116,7 @@ const AUTO_REFRESH_MS = 10_000
  *
  *  卡片断点从 900px 提到 1024px，与侧栏的 lg 断点、账号管理页对齐：900–1100px
  *  这一段本来仍走表格，只能靠 NDataTable 内层容器自动横滚 —— 11 列挤在不到
- *  1000px 的宽度里，连「取件码 / 费用」都要左右拖才看得到，还不如卡片列表。
+ *  1000px 的宽度里，连「单号 / 费用」都要左右拖才看得到，还不如卡片列表。
  *  `:scroll-x` 依旧显式声明（它就是表格这一侧的横滚契约，与账号管理页同一口径）。 */
 const ORDER_TABLE_MIN_WIDTH = 1474
 
@@ -650,7 +650,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
     },
   },
   {
-    title: '取件码',
+    title: '单号',
     key: 'pickup_code',
     width: 78,
     render: (row) =>
@@ -989,7 +989,7 @@ onBeforeUnmount(() => {
         v-model:value="keyword"
         size="small"
         class="!w-[280px]"
-        placeholder="搜取件码 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式"
+        placeholder="搜单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式"
         clearable
         :loading="keywordPending"
         @update:value="onKeywordInput"
@@ -1080,7 +1080,7 @@ onBeforeUnmount(() => {
             <!-- 联系方式单独一格而不是拼到上面那句里：拼在一起，窄屏上先被挤掉的
                  恰恰是它，而这行里最要紧的就是它（找不到人时昵称和宿舍都白搭）。 -->
             <span class="truncate">{{ contactLabel(order.owner_contact_type, order.owner_contact) }}</span>
-            <span class="tnum">取件码 {{ pickupCodeLabel(order.pickup_code) }}</span>
+            <span class="tnum">单号 {{ pickupCodeLabel(order.pickup_code) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
 
@@ -1129,7 +1129,7 @@ onBeforeUnmount(() => {
             <span class="ml-1.5 text-ink-3">{{ order.remark }}</span>
           </p>
 
-          <!-- 金额单独一行：它是这一屏上唯一跟钱有关的数字，跟规格、取件码挤在一行会被略过 -->
+          <!-- 金额单独一行：它是这一屏上唯一跟钱有关的数字，跟规格、单号挤在一行会被略过 -->
           <p class="mt-2 flex flex-wrap items-center gap-x-3 text-xs">
             <span
               :class="

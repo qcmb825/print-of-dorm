@@ -30,6 +30,7 @@ import uuid
 from flask import Blueprint, Response, g, jsonify, request
 
 import botcard
+import prefs
 
 from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ROLE_USER, ST_DONE,
                     ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED, STATUS_ACTIVE,
@@ -55,20 +56,31 @@ BOT_ORDERS_LIMIT = 10
 # 所以：服务端存结构（`/api/bot/help` 出 JSON），**printbot 拿它拼文本、服务端拿它画卡**。
 # 帮助属于「机器人自己」的东西，与具体账号无关，因此不需要 qq 参数、也不查库。
 BOT_HELP_SECTIONS = [
+    # ⚠️ `desc` 控制在 ~18 个汉字以内：卡片上说明列只有 550px 宽（T_META 26px 的中文
+    # 约 21 字），超了会被截成「…印…」那种读不出意思的碎片 —— 试过写长句，
+    # 结果五条里三条被截。要讲细节就在命令自己的回复里讲（如「设置」）。
     {'title': '下单', 'items': [
-        {'cmd': '直接发文件', 'desc': 'pdf / word / 图片都行，我会问打印方式、份数、纸张'},
-        {'cmd': '备注 内容', 'desc': '下单过程中随时发，把备注加到这一单上'},
-        {'cmd': '打印服务', 'desc': '看有哪些现成服务；「打印服务 编号」按那条下单'},
+        {'cmd': '直接发文件', 'desc': 'pdf / word / 图片都行'},
+        {'cmd': '备注 内容', 'desc': '下单过程中随时发，加到这一单上'},
+        {'cmd': '打印服务', 'desc': '看有哪些现成服务；带编号下单'},
     ]},
     {'title': '查询', 'items': [
         {'cmd': '订单', 'desc': '最近的订单与状态（卡片）'},
-        {'cmd': '取件码 订单号', 'desc': '查某一单的取件码'},
+        {'cmd': '单号 25124', 'desc': '查某一单；单号就是取件报的那串'},
         {'cmd': '我的', 'desc': '下单概况与存储用量（卡片）'},
         {'cmd': '公告', 'desc': '看最新公告'},
     ]},
+    {'title': '设置', 'items': [
+        {'cmd': '设置', 'desc': '看当前偏好；网页端改的是同一份'},
+        {'cmd': '通知 开/关', 'desc': '可取了要不要推到这个 QQ'},
+        {'cmd': '免打扰 22:00-08:00', 'desc': '这段时间先不推、白天补推'},
+        {'cmd': '隐藏已取件 开/关', 'desc': '「订单」里不显示已取件的单'},
+        {'cmd': '卡片 开/关', 'desc': '关掉后表格类查询改用纯文字'},
+        {'cmd': '默认 黑白双面 2份', 'desc': '下单默认参数（「每页 8」改条数）'},
+    ]},
     {'title': '其它', 'items': [
-        {'cmd': '反馈 你的问题', 'desc': '提交工单；「工单」看进展、「回复工单 单号 内容」接着聊'},
-        {'cmd': '撤回 订单号', 'desc': '撤回还没被接单的订单（会再要一次「确认撤回 订单号」）'},
+        {'cmd': '反馈 你的问题', 'desc': '提交工单；「工单」看进展'},
+        {'cmd': '撤回 单号', 'desc': '撤回未被接单的订单（要再确认一次）'},
     ]},
 ]
 
@@ -132,7 +144,7 @@ def _identify(requested_qq):
 
 @bp.get('/api/bot/orders')
 def api_bot_orders():
-    """这个 QQ 的最近订单（含状态与取件码）。都是本人自己的数据。"""
+    """这个 QQ 的最近订单（含状态与单号）。都是本人自己的数据。"""
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
@@ -148,17 +160,21 @@ def _orders_payload(uid, conn=None):
     conn 传进来就复用调用方的连接（卡片那条路要连查好几张表，
     每张表各开一次连接既慢、又容易在写库时互相撞锁）。
     """
+    # 条数与「隐藏已取件」来自用户偏好：**在 SQL 里生效**，不是让机器人少画几行 ——
+    # 少画的那些数据还是出了库，而用户以为自己关掉了。
+    user_prefs = prefs.get_prefs(uid, conn)
     sql = '''
         SELECT o.id, o.status, o.pickup_code, o.price, o.filename,
                o.preset_content, o.copies,
                datetime(o.create_time, 'localtime') AS create_time
-        FROM orders o WHERE o.user_id = ? ORDER BY o.id DESC LIMIT ?
-    '''
+        FROM orders o WHERE o.user_id = ?%s ORDER BY o.id DESC LIMIT ?
+    ''' % (" AND o.status <> '%s'" % ST_DONE if user_prefs['hide_done_orders'] else '')
+    limit = user_prefs['orders_page_size']
     if conn is None:
         with db_conn() as own:
-            rows = own.execute(sql, (uid, BOT_ORDERS_LIMIT)).fetchall()
+            rows = own.execute(sql, (uid, limit)).fetchall()
     else:
-        rows = conn.execute(sql, (uid, BOT_ORDERS_LIMIT)).fetchall()
+        rows = conn.execute(sql, (uid, limit)).fetchall()
     orders = []
     for row in rows:
         # 文件单报文件名、预设单报服务内容：bot 端拼的是同一条「这单要打什么」。
@@ -175,23 +191,40 @@ def _orders_payload(uid, conn=None):
     return {'orders': orders}
 
 
-@bp.get('/api/bot/code')
-def api_bot_code():
-    """查一张单的取件码。只认自己的单：别人的单按「不存在」回答 ——
-    这一个接口不能被拿去当「订单号是否存在」的探测仪。"""
+@bp.get('/api/bot/order')
+def api_bot_order():
+    """按**单号**查一张单（状态 + 单号）。
+
+    2026-09-21：用户面前只保留一个标识 —— **单号**（4 位数字，下单时生成）。
+    内部自增 ID 不再出库给用户看，所有操作都拿单号来。
+    `order_id` 参数作兼容保留，但只对**还没取件**的单生效（已取件的单
+    用旧编号也能查到，方便老消息里的引用不至于立刻失效）。
+
+    只认自己的单：别人的单按「不存在」回答 —— 这个接口不能被拿来当探测仪。
+    """
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
-    try:
-        order_id = int(request.args.get('order_id', ''))
-    except ValueError:
-        return jsonify({'code': 400, 'msg': '订单号应为数字'}), 400
+    handle = (request.args.get('handle') or '').strip()
+    legacy_id = (request.args.get('order_id') or '').strip()
     with db_conn() as conn:
-        row = conn.execute(
-            'SELECT id, status, pickup_code FROM orders WHERE id = ? AND user_id = ?',
-            (order_id, g.user['id'])).fetchone()
+        row = None
+        if handle:
+            # 单号可能被历史数据复用（唯一索引只保证**未取件**的单之间不重复），
+            # 所以优先回还没取件的那张 —— 与柜台「凭码核对」同一个口径。
+            row = conn.execute(
+                'SELECT id, status, pickup_code FROM orders '
+                'WHERE pickup_code = ? AND user_id = ? '
+                "ORDER BY (status = '%s') ASC, id DESC LIMIT 1" % ST_DONE,
+                (handle, g.user['id'])).fetchone()
+        elif legacy_id.isdigit():
+            row = conn.execute(
+                'SELECT id, status, pickup_code FROM orders WHERE id = ? AND user_id = ?',
+                (int(legacy_id), g.user['id'])).fetchone()
+        else:
+            return jsonify({'code': 400, 'msg': '用法：单号 1234'}), 400
     if row is None:
-        return jsonify({'code': 404, 'msg': '没有找到这张订单，检查一下订单号'}), 404
+        return jsonify({'code': 404, 'msg': '没有找到这张单，核对一下单号'}), 404
     if row['status'] == ST_DONE:
         return jsonify({'code': 0, 'msg': '这张单已经取件了', 'status': row['status'],
                         'pickup_code': None})
@@ -315,17 +348,27 @@ def api_bot_order_withdraw():
     error = _identify(data.get('qq'))
     if error is not None:
         return error
-    order_id = data.get('order_id')
-    if isinstance(order_id, bool) or not isinstance(order_id, int) or order_id < 1:
-        return jsonify({'code': 400, 'msg': '订单号应为数字'}), 400
-
     uid = g.user['id']
+    # 用户面前只有一个标识：**单号**。`order_id` 作兼容保留（老消息里可能还有），
+    # 但优先用单号 —— 它才是「以后所有操作都用它」的那个号。
+    handle = str(data.get('handle') or '').strip()
+    legacy_id = data.get('order_id')
     with db_conn() as conn:
-        row = conn.execute(
-            'SELECT user_id, claimed_by, status, filename, file_path FROM orders WHERE id = ?',
-            (order_id,)).fetchone()
+        if handle:
+            row = conn.execute(
+                'SELECT id, user_id, claimed_by, status, filename, file_path FROM orders '
+                'WHERE pickup_code = ? AND user_id = ? '
+                "ORDER BY (status = '%s') ASC, id DESC LIMIT 1" % ST_DONE,
+                (handle, uid)).fetchone()
+        elif isinstance(legacy_id, int) and not isinstance(legacy_id, bool) and legacy_id > 0:
+            row = conn.execute(
+                'SELECT id, user_id, claimed_by, status, filename, file_path '
+                'FROM orders WHERE id = ?', (legacy_id,)).fetchone()
+        else:
+            return jsonify({'code': 400, 'msg': '用法：撤回 1234（1234 是单号）'}), 400
         if row is None:
-            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+            return jsonify({'code': 404, 'msg': '没有找到这张单，核对一下单号'}), 404
+        order_id = row['id']
         if row['user_id'] != uid:
             security_event('withdraw_denied',
                            '订单 #%s 的下单人 uid=%s，bot 请求来自 uid=%s'
@@ -342,8 +385,9 @@ def api_bot_order_withdraw():
             conn.rollback()
             return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败'}), 409
         log_event(order_id, ORDER_LOG_WITHDRAW,
-                  '本人撤回订单（QQ）%s' % ('，文件「%s」已一并删除' % row['filename']
-                                            if row['filename'] else '（预设服务，无文件）'),
+                  '本人撤回订单（QQ，单号 %s）%s'
+                  % (handle or '—', '，文件「%s」已一并删除' % row['filename']
+                     if row['filename'] else '（预设服务，无文件）'),
                   conn=conn)
         conn.commit()
 
@@ -532,7 +576,7 @@ def api_bot_order_preset():
                              g.user['nickname'], preset_id, client_ip())
             return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s（QQ） 预设#%s 份数=%s 取件码=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s（QQ） 预设#%s 份数=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies, pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
                     'pickup_code': pickup_code})
@@ -620,11 +664,43 @@ def api_bot_order_file():
                          g.user['nickname'], original_name, client_ip())
         return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s（QQ） 文件=%s 大小=%sKB 取件码=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s（QQ） 文件=%s 大小=%sKB 单号=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
                 pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
                     'pickup_code': pickup_code})
+
+
+@bp.get('/api/bot/prefs')
+def api_bot_prefs():
+    """读偏好（机器人「设置」命令用）。"""
+    error = _identify(request.args.get('qq'))
+    if error is not None:
+        return error
+    current = prefs.get_prefs(g.user['id'])
+    return jsonify({'code': 0, 'msg': 'ok', 'prefs': current, 'lines': prefs.describe(current)})
+
+
+@bp.put('/api/bot/prefs')
+def api_bot_prefs_save():
+    """改偏好（机器人命令走这里）。字段白名单在 prefs.EDITABLE，不认的直接忽略。"""
+    data = request.get_json(silent=True) or {}
+    error = _identify(data.get('qq'))
+    if error is not None:
+        return error
+    fields = data.get('prefs') or {}
+    if not isinstance(fields, dict):
+        return jsonify({'code': 400, 'msg': '偏好格式不对'}), 400
+    # 免打扰时段要成对出现（只给一头等于没设），格式不对直接拒 —— 静默忽略会让用户
+    # 以为设上了、夜里照样被吵。
+    for key in ('quiet_from', 'quiet_to'):
+        value = fields.get(key)
+        if value and prefs.parse_clock(value) is None:
+            return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
+    if ('quiet_from' in fields) != ('quiet_to' in fields):
+        return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
+    saved = prefs.save_prefs(g.user['id'], fields)
+    return jsonify({'code': 0, 'msg': 'ok', 'prefs': saved, 'lines': prefs.describe(saved)})
 
 
 @bp.get('/api/bot/help')
@@ -639,7 +715,7 @@ def api_bot_card():
 
     为什么要它：那几类回复在手机 QQ 里是一大坨等宽文字，层级全糊；
     渲染成一张卡更像站内的面板。**一句话能说清的内容不要做成卡**
-    （取件码、下单成功这些仍然走文本）—— 在手机里点开一张图比读一行字慢。
+    （单号、下单成功这些仍然走文本）—— 在手机里点开一张图比读一行字慢。
 
     取数一律走 *_payload() 那几个共用函数，卡片与文本看到的是同一份数据。
 
@@ -698,7 +774,7 @@ def api_bot_events():
         cursor_row = conn.execute('SELECT COALESCE(MAX(id), 0) AS m FROM order_logs').fetchone()
         cursor = cursor_row['m']
         rows = conn.execute('''
-            SELECT l.order_id, o.pickup_code, o.price, o.copies,
+            SELECT l.order_id, o.user_id, o.pickup_code, o.price, o.copies,
                    o.filename, o.preset_content, u.qq
             FROM order_logs l
             JOIN orders o ON o.id = l.order_id
@@ -707,9 +783,19 @@ def api_bot_events():
             GROUP BY l.order_id
             ORDER BY MIN(l.id)
         ''', (since, ST_READY)).fetchall()
+        # 顺手把每个下单人的偏好取出来（同一连接，别为每一行再开一次库）
+        prefs_by_user = {uid: prefs.get_prefs(uid, conn)
+                         for uid in {r['user_id'] for r in rows}}
 
     events = []
     for row in rows:
+        # **推送开关与免打扰在服务端生效**（不是在机器人那边少说一句）：
+        # 关掉 QQ 推送的人、正在免打扰时段的人，这里就不给出事件 ——
+        # 藏按钮挡不住这条链路，而用户以为自己关掉了。
+        # 注意这是「延后」不是「丢弃」：事件仍在库里，下一轮轮询还会带上，
+        # 出了免打扰时段自然发出去（游标由机器人推进，它没见过就不会越过）。
+        if not prefs.should_notify(prefs_by_user.get(row['user_id']) or prefs.DEFAULTS, 'qq'):
+            continue
         title = (row['preset_content'] or row['filename'] or '').replace('\n', ' ')
         events.append({
             'order_id': row['order_id'],

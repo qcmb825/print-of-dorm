@@ -15,12 +15,16 @@
  *     所以他们**改任何一个字段都会被这一栏挡住** —— 这是有意的，
  *     页面上必须显式说明，否则就成了「改个宿舍为什么老是保存失败」。
  *
- *  这一页始终**只调一个接口**（/api/me/overview）。底部的工单入口只是个跳转，
- *  不在这里顺手拉一遍工单数：那会多一次往返，而未读回复在工单页自己带徽标 ——
- *  设置页是「查自己资料」的地方，不该为了一个红点多跑一趟。
+ *  这一页调**两个**接口：/api/me/overview（资料 + 单数 + 用量）与 /api/me/prefs
+ *  （通知 / 免打扰 / 默认打印参数 / 订单列表显示）。偏好刻意不并进 overview ——
+ *  它是另一份真相（服务端 prefs.py，机器人「设置」命令读的也是它），
+ *  并进去的结果是两个接口以后每次加字段都要一起改。
+ *  除此之外仍然不拉别的东西：底部的工单入口只是个跳转，不顺手拉一遍工单数
+ *  （未读回复在工单页自己带徽标），纸张列表也只在点开「默认纸张」那一栏时才拉。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
+  BellRing,
   HardDrive,
   KeyRound,
   LogOut,
@@ -31,12 +35,21 @@ import {
   TriangleAlert,
   UserCog,
 } from '@lucide/vue'
-import { NAlert, NButton, NInput, NSelect, NSkeleton } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NInput,
+  NInputNumber,
+  NSelect,
+  NSkeleton,
+  NSwitch,
+  NTimePicker,
+} from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
-import { authApi } from '@/api/endpoints'
+import { authApi, printOptionsApi } from '@/api/endpoints'
 import { OTHER_CONTACT_LABELS } from '@/api/types'
-import type { MeOverviewResponse, OtherContactType } from '@/api/types'
+import type { MeOverviewResponse, OtherContactType, UserPrefs } from '@/api/types'
 import { confirmAction, notify } from '@/composables/feedback'
 import { useAuthStore } from '@/stores/auth'
 import { formatBytes, priceLabel, shortTime } from '@/utils/format'
@@ -201,6 +214,7 @@ async function load(resetForm = true): Promise<void> {
  *  把用户正改着的东西悄悄冲掉，比不刷新难受得多。 */
 function refresh(): void {
   void load(!profileDirty.value)
+  if (!prefsDirty.value) void loadPrefs()
 }
 
 async function saveProfile(): Promise<void> {
@@ -258,6 +272,166 @@ function goTickets(): void {
   void router.push({ name: 'student-tickets' })
 }
 
+/* ---------- 偏好（通知 / 免打扰 / 默认打印参数 / 订单列表） ----------
+ *
+ *  这份与机器人「设置」命令读写的是**同一份**（服务端 prefs.py）。所以：
+ *  ① 页面不再自己拼解释文案，`prefsLines` 直接显示服务端翻好的那几句 ——
+ *     两边各写一套话术的话，改一处另一处就留在旧说法上，而且不报错；
+ *  ② 保存走**整块一起提交**（和上面的「账号资料」一样有脏值判定），
+ *     而不是每个开关立刻发一次请求：开关多了以后那种「点一下一个请求」的写法
+ *     一旦有一发失败，界面上那颗开关已经翻过去了，用户看到的是假状态。
+ */
+
+/** 表单里的形状：时间用两个独立字段，但界面上是一个「免打扰」开关 + 两个时间。
+ *  只给一头时间是**非法**的（后端会 400）—— 那一头等于没设，用户却以为设上了。 */
+const prefsForm = reactive({
+  notify_qq: true,
+  notify_mail: true,
+  quietOn: false,
+  quiet_from: '22:00',
+  quiet_to: '08:00',
+  hide_done_orders: false,
+  card_replies: true,
+  orders_page_size: 5,
+  default_color: '',
+  default_duplex: '',
+  default_copies: null as number | null,
+  default_paper_type_id: null as number | null,
+})
+
+/** 服务端当前那份（已归一化）。脏值判定与回填都以它为准。 */
+const savedPrefs = ref<UserPrefs | null>(null)
+const prefsLines = ref<string[]>([])
+const savingPrefs = ref(false)
+
+function fillPrefs(next: UserPrefs): void {
+  savedPrefs.value = next
+  prefsForm.notify_qq = next.notify_qq
+  prefsForm.notify_mail = next.notify_mail
+  // 两头都有才算「开着免打扰」。数据库里存的是空串（不是 NULL），
+  // 所以这里判空串 —— 判 null 会永远判不出关闭状态。
+  prefsForm.quietOn = !!(next.quiet_from && next.quiet_to)
+  prefsForm.quiet_from = next.quiet_from || '22:00'
+  prefsForm.quiet_to = next.quiet_to || '08:00'
+  prefsForm.hide_done_orders = next.hide_done_orders
+  prefsForm.card_replies = next.card_replies
+  prefsForm.orders_page_size = next.orders_page_size
+  prefsForm.default_color = next.default_color
+  prefsForm.default_duplex = next.default_duplex
+  prefsForm.default_copies = next.default_copies
+  prefsForm.default_paper_type_id = next.default_paper_type_id
+}
+
+async function loadPrefs(): Promise<void> {
+  try {
+    const response = await authApi.prefs()
+    fillPrefs(response.prefs)
+    prefsLines.value = response.lines
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '加载偏好失败 · 稍后重试')
+  }
+}
+
+/** 要提交的那一份。免打扰关掉时**必须回空串**（而不是把两个时间留在表单里）——
+ *  留着的话用户以为关了，服务端那边还开着，夜里照旧不推送。 */
+function prefsPayload(): Partial<UserPrefs> {
+  return {
+    notify_qq: prefsForm.notify_qq,
+    notify_mail: prefsForm.notify_mail,
+    quiet_from: prefsForm.quietOn ? prefsForm.quiet_from : '',
+    quiet_to: prefsForm.quietOn ? prefsForm.quiet_to : '',
+    hide_done_orders: prefsForm.hide_done_orders,
+    card_replies: prefsForm.card_replies,
+    orders_page_size: prefsForm.orders_page_size,
+    default_color: prefsForm.default_color,
+    default_duplex: prefsForm.default_duplex,
+    default_copies: prefsForm.default_copies,
+    default_paper_type_id: prefsForm.default_paper_type_id,
+  }
+}
+
+const prefsDirty = computed(() => {
+  const saved = savedPrefs.value
+  if (!saved) return false
+  const next = prefsPayload()
+  return (Object.keys(next) as (keyof UserPrefs)[]).some((key) => {
+    const mine = next[key]
+    const theirs = saved[key]
+    // 份数那一栏空着时是 null，而输入框清空给的是 null —— 但比较前再归一一次
+    // （'' 与 null 都算「没设」），免得清空后按钮一直亮着、点了又说没变化。
+    const norm = (v: unknown) => (v === '' || v === undefined ? null : v)
+    return norm(mine) !== norm(theirs)
+  })
+})
+
+/** 免打扰的两个时间点必须是 'HH:MM' —— 后端也校验，这里提前拦是为了
+ *  不让用户点了保存才知道格式不对（NTimePicker 基本只会给出合法值，
+ *  但它是可清空的：清空后是 null，直接发过去会被后端 400）。 */
+const quietIssue = computed<string | null>(() => {
+  if (!prefsForm.quietOn) return null
+  const ok = (v: unknown) => typeof v === 'string' && /^\d{2}:\d{2}$/.test(v)
+  if (!ok(prefsForm.quiet_from) || !ok(prefsForm.quiet_to)) {
+    return '免打扰的两个时间都要选（或整个关掉）'
+  }
+  if (prefsForm.quiet_from === prefsForm.quiet_to) {
+    return '开始与结束时间不能一样 —— 那等于没有免打扰时段'
+  }
+  return null
+})
+
+async function savePrefs(): Promise<void> {
+  if (savingPrefs.value || quietIssue.value || !prefsDirty.value) return
+  savingPrefs.value = true
+  try {
+    const response = await authApi.savePrefs(prefsPayload())
+    // 用服务端回来的那一份回填，而不是拿本地表单当结果：份数/每页条数
+    // 服务端会**夹到范围内**，不回填的话界面显示 25、库里存的是 20。
+    fillPrefs(response.prefs)
+    prefsLines.value = response.lines
+    notify.success('偏好已保存')
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '保存失败 · 稍后重试')
+  } finally {
+    savingPrefs.value = false
+  }
+}
+
+/** 纸张列表按需拉：设置页平时只调两个接口，而纸张列表只在**点开那一栏**时
+ *  才有用。不点就不拉，省掉一次没人看的往返（纸张是管理员维护的，改得很少）。 */
+const paperOptions = ref<{ label: string; value: number }[]>([])
+const paperLoading = ref(false)
+async function loadPapers(): Promise<void> {
+  if (paperOptions.value.length || paperLoading.value) {
+    return
+  }
+  paperLoading.value = true
+  try {
+    const response = await printOptionsApi.load()
+    paperOptions.value = response.paper_types.map((item) => ({
+      label: item.remark ? `${item.name}（${item.remark}）` : item.name,
+      value: item.id,
+    }))
+  } catch {
+    // 拉不到就当这一栏没有可选项：默认纸张本来就是个可选项，
+    // 为它弹一个错误反而像是下单失败了。
+    paperOptions.value = []
+  } finally {
+    paperLoading.value = false
+  }
+}
+
+/** 「每次问我」与「没设过」是同一个状态：空串 / null。 */
+const colorOptions = [
+  { label: '每次问我', value: '' },
+  { label: '黑白', value: 'black' },
+  { label: '彩色', value: 'color' },
+]
+const duplexOptions = [
+  { label: '每次问我', value: '' },
+  { label: '单面', value: 'single' },
+  { label: '双面', value: 'double' },
+]
+
 /** 退出登录。
  *
  *  **必须走 auth.logout()，不能直接调 authApi.logout()**：store 那一步除了清 user，
@@ -293,6 +467,10 @@ async function doLogout(): Promise<void> {
 
 onMounted(() => {
   void load()
+  // 偏好单独一次请求：它与 /api/me/overview 是两份真相（服务端 prefs.py 是权威），
+  // 硬塞进 overview 会让两个接口以后都要改。这一页因此是**两个**请求，
+  // 但仍不拉工单数 / 打印选项那些「顺手就能拿」的东西（纸张列表只在点开时按需拉）。
+  void loadPrefs()
 })
 </script>
 
@@ -301,7 +479,7 @@ onMounted(() => {
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h1 class="font-heading text-lg font-bold sm:text-xl">设置</h1>
-        <p class="mt-0.5 text-sm text-ink-3">账号资料 · 密码 · 取件提醒 · 存储用量</p>
+        <p class="mt-0.5 text-sm text-ink-3">账号资料 · 密码 · 取件提醒 · 通知与默认参数 · 存储用量</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="refresh()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -513,7 +691,7 @@ onMounted(() => {
           取件提醒
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          状态变成「可取件」时自动发一封邮件：标题带取件码，正文带取件地点与付款方式。
+          状态变成「可取件」时自动发一封邮件：标题带单号，正文带取件地点与付款方式。
           不用一直回网页刷。
         </p>
 
@@ -552,6 +730,174 @@ onMounted(() => {
           <span class="tnum">&lt;QQ号&gt;@qq.com</span>，填错一位就寄给别人了）；
           ③ 还没有就在「问题反馈」里留言，管理员能看到订单。
         </p>
+      </section>
+
+      <!-- 通知与偏好。放在「取件提醒」后面是有意的顺序：上一块讲「信怎么发」，
+           这一块讲「要不要发、什么时候发、列表给我看什么」——
+           两个问题挨着，人才不会以为上一块那些设置改不了。 -->
+      <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
+        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-base font-bold">
+          <BellRing :size="15" />
+          通知与偏好
+        </h2>
+        <p class="mb-3 text-xs leading-5 text-ink-3">
+          QQ 机器人里的「设置」命令改的是<strong>同一份</strong>（改一边另一边跟着变）。
+        </p>
+
+        <div v-if="!savedPrefs" class="text-xs text-ink-3">正在载入偏好…</div>
+
+        <template v-else>
+          <!-- ① 通知渠道 -->
+          <div class="grid gap-2 sm:grid-cols-2">
+            <label
+              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              style="background-color: var(--muted)"
+            >
+              <span>
+                <span class="block text-sm font-semibold">QQ 推送</span>
+                <span class="mt-0.5 block text-xs text-ink-3">可取了在 QQ 里戳你一下（要先绑定 QQ 号）</span>
+              </span>
+              <NSwitch v-model:value="prefsForm.notify_qq" size="small" />
+            </label>
+            <label
+              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              style="background-color: var(--muted)"
+            >
+              <span>
+                <span class="block text-sm font-semibold">邮件提醒</span>
+                <span class="mt-0.5 block text-xs text-ink-3">同时发一封邮件到 &lt;QQ号&gt;@qq.com</span>
+              </span>
+              <NSwitch v-model:value="prefsForm.notify_mail" size="small" />
+            </label>
+            <label
+              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              style="background-color: var(--muted)"
+            >
+              <span>
+                <span class="block text-sm font-semibold">隐藏已取件的单</span>
+                <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」都不再列它们</span>
+              </span>
+              <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" />
+            </label>
+            <label
+              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              style="background-color: var(--muted)"
+            >
+              <span>
+                <span class="block text-sm font-semibold">机器人用卡片回</span>
+                <span class="mt-0.5 block text-xs text-ink-3">关掉后订单/工单这类查询改用纯文字，省流量</span>
+              </span>
+              <NSwitch v-model:value="prefsForm.card_replies" size="small" />
+            </label>
+          </div>
+
+          <!-- ② 免打扰。跨零点（22:00-08:00）是常态，所以两个时间点不设约束：
+               谁前谁后由服务端判定（见 prefs.in_quiet_hours）。 -->
+          <div class="mt-3 px-2.5 py-2.5" style="background-color: var(--muted)">
+            <label class="flex cursor-pointer items-center justify-between gap-3">
+              <span>
+                <span class="block text-sm font-semibold">免打扰时段</span>
+                <span class="mt-0.5 block text-xs text-ink-3">
+                  这段时间的提醒<strong>不丢</strong>，攒到时段结束再推 ——
+                  单号有时效，夜里静音不等于不要了
+                </span>
+              </span>
+              <NSwitch v-model:value="prefsForm.quietOn" size="small" />
+            </label>
+            <div v-if="prefsForm.quietOn" class="mt-2.5 flex flex-wrap items-center gap-2">
+              <NTimePicker
+                v-model:formatted-value="prefsForm.quiet_from"
+                format="HH:mm"
+                value-format="HH:mm"
+                size="small"
+                class="w-28"
+                :clearable="false"
+              />
+              <span class="text-xs text-ink-3">到</span>
+              <NTimePicker
+                v-model:formatted-value="prefsForm.quiet_to"
+                format="HH:mm"
+                value-format="HH:mm"
+                size="small"
+                class="w-28"
+                :clearable="false"
+              />
+              <span class="text-xs text-ink-3">（跨零点没问题，22:00 → 08:00 就是一夜）</span>
+            </div>
+          </div>
+
+          <!-- ③ 默认打印参数与订单每页条数 -->
+          <div class="mt-3 grid gap-2.5 sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">默认打印方式</span>
+              <NSelect v-model:value="prefsForm.default_color" :options="colorOptions" size="small" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">默认单双面</span>
+              <NSelect v-model:value="prefsForm.default_duplex" :options="duplexOptions" size="small" />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">默认份数</span>
+              <!-- 清空 = 「没设过」= 每次下单都问。不写 1 当兜底：
+                   1 是个**决定**，代替用户决定「就打一份」是最不该做的默认值。 -->
+              <NInputNumber
+                v-model:value="prefsForm.default_copies"
+                size="small"
+                :min="1"
+                :max="99"
+                clearable
+                placeholder="每次问我"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">默认纸张</span>
+              <NSelect
+                v-model:value="prefsForm.default_paper_type_id"
+                :options="paperOptions"
+                :loading="paperLoading"
+                size="small"
+                clearable
+                placeholder="每次问我"
+                @update:show="(shown: boolean) => shown && loadPapers()"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">机器人「订单」每页条数</span>
+              <NInputNumber
+                v-model:value="prefsForm.orders_page_size"
+                size="small"
+                :min="3"
+                :max="20"
+              />
+            </label>
+          </div>
+
+          <!-- 服务端翻好的那几句：不在这里另写一套解释，否则改一处就与机器人那边对不上。 -->
+          <ul v-if="prefsLines.length" class="mt-3 mb-0 list-none space-y-1 p-0 text-xs text-ink-3">
+            <li v-for="line in prefsLines" :key="line" class="flex gap-1.5">
+              <span aria-hidden="true">·</span>
+              <span>{{ line }}</span>
+            </li>
+          </ul>
+
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p class="m-0 text-xs leading-5" :class="quietIssue && 'text-[var(--err)]'">
+              <template v-if="quietIssue">{{ quietIssue }}</template>
+              <template v-else-if="prefsDirty">有改动还没保存。</template>
+              <template v-else>默认参数只用来预填下单表单，随时能在下单时改。</template>
+            </p>
+            <NButton
+              type="primary"
+              size="small"
+              :loading="savingPrefs"
+              :disabled="!prefsDirty || !!quietIssue"
+              @click="savePrefs"
+            >
+              <template #icon><Save :size="15" /></template>
+              保存偏好
+            </NButton>
+          </div>
+        </template>
       </section>
 
       <!-- 密码 -->

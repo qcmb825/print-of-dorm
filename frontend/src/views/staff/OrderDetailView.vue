@@ -125,7 +125,7 @@ const flowFields = computed<Field[]>(() => {
   const item = order.value
   if (!item) return []
   return [
-    { label: '取件码', value: pickupCodeLabel(item.pickup_code) },
+    { label: '单号', value: pickupCodeLabel(item.pickup_code) },
     { label: '金额', value: priceLabel(item.price) },
     { label: '接单人', value: item.claimer_nickname },
     { label: '接单时间', value: item.claim_time ? fullTime(item.claim_time) : null },

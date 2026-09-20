@@ -1,7 +1,7 @@
 <script setup lang="ts">
-/** 取件核对：柜台上输一串取件码 → 看清是哪一单、是谁的 → 直接确认取件。
+/** 取件核对：柜台上输一串单号 → 看清是哪一单、是谁的 → 直接确认取件。
  *
- *  为什么值得单独做一屏，而不是让管理员在订单台里搜取件码再点改状态：
+ *  为什么值得单独做一屏，而不是让管理员在订单台里搜单号再点改状态：
  *  学生站在柜台前报一串数字，管理员要做的是「核一眼、把纸递过去」，中间
  *  不该夹着翻页、找行、点下拉、选「已取件」这几步 —— 那几步里的每一步
  *  都可能在忙的时候点错（尤其下拉里「已取件」和「可取件」挨着）。
@@ -94,7 +94,7 @@ async function lookup(): Promise<void> {
     order.value = data.order
     if (data.order.status !== READY) missHint.value = ''
   } catch (error) {
-    missHint.value = error instanceof ApiError ? error.message : '查不到这一单 · 核对取件码'
+    missHint.value = error instanceof ApiError ? error.message : '查不到这一单 · 核对单号'
   } finally {
     looking.value = false
   }
@@ -151,7 +151,7 @@ function close(): void {
     :bordered="false"
   >
     <p class="mb-3 text-xs leading-5 text-ink-3">
-      输入取件码回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
+      输入单号回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
     </p>
 
     <NInput
@@ -159,7 +159,7 @@ function close(): void {
       v-model:value="code"
       size="large"
       clearable
-      placeholder="取件码 · 例 0012"
+      placeholder="单号 · 例 0012"
       :status="missHint ? 'error' : undefined"
       @keydown.enter="lookup"
     >
@@ -242,7 +242,7 @@ function close(): void {
             费用 {{ priceLabel(order.price) }}
           </span>
           <span class="tnum text-ink-3">
-            取件码 {{ pickupCodeLabel(order.pickup_code) }}
+            单号 {{ pickupCodeLabel(order.pickup_code) }}
           </span>
           <span v-if="order.claimer_nickname" class="text-ink-3">
             接单 {{ order.claimer_nickname }}

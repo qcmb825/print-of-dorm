@@ -27,6 +27,7 @@ from config import (
     ORDER_STATUSES,
     ORDER_STATUSES_MANUAL,
     ORDER_STATUSES_QUEUE,
+    PICKUP_CODE_DIGITS,
     ROLE_ADMIN,
     ROLE_SUPER,
     ST_DONE,
@@ -275,7 +276,7 @@ def log_event(order_id, action, detail='', conn=None, to_status=None):
 
 # ---- 订单列表的公共 SQL ----
 #
-# 「订单台列表」和「凭取件码核对」要的是同一批字段。两份 SELECT 各写一遍的话，
+# 「订单台列表」和「凭单号核对」要的是同一批字段。两份 SELECT 各写一遍的话，
 # 以后加一个字段（比如这次的 preset_group_id）只会改到其中一处，
 # 另一处静默少一个键 —— 前端类型是手写的，少键不报错，只是那一格永远空着。
 #
@@ -360,22 +361,31 @@ def _like_param(text):
 
 
 def _pickup_codes(raw):
-    """把柜台输入的取件码归一成几个候选值。
+    """把柜台输入的单号归一成几个候选值。
 
-    取件码是 4 位数字，界面上也补零显示成 4 位，但人报号码时习惯省前导零
-    （「12 号」而不是「0012」）。所以纯数字且不足 4 位时，把补零那一份也算上 ——
-    只认原样的话，柜台会碰到「明明是这个码，却显示找不到」，而且没法解释。
+    单号是 **5 位数字**（2026-09-21 从 4 位升上来，见 utils.generate_pickup_code），
+    界面上补零显示成 5 位，但人报号码时习惯省前导零（「1245 号」而不是「01245」）。
+    所以纯数字且不足位时，把补零的那几份都算上 —— 只认原样的话，柜台会碰到
+    「明明是这个码，却显示找不到」，而且没法解释。
+
+    **老单的 4 位单号也照旧认**：库里存的是 TEXT，索引按值不按长度；
+    长度不足时我们同时给 zfill(4) 与 zfill(5) 两个候选，两代号码一起匹配。
     极端冲突时退化成 6 位短码（含字母），那种走原样匹配。
     """
     # JSON 里这个字段可能是数字（前端传的是字符串，但不保证）——
     # 先 str() 一下，别让 .strip() 在 int 上直接 AttributeError（那就是一个 500）。
     text = str(raw if raw is not None else '').strip()
-    # 超过 16 个字就不是取件码了（最长也就 6 位），不要拿它去查库
+    # 超过 16 个字就不是单号了，不要拿它去查库
     if not text or len(text) > 16:
         return []
     codes = [text]
-    if text.isdigit() and len(text) < 4:
-        codes.append(text.zfill(4))
+    if text.isdigit():
+        # 4 位是老形态、5 位是现形态：两个都当候选，老单不用迁移
+        for width in (4, PICKUP_CODE_DIGITS):
+            if len(text) < width:
+                padded = text.zfill(width)
+                if padded not in codes:
+                    codes.append(padded)
     return codes
 
 
@@ -391,7 +401,7 @@ def _pickup_conflict_response(conn, codes):
         'FROM orders WHERE pickup_code IN (%s) ORDER BY id DESC' % placeholders,
         codes).fetchall()
     if not found:
-        return jsonify({'code': 404, 'msg': '没找到这个取件码，核对一下再试'}), 404
+        return jsonify({'code': 404, 'msg': '没找到这个单号，核对一下再试'}), 404
     live = [item for item in found if item['status'] != ST_DONE]
     if not live:
         return jsonify({
@@ -671,11 +681,11 @@ def api_upload():
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 纸张=%s 取件码=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 纸张=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
                 color, duplex, copies, paper['name'] if paper else '未指定',
                 pickup_code, client_ip())
-    # 只返回订单号和取件码，不暴露服务器绝对路径
+    # 只返回订单号和单号，不暴露服务器绝对路径
     return jsonify({
         'code': 0,
         'msg': '上传成功！订单已记录',
@@ -742,7 +752,7 @@ def api_create_preset_order():
                              g.user['nickname'], preset_id, client_ip())
             return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 取件码=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies,
                 paper['name'] if paper else '未指定', pickup_code, client_ip())
     return jsonify({
@@ -1260,10 +1270,10 @@ def api_update_status(order_id):
     return jsonify({'code': 0, 'msg': f'订单 {order_id} 已更新为「{new_status}」'})
 
 
-# ---- 柜台取件：凭取件码核对、确认取件 ----
+# ---- 柜台取件：凭单号核对、确认取件 ----
 #
 # 为什么单独给两条接口，而不是让柜台那人在列表里翻出那一单再改状态：
-# 学生站在面前报的是**取件码**，不是订单号。走列表要先搜索、再在一堆同名学生里
+# 学生站在面前报的是**单号**，不是订单号。走列表要先搜索、再在一堆同名学生里
 # 认出是哪一行、再点开下拉框选「已取件」—— 三个人排队的时候很容易点错行，
 # 而这里点错行的后果是把别人的件交出去，学生拿走之后基本追不回来。
 # 这条路径只有「输入码 → 看一眼 → 点取件」三步。
@@ -1276,7 +1286,7 @@ def api_update_status(order_id):
 def api_lookup_pickup():
     codes = _pickup_codes(request.args.get('code'))
     if not codes:
-        return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
+        return jsonify({'code': 400, 'msg': '请输入单号'}), 400
     placeholders = ','.join('?' * len(codes))
 
     with db_conn() as conn:
@@ -1298,7 +1308,7 @@ def api_lookup_pickup():
             order['owner_student_id'] = owner['student_id'] if owner else None
 
     if order is None:
-        return jsonify({'code': 404, 'msg': '没找到这个取件码，核对一下再试'}), 404
+        return jsonify({'code': 404, 'msg': '没找到这个单号，核对一下再试'}), 404
     return jsonify({'code': 0, 'order': order})
 
 
@@ -1308,7 +1318,7 @@ def api_confirm_pickup():
     data = request.get_json(silent=True) or {}
     codes = _pickup_codes(data.get('code') or request.form.get('code'))
     if not codes:
-        return jsonify({'code': 400, 'msg': '请输入取件码'}), 400
+        return jsonify({'code': 400, 'msg': '请输入单号'}), 400
     placeholders = ','.join('?' * len(codes))
 
     with db_conn() as conn:
@@ -1319,7 +1329,7 @@ def api_confirm_pickup():
         #
         # 参数顺序要跟问号一一对上：SET 的那个问号在最前面，然后是 IN 里的一串，
         # 最后才是状态条件。写成 (*codes, ST_DONE, ST_READY) 的话
-        # 状态列会被赋成用户输入的取件码文本（UPDATE 照样成功、rowcount 也是 1），
+        # 状态列会被赋成用户输入的单号文本（UPDATE 照样成功、rowcount 也是 1），
         # 然后下面按「已取件」再查就查不到，当场 500 —— 这个坑已经踩过一次。
         cursor = conn.execute(
             'UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP '
@@ -1332,10 +1342,10 @@ def api_confirm_pickup():
             # 这种码不能替人做决定，退回订单台让他自己看。
             if cursor.rowcount > 1:
                 security_event('pickup_code_ambiguous',
-                               '取件码 %s 同时命中 %s 张订单' % (codes[0], cursor.rowcount))
+                               '单号 %s 同时命中 %s 张订单' % (codes[0], cursor.rowcount))
                 return jsonify({
                     'code': 409,
-                    'msg': '这个取件码对上了不止一单，请到订单台手动处理',
+                    'msg': '这个单号对上了不止一单，请到订单台手动处理',
                 }), 409
             return _pickup_conflict_response(conn, codes)
 
@@ -1349,16 +1359,16 @@ def api_confirm_pickup():
             claimer = conn.execute(
                 'SELECT nickname, status FROM users WHERE id = ?', (row['claimed_by'],)).fetchone()
         if claimer is not None and row['claimed_by'] != g.user['id']:
-            detail = '凭取件码确认取件，代为交接「%s」接的单' % display_name(
+            detail = '凭单号确认取件，代为交接「%s」接的单' % display_name(
                 claimer['nickname'], claimer['status'])
         else:
-            detail = '凭取件码确认取件'
+            detail = '凭单号确认取件'
         log_event(row['id'], ORDER_LOG_PICKUP, detail, conn=conn, to_status=ST_DONE)
         # 取件不额外发信：学生本人就在柜台前面等着拿纸，
         # 再给他发一封「你的件已被取走」只是骚扰（可取件那封信才是真正有用的那封）。
         conn.commit()
 
-    logger.info('订单 #%s 凭取件码确认取件 操作人=%s(%s) ip=%s',
+    logger.info('订单 #%s 凭单号确认取件 操作人=%s(%s) ip=%s',
                 row['id'], g.user['nickname'], g.user['role'], client_ip())
     return jsonify({
         'code': 0,

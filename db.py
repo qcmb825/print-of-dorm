@@ -98,16 +98,16 @@ _ORDER_INSERT_COLUMNS = (
 
 
 def insert_order_row(conn, values):
-    """插一行订单，取件码交给这里生成，返回 (order_id, pickup_code)。
+    """插一行订单，单号交给这里生成，返回 (order_id, pickup_code)。
 
     **不 commit** —— 订单和它那条「提交订单」留痕必须落在同一个事务里
     （理由同 log_order_event），事务边界归调用方管。
 
     values 是「列名 -> 值」的字典，缺的列按 NULL 处理。
 
-    「摇取件码 → 撞了就重摇」这段刻意只写一份：直传下单、分片合并、预设下单
+    「摇单号 → 撞了就重摇」这段刻意只写一份：直传下单、分片合并、预设下单
     三条路都走这里。复制成三份的话，哪天改了重试次数或者码长，
-    改漏的那条路会变成偶发报错（「取件码连续 5 次都重复」），
+    改漏的那条路会变成偶发报错（「单号连续 5 次都重复」），
     而另外两条一切正常 —— 这种一半好的毛病最难查。
     """
     placeholders = ', '.join(['?'] * (len(_ORDER_INSERT_COLUMNS) + 1))
@@ -121,9 +121,9 @@ def insert_order_row(conn, values):
             return cursor.lastrowid, pickup_code
         except sqlite3.IntegrityError:
             conn.rollback()
-            logger.warning('取件码「%s」已被占用（第 %s 次），重摇一个', pickup_code, attempt + 1)
+            logger.warning('单号「%s」已被占用（第 %s 次），重摇一个', pickup_code, attempt + 1)
     # 连摇 5 次都撞上已经不是概率问题了，宁可报错也不能写进一个重码的单
-    raise RuntimeError('取件码连续 5 次都与其他订单重复')
+    raise RuntimeError('单号连续 5 次都与其他订单重复')
 
 
 
@@ -232,7 +232,7 @@ def find_paper_type(conn, paper_type_id):
 #            筛选就静默失效了。新记录一律写列；**老记录不倒推**（沿项目惯例：
 #            没有事实就不编），查询时用 `to_status = ? OR detail LIKE '%→「?」%'`
 #            把两种都认下来。纯加列，不重建表。
-SCHEMA_VERSION = '17'
+SCHEMA_VERSION = '18'
 
 
 
@@ -510,7 +510,7 @@ def init_database():
             'CREATE INDEX IF NOT EXISTS idx_orders_unpriced ON orders(status) '
             "WHERE status = '%s'" % ST_UNPRICED
         )
-        # 取件码得唯一：两个人拿到同一个码，打印员就会把件取错。
+        # 单号得唯一：两个人拿到同一个码，打印员就会把件取错。
         # 只对「还没取件」的单子判重，历史单子不参与 —— 老数据里万一已经存在重复值，
         # 也不该因为建不上索引就让整个服务起不来，所以这里建失败只记一条 error。
         #
@@ -527,9 +527,9 @@ def init_database():
             cursor.execute(live_index_sql)
         except sqlite3.IntegrityError:
             _pickup_index_ok = False
-            logger.error('取件码唯一索引没建成：还没取件的订单里存在重复的取件码，'
-                         '请先处理这些重复数据；本次仍会继续启动，但取件码暂时不能保证唯一')
-            logger.error('!!! 迁移未完成：取件码唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
+            logger.error('单号唯一索引没建成：还没取件的订单里存在重复的单号，'
+                         '请先处理这些重复数据；本次仍会继续启动，但单号暂时不能保证唯一')
+            logger.error('!!! 迁移未完成：单号唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
 
         # 补列之前先备份：ALTER 随时能撤，但万一中途断电/进程被杀，
         # 老表就剩一个残缺的壳。重建表那条路已经在 _migrate_release_unique_names
@@ -634,7 +634,7 @@ def init_database():
         # 和 claim_alert_time 分成两列而不是共用一列：两封信的收件人、
         # 触发条件、失败退避策略都不一样，挤在一列里的话，
         # 「未接单提醒发过了」会连带把「可取件提醒」判成已发送 ——
-        # 学生永远收不到取件码，而日志上看不出任何异常。
+        # 学生永远收不到单号，而日志上看不出任何异常。
         if 'ready_notify_time' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN ready_notify_time TIMESTAMP')
 
@@ -689,7 +689,7 @@ def init_database():
         # 部分索引的两层条件各有含义：
         #   qq <> '' —— v13 之前的存量账号这列是空串，「都是空」不算冲突；
         #   status <> 'closed' —— 注销的账号让出 QQ 号，主人换个账号还能绑回来。
-        # 建失败（存量里已有重复）只记 error 不崩，与取件码索引同一待遇：
+        # 建失败（存量里已有重复）只记 error 不崩，与单号索引同一待遇：
         # 接口层的判重（注册 / 改资料）照常挡住新的重复，存量重复由运维清完
         # 之后下次启动自动补上；bot 侧按 QQ 找账号时遇到多行也会明确拒绝。
         _qq_index_ok = True
@@ -862,6 +862,28 @@ def init_database():
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
+
+        # ---- v18：用户偏好（一对一挂在 users 上）----
+        # 为什么单独一张表而不是往 users 上加列：偏好会长（通知开关、免打扰、默认参数、
+        # 显示偏好…），塞进 users 会让「账号」这张核心表越来越像杂物间；
+        # 而偏好天然可缺省 —— 没有行就是全默认，读取侧不必区分「没设过」和「设成默认」。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_prefs (
+                user_id INTEGER PRIMARY KEY,
+                notify_qq INTEGER NOT NULL DEFAULT 1,
+                notify_mail INTEGER NOT NULL DEFAULT 1,
+                quiet_from TEXT,
+                quiet_to TEXT,
+                default_color TEXT,
+                default_duplex TEXT,
+                default_copies INTEGER,
+                default_paper_type_id INTEGER,
+                hide_done_orders INTEGER NOT NULL DEFAULT 0,
+                card_replies INTEGER NOT NULL DEFAULT 1,
+                orders_page_size INTEGER,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，

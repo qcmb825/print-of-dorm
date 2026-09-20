@@ -758,7 +758,7 @@ def api_chunk_complete(upload_id):
             return jsonify({'code': 400, 'msg': content_error}), 400
 
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
-        # 所以走同一个函数——取件码重摇、失败清理都只有一份实现。
+        # 所以走同一个函数——单号重摇、失败清理都只有一份实现。
         order_id, pickup_code = create_order_from_saved_file(
             meta['filename'], final_path, color, duplex, remark, copies, paper)
     except Exception:
@@ -781,7 +781,7 @@ def api_chunk_complete(upload_id):
         _release_merge_lock(lock_path)
 
     logger.info('分片上传完成（合并 -> 订单 #%s）upload_id=%s 用户=%s 文件=%s 大小=%sKB '
-                '共 %s 片 取件码=%s ip=%s',
+                '共 %s 片 单号=%s ip=%s',
                 order_id, upload_id, g.user['nickname'], meta['filename'],
                 meta['size'] // 1024, meta['total_chunks'], pickup_code, client_ip())
     return jsonify({

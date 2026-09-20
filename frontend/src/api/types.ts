@@ -204,6 +204,41 @@ export interface MeOverviewResponse extends ApiEnvelope {
   usage: UsageSnapshot
 }
 
+/** 用户偏好（`GET/PUT /api/me/prefs`）。
+ *
+ *  服务端 `prefs.py` 是**唯一事实来源**：网页这一页、机器人「设置」命令、
+ *  取件提醒线程读的是同一份。所以这里的字段名必须与那张表逐字对齐 ——
+ *  拼错一个键不会报错，只会在保存时被白名单静默丢掉，用户看到「已保存」而实际没变。
+ *  空串一律表示「没设过」（免打扰、默认参数都是这个约定），不是一个合法的取值。 */
+export interface UserPrefs {
+  /** 取件提醒推不推到这个 QQ（机器人私聊） */
+  notify_qq: boolean
+  /** 取件提醒发不发邮件 */
+  notify_mail: boolean
+  /** 'HH:MM'；两头都空 = 不启用免打扰。只给一头会被后端 400（只给一头等于没设） */
+  quiet_from: string
+  quiet_to: string
+  /** 'black' | 'color' | ''（'' = 每次下单都问） */
+  default_color: string
+  /** 'single' | 'double' | '' */
+  default_duplex: string
+  default_copies: number | null
+  default_paper_type_id: number | null
+  /** 「我的订单」里不显示已取件的单；机器人「订单」同样按它收口 */
+  hide_done_orders: boolean
+  /** 机器人用卡片回「表格型」查询；关掉就一律纯文本 */
+  card_replies: boolean
+  /** 机器人「订单」一次列几条（后端夹在 3-20） */
+  orders_page_size: number
+}
+
+export interface PrefsResponse extends ApiEnvelope {
+  prefs: UserPrefs
+  /** 服务端把偏好翻成的人话。网页与机器人**共用这几句** ——
+   *  两边各写一套话术的话，改一处另一处就留在旧说法上，而且不报错。 */
+  lines: string[]
+}
+
 export interface Order {
   id: number
   filename: string
@@ -273,7 +308,7 @@ export interface Order {
   /** 分组名。服务端按 COALESCE(preset_group_id, preset_id) 取的那条预设的**现值**，
    *  和 preset_content 那个下单快照不同 —— 服务改名后这里会跟着变。 */
   preset_group_content?: string | null
-  /** 下单人姓名 / 学号。**只有「凭取件码核对」那一条接口返回**：
+  /** 下单人姓名 / 学号。**只有「凭单号核对」那一条接口返回**：
    *  柜台要拿它确认来的人是不是本人。订单列表一页 20 条，不给这个
    *  （那是一份花名册，不是柜台核对）。 */
   owner_real_name?: string | null
@@ -308,7 +343,7 @@ export type OrderLogAction =
   | 'status'
   | 'withdraw'
   | 'download'
-  /** 凭取件码确认取件。和 'status' 分开是有意的：时间线上要能看出
+  /** 凭单号确认取件。和 'status' 分开是有意的：时间线上要能看出
    *  「柜台核对过码才交的件」和「管理员随手把状态改成已取件」是两回事。 */
   | 'pickup'
   /** 管理员把这一单归入某条打印服务分组（不是下单时选的预设）。 */
@@ -413,7 +448,7 @@ export interface OrderDetail {
   preset_group_content?: string | null
 }
 
-/** 凭取件码核对的响应。就是列表那一行订单，外加两个只在柜台核对时给的字段。
+/** 凭单号核对的响应。就是列表那一行订单，外加两个只在柜台核对时给的字段。
  *
  *  单独起一个类型而不是复用 Order：这样 owner_real_name / owner_student_id
  *  在这条接口上就是**必有**的，界面上不用写一堆 `?? '—'` 去兜底

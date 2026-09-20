@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 学生下单：选文件**或用预设打印服务** + 打印选项，上传成功后把取件码放大展示 ——
+/** 学生下单：选文件**或用预设打印服务** + 打印选项，上传成功后把单号放大展示 ——
  *  那是学生真正要记住的东西。
  *
  *  两条下单路径互斥，而且是在**服务端**互斥的：用了预设就不许带文件
@@ -42,7 +42,7 @@ import {
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showReceipt } from '@/composables/transition-receipt'
-import { chunkApi, orderApi, printOptionsApi } from '@/api/endpoints'
+import { chunkApi, orderApi, printOptionsApi, authApi } from '@/api/endpoints'
 import type { ChunkSession, PaperType, PrintPreset } from '@/api/types'
 import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
@@ -170,15 +170,71 @@ onBeforeUnmount(() => {
 function reset(): void {
   fileList.value = []
   remark.value = ''
-  color.value = 'black'
-  duplex.value = 'single'
-  copies.value = COPIES_DEFAULT
-  paperTypeId.value = null
   presetId.value = null
   mode.value = 'file'
   progress.value = 0
   uploadedBytes.value = 0
   totalBytes.value = 0
+  // 打印参数回到**偏好里的默认值**（而不是写死的黑白/单面/1 份）：
+  // 下第二单时把自己设过的默认值丢掉，那个设置就等于不存在。
+  applyDefaults()
+}
+
+/* ---------- 偏好里的「默认打印参数」 ----------
+ *
+ *  它只当**表单初值**（服务端 prefs.py 那条注释讲的就是这件事）：
+ *  服务端绝不替用户补参数，学生交上来的就是表单里那个值。
+ *  两边都默认的话，「没选」和「选了默认」就分不开，计费时会为
+ *  「这份到底是不是彩色」吵架。
+ *
+ *  表单初值而非锁定值：预填之后学生照样能改，改完这一单按改后的走，
+ *  默认值本身不动（要改默认值得去设置页 / 机器人「默认 …」命令）。
+ */
+const formDefaults = ref<{
+  color: 'black' | 'color' | null
+  duplex: 'single' | 'double' | null
+  copies: number
+  paperTypeId: number | null
+}>({ color: null, duplex: null, copies: COPIES_DEFAULT, paperTypeId: null })
+
+/** 有没有真的用过默认值。用来决定要不要显示那句「已按你的默认参数预填」——
+ *  没设过默认值的人也看到这句话，会去找一个自己从没设过的东西。 */
+const defaultsApplied = computed(() => {
+  const d = formDefaults.value
+  return !!(d.color || d.duplex || d.paperTypeId || d.copies !== COPIES_DEFAULT)
+})
+
+function applyDefaults(): void {
+  const d = formDefaults.value
+  if (d.color) color.value = d.color
+  else color.value = 'black'
+  if (d.duplex) duplex.value = d.duplex
+  else duplex.value = 'single'
+  copies.value = d.copies
+  paperTypeId.value = d.paperTypeId
+}
+
+async function loadPrefs(): Promise<void> {
+  try {
+    const response = await authApi.prefs()
+    const saved = response.prefs
+    formDefaults.value = {
+      // 只认这两个值：库里存了别的东西（手改过库、旧版本留下的）时当作「没设」，
+      // 塞进 NRadioGroup 会变成一个选不中的状态，看着像坏了。
+      color: saved.default_color === 'color' || saved.default_color === 'black'
+        ? saved.default_color
+        : null,
+      duplex: saved.default_duplex === 'single' || saved.default_duplex === 'double'
+        ? saved.default_duplex
+        : null,
+      copies: typeof saved.default_copies === 'number' ? saved.default_copies : COPIES_DEFAULT,
+      paperTypeId: saved.default_paper_type_id ?? null,
+    }
+    applyDefaults()
+  } catch {
+    // 拉不到就按硬编码初值走：默认参数本来就是个锦上添花的东西，
+    // 为它弹一个错误反而像是下单页坏了。
+  }
 }
 
 type OrderInfo = { orderId: number; code: string; filename: string }
@@ -189,14 +245,14 @@ type OrderInfo = { orderId: number; code: string; filename: string }
  *  回执压在换场覆盖层之上、跨过换场留在屏幕上，覆盖层自己的中心读数在回执期间让位
  *  （:root[data-receipt] 那条），所以整场只有一句话。
  *
- *  取件码写在回执的补充行上，而不是只留在这一页的成功面板里 ——
+ *  单号写在回执的补充行上，而不是只留在这一页的成功面板里 ——
  *  面板会跟着跳转一起消失，而回执**跨过换场还在**，学生至少多一秒看清它。
  *  目标页名从路由表取，和守卫算的是同一份事实来源（与 LoginView 一致）。 */
 function announceOrder(info: OrderInfo): void {
   showReceipt({
     code: 'ORDER SUBMITTED',
     title: '下单成功',
-    detail: `取件码 ${pickupCodeLabel(info.code)} · ${info.filename}`,
+    detail: `单号 ${pickupCodeLabel(info.code)} · ${info.filename}`,
     target: (router.resolve('/my-orders').meta.title as string | undefined) ?? '我的订单',
   })
   // **不 await**：路由守卫要是抛出来，会被下面那个 catch 逮成"提交失败，请稍后重试" ——
@@ -274,13 +330,18 @@ async function submit(): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([refreshPending(), loadOptions()])
+  await Promise.all([refreshPending(), loadOptions(), loadPrefs()])
+  // 偏好里的默认纸张可能已经被管理员停用或删掉了 —— 那种情况下下拉框里
+  // 找不到它的名字，会显示成一个裸 id（看着像乱码）。对一次账，不在清单里就当没设。
+  if (paperTypeId.value !== null && !paperTypes.value.some((item) => item.id === paperTypeId.value)) {
+    paperTypeId.value = null
+  }
 })
 </script>
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <!-- 成功回执：取件码是页面上最该被看到的信息。
+    <!-- 成功回执：单号是页面上最该被看到的信息。
          这里给整页唯一一段「有分量」的动效（rare 档，一单只出现一次）：0.97→1 的缩放配淡入，
          只用透明度会像换了张图，不像「东西出现了」。起点是 0.97 而不是 0 —— 现实里没有东西
          从虚无里冒出来，scale(0) 一律禁止。 -->
@@ -310,12 +371,12 @@ onMounted(async () => {
               订单 #{{ receipt.orderId }} · {{ receipt.filename }}
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
-              <!-- 取件码是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
+              <!-- 单号是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
                    给它长臂角标框 + 底下一整条刻度尺 —— 像一张被框起来的凭证。
                    下单成功后这一页会立刻跳去我的订单（回执跨换场留着），所以这块面板平时
-                   只是"跳转失败时还在原地"的兜底；取件码另外写进了那条回执的补充行。 -->
+                   只是"跳转失败时还在原地"的兜底；单号另外写进了那条回执的补充行。 -->
               <div class="bracket-lg px-4 py-3" style="--bracket-arm: 26px">
-                <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">取件码</div>
+                <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">单号</div>
                 <div
                   class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
                   style="color: var(--accent-text)"
@@ -327,7 +388,7 @@ onMounted(async () => {
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
             <p class="mt-3 text-xs text-ink-3">
-              管理员接单打印后，凭上面的取件码到打印点取件。
+              管理员接单打印后，凭上面的单号到打印点取件。
             </p>
           </div>
         </div>
@@ -537,6 +598,9 @@ onMounted(async () => {
       <p class="mt-2 text-xs text-ink-3">
         份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
         不确定就用「不指定」，会按常规纸走。
+        <template v-if="defaultsApplied">
+          已按你在「设置」里的<strong>默认参数</strong>预填，随时可以改。
+        </template>
       </p>
 
       <NFormItem label="备注（可选）" :show-feedback="false" class="mt-4">
@@ -598,9 +662,9 @@ onMounted(async () => {
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
           <Hash :size="12" />
-          <template v-if="usingPreset">不需要上传文件，提交后立即生成取件码</template>
+          <template v-if="usingPreset">不需要上传文件，提交后立即生成单号</template>
           <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>
-          <template v-else>上传完成后立即生成取件码</template>
+          <template v-else>上传完成后立即生成单号</template>
         </span>
       </div>
     </div>

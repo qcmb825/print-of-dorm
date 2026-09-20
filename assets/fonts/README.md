@@ -6,7 +6,7 @@
 | `SourceHanSans-SC-Regular.ttf` | 正文 / 标题（中文 + 拉丁） | 由站内 `frontend/src/assets/fonts/regular/*.woff2` 的**同一批分片合并**而来（Noto Sans SC / 思源黑体，`npm run fonts:build` 的产物） | SIL OFL 1.1 |
 | `SourceHanSans-SC-Bold.ttf` | 标题（粗） | 同上，来自 `bold/` | SIL OFL 1.1 |
 | `SpaceGrotesk-Variable.ttf` | 英文小标签（全大写宽字距） | `@fontsource-variable/space-grotesk`（网页端标题字体） | SIL OFL 1.1 |
-| `JetBrainsMono-Variable.ttf` | 数字 / 取件码 / 时间（等宽） | `@fontsource-variable/jetbrains-mono`（网页端数字字体） | SIL OFL 1.1 |
+| `JetBrainsMono-Variable.ttf` | 数字 / 单号 / 时间（等宽） | `@fontsource-variable/jetbrains-mono`（网页端数字字体） | SIL OFL 1.1 |
 
 **为什么要转成 TTF 存进来**：Pillow 读不了 woff2，而卡片要在没有 Node、没有网络的服务器上
 渲染 —— 字体必须随仓库走。转法（一次性，换字体时照做）：

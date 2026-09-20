@@ -6,13 +6,13 @@
 
   ① **一单一封，不合并。** 催单那封是发给同一个人（管理员）的，五笔单合成一封
      反而更清楚。这一封的收件人是**下单学生本人**，两个人不能塞进同一封信 ——
-     邮件的 To 字段所有人都看得见，合并就等于把 A 的取件码和订单内容告诉 B。
+     邮件的 To 字段所有人都看得见，合并就等于把 A 的单号和订单内容告诉 B。
      这不是排版问题，是泄露。所以失败的撤回也只能**逐单**撤，
      不能像催单那样整批撤回（那会把已经发成功的几封又重发一遍）。
 
   ② **凭证列是 ready_notify_time**，语义和 claim_alert_time 一样（NULL = 没提醒过），
      但分成两列。共用一列的话「催过管理员」会把这一路判成「已提醒学生」——
-     学生永远收不到取件码，而日志上完全看不出异常。
+     学生永远收不到单号，而日志上完全看不出异常。
 
   ③ **收件人是现查的单个学生**，不是 alert_recipients 那份管理员名单。
      学生的联系方式（QQ / 邮箱 / 微信）决定这封信发得出去还是发不出去：
@@ -42,6 +42,8 @@ from config import (CONTACT_LABELS, PAY_QR_FALLBACK_IMAGE, PAY_QR_FOLDER, PICKUP
                     PICKUP_NOTIFY_ENABLED, PICKUP_NOTIFY_INTERVAL,
                     PICKUP_NOTIFY_MAX_AGE_HOURS, PICKUP_NOTIFY_RETRY_BACKOFF,
                     ST_READY, logger)
+import prefs
+
 from db import db_conn
 from mail import (PAY_QR_CID, alert_recipients, compose_manual_body, compose_manual_subject,
                   compose_pickup_body, compose_pickup_html, compose_pickup_subject,
@@ -80,7 +82,7 @@ def _pending_orders(conn):
     return conn.execute('''
         SELECT o.id, o.pickup_code, o.filename, o.preset_content, o.copies,
                o.color_type, o.duplex, o.paper_name, o.price,
-               o.claimed_by,
+               o.claimed_by, o.user_id,
                u.nickname AS owner,
                u.qq AS owner_qq,
                u.contact_type AS owner_contact_type,
@@ -162,6 +164,21 @@ def _pay_qr_path(conn, claimed_by):
     return None
 
 
+def _may_notify(conn, order):
+    """这一单此刻该不该给学生发信（通知开关 + 免打扰）。
+
+    ⚠️ 必须在**发信这一层**判：把设置页的开关藏起来挡不住已经排队的提醒，
+    用户以为自己关掉了、夜里照样被吵 —— 那种错还不报警。
+    免打扰是**延后**不是丢弃：这里跳过它，下一轮扫描还会选中（凭证没被占用），
+    出了免打扰时段自然发出去。
+    """
+    user_id = order['user_id']
+    if user_id is None:
+        return True
+    current = prefs.get_prefs(user_id, conn)
+    return prefs.should_notify(current, 'mail')
+
+
 def _send_student(order, mailbox, qr_path):
     """给一个学生发他的取件通知。一单一封，所以这里只管一笔。"""
     has_qr = bool(qr_path)
@@ -237,9 +254,18 @@ def scan_once():
         if not rows:
             return 0
         claimed = []
+        deferred = 0
         for row in rows:
+            # ⚠️ 顺序不能反：_claim 会占掉「已通知」凭证（ready_notify_time），
+            # 先 claim 再跳过 = 这条提醒**永久丢掉**；先判偏好、不动凭证，
+            # 才是「延后到出了免打扰再发」（下一轮扫描还会选中它）。
+            if not _may_notify(conn, row):
+                deferred += 1
+                continue
             if _claim(conn, row['id']):
                 claimed.append(dict(row))
+        if deferred:
+            logger.info('取件提醒：%d 单因通知偏好/免打扰暂缓，稍后重试', deferred)
         conn.commit()
         if not claimed:
             return 0
@@ -284,7 +310,7 @@ def _watch_loop():
 
     整个循环包在 try/except 里 —— 理由和 notifier.py 完全相同：
     **死了的定时任务是不会有任何提示的**，日志正常、接口正常，
-    只是学生再也收不到取件码，可能过很久才有人发现。
+    只是学生再也收不到单号，可能过很久才有人发现。
     """
     global _next_retry_at
     while True:

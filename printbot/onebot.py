@@ -179,7 +179,7 @@ class OneBotClient:
 
     def send_private_msg(self, user_id, text):
         """发私聊消息。**绝不用 send_msg / send_group_msg** ——
-        那两个会碰群聊，而取件码、绑定码这类内容出现在群里就是泄露
+        那两个会碰群聊，而单号、绑定码这类内容出现在群里就是泄露
         （大纲第 0 节把「不做群聊」列为硬边界）。"""
         return self.call_action('send_private_msg',
                                 {'user_id': int(user_id), 'message': text})
