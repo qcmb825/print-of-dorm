@@ -245,7 +245,7 @@ def quota_rejection(extra_bytes=0):
     }), 429
 
 
-def log_event(order_id, action, detail='', conn=None):
+def log_event(order_id, action, detail='', conn=None, to_status=None):
     """给订单写一条操作留痕。
 
     传了 conn 就并入调用方的事务 —— 改状态和写留痕必须一起成功或一起失败，
@@ -254,14 +254,17 @@ def log_event(order_id, action, detail='', conn=None):
 
     不传 conn 时自己开一个短连接，给下载这类**只读**操作留痕用：它没有事务可搭，
     而且留痕失败也不该把用户的下载搞失败 —— 所以这里只记一条 warning。
+
+    to_status：这一条把订单改成了哪个状态（改状态、柜台取件时传）。
+    历史记录页按结果状态筛选读的就是它（见 db.log_order_event 的说明）。
     """
     if conn is not None:
-        log_order_event(conn, order_id, g.user['id'], g.user['role'], action, detail)
+        log_order_event(conn, order_id, g.user['id'], g.user['role'], action, detail, to_status)
         return
     short = None
     try:
         short = get_db()
-        log_order_event(short, order_id, g.user['id'], g.user['role'], action, detail)
+        log_order_event(short, order_id, g.user['id'], g.user['role'], action, detail, to_status)
         short.commit()
     except sqlite3.Error:
         logger.warning('订单 #%s 的操作留痕写入失败（动作=%s）', order_id, action)
@@ -1248,7 +1251,8 @@ def api_update_status(order_id):
         # 「从什么改成什么」必须记下来：状态被连着改两次（可取了 → 打印中 → 可取了）之后，
         # 光看最终状态和一个 update_time，谁也说不清中间那一步是谁做的。
         log_event(order_id, ORDER_LOG_STATUS,
-                  '「%s」→「%s」' % (row['status'], new_status), conn=conn)
+                  '「%s」→「%s」' % (row['status'], new_status), conn=conn,
+                  to_status=new_status)
         conn.commit()
 
     logger.info('订单 #%s 状态「%s」->「%s」 操作人=%s(%s) ip=%s',
@@ -1349,7 +1353,7 @@ def api_confirm_pickup():
                 claimer['nickname'], claimer['status'])
         else:
             detail = '凭取件码确认取件'
-        log_event(row['id'], ORDER_LOG_PICKUP, detail, conn=conn)
+        log_event(row['id'], ORDER_LOG_PICKUP, detail, conn=conn, to_status=ST_DONE)
         # 取件不额外发信：学生本人就在柜台前面等着拿纸，
         # 再给他发一封「你的件已被取走」只是骚扰（可取件那封信才是真正有用的那封）。
         conn.commit()

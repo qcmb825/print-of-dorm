@@ -3,7 +3,7 @@
 各路由模块只依赖 config / security / auth / utils / db，不反向依赖 app.py，
 所以不会出现循环导入。
 """
-from . import account, admin, announcements, order_options, orders, tickets
+from . import account, admin, announcements, bot, history, order_options, orders, tickets
 # upload_chunks 依赖 orders 里的建订单函数，所以写在上面那行之后：
 # Python 从左到右导入，到这一行时 orders 已经进了 sys.modules。
 from . import upload_chunks
@@ -15,9 +15,11 @@ from . import pay_qr
 
 BLUEPRINTS = (
     account.bp,
+    bot.bp,
     orders.bp,
     upload_chunks.bp,
     admin.bp,
+    history.bp,
     announcements.bp,
     tickets.bp,
     audit.bp,

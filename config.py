@@ -40,6 +40,9 @@ def load_env_file(env_file='.env'):
 load_env_file()
 
 
+BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()
+
+
 
 def env_bool(name, default=False):
     """true/1/yes/on 都当成 True。"""

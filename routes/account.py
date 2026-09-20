@@ -188,7 +188,12 @@ def api_register():
             # 这里刻意不查姓名：同名同姓本来就该各注册各的账号（学号不同），
             # 挡住第二个「张伟」没道理，注册人也无法自证自己不是第一个。
             # 真正能唯一标识身份的是学号，唯一性也只留给它和登录用的昵称。
-            for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+            #
+            # qq 也在这轮判重里：QQ 号是机器人的身份凭证（bot 按发送者的 QQ 号
+            # 找账号，见 routes/bot.py），两个账号共用一个 QQ 会让 bot 分不清
+            # 消息是谁发的。它与 users.qq 上的部分唯一索引（idx_users_qq_live）
+            # 是同一条规矩的两道闸：接口这道给出人话，索引那道兜住并发。
+            for column, label in (('nickname', '昵称'), ('student_id', '学号'), ('qq', 'QQ 号')):
                 exists = conn.execute(
                     f'SELECT 1 FROM users WHERE {column} = ? AND status != ? LIMIT 1',
                     (payload[column], STATUS_CLOSED),
@@ -469,6 +474,14 @@ def api_me_update_profile():
                     (fields['nickname'], STATUS_CLOSED, uid)).fetchone()
                 if owner is not None:
                     return jsonify({'code': 409, 'msg': f'昵称已被账号 {owner["nickname"]} 占用'}), 409
+            # QQ 号同样不能改到别人头上：它是机器人的身份凭证（与注册判重、
+            # idx_users_qq_live 同一条规矩）。改动自己没变过的值不查，省一次 SELECT。
+            if fields['qq'] != (target['qq'] or ''):
+                owner = conn.execute(
+                    'SELECT id, nickname FROM users WHERE qq = ? AND status != ? AND id != ? LIMIT 1',
+                    (fields['qq'], STATUS_CLOSED, uid)).fetchone()
+                if owner is not None:
+                    return jsonify({'code': 409, 'msg': f'QQ 号已被账号 {owner["nickname"]} 占用'}), 409
 
             conn.execute('''
                 UPDATE users SET nickname = ?, dorm = ?, qq = ?, contact_type = ?, contact = ?

@@ -14,6 +14,7 @@ from flask_cors import CORS
 from config import (
     ALERT_MAIL_TO,
     ALLOWED_EXTENSIONS,
+    BOT_TOKEN,
     CLAIM_ALERT_ENABLED,
     CLAIM_ALERT_MINUTES,
     DATABASE_PATH,
@@ -159,6 +160,27 @@ log_startup_summary()
 
 # 鉴权 / 会话
 
+# bot 只允许访问 /api/bot/*，也不借用任何真实账号。认证必须排在 CSRF 之前，
+# 否则它的写请求会先被浏览器专用的 CSRF 校验挡掉。
+@app.before_request
+def identify_bot_request():
+    """验证 bot 专用 Bearer 令牌，并给后续钩子标记受限的虚拟身份。"""
+    g.bot_endpoint = False
+    if not request.path.startswith('/api/bot/'):
+        return
+    if not BOT_TOKEN:
+        return jsonify({'code': 503, 'msg': 'QQ Bot 服务未配置'}), 503
+
+    authorization = request.headers.get('Authorization', '')
+    scheme, separator, token = authorization.partition(' ')
+    if (not separator or scheme.lower() != 'bearer' or
+            not token or not secrets.compare_digest(BOT_TOKEN, token.strip())):
+        security_event('bot_auth_failed', 'path=%s' % request.path)
+        return jsonify({'code': 401, 'msg': 'Bot 鉴权失败'}), 401
+
+    g.bot_endpoint = True
+
+
 # CSRF 校验必须排在「读取登录用户」之前。顺序在这里有实际后果：
 # 账号被禁用或注销后，浏览器里那份旧 Cookie 再发写请求时，应该先过安全校验，
 # 再到下面那步把无效会话清掉，最后视图给出干净的 401，前端据此回登录页。
@@ -167,6 +189,8 @@ log_startup_summary()
 @app.before_request
 def csrf_protect():
     """所有写操作都要带上与会话匹配的 X-CSRF-Token，防止跨站伪造请求（CSRF）。"""
+    if g.get('bot_endpoint'):
+        return
     if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
         return
     expected = session.get('csrf')

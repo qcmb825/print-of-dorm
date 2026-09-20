@@ -316,6 +316,39 @@ export type OrderLogAction =
 
 /** 一条订单操作记录。actor_* 是**动作发生当时**的身份 ——
  *  事后拿 users.role 反推的话，历史记录会跟着账号现状一起变。 */
+/** 历史记录页的一行：订单留痕 + 它属于哪一单、把订单改成了什么状态。
+ *
+ *  与详情页时间线的 `OrderLog` 是同一份数据，多了 order_id / to_status ——
+ *  详情页天然知道自己在看哪一单，所以不需要这两个字段。
+ *  `to_status` 只有「改状态」「柜台取件」两类留痕才有值；v16 之前的老留痕是
+ *  null（服务端刻意不倒推），但按状态筛选时服务端会用详情正文兜住，界面不用管。 */
+export interface OrderLogRow extends OrderLog {
+  order_id: number
+  to_status: OrderStatus | null
+}
+
+/** 历史记录列表（分页）。 */
+export interface OrderLogListResponse extends ApiEnvelope {
+  total: number
+  page: number
+  size: number
+  logs: OrderLogRow[]
+}
+
+/** 与列表**同一套筛选条件**下的统计。
+ *
+ *  `by_action` 十种动作全给（没有的记 0）、`by_status` 五个状态按流程顺序全给：
+ *  界面直接照数组画，不另抄一份清单 —— 抄一份的话，后端少给一档时前端不知道，
+ *  会稳稳留下一格永远是 0 的项（不报错，只是那句话是假的）。 */
+export interface OrderLogStatsResponse extends ApiEnvelope {
+  total: number
+  by_action: { action: OrderLogAction; label: string; count: number }[]
+  by_status: { status: OrderStatus; count: number }[]
+  /** 按天趋势，**日期升序**（画图从左到右），最多 60 天 */
+  by_day: { date: string; count: number }[]
+  by_actor: { nickname: string | null; role_label: string | null; count: number }[]
+}
+
 export interface OrderLog {
   id: number
   action: OrderLogAction

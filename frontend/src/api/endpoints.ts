@@ -15,6 +15,8 @@ import type {
   DashboardStats,
   MeOverviewResponse,
   MeResponse,
+  OrderLogListResponse,
+  OrderLogStatsResponse,
   MyOrdersResponse,
   OrderDetailResponse,
   OrderListResponse,
@@ -133,6 +135,24 @@ export const orderApi = {
 
 /* 服务数据：全站公开口径的汇总 + 下单榜。登录即可看，响应里没有金额、
    别人的昵称也已由服务端打码 —— 这两件事都在后端做，前端拿不到原文。 */
+/* 历史记录：全部订单操作留痕的查询与统计（管理端）。
+ *
+ * 列表与统计吃**同一套筛选条件**，后端也共用同一条 WHERE —— 两边各算一遍的话，
+ * 「列表 3 条、统计说 5 条」这种对不上会天天出现，而且没人会去核对。 */
+export const historyApi = {
+  list: (params: {
+    page?: number
+    size?: number
+    action?: string
+    status?: string
+    q?: string
+    from?: string
+    to?: string
+  }) => get<OrderLogListResponse>('/api/admin/order-logs', params),
+  stats: (params: { action?: string; status?: string; q?: string; from?: string; to?: string }) =>
+    get<OrderLogStatsResponse>('/api/admin/order-logs/stats', params),
+}
+
 export const boardApi = {
   load: () => get<ServiceBoard>('/api/board'),
 }

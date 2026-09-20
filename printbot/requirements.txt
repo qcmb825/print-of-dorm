@@ -1,0 +1,3 @@
+# printbot（QQ 机器人独立进程）的依赖，与服务器 requirements.txt **互不包含**：
+# 它跑在国内那台机器上，装得越少，恢复越快。
+websocket-client==1.8.0

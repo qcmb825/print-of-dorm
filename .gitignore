@@ -245,6 +245,11 @@ frontend/.vite/
 # 所以它重新落回上面的 `*.md` 规则里，文件仍留在磁盘上，只是不再被跟踪。
 # 若哪天确认要团队共享，把 `!AGENTS.md` 加回本行位置即可。
 
+# NapCat 启动器每次启动都会在**当前工作目录**生成一个加载器（内容是指向
+# napcat.mjs 的绝对路径），从项目根启动就落在仓库根上 —— 它是本机运行产物，
+# 换台机器路径就不对，不该进仓库。
+loadNapCat.js
+
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

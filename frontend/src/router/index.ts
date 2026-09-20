@@ -88,6 +88,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '订单详情' },
       },
       {
+        // 历史记录对所有管理员开放（与后端 roles_required(ROLE_ADMIN, ROLE_SUPER) 对齐）：
+        // 它就是订单台那份留痕的全局视图，能看到订单的人都能看它。
+        path: 'logs',
+        name: 'staff-logs',
+        component: () => import('@/views/staff/LogsView.vue'),
+        meta: { title: '历史记录' },
+      },
+      {
         path: 'dashboard',
         name: 'staff-dashboard',
         component: () => import('@/views/staff/DashboardView.vue'),

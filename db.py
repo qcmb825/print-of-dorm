@@ -57,7 +57,7 @@ def db_conn():
 
 
 
-def log_order_event(conn, order_id, actor_id, actor_role, action, detail=''):
+def log_order_event(conn, order_id, actor_id, actor_role, action, detail='', to_status=None):
     """往 order_logs 里写一条订单操作留痕。
 
     这个函数**不 commit**，也不自己开连接 —— 事务归调用方管。
@@ -72,11 +72,16 @@ def log_order_event(conn, order_id, actor_id, actor_role, action, detail=''):
 
     detail 只是给人看的一句话，不含密码、明文和服务器绝对路径
     （沿项目惯例：这类内容一律不进日志，也不进留痕）。
+
+    to_status 是「这一条把订单改成了哪个状态」（改状态、柜台取件时才有值）：
+    历史记录页要按结果状态筛选，而 detail 是展示文案 —— 拿它做匹配等于
+    把中文句子当接口用，文案改一个字筛选就静默失效。没有状态含义的动作留 None。
     """
     conn.execute('''
-        INSERT INTO order_logs (order_id, actor_id, actor_role, action, detail)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (order_id, actor_id, actor_role, action, (detail or '')[:ORDER_LOG_DETAIL_MAX]))
+        INSERT INTO order_logs (order_id, actor_id, actor_role, action, detail, to_status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (order_id, actor_id, actor_role, action, (detail or '')[:ORDER_LOG_DETAIL_MAX],
+          to_status))
 
 
 
@@ -211,7 +216,23 @@ def find_paper_type(conn, paper_type_id):
 #            QQ 号从旧字段挪到新字段 —— 不搬的话，所有老用户的提醒会当场静默断掉，
 #            他们只会发现「以前收得到，现在收不到了」，而日志里什么都没有。
 #            老库里填微信/邮箱的行 qq 留空，登录后会弹一次可关闭的补填提示（见前端）。
-SCHEMA_VERSION = '14'
+# v14 -> v15：QQ 号成为机器人的身份凭证，给 users.qq 加部分唯一索引。
+#            产品决策（2026-09-20）：用户在 QQ 私聊里发消息，OneBot 给出的
+#            发送者 QQ 号就是身份证明 —— 不需要验证码绑定，bot 直接按
+#            users.qq（注册必填项）找到账号。既然一个 QQ 号对应至多一个账号
+#            成了硬前提，就在数据库这一层守住它：同一 QQ 在两个还在用的
+#            账号上出现，从索引这一层就不可能。注册接口的判重也同步加上 qq
+#            （见 routes/account.py），索引管存量并发，接口管提前给出人话。
+#            排除条件里带 qq <> ''：v13 之前的存量账号 qq 是空串/NULL，
+#            「大家都是空」不该算冲突；NULL 天然不参与唯一判重，空串要显式排除。
+# v15 -> v16：order_logs 新增 to_status（这条留痕把订单改成了哪个状态）。
+#            为什么加一列而不是查的时候去 detail 里抠字：历史记录页要按
+#            「被改成待取件/已取件」这类结果状态筛选，拿中文句子做 LIKE 匹配
+#            等于把展示文案当接口用 —— 哪天改一个字（比如状态文案微调），
+#            筛选就静默失效了。新记录一律写列；**老记录不倒推**（沿项目惯例：
+#            没有事实就不编），查询时用 `to_status = ? OR detail LIKE '%→「?」%'`
+#            把两种都认下来。纯加列，不重建表。
+SCHEMA_VERSION = '16'
 
 
 
@@ -628,6 +649,26 @@ def init_database():
             CREATE UNIQUE INDEX IF NOT EXISTS idx_users_student_id_live
                 ON users(student_id) WHERE status <> 'closed'
         ''')
+        # QQ 号是机器人的身份凭证（bot 按发送者的 QQ 号找账号），一个 QQ
+        # 至多对应一个还在用的账号 —— 同上，约束落在数据库这一层。
+        # 部分索引的两层条件各有含义：
+        #   qq <> '' —— v13 之前的存量账号这列是空串，「都是空」不算冲突；
+        #   status <> 'closed' —— 注销的账号让出 QQ 号，主人换个账号还能绑回来。
+        # 建失败（存量里已有重复）只记 error 不崩，与取件码索引同一待遇：
+        # 接口层的判重（注册 / 改资料）照常挡住新的重复，存量重复由运维清完
+        # 之后下次启动自动补上；bot 侧按 QQ 找账号时遇到多行也会明确拒绝。
+        _qq_index_ok = True
+        try:
+            cursor.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_qq_live
+                    ON users(qq) WHERE qq <> '' AND status <> 'closed'
+            ''')
+        except sqlite3.IntegrityError:
+            _qq_index_ok = False
+            logger.error('QQ 号唯一索引没建成：还有用中的账号共用同一个 QQ 号，'
+                         '请先在账号管理里核对并改掉；本次仍会继续启动，'
+                         '但「按 QQ 找账号」暂时不能保证唯一')
+            logger.error('!!! 迁移未完成：QQ 号唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
 
         # 工单（站内信）：tickets 是会话，ticket_messages 是会话里的消息。
         # user_read_time / admin_read_time 分别记录双方最后一次已读的时刻，
@@ -726,11 +767,23 @@ def init_database():
                 actor_role TEXT,
                 action TEXT NOT NULL,
                 detail TEXT,
+                to_status TEXT,
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # v15 -> v16 补列：老库的 order_logs 没有 to_status（全新库上面建表就带着它了）。
+        # ⚠️ 位置必须在**建表语句之后**：这段代码比补齐表跑得早，ALTER 时会报
+        # ambiguous「no such table: order_logs」—— 和 v12 那次「索引建在补列之前」同源，
+        # 都是「先用了后出现的结构」。测试（test_history.py 全新库路径）当场抓到过一次。
+        log_columns = {row[1] for row in cursor.execute('PRAGMA table_info(order_logs)').fetchall()}
+        if 'to_status' not in log_columns:
+            cursor.execute('ALTER TABLE order_logs ADD COLUMN to_status TEXT')
         # 详情页永远是「按订单号取这几条」，所以索引直接建在 order_id 上。
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_order ON order_logs(order_id)')
+        # 历史记录页按时间倒序翻页（并可限定时间范围），给它一条时间索引。
+        # create_time 是这张表**本来就有**的列，所以这里建索引不存在
+        # 「索引建在补列之前」那个坑（见 idx_orders_preset_group 的注释）。
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_time ON order_logs(create_time)')
 
         # 预设打印服务：管理员维护的「一段描述」，学生下单时可以挑一条套用。
         #
@@ -775,13 +828,13 @@ def init_database():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
 
-        if _pickup_index_ok:
+        if _pickup_index_ok and _qq_index_ok:
             cursor.execute(
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
                 (SCHEMA_VERSION,),
             )
         else:
-            logger.error('取件码唯一索引未建成，本次不推进版本号（迁移未完成）')
+            logger.error('存在未建成的唯一索引，本次不推进版本号（迁移未完成）')
         conn.commit()
 
 

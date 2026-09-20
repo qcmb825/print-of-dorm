@@ -35,6 +35,8 @@ def actor_label():
     """
     if not has_request_context():
         return 'system'
+    if g.get('bot_endpoint'):
+        return 'qqbot'
     who = g.get('user')
     if not who:
         return '匿名'

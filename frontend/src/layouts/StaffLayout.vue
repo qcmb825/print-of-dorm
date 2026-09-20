@@ -3,6 +3,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ClipboardCheck,
+  History,
   LayoutDashboard,
   Megaphone,
   Menu,
@@ -38,6 +39,7 @@ const drawerOpen = ref(false)
 const navItems = computed(() =>
   [
     { to: '/staff/orders', label: '订单台', icon: Package, show: true },
+    { to: '/staff/logs', label: '历史记录', icon: History, show: true },
     { to: '/staff/dashboard', label: '数据看板', icon: LayoutDashboard, show: true },
     { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck, show: true },
     { to: '/staff/tickets', label: '工单处理', icon: MessageSquare, show: true },
