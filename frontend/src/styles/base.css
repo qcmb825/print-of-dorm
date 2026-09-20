@@ -12,8 +12,6 @@
 :root body {
   margin: 0;
   background-color: var(--background);
-  background-image: var(--ambient);
-  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--stack-body);
   font-size: 15px;
@@ -53,6 +51,42 @@
     letter-spacing: -0.01em;
   }
 
+  /* 裸 <a> 的颜色。
+   *
+   * 项目刻意不引 tailwind preflight（免得 reset 掉 Naive 的组件样式），代价是没有任何规则
+   * 给 <a> 定色 —— 于是盒子里的文件名链接拿的是**浏览器默认链接蓝**：浅色下 #0000EE，
+   * 深色下由 UA 的 color-scheme 给一个浅蓝。它既不在调色板里，深色下 #0000EE 压在 #050505 上
+   * 只有约 1.6:1，几乎读不出来。受影响的是订单台 / 账号管理表格里那些「→ 详情」的 router-link。
+   *
+   * 只在 @layer base 里定色，所以任何写了颜色工具类的链接（侧栏 .nav-link、品牌区那个
+   * style="color: inherit"）都照旧赢它。**不动 text-decoration** —— 那几个链接靠默认下划线
+   * 表示可点，去掉会减少一处可用线索。 */
+  a {
+    color: var(--accent-text);
+  }
+
+  /* 裸 <button> 的外观重置。
+   *
+   * 与上面 <a> 那条同一个根源：项目刻意不引 tailwind preflight，于是**没接 Naive 的
+   * 原生 <button>** 全都带着浏览器默认的按钮皮肤 —— 浅色下是一块灰底、一圈描边、
+   * 还有 Win32 时代那种凸起的斜面（管理端窄屏顶栏的菜单键与主题键当时就是这个样子，
+   * 用户截图报的"太丑"就是它）。凡是这类按钮，模板里都只写了布局与颜色，
+   * 没人写背景 —— 因为谁都没想起来 UA 皮肤的存在。
+   *
+   * 必须留在 @layer base：Naive 的组件样式在层外，永远赢过这里，
+   * 所以 NButton 一根汗毛都不少；赢它的只有 UA，而这正是目的。
+   * 不动 text-align —— UA 给的居中恰好是工具条图标想要的，
+   * 要左对齐的地方（工单列表行）自己写了 text-left。 */
+  button {
+    appearance: none;
+    background-color: transparent;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
   /* 数字、编号、取件码、时间戳一律走等宽，这是参考站最出效果的一处细节 */
   .tnum,
   code,
@@ -71,7 +105,6 @@
   }
   ::-webkit-scrollbar-thumb {
     background: var(--border);
-    border-radius: 999px;
     border: 2px solid transparent;
     background-clip: content-box;
   }
@@ -80,10 +113,12 @@
     background-clip: content-box;
   }
 
+  /* 焦点轮廓走 --accent-text，不走 --primary：后者是荧光黄 #fffa00，压在浅底上只有
+     1.05:1 —— 键盘用户会完全看不到焦点在哪。--accent-text 在同底上是 5.22:1。
+     这属于 WCAG 2.4.11（非文本对比度 ≥3:1），换了颜色就要重新量。 */
   :focus-visible {
-    outline: 2px solid var(--primary);
+    outline: 2px solid var(--accent-text);
     outline-offset: 2px;
-    border-radius: 2px;
   }
 
   .sr-only {
@@ -101,34 +136,40 @@
 
 @layer utilities {
   /* 磨砂面板：参考站的 glass-panel，用细边框而非阴影来分层 */
+  /* 区块（.panel）：**去掉卡片外壳**。
+   *
+   * 这套语言不用「圆角卡片 + 投影」分区，用**编号 + 分隔线 + 留白**：一个区块以一条
+   * 贯穿的 1px 细线开头，边界交给排版而不是框（实测鹰角官网主 CSS 里 box-shadow
+   * 只出现一次、border-radius:0 出现四次）。全站 47 处 .panel 靠改这一处一起换掉，
+   * 不必逐个文件动。
+   *
+   * 保留 position: relative 是给装饰层的绝对定位留宿主。 */
   .panel {
     position: relative;
-    background-color: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-panel);
-    box-shadow: var(--shadow-panel);
+    background: none;
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
   }
 
-  /* 磨砂只留给登录首屏这种低频、面积可控的场景；订单表和图表不应在滚动时
-     为每个面板持续重算背景。 */
-  .login-card {
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
+  /* 这里原先有 .login-card 的 backdrop-filter: blur(12px)。
+     删掉有两条原因：它属于「柔和光晕」语汇，与纯平硬边的目标相反；以及
+     backdrop-filter 需要每帧重算背后的内容，滚动时是实打实的合成开销。
+     .login-card 这个类保留 —— 它是 .login-card::after 那条双色亮线的定位宿主。 */
 
-  /* 让需要承载数字或主要操作的卡片有一层克制的抬升感；普通容器不跟着动，
-     避免表格和大块内容在滚动时显得浮躁。 */
+  /* 数据单元（.panel-raised）：**保留一圈细描边**，但同样无底色、无圆角、无投影。
+   *
+   * 与 .panel 分开是因为角色不同 —— 它是重复网格里的一个格（指标卡、学生端汇总格）。
+   * 去掉框之后相邻格子会连成一片数字，可读性反而下降。给框不给底，正是这套语言的做法：
+   * 用描边分层、不用色块。 */
   .panel-raised {
-    box-shadow: var(--shadow-raised);
-    transition:
-      transform var(--motion-dur-base) var(--motion-ease-out),
-      border-color var(--motion-dur-fast) ease,
-      box-shadow var(--motion-dur-base) var(--motion-ease-out);
+    background: none;
+    border: 1px solid var(--border);
+    transition: border-color var(--motion-dur-fast) ease;
   }
 
   @media (hover: hover) {
     .panel-raised:hover {
-      transform: translateY(-2px);
       border-color: var(--accent-tint-border);
     }
   }
@@ -147,8 +188,9 @@
     bottom: 9px;
     left: 0;
     width: 2px;
-    border-radius: 0 999px 999px 0;
-    background: var(--primary);
+    /* 激活色条是「线」，走 --accent-text。荧光黄当 2px 竖条在浅色底上只有 1.05:1，等于没有。
+       （激活态另有文字色与 --muted 底色两个信号，所以这条即使变暗也不丢信息。） */
+    background: var(--accent-text);
     content: '';
     opacity: 0;
     transform: scaleY(0.45);
@@ -167,13 +209,42 @@
     transform: scale(0.98);
   }
 
-  /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理 */
+  /* 方形图标按钮：外壳上的小动作（亮暗切换、去学生端、抽屉、退出高级视图）。
+   * 尺寸与图标由调用处给（size-9 + place-items-center），这里只负责**悬停**：
+   * 裸 <button> 的 UA 皮肤被上面那条重置剥掉之后，桌面上没有任何"这里可以按"的回应，
+   * 图标会读成一张静态插图。铺一层 --muted —— 与导航激活项、抽屉选中行同一块底。
+   * 触屏那半边不用它：pointer:coarse 的 :active 已经给了按压反馈。 */
+  .icon-btn {
+    transition: background-color var(--motion-dur-fast) ease;
+  }
+
+  @media (hover: hover) {
+    .icon-btn:hover {
+      background-color: var(--muted);
+    }
+  }
+
+  /* 小号技术标签：大写 + 加大字距，来自参考站的徽标处理。
+   *
+   * **本类不带 font-size** —— 字号由调用处显式给（拉丁走 text-2xs，中文走 text-xs）。
+   * 原先这里写死 11px，但那是按拉丁字母定的：汉字没有大小写（uppercase 对它是空操作），
+   * .09em 的字距会把汉字拉散，而 11px 又低于中文 12px 的可读下限。
+   * 两套需求放不进一个类，所以拆开：本类只管家族 / 大小写 / 字距，字号交给工具类。
+   * 漏写字号的后果是继承正文 15px（静默变大），所以每个调用处都必须有 size 类。 */
   .tech-label {
     font-family: var(--stack-mono);
-    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.09em;
     text-transform: uppercase;
+  }
+
+  /* 中文标签的对应形态。必须写在 .tech-label **之后**（同层同特异度，后者胜）。
+     中文不加字距：CLReq 的疏排档位是 1/4em、1/3em 这类刻度，.09em 落在档位之间，
+     既读不出疏排意图又破坏了汉字字框的均匀节奏 —— 归零更干净。 */
+  .tech-label--cn {
+    font-family: var(--stack-heading);
+    letter-spacing: 0;
+    text-transform: none; /* 对汉字是空操作，写出来是为了表明意图 */
   }
 
   /* 「几份」这个数字。打印员是照着它干活的，而它原来只是规格列第二行里的
@@ -192,7 +263,6 @@
     align-items: baseline;
     padding: 1px 5px;
     border: 1px solid var(--accent-tint-border);
-    border-radius: 4px;
     background-color: var(--accent-tint);
     color: var(--accent-text);
     font-family: var(--stack-mono);
@@ -202,20 +272,909 @@
     white-space: nowrap;
   }
 
+  /* ══ 装饰层 ════════════════════════════════════════════════════════
+   * 「宣传片」语汇的零件：括角、刻度、斜切、斜纹、技术读数、水印。
+   * 三条纪律，每一条都是坑：
+   *   1) 纹理与斜纹**永不压在文字下面** —— 笔画会和纹理混同（WCAG F83 型失败）。
+   *      所以边带一律做成窄条，并用 padding 把内容让开；
+   *   2) clip-path 只用在**非交互的装饰层**上 —— 它会裁掉描边与 outline，被裁区域还
+   *      不接收指针事件（CSS Masking §5），压在按钮上会让焦点环消失、点不到；
+   *   3) 全部用静态 background-image 或伪元素，不动画、不开新层、不加 will-change。 */
+
+  /* ══ 装饰层（App.vue 里的固定层）══════════════════════════════════
+   * 它铺满视口、在内容之下，承载"随指针做视差"的那几件装饰。
+   * 必须放在换场 stage **之外**：stage 在换场时会被 transform，而 transform 会给
+   * 固定定位的后代换掉包含块，这一层就会跟着飘走。 */
+  .decor-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  /* 底纹网格。inset 留出负余量，视差移动后不会露出边缘。 */
+  /* 登录页不画工作台网格：那一页有自己的图纸底图，两套线叠在一起就是"两层网格"。 */
+  .decor-layer[data-guest] .decor-layer__grid {
+    display: none;
+  }
+
+  .decor-layer__grid {
+    position: absolute;
+    inset: -48px;
+    /* 双层：上面两层是 48px 的细线，下面两层是每 5 格一条的重线。
+       细线写在前面（画在上面），两线重合处会叠加 —— 那正好让"每 5 格一条"看起来更重。 */
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(var(--grid-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
+    background-size: 48px 48px, 48px 48px, 240px 240px, 240px 240px;
+    background-position: center;
+  }
+
+  /* ── 视差 ────────────────────────────────────────────────────────
+   * **只动 transform**（合成属性）。JS 只写 --px / --py（已经是平滑后的值），
+   * 位移由这里的 calc() 算，所以"谁动多少"完全在 CSS 里：各元素给自己的 --depth。
+   *
+   * 这里**不再有 transition**。上一版挂了一条 280ms 的过渡，那是两层平滑叠在一起：
+   * CSS 的过渡每帧被一个新目标重新触发，等于每帧重来一次"快起步慢收尾"，
+   * 而且实际响应取决于指针事件的密度（不同设备不同）。平滑现在只由 JS 的
+   * 指数阻尼负责，帧率无关 —— 详见 composables/motion.ts。两层同时留着只会互相打架。
+   *
+   * `--parallax-gain` 是全局闸门：整套视差"感觉太晃"时只改 tokens.css 里这一支，
+   * 不用去翻每个 data-parallax 的 --depth。
+   *
+   * `will-change: transform` 是给 .decor-layer__grid 那种**铺满视口**的元素留的：
+   * 它带着四层背景图，不提到独立图层的话，每帧位移都要重绘整屏。
+   * 代价要说清楚：这几件都是空壳元素（span / svg，没有后代），
+   * 所以不会撞上"will-change 给 fixed 后代换掉包含块"那个坑 —— 换成有内容的
+   * 容器前要先确认里面没有 fixed / sticky。 */
+  [data-parallax] {
+    transform: translate3d(
+      calc(var(--px, 0) * var(--depth, 6px) * var(--parallax-gain, 1)),
+      calc(var(--py, 0) * var(--depth, 6px) * var(--parallax-gain, 1)),
+      0
+    );
+    will-change: transform;
+  }
+
+  /* ── 显示面（.sheet）══════════════════════════════════════════════
+   * **网格是"工作台"，内容是一块"屏"。** 网格只在屏外可见：页边、侧栏、栏距；
+   * 屏面本身是近实底，正文永远落在实底上。
+   *
+   * 这条分工是这套视觉里 figure/ground 的根。之前把内容做成透明、让网格从底下透上来，
+   * 结果是三层东西同层竞争：网格线（3%/5.5%）、元素边框（--border 1.23:1）、
+   * 以及本该"浮在上面"的内容块 —— 谁也读不出谁是元素，内容看起来是浮在背景**里**
+   * 而不是浮在背景**上**。方舟的网格底下从不放正文，所以这里把实底面补回来。
+   *
+   * 注意它不是"把卡片又加回来"：这一层是**整块内容区**的底，不是每个块各给一个卡片；
+   * 块与块之间仍然是 1px 分隔线 + 留白那套语言。
+   *
+   * 2026-09-18：从"纸"改成"屏"。纸与屏的差别在做设计时只落在三件事上 ——
+   * 光的方向（纸是对角打光、屏是纵向背光）、材质（纸是纤维、屏是像元阵列）、
+   * 边缘（纸被裁切、屏被边框框住）。这里改的是前两件，第三件由 .frame-brackets 承担。
+   * 两者共用 --surface-sheen 这个变量名，因为它们的**职责**完全相同：
+   * 给一大片纯色一个方向感与材质。 */
+  .sheet {
+    background-color: var(--background);
+    /* 两层底：像元栅格在最上（它必须逐格平铺，所以要给 background-size），
+       背光渐变在下面（单张铺满，size 给 auto）。 */
+    background-image:
+      radial-gradient(var(--raster-dot) 0.5px, transparent 0.6px),
+      var(--surface-sheen);
+    background-size: 4px 4px, auto;
+    background-position: 0 0, 0 0;
+  }
+
+  /* ══ 图纸底图（登录页）═══════════════════════════════════════════
+   * 登录页的底不做网格，做**一张图纸**：图框 + 分区刻度尺 + 一张空间站结构草图 + 标题栏。
+   * 三条取舍，都是为了让"有内容的线"不至于变成脏背景：
+   *   ① 它是**画出来的**，不是铺出来的。一张图有疏有密、有大片空白，而图案是均匀的；
+   *      均匀的东西铺满整屏必然和内容抢注意力（工作台网格那次就是这个教训）。
+   *   ② 颜色与粗细一起分主次：**铅笔墨**两档透明度（--blueprint-ink / -fine）
+   *      + 强调色只给引出编号和图框角标；粗细三档（0.75 / 1 / 2 设备像素，
+   *      全部 non-scaling-stroke —— 否则"按视口缩放"会把 2px 在大屏拉成 4px）。
+   *      单色单线宽那一版被评"线条粗细太一致不好看"。
+   *   ③ 笔画**不进内容区**：图纸是一圈"框"，所有笔画留在内容列之外的边带里
+   *      （包络怎么算见 BlueprintSheet.vue 顶部的注释）。所以文字脚下没有图纸的线，
+   *      "纹理压文字"那条红线在构图层面就不成立，而不只是靠透明度凑对比度。
+   *
+   * 它替代的是全站那层 48px 工作台网格 —— **一页只能有一套底线**，
+   * 网格和图纸叠在一起就是"两层网格"那个老问题（见 App.vue 的 data-guest）。 */
+  .blueprint {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  /* 图框：内缩一道 1px 线，四角各一小段加粗，像一张图纸的裁切边。 */
+  .blueprint__frame {
+    position: absolute;
+    inset: 14px;
+    border: 1px solid var(--blueprint-ink-fine);
+  }
+
+  /* 角标走强调色：整张图里"要被看到"的三处之一（另两处是引出编号和剖切内圈）。 */
+  .blueprint__frame::before,
+  .blueprint__frame::after {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--blueprint-accent);
+    content: '';
+  }
+
+  .blueprint__frame::before {
+    top: -1px;
+    left: -1px;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  .blueprint__frame::after {
+    right: -1px;
+    bottom: -1px;
+    border-top: 0;
+    border-left: 0;
+  }
+
+  /* 分区刻度尺：贴在纸的四条边上，比内图框再外一档（图框与纸边之间那圈）。
+     节奏与站内的 .ticks / .vticks 一致，所以它读起来是同一把尺子换了个位置。 */
+  .blueprint__zones {
+    position: absolute;
+    --tick-color: var(--blueprint-ink-fine);
+  }
+
+  .blueprint__zones--x {
+    right: 14px;
+    left: 14px;
+    height: 5px;
+  }
+
+  .blueprint__zones--y {
+    top: 14px;
+    bottom: 14px;
+    width: 5px;
+  }
+
+  /* 图纸本体：居中、按视口铺满（preserveAspectRatio=meet，所以圆还是圆，
+     不会被拉成椭圆 —— 技术图纸里最刺眼的就是比例失真）。 */
+  .blueprint__station {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 标题栏：图纸右下角那一块。字段写的都是真事（产品名与版本戳），
+     不编图纸编号、不编比例尺 —— 装饰件可以无意义，但不该是假的。 */
+  .blueprint__block {
+    position: absolute;
+    bottom: 26px;
+    left: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-left: 2px solid var(--blueprint-accent);
+    padding: 8px 12px;
+  }
+
+  /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
+     上的伪元素互不打架，也能直接叠在任何容器上。
+     背景图不会接收指针事件，所以这里不需要 pointer-events: none（那会连子元素一起禁掉）。 */
+  .frame-brackets {
+    --fb-size: 16px;
+    --fb-w: 1px;
+    --fb-c: var(--accent-text);
+    background-image:
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c)),
+      linear-gradient(var(--fb-c), var(--fb-c)), linear-gradient(var(--fb-c), var(--fb-c));
+    background-repeat: no-repeat;
+    background-size:
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size),
+      var(--fb-size) var(--fb-w), var(--fb-w) var(--fb-size);
+    background-position:
+      left top, left top, right top, right top,
+      left bottom, left bottom, right bottom, right bottom;
+  }
+
+  /* 竖向刻度尺：主内容区左缘那把「标尺」。与 .ticks 同一套节奏，只是转了 90°。 */
+  .vticks {
+    width: 5px;
+    background-image:
+      repeating-linear-gradient(to bottom, var(--tick-color) 0 1px, transparent 1px var(--tick, 10px)),
+      repeating-linear-gradient(
+        to bottom,
+        var(--tick-color) 0 1px,
+        transparent 1px var(--tick-major, 50px)
+      );
+    background-position: left top;
+    background-repeat: repeat-y;
+    background-size: 3px 100%, 5px 100%;
+    --tick-color: var(--text-quaternary);
+  }
+
+  /* 斜切色块：平行四边形记号。只做装饰，理由见本节开头第 2 条。 */
+  .cut {
+    clip-path: polygon(28% 0, 100% 0, 72% 100%, 0 100%);
+  }
+
+  /* 超大水印：页面角落那枚几乎看不见的巨号编号。排版装饰，用的时候要配 aria-hidden。
+     定位写在类里而不是调用处：底距在窄屏要变（见下），分散在两个 layout 的 class 上
+     迟早改漏一处，改漏的表现是它被下面的栏切掉一截。 */
+  .watermark {
+    position: fixed;
+    right: 0;
+    bottom: 0.5rem;
+    font-family: var(--stack-heading);
+    font-size: clamp(88px, 16vw, 220px);
+    font-weight: 700;
+    line-height: 0.78;
+    letter-spacing: -0.07em;
+    color: color-mix(in srgb, var(--foreground) 5%, transparent);
+    user-select: none;
+    pointer-events: none;
+  }
+
+  /* 窄屏：右下角这一角被底部标签栏占了，编号的**下半截会被栏切掉** ——
+     屏幕上只剩十几个像素高的字头露在栏上方，读起来不像排版，像渲染坏了。
+     所以让它抬到栏上面去，而不是把它藏掉：它本来就是「右下角那枚编号」，
+     而窄屏这个角只有栏上方是空的（栏以上那一段，正好是页面自己留出的底部留白）。
+     让位距离与栏高共用 --chrome-tabbar-h —— 栏长高而水印不动，就是同一个 bug 回来。
+     只管学生端：管理端窄屏没有底部栏（导航在顶栏里），那枚编号该留在原来的角上。 */
+  @media (width < 48rem) {
+    [data-shell='student'] .watermark {
+      bottom: calc(var(--chrome-tabbar-h) + env(safe-area-inset-bottom) + 0.5rem);
+    }
+  }
+
+  /* 技术读数：等宽大写的极小字，用于「SECTOR 01 / GRID 48」这类装饰读数。 */
+  .readout {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-quaternary);
+    white-space: nowrap;
+  }
+
+  /* 边带斜纹：只占 4px 窄条，并用 padding 把内容让开，
+     所以永远不会出现「纹路压在字上」。左右两条边各一个变体，
+     实际用到的是左边（公告条）与底边（窄屏顶栏）。 */
+  .hazard-left {
+    background-image: repeating-linear-gradient(-45deg, var(--hazard-ink) 0 3px, transparent 3px 6px);
+    background-repeat: no-repeat;
+    background-position: left top;
+    background-size: 4px 100%;
+    padding-left: 16px;
+  }
+
+  /* 底边斜纹带（窄屏顶栏那道横贯的危险斜纹）。 */
+  .hazard-bottom {
+    background-image: repeating-linear-gradient(-45deg, var(--hazard-ink) 0 3px, transparent 3px 6px);
+    background-repeat: no-repeat;
+    background-position: left bottom;
+    background-size: 100% 4px;
+    padding-bottom: 14px;
+  }
+
+  /* ══ 大号装饰件（"技术档案/工作文件"语汇）════════════════════════════
+   * 这一批是**大尺度**的：长臂角标、大面积斜切色带、大网点块、穿孔边、大号读数。
+   * 它们承担的是"这份文件被认真整理过"的观感 —— 小号的刻度与括角负责细节，
+   * 大号的这几件负责让整页一眼看出是档案而不是普通网页。
+   *
+   * 约束仍然只有一条：**不压在正文上**。所以它们只占空白区（页边、纸角、内容末尾），
+   * 要么就只是极低对比度的底纹。 */
+
+  /* 长臂角标框：与小号 .bracket 语 义相同（替代圆角容器），只是臂长与线宽都加大。
+     用于把一块内容框成"取景框里的东西"—— 取件码、登录卡这类需要被单独标示的块。 */
+  .bracket-lg {
+    position: relative;
+  }
+  .bracket-lg::before,
+  .bracket-lg::after {
+    position: absolute;
+    width: var(--bracket-arm, 34px);
+    height: var(--bracket-arm, 34px);
+    border: 2px solid var(--accent-text);
+    content: '';
+    /* 必须：伪元素默认堆在内容之上，不吃掉这一条会让压在线上的东西点不动 */
+    pointer-events: none;
+  }
+  .bracket-lg::before {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .bracket-lg::after {
+    right: 0;
+    bottom: 0;
+    border-left: 0;
+    border-top: 0;
+  }
+
+  /* 大斜切色带：一条很长的平行四边形，横过纸面的空角。
+     用 clip-path 切 —— 它是纯装饰、不载文字、不可交互，所以不违反那两条禁令
+     （cut 会裁掉描边与 outline、被裁区域不接收指针事件）。 */
+  .decor-band {
+    background-color: var(--accent-tint);
+    clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
+  }
+
+  /* 条码块：三层周期互质的竖条（3px / 7px / 11px 步长）叠在一起，
+     叠出来的疏密在整段长度里不重复 —— 观感就是一条真条形码，但不需要生成编码。
+     它替代的是原来的半调网点块：网点做的是"油墨印在纸上"，
+     而屏幕上的同类记号是条码/扫描条（摄像头、扫码枪、标签机都在屏幕上画这个）。
+     整块纯装饰、不承载可扫的编码，调用方负责 aria-hidden。 */
+  .decor-bars {
+    background-image:
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 3px),
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 2px, transparent 2px 11px),
+      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 7px);
+  }
+
+  /* 右缘读数沟（替代原来的穿孔边）：一条 1px 竖槽 + 一列长短交替的刻度，
+     做的是**电子文档的滚动沟 / 代码编辑器的行号沟**。
+     穿孔是纸的记号（装订线），沟槽是屏幕的记号（这一页在文档里有多长）——
+     同一块空白位置，换一件东西就把语汇从"纸"扳到"屏"。
+     background-clip: padding-box 不能省：背景默认画到边框下面，
+     刻度会压在槽线上，看着像脏了。 */
+  .decor-rail {
+    border-right: 1px solid var(--border);
+    background-image:
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 12px),
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 60px);
+    background-repeat: repeat-y;
+    background-position: right top;
+    background-clip: padding-box;
+    background-size: 3px 100%, 7px 100%;
+  }
+
+  /* 数据转储块：等宽十六进制，越往下越淡。
+     这一件是整套语汇里**最能分辨"屏"与"纸"**的一件 —— 纸上不会印十六进制转储，
+     而屏幕上到处都是（调试面板、诊断输出、设备状态）。
+     内容是真的（调用方传进来的字符串的 UTF-8 字节），不是随机数：
+     装饰件可以"无意义"，但不该"假"——假数据在截图里和真数据长得一样，
+     可一旦有人真去数，它就会露馅。 */
+  .data-dump {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    line-height: 1.6;
+    letter-spacing: 0.08em;
+    color: var(--text-quaternary);
+    overflow: hidden;
+    /* 不折行：一行 16 字节是这个图案的**形状**，折了就不是转储了。
+       窄屏上被截断留在屏幕外，正好读成"后面还有"——真转储在窗格里也是这么被切的。 */
+    white-space: pre;
+    mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
+  }
+
+  /* 大号读数：尺码更大、字距更宽的技术读数，用于文件头/版号这类"铭牌"位置。 */
+  .readout-lg {
+    font-family: var(--stack-mono);
+    font-size: var(--text-base);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-quaternary);
+    white-space: nowrap;
+  }
+
+  /* ══ 电子件（"终端/在线文档"语汇）═══════════════════════════════════
+   * 这一批回答的是"为什么它看起来像屏幕上的东西，而不是印出来的东西"。
+   * 纸与屏最本质的差别不在材质，在**状态**：纸是死的（印完就定了），
+   * 屏是活的（有光标、有连接状态、有正在走的时间）。所以这里的每件东西
+   * 都对应一种"屏上的活状态"，而不是一种图案。
+   *
+   * 共同约束有两条，都来自前面那三条纪律：
+   *   ① 动的东西一律只出现在**没有正文**的位置 —— 扫描高光走分隔基线、
+   *      光标与状态灯跟在等宽读数旁边。会动的亮点扫过正文比"纹理压文字"更该避免；
+   *   ② 每件动效都必须有一个**静态的等价形态**（reduced-motion 下退成常亮或整件撤掉），
+   *      而不是"变慢"—— 慢扫一条横贯全宽的亮线仍然踩前庭敏感。 */
+
+  /* 扫描基线：一条 1px 分隔线，上面有一段强调色高光慢慢掠过（7 秒一遍）。
+     只在**不载正文的基线**上用（标题区收尾线、区块间的分隔线）。 */
+  .scan-rule {
+    position: relative;
+    height: 1px;
+    background-color: var(--border);
+  }
+  .scan-rule::after {
+    position: absolute;
+    top: -1px;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    background-image: linear-gradient(90deg, transparent, var(--scan-ink) 50%, transparent);
+    background-repeat: no-repeat;
+    background-size: 96px 100%;
+    content: '';
+    opacity: 0.75;
+    pointer-events: none;
+    /* 走 background-position 而不是 transform：元素只有 1px 高、宽度是一个内容列，
+       每帧重绘一条 1px 线可以忽略；换成 transform 反而要多包一层元素来承载位移。
+       两端都落在可视区之外（-96px 与 100% + 96px），所以循环处不会出现
+       "高光从左边凭空冒出来"这一眼能看出破绽的接缝。 */
+    animation: scan-pass var(--motion-dur-scan) linear infinite;
+  }
+
+  @keyframes scan-pass {
+    from {
+      background-position: -96px 0;
+    }
+    to {
+      background-position: calc(100% + 96px) 0;
+    }
+  }
+
+  /* 光标：一个半字宽的方块，0.9Hz 明灭。
+     它只跟在**状态读数**（等宽小字）后面，语义是"这条通道是活的"，
+     不是"这里可以打字"（本站没有终端输入），所以不要放进表单里。 */
+  .caret {
+    display: inline-block;
+    width: 0.5em;
+    height: 0.85em;
+    vertical-align: -0.08em;
+    background-color: var(--scan-ink);
+    animation: caret-blink var(--motion-dur-blink) linear infinite;
+  }
+
+  @keyframes caret-blink {
+    0%,
+    54% {
+      opacity: 1;
+    }
+    55%,
+    100% {
+      opacity: 0.12;
+    }
+  }
+
+  /* 状态灯：4px 方块，与光标同一节奏但**错开半拍**（负 delay 推半个周期），
+     所以一行里不会两件东西一起亮 —— 同频的两个亮点会读成一处频闪。
+     不用 box-shadow 做外圈：全站投影归零的验收把 box-shadow 收成了白名单，
+     为一个 4px 的灯破例不值。 */
+  .status-led {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    background-color: var(--accent-text);
+    animation: led-pulse var(--motion-dur-blink) linear infinite;
+    animation-delay: calc(var(--motion-dur-blink) / -2);
+  }
+
+  @keyframes led-pulse {
+    0%,
+    40% {
+      opacity: 1;
+    }
+    60%,
+    100% {
+      opacity: 0.25;
+    }
+  }
+
+  /* 数据字段行：等宽标签 + 点线引导 + 等宽值。
+     这是"电子文档"最省力的一件记号 —— 屏幕上记录视图就是这个形状（表单、属性面板、
+     诊断输出），而纸上同类信息的形状是**实线格子**。换句话说：点线引导不是装饰，
+     它正是"这条信息是某个进程吐出来的、不是印刷出来的"那个视觉差别本身。
+     点线由 border 画，不载文字，所以不碰"纹理压文字"那条红线。 */
+  .field {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .field__k {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    /* 走次要文字档而不是装饰档：PATH / CODE / SYNC 是**要读的**（读数靠它对应到哪一栏），
+       而装饰档（--text-quaternary）在浅色下只有约 2.9:1、暗色下 3.71:1，都不达小字门槛。
+       装饰档那条"只作纯装饰"的注解，靠这一类用法搬走才算真的成立。 */
+    color: var(--text-tertiary);
+    white-space: nowrap;
+  }
+
+  .field__lead {
+    height: 1px;
+    min-width: 10px;
+    flex: 1 1 auto;
+    margin-bottom: 3px;
+    border-bottom: 1px dotted var(--border);
+  }
+
+  .field__v {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.06em;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 细分隔线的强调段：一条 1px 线，左端 40px 用强调色。
+     区块标题下方、表头下方这类地方用来标「线的起点」。 */
+  .rule-accent {
+    height: 1px;
+    background-image: linear-gradient(
+        to right,
+        var(--accent-text) 0 40px,
+        transparent 40px
+      ),
+      linear-gradient(var(--border), var(--border));
+    background-repeat: no-repeat;
+  }
+
   .grid-lines {
     background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px),
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
     background-size: 32px 32px;
   }
 
-  /* 登录首屏的背景只在这里加强层次，进到业务区仍维持低干扰的环境光。 */
-  .login-shell {
-    background-image:
-      linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px),
-      radial-gradient(circle at 72% 42%, var(--accent-tint-soft), transparent 24rem);
-    background-size: 42px 42px, 42px 42px, auto;
+  /* ── 四个装饰元件 ────────────────────────────────────────────────
+   * 都是「用编号、刻度、括角、斜纹来分区」这套做法的零件，替代卡片边界。
+   * 共同纪律：一律用静态 background-image / 伪元素，不动画、不开新层。 */
+
+  /* 括角：两条直角短线。**pointer-events: none 是必须的** —— 伪元素默认堆在内容之上，
+     不吃掉这一条的话，压在角上的按钮与链接会点不动、hover 也不响应。 */
+  .bracket {
+    position: relative;
   }
+  .bracket::before,
+  .bracket::after {
+    position: absolute;
+    width: var(--bracket-size, 12px);
+    height: var(--bracket-size, 12px);
+    border: 1px solid var(--accent-text);
+    content: '';
+    pointer-events: none;
+  }
+  .bracket::before {
+    top: 0;
+    left: 0;
+    border-right: 0;
+    border-bottom: 0;
+  }
+  .bracket::after {
+    right: 0;
+    bottom: 0;
+    border-left: 0;
+    border-top: 0;
+  }
+
+  /* 刻度尺：两层 repeating-linear-gradient。
+     长刻度必须落在第 5 条小刻度上 —— repeating-linear-gradient 自己不会计数，
+     靠两层都从 left 起算、且 --tick-major 恰为 --tick 的整数倍来实现。 */
+  .ticks {
+    height: 5px;
+    background-image:
+      repeating-linear-gradient(to right, var(--tick-color) 0 1px, transparent 1px var(--tick, 8px)),
+      repeating-linear-gradient(
+        to right,
+        var(--tick-color) 0 1px,
+        transparent 1px var(--tick-major, 40px)
+      );
+    background-position: bottom left;
+    background-repeat: repeat-x;
+    background-size: 100% 3px, 100% 5px;
+    /* 刻度是装饰，走四级文字色（浅色 2.6:1），不抢内容的注意力。 */
+    --tick-color: var(--text-quaternary);
+  }
+
+  /* 危险斜纹：45°、3px 条纹 + 3px 间隙。只用于「待计费 / 已取消异常」这类状态标记
+     与不可逆操作的提示区，**不做背景装饰** —— 铺满就变成廉价科技感滤镜了。 */
+  .hazard {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--hazard-ink) 0 3px,
+      transparent 3px 6px
+    );
+  }
+
+  /* ══ 工单条（列表里的每一行订单）═════════════════════════════════
+   * 形状学的是**处理队列里的行**，不是卡片。三处差别，每一处都在解决一个具体问题：
+   *   ① 左缘一条状态色条（--wo-accent）：状态本来只在标签里以文字出现，
+   *      一屏订单要逐个读标签才知道谁到哪一步了；色条让它变成一眼扫得出来的。
+   *      色条是**冗余**编码（文字标签仍在），所以它不需要自己承担对比度门槛；
+   *   ② 顶上先给一行等宽读数（单号 / 时间），再给文件名 —— 读数的位置固定在右上角，
+   *      扫视时不会因为文件名长短而错位；
+   *   ③ 行与行之间靠 1px 线，而不是卡片之间的间距。一整列订单由此读成**一张表**。
+   *
+   *  ⚠ 左侧内边距必须 >= 色条宽度 + 8px：色条压在文字上的话，它就从"记号"变成了脏东西
+   *  （这条与"纹理不压文字"是同一条纪律）。 */
+  .wo {
+    position: relative;
+    border-top: 1px solid var(--border);
+    padding: 14px 0 14px 12px;
+  }
+
+  .wo__bar {
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 0;
+    width: 3px;
+    background-color: var(--wo-accent, var(--border));
+  }
+
+  /* 仪表格：给一格读数加一条左缘竖刻度。
+   * 读数落在刻度旁边才像"从仪表上读出来的"，而不是"网页里的一个数字" ——
+   * 这是这套语汇里最便宜也最见效的一件（一个 ::before，零布局影响）。
+   * 它占的是格子自己的内边距，所以**不压任何文字**：调用方要给足左侧内边距
+   * （4px 刻度 + 至少 6px 间隙），这条与"纹理不压文字"是同一条纪律。 */
+  .gauge {
+    position: relative;
+  }
+
+  .gauge::before {
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    left: 1px;
+    width: 4px;
+    content: '';
+    pointer-events: none;
+    background-image:
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 8px),
+      repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 40px);
+    background-position: left top;
+    background-repeat: repeat-y;
+    background-size: 3px 100%, 4px 100%;
+  }
+
+  /* 尺条：带刻度的进度条（榜单里"谁下了多少单"那一根）。
+   * 填充与轨道各画一层**同相位**（都从各自左边缘起算、都是 8px）的竖刻度，
+   * 所以看上去是"同一把尺子被填满了多少"，而不是"一根彩条"。
+   * 填充上的刻度走 --background 的混色：浅色下是白线压在黄条上，深色下是黑线，
+   * 两个主题都不需要另给一支颜色。 */
+  .ruler {
+    height: 6px;
+    background-color: var(--muted);
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--border) 0 1px,
+      transparent 1px 8px
+    );
+  }
+
+  .ruler__fill {
+    height: 100%;
+    background-color: var(--accent-text);
+    background-image: repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--background) 45%, transparent) 0 1px,
+      transparent 1px 8px
+    );
+  }
+
+  /* 数值变化：数字亮一下再退回来（配套 composables/motion.ts 的 useValueTick）。
+   * 用 transition 而不是 animation —— 同一批元素上 .motion-stagger 已经挂了
+   * animation-delay，两条 animation 会互相顶掉。 */
+  .value-tick {
+    transition: color var(--motion-dur-slow) var(--motion-ease-out);
+  }
+
+  .value-tick--on {
+    color: var(--accent-text);
+    transition-duration: var(--motion-dur-fast);
+  }
+
+  /* ══ 转场回执条 ═════════════════════════════════════════════════
+   * 一条横贯全屏的带子，两层（黄承载带慢进、殿后；数据带后进、先走）+ 底边排空线，
+   * 说清"刚才发生了什么、你现在去哪"。**只给有结果的事件**：登录成功、下单成功、撤回…
+   *
+   * 普通导航**不再走这里**（2026-09-18 撤掉）：那条高频路径上的"去哪"改由换场覆盖层
+   * 自己在屏幕正中报出来，屏幕中间不必再横着一条带子。
+   * 于是这条带子只在低频、有结果的那一刻出现，"停下来读一会儿"才是对的权重。
+   *
+   * 位置与分层：走在垂直中线上、贯穿全宽、z-index 300（换场面板 100、布局 sticky 顶栏 20、
+   * Naive 弹层 2000）。整层 pointer-events: none —— 盖着也点得到下面的一切。
+   * 它活着的时候覆盖层的中心读数让位（见文件末尾 :root[data-receipt] 那条）。 */
+  .receipt {
+    position: fixed;
+    top: 50%;
+    right: 0;
+    left: 0;
+    z-index: 300;
+    height: 56px;
+    overflow: hidden;
+    transform: translateY(-50%);
+    pointer-events: none;
+    /* 这条 transition **不是给眼睛看的**（它的值在离场前后不变）：Vue 判断"离场演了多久"
+       读的是被过渡的那个根元素上的 transition-duration/delay —— 只写在子层上的话它读到 0，
+       于是当场卸载元素，表现就是"回执没有出场"。 */
+    transition: transform var(--motion-dur-band) linear;
+  }
+
+  .receipt__mat {
+    position: absolute;
+    inset: 0;
+    background-color: var(--primary);
+    animation: receipt-mat-in var(--motion-dur-band) var(--motion-ease-drawer);
+  }
+
+  .receipt__strip {
+    position: absolute;
+    top: 6px;
+    right: 0;
+    bottom: 6px;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 16px;
+    /* 实底而不是半透明：它既会落在暗面板上、也会落在新页面的浅底上，
+       唯一在这两个底上都读得清的，是它自带表面。 */
+    background-color: var(--background);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    /* backwards 不能省：数据带比黄带晚 90ms，缺了它这 90ms 里数据带会先出现在
+       落点上（屏外滑入变成"凭空出现再动一下"）。 */
+    animation: receipt-strip-in var(--motion-dur-band) var(--motion-ease-drawer)
+      var(--motion-dur-band-lag) backwards;
+  }
+
+  @keyframes receipt-mat-in {
+    from {
+      transform: translate3d(100%, 0, 0);
+    }
+  }
+
+  @keyframes receipt-strip-in {
+    from {
+      transform: translate3d(100%, 0, 0);
+    }
+  }
+
+  /* 退场：数据带先走、黄带殿后，方向朝左 —— 与进场反向，所以观感是"穿过去"。
+     退场仍走 <Transition> 的类：根元素那条 transition 负责把时长报给 Vue。 */
+  .receipt-leave-active .receipt__strip {
+    transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out);
+  }
+
+  .receipt-leave-active .receipt__mat {
+    transition: transform var(--motion-dur-band-out) var(--motion-ease-in-out)
+      var(--motion-dur-band-lag);
+  }
+
+  .receipt-leave-to .receipt__strip,
+  .receipt-leave-to .receipt__mat {
+    transform: translate3d(-100%, 0, 0);
+  }
+
+  /* 读数文字那一块（代号 + 主文 + 补充）。单独成块是为了让闪烁只打在字上。 */
+  .receipt__ink {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* 字**闪一下**（一次到位、带一点回弹），模拟电子屏刷新。
+     三条纪律：
+     ① **只闪字不闪带** —— 整条带是 56×1430px 的大面积亮度摆动，那是 WCAG 2.3.1
+        与光敏性癫痫的地界；字那一块面积小三个数量级，闪一下只是"屏刷新了"的一眼。
+     ② **一次性**，不循环：常驻闪烁才是问题，标记一下不是。
+     ③ 延迟 = 进场 + 那 90ms 错帧，所以它恰好落在"字刚停稳"那一刻；
+        减少动效下由全局兜底把时长压成 0，这一下自动消失（不会变成对光敏用户的闪烁）。 */
+  .receipt__ink {
+    /* **step-end**：这一步是关键。linear 会把每个档位之间插值成渐变 ——
+       实测透明度的取值是一串 0.95/0.77/0.58/0.39/0.2…，看起来像"慢慢暗下去"，
+       那是淡入淡出，不是闪。数字屏的明灭是**硬切**：只有那几个档位值，中间什么都没有。 */
+    animation: receipt-flicker 420ms step-end
+      calc(var(--motion-dur-band) + var(--motion-dur-band-lag)) both;
+  }
+
+  /* 关键帧的写法是"**停住**"，不是"划过"。
+     第一版把低谷写成 260ms 里的 10% —— 那是 26ms，一帧半，谁也看不见
+     （实测采样到 0.2 只维持约 20ms，用户反馈"没看到闪烁"）。
+     现在低谷各停 40~60ms（2~4 帧），才是能看见的"闪"：
+     两下实的（0.15 一下、0.45 一下）+ 一下轻的（0.78）—— 电子屏重新同步的手感。
+     仍然是一次性、仍然只打在字上、减少动效下仍被全局兜底压掉。 */
+  /* 每一档都写成"从 x% 到 y% 停在这个值"，跳变落在档位交界处（0.01% 的间隔
+     把"这里是硬切"写死，不依赖对 step-end 细节的记忆）。
+     节奏：暗 84ms → 亮 50ms → 暗 42ms → 亮 42ms → 轻暗 25ms → 常亮。 */
+  @keyframes receipt-flicker {
+    0%,
+    10% {
+      opacity: 1;
+    }
+    10.01%,
+    30% {
+      opacity: 0.15;
+    }
+    30.01%,
+    42% {
+      opacity: 1;
+    }
+    42.01%,
+    52% {
+      opacity: 0.45;
+    }
+    52.01%,
+    62% {
+      opacity: 1;
+    }
+    62.01%,
+    68% {
+      opacity: 0.78;
+    }
+    68.01%,
+    100% {
+      opacity: 1;
+    }
+  }
+
+  .receipt__mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    background-color: var(--status-done-bg);
+    color: var(--status-done);
+  }
+
+  .receipt__code {
+    font-family: var(--stack-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.1em;
+    color: var(--status-done);
+    white-space: nowrap;
+  }
+
+  .receipt__drain {
+    position: absolute;
+    right: 0;
+    bottom: 6px;
+    left: 0;
+    height: 2px;
+    background-color: var(--status-done);
+    transform-origin: left center;
+    animation: receipt-drain var(--receipt-hold, 2400ms) linear both;
+  }
+
+  @keyframes receipt-drain {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  /* 回执占着中线的那几秒里，**覆盖层的读数整层让位**。
+     两条读数说的是同一件事（都报目标页），挤在同一个位置只是噪音。 */
+  :root[data-receipt] .route-veil__hud {
+    display: none;
+  }
+
+  /* 规格标签：一条左强调边 + 极淡底。
+   * 刻意**不用** clip-path 切斜角（虽然那样更像"标签"）：切面会裁掉左边这根线，
+   * 更要紧的是斜边紧贴的两端会切到字的边缘 —— 这套视觉里"图形与笔画混同"是红线，
+   * 切掉半个字是同一类问题。左强调边给到的是同样的"贴上去的一张条"的读感。 */
+  .spec {
+    border-left: 2px solid var(--spec-edge, var(--text-quaternary));
+    background-color: var(--muted);
+    padding: 2px 8px;
+  }
+
+  /* 登录首屏这里**曾经**还有一层自己的 42px 网格（"加强首屏层次"）。
+     2026-09-18 删掉：全站那层 48px 工作台网格（.decor-layer__grid）是 fixed 的，
+     它在登录页同样铺着，两层网格间距不同 → 叠出一种拍频，近处是一堆疏密不匀的
+     方块，远看像背景糊了。**一整页只能有一把尺子** —— 留着全局那层，删掉本地这层。
+     .login-shell 这个类保留：它还是登录页的布局宿主（grid + place-items-center）。 */
 
   .login-card::after {
     position: absolute;
@@ -223,8 +1182,9 @@
     right: 22px;
     left: 22px;
     height: 2px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
+    /* 卡顶那条 2px 双色亮线是「线」，走 --accent-text：卡面在浅色下接近纯白，
+       荧光黄铺上去只有 1.11:1，会整条消失。深色下 --accent-text 就等于 --primary。 */
+    background: linear-gradient(90deg, transparent, var(--accent-text), var(--secondary), transparent);
     content: '';
     opacity: 0.85;
   }
@@ -293,18 +1253,17 @@
     min-width: 0;
     min-height: 100%;
     isolation: isolate;
-    background-image:
-      linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-    background-size: 48px 48px;
-    background-position: center;
+    /* 网格**不在这里** —— 它搬到了 App.vue 那层固定的 .decor-layer 上。
+       两个原因：① 视差需要一个能独立 transform 的层，而这一层（stage）在换场时会被
+       transform，固定定位的后代包含块会跟着变；② 网格压在所有内容下面，包括密集表格 ——
+       读者反馈"网格线影响到内容阅读了"，所以它现在降到 3%/5.5%，并且密排数据另有实底。 */
   }
 
-  /* 入场：等 --veil-hold 那么久（那一段正是幕布闭死的休止符，也是 DOM 换手发生的时刻），
-     再和幕布退开同刻起步、同时长收尾。
-     这个 transition-delay 是整个方案里唯一一处「内容与幕布对齐」的机关 ——
+  /* 入场：等 --veil-hold 那么久（那一段正是面板盖死的休止符，也是 DOM 换手发生的时刻），
+     再和面板滑开同刻起步、同时长收尾。
+     这个 transition-delay 是整个方案里唯一一处「内容与覆盖层对齐」的机关 ——
      Vue 的 getTransitionInfo/getTimeout 算的是 max(duration + delay)，
-     delay 会被计入，所以 @after-enter 恰好落在幕布退到屏外的那一帧，
+     delay 会被计入，所以 @after-enter 恰好落在面板滑到屏外的那一帧，
      状态机可以放心用它收尾，不需要任何 JS 计时器去猜时长。 */
   .route-enter-active {
     transition: opacity var(--veil-part) var(--motion-ease-out) var(--veil-hold);
@@ -314,8 +1273,8 @@
     opacity: 0;
   }
 
-  /* 离场：用 --motion-ease-in-out。这不是机械动作（机器动作是幕布，它走 ease-out），
-     而是幕布压上来之前内容自己先淡掉的那一段，慢起慢收正好。 */
+  /* 离场：用 --motion-ease-in-out。这不是机械动作（机器动作是面板，它走 ease-out），
+     而是面板压上来之前内容自己先淡掉的那一段，慢起慢收正好。 */
   .route-leave-active {
     transition: opacity var(--veil-leave) var(--motion-ease-in-out);
   }
@@ -362,7 +1321,7 @@
    * 1. 每一层都用 position:absolute，只有根元素是 fixed。根挂在 body 下本来就没有会
    *    改变包含块的祖先，保持这条纪律是为了防止日后有人图省事把 <RouteVeil /> 挪回
    *    #app 里 —— 那一刻它会开始受 .route-stage 的层叠与 Naive provider 的影响。
-   * 2. 两扇幕布的闭合位置必须与内容层的 leave 时长严格同刻（见 tokens.css 里的恒等式）。
+   * 2. 面板盖住的那一帧必须与内容层的 leave 时长严格同刻（见 tokens.css 里的恒等式）。
    * 3. 整层 pointer-events: none，从不吃点击。改成 auto 就等于换场时锁死整个界面，
    *    任何一条异常路径回不到 idle 都会让整屏点不动。
    * ================================================================ */
@@ -372,12 +1331,12 @@
     left: 0;
     right: 0;
     /* 用 dvh 明确定高，而不是靠 inset:0 —— inset:0 跟的是 layout viewport，
-       移动端地址栏收放时整层中线会偏离视觉中心，而套准线正落在中线上。
+       移动端地址栏收放时整层中线会偏离视觉中心，而中心读数正落在中线上。
        写了 height 之后 bottom:0 成为过约束被忽略，这正是要的结果。 */
     height: 100dvh;
     z-index: 100; /* (布局 chrome 的 20, Naive 弹层最低的 2000) */
     pointer-events: none;
-    /* 静默期不绘制。不能用 display:none —— 那会让幕布的过渡彻底不跑
+    /* 静默期不绘制。不能用 display:none —— 那会让面板的过渡彻底不跑
        （元素根本没被渲染，过渡无从开始）；visibility 是离散属性，
        隐藏的元素仍然参与过渡，只是不画。 */
     visibility: hidden;
@@ -389,262 +1348,486 @@
     visibility: visible;
   }
 
-  .route-veil__mat {
+  /* 擦除面板：一块斜切面板**单向穿过整屏**，两层。
+   *
+   * 出相位：从屏幕左侧外滑到「正好完全盖住」；那一帧就是 DOM 换手帧（= @after-leave）。
+   * 入相位：不停留，沿**同一方向**继续滑出右侧，把新页让出来。
+   * 于是「全屏被遮死」的窗口只有换手那一帧，而不是更早那版两扇幕布咬合方案的 480/600ms。
+   *
+   * 宽度取 118%、左移 9%：斜切角会让面板上下缘各偏出约 height·tan(4°)，
+   * 不留这个余量，「完全盖住」那一帧会在上下角露出缝隙。
+   *
+   * 材质与 .route-stage 同尺度（48px 网格），换场时网格是"跟着面板一起走"而不是
+   * 被抹平成一块纯色。**不要**换成 .grid-lines —— 那是 32px，两套尺度会打架。 */
+  .route-veil__wipe,
+  .route-veil__wipe-under {
     position: absolute;
-    left: 0;
-    right: 0;
-    /* 两扇各占一半减掉缝宽的一半，合拢之后正中间正好留出 --veil-slit 那道口子。
-       用 50% 而不是 50vh：根元素的高度已经是 100dvh，百分比自动跟随。 */
-    height: calc(50% - var(--veil-slit) / 2);
-    background-color: var(--veil-mat);
-    /* 与 .route-stage 同尺度、同起点的 48px 网格：幕布收拢时网格是「跟着幕布一起合」
-       而不是被抹平成一块纯色，材质才连得上。**不要**换成 .grid-lines —— 那是 32px，
-       两套尺度同时出现能看出网格打架。 */
-    background-image:
-      linear-gradient(var(--veil-grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
-    background-size: 48px 48px;
-    background-position: center top;
+    top: 0;
+    bottom: 0;
+    left: -9%;
+    width: 118%;
+    transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
     /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
        而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
     transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
-    /* 退到屏外要退多远。**不能只按自身高度算（-100%）**：唇（::before）挂在幕布内缘、
-       还要再往外伸 --veil-slit/2 + 1px，只按高度退干净的话，开幕结束那一刻唇会留在
-       屏幕边缘露出 slit/2 + 1px 的一条暗带（外壳档 slit 上限 62px 时正好残留 32px）。
-       末尾那 14px 是给分数缩放（Windows 常见的 125% / 150%）留的余量 —— 原来只留 12px，
-       1% 自高的余量只剩半个像素，边缘会露亮线。 */
-    --veil-mat-exit: calc(100% + var(--veil-slit) / 2 + 14px);
   }
 
-  /* 缝唇那排半调网点：收拢时把缝两唇做成「刚过完纸、还带着墨点的出纸口」。
-     它挂在幕布上而不是挂在缝上 —— 挂在缝上的话幕布一退开，网点会留在原地悬在新页面上方。
-     只有网点加一层向幕布内侧渐隐的遮罩，没有模糊、没有 SVG 滤镜：
-     这个仓库所有边缘都是 1px 直角细线，撕纸纤维那类有机边缘一出现，
-     界面语言就从工业件滑向特效演示。 */
-  .route-veil__mat::after {
+  .route-veil__wipe {
+    background-color: var(--veil-mat);
+    background-image:
+      linear-gradient(var(--veil-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  /* 黄层。**必须在黑层之前出现在 DOM 里**（同一层叠层下 DOM 顺序就是绘制顺序）。
+     它整个行程都比黑层多走一个 --motion-route-wipe-lead，于是两个相位里都能从黑层的
+     边下露出一条黄边：出相位它领先（黑层的边还没扫到，它先铺过去了）、入相位它殿后
+     （黑层让开一条，它还在下面）—— 与回执条「黄带先进后出」是同一条规矩。
+     不画网格：黄层是黑层的衬边，铺满网格会让那条几像素的边看着发脏。 */
+  .route-veil__wipe-under {
+    background-color: var(--primary);
+  }
+
+  /* 面板前缘的扫描边：1px 发丝线 + 1px 青线 + 1px 白核心 + 光晕。
+   * 它挂在黑层自己**朝行进方向的那条边**上、跟着一起走，所以重绘面积只有那条窄边
+   * （全屏的百分之几），而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘。
+   *
+   * 亮度走 --scan-line（浅色主题取 --status-printing，深色是 #67e8f9），
+   * 它在暗面板上是看得见的；光晕用不跟随主题的 --veil-accent-tint。 */
+  .route-veil__wipe::before {
     position: absolute;
-    left: 0;
+    top: 0;
+    bottom: 0;
     right: 0;
-    height: var(--motion-route-dot-lip);
+    width: 3px;
     content: '';
-    /* background-image 里先写的画在上面：第一层是把网点往幕布内侧吃掉的渐隐遮罩，
-       第二层才是网点本身。 */
-    background-image:
-      linear-gradient(to top, transparent, var(--veil-mat)),
-      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
-    background-size: 100% 100%, var(--motion-route-dot) var(--motion-route-dot);
-    opacity: 0;
-    transition: opacity var(--motion-dur-route-sweep) var(--motion-ease-out);
+    /* 三段而不是两段：内侧 1px 暗发丝线（面板的"厚度"）→ 中间 1px 青线 → 最外
+       1px 热核心。最外那一线落在**前缘本身**上，所以板子扫过来时最先看到的是一根
+       白亮的边，后面才跟着颜色 —— 单色 3px 条看着是"贴了一条胶带"。 */
+    background: linear-gradient(
+      to right,
+      var(--veil-hairline) 0 1px,
+      var(--scan-line, var(--secondary)) 1px 2px,
+      var(--veil-edge-core) 2px 3px
+    );
+    box-shadow: 0 0 10px 0 var(--veil-accent-tint);
   }
 
-  .route-veil__mat--top {
-    top: 0;
-    /* 退场位移见 .route-veil__mat 里的 --veil-mat-exit（必须把唇的长度算进去）。 */
-    transform: translate3d(0, calc(-1 * var(--veil-mat-exit)), 0);
+  /* 离场：面板滑到「正好完全盖住」——这一帧就是换手帧。 */
+  .route-veil[data-phase='out'] .route-veil__wipe {
+    transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  .route-veil__mat--bottom {
-    bottom: 0;
-    background-position: center bottom;
-    transform: translate3d(0, var(--veil-mat-exit), 0);
+  .route-veil[data-phase='out'] .route-veil__wipe-under {
+    transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  .route-veil__mat--top::after {
-    bottom: 0;
-  }
-
-  .route-veil__mat--bottom::after {
-    top: 0;
-    /* 下唇的渐隐方向要翻过来，否则网点是在靠外那一侧最浓、贴着缝的地方反而没了。 */
-    background-image:
-      linear-gradient(to bottom, transparent, var(--veil-mat)),
-      radial-gradient(circle, var(--scan-line, var(--secondary)) 0 38%, transparent 40%);
-  }
-
-  /* 离场：两扇咬合到中线两侧，网点同时显影。 */
-  .route-veil[data-phase='out'] .route-veil__mat--top,
-  .route-veil[data-phase='out'] .route-veil__mat--bottom {
-    transform: translate3d(0, 0, 0);
-  }
-
-  .route-veil[data-phase='out'] .route-veil__mat::after {
-    opacity: 1;
-  }
-
-  /* 重入：上一次换场还没走完就又点了一次导航，幕布多半已经在半开位置了，
+  /* 重入：上一次换场还没走完就又点了一次导航，面板多半已经在半路上了，
      再等 --veil-latch 那一段空拍就是一次肉眼看得见的卡顿。
      空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
      闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__mat {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe,
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under {
     transition-delay: 0ms;
   }
 
   /* 入场：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
-     新建一条带新 delay 的过渡，于是「先停在闭合位等 --veil-hold，再以 --veil-part 退开」
-     完全由 CSS 排出来，不依赖任何 JS 计时器。
-     停在闭合位的这一段就是休止符，也是 DOM 换手真正发生的地方。 */
-  /* 入场这一侧**不重复写落点**：--veil-mat-exit 那两个值已经在 .route-veil__mat--top /
-     --bottom 的基类里了。
-     之所以能生效，是因为 [data-phase='out'] 那两条（特异度 0,2,0）在 in 相位下不再匹配，
-     于是落回基类（0,1,0）。同一份值写两处只会给以后留一个"改了这处忘了那处"的坑
-     —— 这个文件已经被同类问题咬过一次（见 tokens.css 里 --veil-* 两个档位的注释）。 */
-
-  .route-veil[data-phase='in'] .route-veil__mat {
+     新建一条带新 delay 的过渡，于是「先停在盖住位等 --veil-hold，再以 --veil-part
+     沿同方向滑出去」完全由 CSS 排出来，不依赖任何 JS 计时器。
+     停在盖住位的这一段就是休止符，也是 DOM 换手真正发生的地方。
+   *
+   * 落点必须**显式写出来**：基类的落点是 −100%（屏外左侧），而入场要去屏外右侧。
+   * 黄层的落点同样把那个 lead 减掉，否则它收尾时会留一条 3% 宽的黄边贴在屏幕右边，
+   * 直到 settle() 把整层切掉才消失。 */
+  .route-veil[data-phase='in'] .route-veil__wipe,
+  .route-veil[data-phase='in'] .route-veil__wipe-under {
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
   }
 
-  .route-veil[data-phase='in'] .route-veil__mat::after {
-    transition-duration: var(--motion-dur-route-sweep);
-    transition-delay: var(--veil-hold);
+  .route-veil[data-phase='in'] .route-veil__wipe {
+    transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 出纸口的上下唇：每扇幕布从自己的内缘再往外长半道缝，两唇合拢正好填满中间那道口子。
-   *
-   * 这里刻意**不做成一个独立的「缝」元素** —— 那样它就必须靠时间对齐去追幕布，而两边
-   * 都追不上：合拢时幕布是从上下两端爬进来的，独立元素在它到位之前就已经画在屏幕正中
-   * （浅色主题下就是「页面中间突然蹦出一条黑条」，深色下 --veil-mat 与页面底色几乎相同
-   * 所以看不见）；开幕时幕布从中线往两边退，独立元素又留在原地压着新页面，直到整场结束
-   * 才随 visibility 一起消失。做成幕布自己的内缘之后，这两个问题从结构上就不存在：
-   * 合拢时它被幕布带进来，拉开时它跟着幕布退走，**零时序对齐**。
-   *
-   * 填充必须是**实色**而不是半透明的 --card（#ffffffcc / #ffffff05）：后者会透出底下的
-   * 页面，幕布就不「实」了，换手那一帧直接露馅。
-   *
-   * 两唇与幕布本体的交界处各压一条 1px 发丝线，合拢后相距正好 --veil-slit ——
-   * 那是闭合状态下唯一看得出结构的东西，也是「出纸口」这个读法的来源。
-   *
-   * 尺寸比半道缝各多 1px、并且互相越过中线 1px：两唇在正中重叠 2px，避免分数缩放
-   * （Windows 常见的 125% / 150%）下正中漏出一条亚像素亮缝。同色重叠，看不出接痕。 */
-  .route-veil__mat::before {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: calc(var(--veil-slit) / 2 + 1px);
-    background-color: var(--veil-mat);
-    content: '';
+  .route-veil[data-phase='in'] .route-veil__wipe-under {
+    transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
+      skewX(var(--motion-route-wipe-skew));
   }
 
-  .route-veil__mat--top::before {
-    /* 负的 bottom = 从幕布下缘继续往中线长。 */
-    bottom: calc(-0.5 * var(--veil-slit) - 1px);
-    border-top: 1px solid var(--veil-hairline);
-  }
-
-  .route-veil__mat--bottom::before {
-    top: calc(-0.5 * var(--veil-slit) - 1px);
-    border-bottom: 1px solid var(--veil-hairline);
-  }
-
-  /* 套准线：全程唯一一次「快」，也是唯一一处发光。
-     配方直接抄 .login-card::after —— transparent → --primary → --secondary → transparent，
-     那是站点自己的冷暖双色语汇，不新造霓虹色。
-     它只做一次 scaleX 展开：不做位移，峰值那一帧屏幕上就这一件事在动。 */
-  .route-veil__rule {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    height: 2px;
-    margin-top: -1px;
-    background: linear-gradient(90deg, transparent, var(--primary), var(--secondary), transparent);
-    /* 不用 --glow-secondary：那一对令牌是按 24px 半径的主按钮光晕调的（tokens.css 里
-       已经在 LoginView / UploadView 的主按钮上用着），铺到一条横贯全宽的 2px 线上，
-       面积大了十几倍，会从「高光」变成「漏光」。12px 的 --accent-tint-border 是同一个
-       色相、更小的半径，和站内的发光档位对得上。 */
-    box-shadow: 0 0 12px 0 var(--accent-tint-border);
-    opacity: 0;
-    transform: scaleX(var(--motion-route-cut));
-    transform-origin: center;
-  }
-
-  .route-veil[data-phase='in'] .route-veil__rule {
-    animation: veil-rule-strike var(--motion-dur-route-rule) var(--motion-ease-out) both;
-  }
-
-  /* 场记读数：等宽大写的目标页名，换场里唯一的文字。
-     排版直接用既有的 .tech-label + .tnum，不新增字体样式。
-     它是信息不是装饰，所以整场只有这一处文字，也没有第二块浮出的面板。 */
+  /* 读数层：一个**固定在屏幕上的版面**，不跟面板走。
+     跟过一版（位移与面板锁相、看起来是印在板上的字），问题是那一趟横穿全屏的大位移
+     和面板绑死：读数什么时候看清、能停多久，全被面板的行程决定。现在它自己只做一次
+     轻微滑动 + 淡入淡出，长度就是停留，于是停留可以按"读一行字要多久"单独定。 */
   .route-veil__hud {
     position: absolute;
-    left: 0;
-    right: 0;
-    top: calc(50% - var(--veil-slit) / 2);
-    height: var(--veil-slit);
+    inset: 0;
+    overflow: hidden;
+  }
+
+  /* 中心读数：横竖都在正中。读数占着屏幕中心这件事，是那条 2px 套准线被删掉的原因
+     （横贯全宽走 50%，必然从字中间穿过去）。 */
+  .route-veil__read {
+    position: absolute;
+    inset: 0;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    padding: 0 24px;
-    overflow: hidden;
-    white-space: nowrap;
-    color: var(--primary);
+    gap: 16px;
+    padding: 0 32px;
+    /* 面板扫过来的那一段（出相位）里它必须是**看不见**的：它现在固定居中，
+       而那时屏幕右半边还是页面，字压上去就是"图形压在内容上"。 */
     opacity: 0;
   }
 
-  /* 两个 span 都带 .tech-label，那是 11px + 字距 .09em 的通用小标签规格。
-     缝里这批字是整场唯一的文字、也是用户唯一要读的东西，按通用规格走偏小；
-     中文页名再叠上 .09em 也太挤。这里覆盖成"场记板"的读法：中文 15px + .18em。 */
+  /* 警戒线：就地改写 --hazard-ink 为荧光黄 —— 面板是暗的，而 .hazard 通用那档
+     34% 前景色条纹铺上去是灰的，"警戒"那点意思就没了。
+     它是一条 132×6 的标记，不是铺满的背景：.hazard 那条"不做背景装饰"的规矩仍然成立。 */
+  .route-veil__hazard {
+    --hazard-ink: var(--primary);
+
+    width: 200px;
+    height: 8px;
+  }
+
+  /* 英文引导行。它读起来要是一块"标签"而不是一个词，所以字距拉到 .34em；
+     字距会在最后一个字后面留一份空白、整行看着偏左，补等量负边距拉回中线。
+     颜色走 --veil-ink-code 而不是 --secondary：面板在两个主题下都是暗底，
+     浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。 */
+  .route-veil__hud-lead {
+    font-family: var(--stack-mono);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.32em;
+    margin-right: -0.32em;
+    color: var(--veil-ink-code);
+  }
+
+  /* 页名与代号同排、按基线对齐：页名（中文、标题字、荧光黄）是主角，代号是它的编号。
+     窄屏放不下这一排时让它换行（页名一行、代号一行），而不是砍掉哪一个 ——
+     两个都是信息，挤着读不出来的才该砍。 */
+  .route-veil__hud-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 10px 20px;
+  }
+
   .route-veil__hud-title {
-    font-size: 15px;
-    letter-spacing: 0.18em;
-    /* 字距会在最后一个字后面留出一份空白，居中时整行看着偏左；补一个等量负边距拉回中线。 */
-    margin-right: -0.18em;
+    font-family: var(--stack-heading);
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    margin-right: -0.12em;
+    /* 读数是打在暗面板上的「场记板」，用 --primary（荧光黄）而不是 --accent-text：
+       后者在浅色主题是深黄 #756a00，铺到暗面板上读不出来。 */
+    color: var(--primary);
   }
 
   .route-veil__hud-code {
-    /* 走 --veil-ink-code 而不是 --secondary：幕布在两个主题下都是暗底，
-       浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。
-       这里**不补**负边距：它不是整行的最后一个元素（后面还跟着分隔线），
-       字距挂在它尾部只是把它和分隔线的间距撑开一点，不影响整行居中。 */
+    font-family: var(--stack-mono);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
     color: var(--veil-ink-code);
-    font-size: 12px;
-    letter-spacing: 0.14em;
   }
 
-  .route-veil__hud-sep {
-    flex: none;
-    width: 1px;
-    height: 16px;
-    background: var(--accent-tint-border);
+  /* 右下角：三角阵列 + 协议号。**位置对着页面自己的水印大字**（那份也是右下角贴边的
+     巨号编号），所以面板盖住的那一帧，这里正好是原本放大数字的地方 ——
+     换场读起来是"同一块版面上的装饰换了内容"，而不是凭空冒出一组图案。
+     窄屏那一档对不上，是有意的：学生端窄屏的右下角被底部标签栏占着，水印让到栏上方
+     （见上面的 .watermark），而这一层是全屏覆盖，盖住的那一帧连栏一起盖了 ——
+     真正的屏幕角落在这时候是空的，三角就该压在角上。 */
+  .route-veil__corner {
+    position: absolute;
+    right: 32px;
+    bottom: 26px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+    opacity: 0;
   }
 
-  .route-veil[data-phase='in'] .route-veil__hud {
-    /* 时长就是**停留**这一段，不含开幕 —— 读数活在「幕布闭死」的窗口里，
-       关键帧在 100% 处收到 opacity: 0，所以开幕一动它已经退干净了；
-       否则那几个字会浮在被揭开的新页面上方，成了压在内容上的浮层。
-       这条 calc 必须写在**使用处**：自定义属性里的 var() 是在声明它的那个元素上完成
-       代换的，写成 :root 上的 --veil-hud 令牌就会被算一次再继承，外壳档会拿到子页档
-       的时长 —— 不报错，只是两种档位的时间轴静默对不上。 */
-    animation: veil-hud-pass var(--veil-hold) var(--motion-ease-out) both;
+  .route-veil__corner-label {
+    font-size: 15px;
+    letter-spacing: 0.22em;
+    margin-right: -0.22em;
+    color: var(--veil-ink-code);
   }
 
-  /* 窄屏：缝更窄、只有一行 11px 等宽字放得下，所以砍掉代号只留中文页名。
-     两段读数挤在一道缝里读不出来，那就是「用装饰冒充信息」。 */
+  /* 三角阵列：两行 × 四格，**第七格刻意空着**。
+     排满八格是一块图案；空一格才读得出"这是数据阵列里没点亮的那一格"，
+     而不是一条装饰花边 —— 空的那一格是这组三角里唯一有信息的一格。
+     几何用 clip-path 画、不用「◣」这个字形：那个码位的形状与基线随平台字体变，阵列会歪；
+     clip-path 在任何 DPR 下都是同一个下左三角。 */
+  .route-veil__tri {
+    display: grid;
+    grid-template-columns: repeat(4, 40px);
+    gap: 18px;
+  }
+
+  .route-veil__tri > i {
+    width: 40px;
+    height: 40px;
+    background-color: var(--primary);
+    clip-path: polygon(0 100%, 0 0, 100% 100%);
+  }
+
+  .route-veil__tri > i.is-blank {
+    background-color: transparent;
+  }
+
+  /* 读数的进出**与面板的滑动同时**，不再等"盖死"那一拍：
+     出相位它跟着面板一起进来（淡入 + 14px 滑动，方向与面板一致，读起来是"边扫过、字浮出"），
+     入相位它跟着面板一起退走。两段各自挂在所在相位的时长上 —— 进场用 --veil-gate、
+     退场用 --veil-part —— 所以关键帧里的百分比永远是"这一次滑动内部的切分"，
+     改令牌不用回来动这里，也不存在动画与相位各跑一套时钟的错位。
+     三角阵列与协议号各晚 8% 起步：两块错开两帧，是同一块版面在自检，不是排队进场。 */
+  .route-veil[data-phase='out'] .route-veil__read {
+    animation: veil-read-in var(--veil-gate) var(--motion-ease-out) var(--veil-latch) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__corner {
+    animation: veil-read-in var(--veil-gate) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.08) both;
+  }
+
+  /* 打断（连点导航）时走另一条：读数**已经在屏幕上亮着了**，再演一遍"从零浮现"
+     就是一次肉眼可见的闪。这里换成"重新对准" —— 从半亮起、很快回到满亮，
+     文字在同一个动作里换成新的目标页（retarget 已经把 target 改写过了）。
+     三角阵列晚一点点，与正常进场保持同一条节奏；特异性比上面那条高，所以自然胜出。 */
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__read {
+    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
+  }
+
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__corner {
+    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
+      calc(var(--veil-gate) * 0.06) both;
+  }
+
+  .route-veil[data-phase='in'] .route-veil__read {
+    animation: veil-read-out var(--veil-part) var(--motion-ease-out) var(--veil-hold) both;
+  }
+
+  .route-veil[data-phase='in'] .route-veil__corner {
+    animation: veil-read-out var(--veil-part) var(--motion-ease-out)
+      calc(var(--veil-hold) + var(--veil-part) * 0.08) both;
+  }
+
+  /* 窄屏：同比收一档（桌面那套撑到 36px 页名 / 40px 三角，小屏放不下）。
+     页名是这一层存在的理由，不能砍；代号掉到第二行。 */
   @media (max-width: 640px) {
-    .route-veil__hud {
-      padding: 0 16px;
+    .route-veil__read {
+      padding: 0 20px;
     }
-    /* 窄屏只留中文页名，字号跟着缝一起收一档（缝的下限是 32px，13px 行高放得下）。
-       不能再小了 —— 它是这道缝存在的理由。 */
+    .route-veil__hud-lead {
+      font-size: 12px;
+      letter-spacing: 0.24em;
+      margin-right: -0.24em;
+    }
     .route-veil__hud-title {
-      font-size: 13px;
-      letter-spacing: 0.14em;
-      margin-right: -0.14em;
+      font-size: 26px;
+      letter-spacing: 0.08em;
+      margin-right: -0.08em;
     }
-    .route-veil__hud-code,
-    .route-veil__hud-sep {
-      display: none;
+    .route-veil__hud-code {
+      font-size: 13px;
+      letter-spacing: 0.16em;
+    }
+    .route-veil__hazard {
+      width: 132px;
+      height: 6px;
+    }
+    .route-veil__corner {
+      right: 18px;
+      bottom: 16px;
+      gap: 10px;
+    }
+    .route-veil__corner-label {
+      font-size: 12px;
+    }
+    .route-veil__tri {
+      grid-template-columns: repeat(4, 24px);
+      gap: 12px;
+    }
+    .route-veil__tri > i {
+      width: 24px;
+      height: 24px;
     }
   }
 
   /* 触屏：发光半径收一档。390px 宽的屏上 12px 的柔和光晕会糊成一片，
-     8px 才看得出「是一条线在发光」而不是「屏幕上有一团黄」。 */
+     8px 才看得出「是一条边在发光」而不是「屏幕上有一团黄」。 */
   @media (hover: none) {
-    .route-veil__rule {
-      box-shadow: 0 0 8px 0 var(--accent-tint-border);
+    .route-veil__wipe::before {
+      box-shadow: 0 0 8px 0 var(--veil-accent-tint);
     }
+  }
+}
+
+/* ══ 开屏层的出场 ══════════════════════════════════════════════════
+ * 开屏层的结构与它自己的样子写在 index.html 里（它必须在样式表之前就能画出来），
+ * **只有出场这一段在这儿** —— 因为出场必须与换场面板是同一件事：一块宽出两侧的
+ * 斜切面板单向穿过屏幕，黄层殿后一个 --motion-route-wipe-lead。写在这里才读得到
+ * 那几支令牌；两处各写一份的话，斜角与时长迟早对不上，而「启动的最后一下和一次
+ * 切页不是同一个动作」这件事，看的人是能感觉出来的。
+ *
+ * 节拍与换场同构：先一拍，再让面板走。换场那一拍是 --veil-latch（留给"旧页先自己
+ * 淡掉一点"），这里那一拍是读数退场。面板让开用的是换场的**入相位**那一段
+ * （--motion-dur-route-enter）：开屏层本来就是"盖着"的状态，它只需要让开。
+ */
+.boot__mat,
+.boot__under {
+  /* 静止时就带上斜角（换场面板也是常驻斜角），出场才是纯平移 ——
+     斜角在出场过程中由 0 渐变到 4deg 的话，那条让开中的边会一边走一边转。
+     **两层必须同时带上**：只给黑层的话，黄层的斜角是从 0 度渐变的，
+     整段扫动里两条边都不平行 —— 那条黄边会变成一头宽一头窄的楔形（实测差 17px）。 */
+  transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
+}
+
+.boot[data-phase='exit'] {
+  /* 出场期间不再吃指针：面板还在扫开的时候，页面已经该能点了 ——
+     与换场层一样是"盖着但不当路"（那一层也一直 pointer-events: none）。 */
+  pointer-events: none;
+}
+
+.boot[data-phase='exit'] .boot__hud {
+  opacity: 0;
+  transition: opacity var(--motion-dur-fast) var(--motion-ease-out);
+}
+
+.boot[data-phase='exit'] .boot__mat,
+.boot[data-phase='exit'] .boot__under {
+  transition: transform var(--motion-dur-route-enter) var(--motion-ease-out) var(--motion-dur-fast);
+  will-change: transform;
+}
+
+.boot[data-phase='exit'] .boot__mat {
+  transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
+}
+
+/* 黄层比黑层少走一个 --motion-route-wipe-lead，于是它殿后：黑层让开的每一寸里，
+   最先露出来的都是那条黄边（与换场入相位、回执条同一条规矩：黄带先进后出）。 */
+.boot[data-phase='exit'] .boot__under {
+  transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
+    skewX(var(--motion-route-wipe-skew));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 减少动效下不做横扫：一块全屏面板斜着划过、外加一条黄带闪过，正好踩在前庭与闪阈
+     那两条上（与换场那一段同一个判断）。这里只留一次明暗 —— 就地淡掉，黄层整块不出现。 */
+  .boot__under {
+    display: none;
+  }
+
+  .boot[data-phase='exit'] {
+    opacity: 0;
+    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out);
+  }
+
+  .boot[data-phase='exit'] .boot__mat,
+  .boot[data-phase='exit'] .boot__under {
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ══ 切页时装饰元素动起来 ══════════════════════════════════════════
+ * 换场相位被镜像到 <html> 的 data-veil-phase 上（见 composables/route-veil.ts），
+ * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块斜切面板在动。
+ *
+ * **不写 fill 模式**：动画结束后 transform 要回到视差那条规则算出来的值，
+ * 用 forwards/both 会把视差的位移冻在动画的终值上。
+ *
+ * **回响的时长必须短于面板盖住屏幕的那一拍**（--motion-dur-decor 就是为此定的）：
+ * 过了那一帧整屏都盖住了，动画再长也没人看得见。这几个回响原来各写 200/420/520ms，
+ * 比滑动（320ms）还长，等于每一场都有一截是在幕布后面空跑。
+ */
+:root[data-veil-phase='out'] .ticks,
+:root[data-veil-phase='out'] .vticks {
+  animation: decor-measure var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+:root[data-veil-phase='out'] .watermark {
+  animation: decor-drift var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+:root[data-veil-phase='out'] .cut,
+:root[data-veil-phase='out'] .data-dump {
+  animation: decor-nudge var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+/* 读数沟的刻度和左边的尺子是同一件东西转了 90°，所以它也要"重新量一遍"，
+   但方向朝下：复用 decor-measure 会把刻度**横向**推出去，那在一条竖沟上
+   表现为"刻度被拉长又缩回"，是另一种观感（也更像故障）。 */
+:root[data-veil-phase='out'] .decor-rail {
+  animation: decor-measure-y var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+/* 刻度尺"重新量一遍"：刻度纹从左往右扫过来落位。尺子很短（96×5），重绘可以忽略。 */
+@keyframes decor-measure {
+  from {
+    background-position-x: -28px;
+  }
+  to {
+    background-position-x: 0;
+  }
+}
+
+/* 等宽读数代号在换场时"重新读一遍"：淡一下、落位、回到清晰。
+ *
+ *  **刻意不做**字符抖动 / RGB 分离那种经典 glitch，两个理由：
+ *    ① 那种效果要靠每秒多次的明暗跳变才读得出"故障"（要把 260ms 切四刀才像），
+ *       而三次/秒是 WCAG 2.3.1 的闪阈 —— 为了"更像赛博朋克"去踩它不值得；
+ *    ② 这一版的语言是**仪表**：准、稳、可读。一个正在闪的数字正好是它的反面，
+ *       而且读数代号里就有"P.02/05""REV 2.006"这类要看清的东西。
+ *  所以留下的只是"重新读数"这一层语义：先淡下去，再落回清晰。
+ *
+ *  范围也收着：只挂在 .readout 上（页头铭牌、扇区读数、状态栏代号）。
+ *  表格内容、表单标签、金额、取件码都不是 .readout —— 那些是要读准的东西。 */
+:root[data-veil-phase='out'] .readout {
+  animation: readout-reread var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+@keyframes readout-reread {
+  from {
+    opacity: 0.3;
+    transform: translate3d(0, 2px, 0);
+  }
+}
+
+/* 刻度沟"重新量一遍"：刻度纹从上往下落位（与尺子同样的行为，只是转了 90°）。 */
+@keyframes decor-measure-y {
+  from {
+    background-position-y: -28px;
+  }
+  to {
+    background-position-y: 0;
+  }
+}
+
+/* 水印：从低处淡着浮上来一点，像刚印上去。 */
+@keyframes decor-drift {
+  from {
+    opacity: 0.25;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 斜切块：先暗一下再亮起来。 */
+@keyframes decor-nudge {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
   }
 }
 
@@ -662,59 +1845,50 @@
   }
 }
 
-/* 套准线那一闪：35ms 内铺满全宽，亮着停约 50ms，再用 75ms 收掉。
-   ease-out 的整段缓动 + 这条百分比切分，观感是「闪」而不是「扫」——
-   扫是 73e18de 那版的做法（560ms 扫全宽 = 9000px/s），快慢感受完全两样。 */
-@keyframes veil-rule-strike {
-  0% {
+/* 读数进场。前 14% 是**故意空着的**：面板的斜边从左边扫过来，大约在这一刻掠过屏幕中线，
+ * 字在这之后才浮出，才不会先在还没盖住的右半屏上亮起来（那是"图形压在内容上"）。
+ * 30% 之后就一直是满不透明，正好接上停留那一段。位移只有 14px 且与面板同向：
+ * 它是"贴上去的一张读数"，不是又一次横扫。 */
+@keyframes veil-read-in {
+  0%,
+  14% {
     opacity: 0;
-    transform: scaleX(var(--motion-route-cut));
+    transform: translate3d(-14px, 0, 0);
   }
-  22% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
-  55% {
-    opacity: 1;
-    transform: scaleX(1);
-  }
+  30%,
   100% {
-    opacity: 0;
-    transform: scaleX(1);
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
   }
 }
 
-/* 场记读数：整场唯一的文字，只在「幕布闭死」那一段里浮出、停住、退干净。
- * 动画时长 = --veil-hold，所以这里的百分比是**停留这一段内部**的切分，与开幕时长无关
- * —— 百分比表对两档自动都成立，改 tokens 里的两档停留时长不需要回来动这里。
- *
- * 满不透明窗口 = 11% → 80%，占整段停留的 69%：
- *   外壳（停留 600ms）约 66ms 淡入，之后 414ms 全亮，最后 120ms 退掉；
- *   子页（停留 480ms）约 53ms 淡入，之后 331ms 全亮。
- * 400ms 上下是「四到六个汉字扫一眼能读出来」的底线，比这更短就会出现用户说的
- * 「来不及看清」。上一版这里是 30%→55% 退场、且时长按 停留:开幕 比例摊开，
- * 满亮窗口只有约 170ms。
- *
- * 收尾必须落在 100% 而不是更早：100% 正好是开幕起步那一帧，读数与幕布同时让位，
- * 中间不留一段"只剩字浮在黑场上"的空转。 */
-@keyframes veil-hud-pass {
-  0% {
-    opacity: 0;
-    transform: translateY(8px);
+/* 读数退场。与面板退场同时开始，14% 内退干净 —— 面板的尾边回到屏幕中线大约就在那一刻，
+ * 再晚就会留下一段"字浮在新页面上"。 */
+/* 读数"重新对准"（连点打断时用）。起点不是 0 而是 0.35：字本来就在那儿，
+ * 要换的只是目标与落位，所以它只淡一下、不上浮。 */
+@keyframes veil-read-resync {
+  from {
+    opacity: 0.35;
+    transform: translate3d(-6px, 0, 0);
   }
-  11% {
+  to {
     opacity: 1;
-    transform: translateY(0);
-  }
-  80% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-6px);
+    transform: translate3d(0, 0, 0);
   }
 }
+
+@keyframes veil-read-out {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  14%,
+  100% {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+}
+
 
 /* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
 @media (prefers-reduced-motion: reduce) {
@@ -781,15 +1955,19 @@
  *   层内 !important 反而会赢过层外 !important，比这里更容易被后人改错。）
  *
  * 降级目标：不是硬切，是「把位移全部去掉、只留一次缓慢的明暗」。
- * 内容仍然交叉淡入淡出，场记读数仍然报出目标页名 —— 只是屏幕上没有东西在移动。
- * 光靠上面那条全局兜底会得到最糟的结果：幕布从「合上」瞬间跳到「打开」，
+ * 内容仍然交叉淡入淡出，中心读数仍然报出目标页名 —— 只是屏幕上没有东西在移动。
+ * 光靠上面那条全局兜底会得到最糟的结果：覆盖层从「盖住」瞬间跳到「揭开」，
  * 等于两帧全屏闪，比不做动画还难看。
  */
 @media (prefers-reduced-motion: reduce) {
-  /* 位移与扫掠类动作整层撤掉。display:none 在这里是安全的 ——
-     这些层本来就不该动，而且覆盖层里唯一需要保留的信息（读数）挂在 .route-veil__hud 上。 */
-  .route-veil__mat,
-  .route-veil__rule {
+  /* 位移与扫掠类动作**整层撤掉**，不是变慢。
+     一块横扫全屏的暗面板同时踩两类风险：它是「大面积平移」（前庭触发器），
+     又是一次全屏亮度反转（闪阈）。对这类元素，减少动效的正确降级是让它不存在，
+     而不是把同样的动作放慢 —— 放宽慢的一秒比没有过渡更难接受。
+     display:none 在这里安全：这些层本来就不该动，覆盖层里唯一需要保留的信息（读数）
+     挂在 .route-veil__hud 上。 */
+  .route-veil__wipe,
+  .route-veil__wipe-under {
     display: none !important;
   }
 
@@ -809,16 +1987,17 @@
     opacity: 0 !important;
   }
 
-  /* 读数不参与扫掠：它只是跟着整层的明暗一起出现和消失。 */
-  .route-veil[data-phase='out'] .route-veil__hud,
-  .route-veil[data-phase='in'] .route-veil__hud {
+  /* 读数不参与扫掠：面板整层不出现，它只是跟着整层的明暗一起到位、一起退走。
+     这里必须显式关掉动画 —— 读数在减少动效下是这一层**唯一**的信息，不能连坐吃掉。 */
+  .route-veil__read,
+  .route-veil__corner {
     animation: none !important;
     opacity: 1 !important;
   }
 
   /* 内容层：位移去掉，时长换成一档慢的，并且**显式把 delay 归零** ——
      全局兜底只压 duration，transition-delay 原样保留的话，
-     新页会先隐形 --veil-hold 那么久，再和幕布一起闪出来，比不做还糟
+     新页会先隐形 --veil-hold 那么久，再和盖住的那一层一起闪出来，比不做还糟
      （.motion-stagger 那段已经踩过同一个坑）。 */
   .route-enter-active,
   .route-leave-active {
@@ -829,5 +2008,214 @@
   .route-enter-from,
   .route-leave-to {
     transform: none !important;
+  }
+}
+
+/* ============ 弹层的分离手段：1px 硬描边 ============
+ *
+ * 阶段 2 把 boxShadow1/2/3 全部置 none 之后，这一层是**必须补上**的东西：
+ * Naive 的 Popover 主题里只有 `boxShadow: boxShadow2`、**没有 border**；
+ * Message 的 border 默认是 "0"。投影一删，Dropdown / Select 下拉 / ColorPicker / Message
+ * 就既没描边也没投影，只剩一块不透明底压在同色系的页面上，边界消失。
+ *
+ * 必须留在 @layer 之外：Naive 的样式是运行时插入的**无层级**规则，同属性下无层级一律
+ * 赢过分层（Message 的 `border: var(--n-border)` 就属于这种冲突），所以这里既无层级又加
+ * !important。Modal / Drawer 本身有遮罩，本来就能分开，一并补上是为了让「弹层有硬边」
+ * 成为统一语言，而不是有的有、有的没有。
+ *
+ * 另：naive 的 popover 箭头自带一条硬编码的 `box-shadow: 0 0 8px rgba(0,0,0,.12)`
+ * （es/popover/src/styles/index.cssr.mjs），它不跟随主题、themeOverrides 也覆盖不到，
+ * 只能在这里压掉 —— 否则「零投影」会从箭头那道小阴影上漏出来。
+ *
+ * **类名要说清楚**：NDropdown / NSelect / NColorPicker 弹出来的「共享弹层」面板上挂的是
+ * `n-popover-shared`，**没有 `n-popover`**（实测完整类名：`n-dropdown-menu … n-popover-shared n-dropdown`）。
+ * 只写 `.n-popover` 会静默漏掉这三个最常用的弹层 —— 它们恰好又是**没有遮罩**的那几个，
+ * 最需要描边。所以两个都列上：同一个元素上两条规则只落一次边框，不会叠成双线。
+ */
+.n-popover,
+.n-popover-shared,
+.n-message,
+.n-modal,
+.n-drawer {
+  border: 1px solid var(--border) !important;
+}
+
+/* Naive 浮层自带一套进出场：150ms + cubic-bezier(0,0,.2,1)。时长碰巧和
+   --motion-dur-fast 一样，曲线不一样 —— 它起步慢、收尾平，站内的 --motion-ease-out
+   是起步快、尾段长。两者在同一屏上挨着出现时（点开下拉、接着切页）能看出不是一台
+   机器上的动作，所以在这里拉平。缩放（scale(.85) → 1）保留：它是"从按钮上长出来"
+   的暗示，去掉就变成凭空出现。
+   无层级 + !important 的理由同上：Naive 插进 head 的规则不是 important，压不过它就只剩层序问题。 */
+.popover-transition-enter-active,
+.popover-transition-leave-active {
+  transition:
+    opacity var(--motion-dur-fast) var(--motion-ease-out),
+    transform var(--motion-dur-fast) var(--motion-ease-out) !important;
+}
+
+.n-popover-arrow {
+  box-shadow: none !important;
+}
+
+/* Naive 有三处圆角**不读 common.borderRadius**，是写在它自己样式表里的字面量：
+   Badge 的计数泡（4px 点 / 9px 数字泡，见 es/badge/src/styles/index.cssr.mjs）
+   与 Timeline 的节点（`border-radius: var(--n-icon-size)`，等于画成一个圆）。
+   全站圆角归零之后它们是仅存的漏网处 —— 和上面那条一样，只能无层级 + !important 压掉。
+   （Alert 不用管：它读的是 var(--n-border-radius)，已经跟着 common 归零了。） */
+/* 类名是从 Naive 自己的组件源码里抄的，别凭印象写：
+   badge 的数字泡是 `n-badge-sup`、点态是 `n-badge--dot`（修饰符，不是 `-dot`）；
+   timeline 的节点是 `n-timeline-item-timeline__circle`（双下划线）。
+   写错了不会报错，只是这条规则永远不命中 —— 而"看起来没生效"最容易被当成
+   "Naive 改不动"而放弃。 */
+.n-badge-sup,
+.n-badge--dot,
+.n-timeline-item-timeline__circle {
+  border-radius: 0 !important;
+}
+
+/* 禁用的按钮不吃 Naive 那层整体 50% 透明（--n-opacity-disabled）。
+ * 透明度把已经选好的禁用配色又打对折：主按钮掉到 1.03:1（浅色下那颗「提交订单」
+ * 整个读不出来，用户截图报的就是它）、文字型的「撤回」掉到 2.5:1 —— 而后者是特意
+ * 禁用但保留可见、把原因写在 title 里的，看不清等于白留。
+ * 「不可点」由 theme/naive.ts 里那组禁用配色（中性底 + 三级文字色）来表达，
+ * 不由"看不清"来表达；按下没有反馈、光标不变这两条照旧。 */
+.n-button:disabled {
+  opacity: 1 !important;
+}
+
+/* 单选组同理：Naive 给整组挂 `--n-opacity-disabled: .5`，禁用的那个选项名就掉到 2.62:1 ——
+   而它是**特意留着的**选项（没有预设时那条「使用预设打印服务」），读得出来才知道有这条路。
+   这里把透明度摘掉，另给一条更浅的文字色：读得出，又与可点的那些分得开
+   （可点的仍是二级文字色，且按下有反馈）。 */
+.n-radio-group {
+  --n-opacity-disabled: 1 !important;
+}
+
+.n-radio-button--disabled .n-radio__label {
+  color: var(--text-tertiary);
+}
+
+/* ══ 微动态的收口：减少动效下这些一律不成立 ══════════════════════════
+ * 视差与"切页时装饰动起来"都属于**大面积位移**，是前庭敏感最主要的一类触发器。
+ * JS 那边已经在 prefers-reduced-motion 下压根不装视差监听器，这里是第二道闸：
+ * 即使有别的路径把 --px/--py 写了进来，位移也不会生效。
+ * （必须留在 @layer 之外并加 !important —— Naive 与会话里的其它无层级规则同理。） */
+@media (prefers-reduced-motion: reduce) {
+  [data-parallax] {
+    transform: none !important;
+    transition: none !important;
+    /* will-change 也要撤：它会把元素永久提成独立图层，而这里它永远不会动 ——
+       那是一块白占显存、还可能让文字在缩放时落在半像素上的图层。 */
+    will-change: auto !important;
+  }
+
+  :root[data-veil-phase='out'] .ticks,
+  :root[data-veil-phase='out'] .vticks,
+  :root[data-veil-phase='out'] .watermark,
+  :root[data-veil-phase='out'] .cut,
+  :root[data-veil-phase='out'] .decor-rail,
+  :root[data-veil-phase='out'] .data-dump,
+  :root[data-veil-phase='out'] .readout {
+    animation: none !important;
+  }
+
+  /* 电子件走的是同一条纪律：减少动效下不是"放慢"，而是各自退到一个**静态的、
+     仍然读得出功能**的形态。
+     扫描高光整段撤掉（它是纯装饰，而且是横贯一条线的位移，正是最该撤的那一类）；
+     光标与状态灯改成常亮 —— 它们的语义是"这条通道活着"，不是"在闪"。 */
+  .scan-rule::after {
+    display: none !important;
+  }
+
+  .caret,
+  .status-led {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+}
+
+/* ══ 移动端：手指能碰到、按下去有回应、聚焦不缩放 ════════════════════
+ *
+ * 三条都是"只在手指上成立"的问题，所以主块挂在 `pointer: coarse` 下 ——
+ * 桌面鼠标不该因为这几条多出任何手感差异。宽度那条单独挂 640px 以下。
+ *
+ * 1. **触点补到 44px。** 站内最小的几颗控件在手指上偏小：名单里的「撤回」是 28px 高，
+ *    顶栏的图标按钮 36px。这里只扩**命中区**（伪元素向外铺），不动视觉尺寸、不动行高 ——
+ *    列表里那一排小按钮不会因此把行撑开。**破坏性操作优先**：撤回单子点错的代价比
+ *    点不到大得多。（Naive 的按钮不用 ::before/::after 画边框，那两个伪元素是空的，可以借。）
+ *
+ * 2. **按下去要有回应。** Tailwind 的 preflight 已经把 -webkit-tap-highlight-color
+ *    设成透明，于是触摸下按下没有任何反馈：点击要么立刻生效（导航），要么要等一次往返
+ *    （提交），中间那段是空的。这里补一层随主题走的按压底色（--muted 的同族），
+ *    不改尺寸也不加动画 —— 手指覆盖的本来就是那块地方。
+ *
+ * 3. **touch-action: manipulation。** 去掉双击缩放的判定窗口：连点两颗开关，
+ *    不该被解释成"放大"。双击缩放留给系统级手势，页面这一层不需要。
+ *
+ * 4. **表单控件在窄屏不小于 16px。** iOS Safari 在聚焦 font-size < 16px 的输入框时
+ *    会把整页放大一次，而放大之后**不会自己缩回来** —— 用户提交完发现页面歪了。
+ *    Naive 的控件字号走 --n-font-size，就地改写它即可（自定义属性就近生效，
+ *    不必动 themeOverrides 里那套桌面值）。 */
+@media (pointer: coarse) {
+  a[href],
+  button,
+  label,
+  [role='button'],
+  .n-switch,
+  .n-checkbox,
+  .n-radio,
+  .n-base-selection {
+    touch-action: manipulation;
+  }
+
+  a[href]:active,
+  button:active,
+  [role='button']:active {
+    background-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  }
+
+  /* 28px 的 tiny → 44px；34px 的 small → 44px。
+     position: relative 必须自己写：伪元素是绝对定位的，宿主不定位就会跑去认别的祖先。 */
+  .n-button--tiny-type,
+  .n-button--small-type,
+  .tap-area {
+    position: relative;
+  }
+
+  /* **只往上下扩，不往左右扩**：一排小按钮的左右间隔只有 4~6px，横向一扩就会盖住邻居，
+     而名单里那排恰好是「编辑 / 删除」这种破坏性组合 —— 点错一颗的代价比点不到大。
+     上下扩没有这个问题（行高 56px 上下，扩 8px 也不会碰到相邻行），
+     而一颗 56×28 的按钮补到 56×44 之后，手指的落点已经够宽了。 */
+  .n-button--tiny-type::after,
+  .n-button--small-type::after {
+    position: absolute;
+    inset: -8px 0;
+    content: '';
+  }
+
+  .n-button--small-type::after {
+    inset: -5px 0;
+  }
+
+  /* 站内自己的小图标按钮（顶栏那几颗）用这个类补命中区：36px 高 → 44px。 */
+  .tap-area::after {
+    position: absolute;
+    inset: -4px 0;
+    content: '';
+  }
+}
+
+@media (max-width: 640px) {
+  /* 输入控件 ≥16px：见上面第 4 条。
+     为什么必须 !important：Naive 那一支字号**写在组件的行内 style 上**（--n-font-size: 15px），
+     而它的元素规则又是 `.n-input .n-input__textarea-el` 这种两层写法 —— 不喊这一声，
+     无论怎么写选择器都差一层。实测过一次只有 input 变 16、textarea 留在 15 的样子。 */
+  .n-input input,
+  .n-input textarea,
+  .n-input .n-input__placeholder,
+  .n-base-selection .n-base-selection-label,
+  .n-base-selection-input {
+    font-size: 16px !important;
   }
 }

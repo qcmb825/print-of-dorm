@@ -21,7 +21,6 @@ import {
   NButton,
   NDataTable,
   NDropdown,
-  NEmpty,
   NInput,
   NModal,
   NPagination,
@@ -42,6 +41,7 @@ import {
   type OrderStatus,
   type PrintPreset,
 } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PickupCheckDialog from '@/components/PickupCheckDialog.vue'
 import StatCard from '@/components/StatCard.vue'
@@ -292,10 +292,10 @@ function canDownload(order: Order): boolean {
 
 /** 改状态按钮点不动的原因；null 表示可以点。分支与后端 `api_update_status` 一一对应。 */
 function statusBlockReason(order: Order): string | null {
-  if (order.status === WAIT_PRICE) return '这单还没计费，先填好金额'
+  if (order.status === WAIT_PRICE) return '还没计费 · 先填金额'
   if (!canReachOrder(order)) {
     // 未接单和「别人接的」是两回事：一个是还没轮到自己，一个是轮不到自己
-    return order.claimed_by === null ? '请先接单，再接单后才能改状态' : '这单是别人接的'
+    return order.claimed_by === null ? '先接单才能改状态' : '这单是别人接的'
   }
   return null
 }
@@ -315,8 +315,8 @@ function canReachOrder(order: Order): boolean {
  *  管理员得知道下一步该干什么 —— 是去接单，还是去找揽下这单的人。 */
 function priceBlockReason(order: Order): string | null {
   if (order.status === DONE) return '订单已取件，金额不再改动'
-  if (order.claimed_by === null) return '请先接单，看过文件后再填金额'
-  if (!canReachOrder(order)) return '这单是别人接的，只有接单人能给它计费'
+  if (order.claimed_by === null) return '先接单，看过文件后再填金额'
+  if (!canReachOrder(order)) return '这单是别人接的 · 只有接单人能计费'
   return null
 }
 
@@ -337,7 +337,7 @@ const pricing = ref(false)
 /** 空输入不算错（用户刚开始输），填了东西才给格式提示 */
 const priceError = computed(() =>
   priceInput.value.trim() === '' ? null : normalizePrice(priceInput.value) === null
-    ? '金额需为不超过 99999.99 元的数字，最多两位小数'
+    ? '金额 ≤ 99999.99，最多两位小数'
     : null,
 )
 
@@ -359,7 +359,7 @@ async function submitPrice(): Promise<void> {
   if (!order) return
   const amount = normalizePrice(priceInput.value)
   if (amount === null) {
-    message.error('请填写正确的金额')
+    message.error('金额格式不对')
     return
   }
   pricing.value = true
@@ -475,14 +475,14 @@ const columns = computed<DataTableColumns<Order>>(() => [
           RouterLink,
           {
             to: `/staff/orders/${row.id}`,
-            class: 'block truncate text-[13px] font-semibold hover:underline',
+            class: 'block truncate text-sm font-semibold hover:underline',
             title: row.preset_content
-              ? `${row.preset_content} — 点开看详情`
-              : `${row.filename} — 点开看详情`,
+              ? `${row.preset_content} · 点开看详情`
+              : `${row.filename} · 点开看详情`,
           },
           { default: () => orderFileLabel(row) },
         ),
-        h('div', { class: 'tnum text-[11px] opacity-60' }, `#${row.id} · ${shortTime(row.create_time)}`),
+        h('div', { class: 'tnum text-2xs text-ink-3' }, `#${row.id} · ${shortTime(row.create_time)}`),
       ]),
   },
   {
@@ -493,14 +493,14 @@ const columns = computed<DataTableColumns<Order>>(() => [
     width: 150,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
-        h('div', { class: 'truncate text-[13px]' }, row.owner_nickname ?? '（账号已注销）'),
-        h('div', { class: 'truncate text-[11px] opacity-60' }, row.owner_dorm ?? '—'),
+        h('div', { class: 'truncate text-sm' }, row.owner_nickname ?? '（账号已注销）'),
+        h('div', { class: 'truncate text-xs text-ink-3' }, row.owner_dorm ?? '—'),
         // 联系方式：名字和宿舍都定位不到人（宿舍楼里几十号人，
         // 而昵称本来就是自填的），出事了得有个能直接喊到人的号码。
         h(
           'div',
           {
-            class: 'truncate text-[11px] opacity-60',
+            class: 'truncate text-2xs text-ink-3',
             title: contactLabel(row.owner_contact_type, row.owner_contact),
           },
           contactLabel(row.owner_contact_type, row.owner_contact),
@@ -511,9 +511,9 @@ const columns = computed<DataTableColumns<Order>>(() => [
               'span',
               {
                 class:
-                  'mt-1 inline-flex items-center rounded-full border px-1.5 py-[1px] text-[10px] font-bold whitespace-nowrap',
+                  'mt-1 inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap',
                 style: NOTIFY_BADGE_STYLE,
-                title: '这位学生推不出邮箱（填的是微信、或者没填），取件邮件发不出去，需要你手动联系他',
+                title: '推不出邮箱（填的是微信或没填）· 取件邮件发不出去，需手动联系',
               },
               '需人工通知',
             )
@@ -538,14 +538,14 @@ const columns = computed<DataTableColumns<Order>>(() => [
           h('span', { class: 'spec-chip tnum' }, copiesLabel(row.copies)),
           h(
             'span',
-            { class: 'truncate text-[13px] font-semibold' },
+            { class: 'truncate text-sm font-semibold' },
             row.duplex ? DUPLEX_LABEL[row.duplex] : '单面',
           ),
         ]),
         h(
           'div',
           {
-            class: 'mt-0.5 truncate text-[11px] opacity-60',
+            class: 'mt-0.5 truncate text-xs text-ink-3',
             title: row.paper_remark ?? undefined,
           },
           `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} · ${paperLabel(row.paper_name)}`,
@@ -574,8 +574,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
       const noPresets = presets.value.length === 0
       return h('div', { class: 'flex min-w-0 items-center gap-1' }, [
         label
-          ? h('span', { class: 'truncate text-[12px] opacity-80', title: label }, label)
-          : h('span', { class: 'text-[12px] opacity-40' }, '—'),
+          ? h('span', { class: 'truncate text-xs opacity-80', title: label }, label)
+          : h('span', { class: 'text-xs opacity-40' }, '—'),
         h(
           NDropdown,
           {
@@ -595,14 +595,14 @@ const columns = computed<DataTableColumns<Order>>(() => [
                 {
                   size: 'tiny',
                   quaternary: true,
-                  circle: true,
+                  class: '!h-7 !w-7 !p-0',
                   type: hasGroup(row) ? 'primary' : 'default',
                   disabled: busyId.value === row.id || noPresets,
                   title: noPresets
                     ? '打印服务名单没取到，去「打印服务」页看看是不是一条都没有'
                     : hasGroup(row)
                       ? '改分组 / 取消归类'
-                      : '把这一单归入某条打印服务，按服务筛选时就能和同一批单一起看到',
+                      : '归入某条打印服务后，按服务筛选就能和同一批单一起看到',
                 },
                 { icon: () => h(FolderPlus, { size: 13 }) },
               ),
@@ -620,8 +620,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 空备注显示一个淡淡的「—」而不是空白：空白会让人怀疑是没渲染出来。
     render: (row) =>
       row.remark
-        ? h('span', { class: 'block truncate text-[12px] opacity-80', title: row.remark }, row.remark)
-        : h('span', { class: 'text-[12px] opacity-40' }, '—'),
+        ? h('span', { class: 'block truncate text-xs opacity-80', title: row.remark }, row.remark)
+        : h('span', { class: 'text-xs opacity-40' }, '—'),
   },
   {
     title: '状态',
@@ -635,21 +635,26 @@ const columns = computed<DataTableColumns<Order>>(() => [
     width: 92,
     // 未计费时金额是 null 而不是 0（老库遗留订单也走这条路）——
     // 显示成「￥0.00」会让人以为这单免费。
-    render: (row) =>
-      h(
-        'span',
-        {
-          class: row.price === null || row.price === undefined ? 'text-[12px] opacity-50' : 'tnum text-[13px] font-bold',
-        },
-        priceLabel(row.price),
-      ),
+    render: (row) => {
+      const unpriced = row.price === null || row.price === undefined
+      if (!unpriced) return h('span', { class: 'tnum text-sm font-bold' }, priceLabel(row.price))
+      // 未计费：旁边挂一小段危险斜纹。
+      // 斜纹是「这块有约束 / 待处理」的记号，**不铺在文字下面** —— 纹理压在文字上会让
+      // 笔画与纹理混同（WCAG F83 型失败），所以只作为独立的色标。
+      // 文字色从原来的 opacity-50（等效对比度约 2.6:1）提到三级文字色（4.86:1）：
+      // 「未计费」是要读的状态，不是装饰。
+      return h('span', { class: 'flex items-center gap-1.5' }, [
+        h('span', { class: 'hazard h-3 w-2 shrink-0', 'aria-hidden': 'true' }),
+        h('span', { class: 'text-xs text-ink-3' }, priceLabel(row.price)),
+      ])
+    },
   },
   {
     title: '取件码',
     key: 'pickup_code',
     width: 78,
     render: (row) =>
-      h('span', { class: 'tnum text-[14px] font-bold tracking-wider' }, pickupCodeLabel(row.pickup_code)),
+      h('span', { class: 'tnum text-sm font-bold tracking-wider' }, pickupCodeLabel(row.pickup_code)),
   },
   {
     title: '接单人',
@@ -658,8 +663,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
     render: (row) =>
       h(
         'span',
-        { class: 'text-[12px]' },
-        row.claimer_nickname ?? h('span', { class: 'opacity-50' }, '未接单'),
+        { class: 'text-xs' },
+        row.claimer_nickname ?? h('span', { class: 'text-ink-3' }, '未接单'),
       ),
   },
   {
@@ -714,7 +719,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
               {
                 size: 'tiny',
                 quaternary: true,
-                circle: true,
+                class: '!h-7 !w-7 !p-0',
                 title: '下载文件',
                 onClick: () => void download(row),
               },
@@ -736,7 +741,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
         {
           size: 'tiny',
           quaternary: true,
-          circle: true,
+          class: '!h-7 !w-7 !p-0',
           title: '查看详情与操作记录',
           onClick: () => openDetail(row),
         },
@@ -813,7 +818,7 @@ const hasFilter = computed(
 
 const emptyText = computed(() =>
   hasFilter.value
-    ? '没有匹配的订单，换个条件或清除筛选试试'
+    ? '没有匹配的订单，换个条件或清除筛选'
     : scope.value === 'pool'
       ? '待接单池是空的，都处理完了'
       : '没有符合条件的订单',
@@ -924,8 +929,8 @@ onBeforeUnmount(() => {
           取件核对
         </NButton>
         <span class="flex items-center gap-2">
-          <NSwitch v-model:value="autoRefresh" size="small" aria-label="自动刷新" />
-          <span class="tech-label text-ink-3">自动刷新 10s</span>
+          <NSwitch :round="false" v-model:value="autoRefresh" size="small" aria-label="自动刷新" />
+          <span class="tech-label text-ink-3 tech-label--cn text-xs">自动刷新 10s</span>
         </span>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -997,33 +1002,33 @@ onBeforeUnmount(() => {
            紧接着 click 冒泡到外层又翻一次，两次抵消，结果就是「点了没反应」。
            分开写之后，点文字翻 ref、点开关走它自己的事件，各自只生效一次。 -->
       <span class="flex items-center gap-1.5">
-        <NSwitch :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
+        <NSwitch :round="false" :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
         <span
-          class="tech-label cursor-pointer text-ink-3"
-          title="已取件是终态、也是累计数，看活件时它只会把待办的几单顶到下一页"
+          class="tech-label cursor-pointer text-ink-3 tech-label--cn text-xs"
+          title="已取件是终态与累计数，看活件时它只会把待办的单顶到下一页"
           @click="onExcludeDoneChange(!excludeDone)"
         >
           隐藏已取件
         </span>
       </span>
-      <span class="tech-label ml-auto text-ink-4">共 {{ total }} 条</span>
+      <span class="tech-label ml-auto text-ink-3 tech-label--cn text-xs">共 {{ total }} 条</span>
     </div>
 
-    <div class="panel overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !orders.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 5" :key="index" height="52px" :sharp="false" />
       </div>
 
       <div v-else-if="!orders.length" class="grid place-items-center py-14">
-        <NEmpty :description="emptyText">
-          <template #icon><Inbox :size="32" /></template>
+        <EmptyState code="00 / NO ORDER" :title="emptyText" hint="筛出来的空通常不是真的空">
+          <template #icon><Inbox :size="28" /></template>
           <!-- 筛出一片空的时候得给条退路：这一屏上同时开着五个筛子
                （范围、状态、打印服务、关键词、隐藏已取件），挨个去关
                很容易漏掉一个，而漏掉的那个恰恰就是把单子藏起来的那个。 -->
-          <template v-if="hasFilter" #extra>
+          <template v-if="hasFilter" #action>
             <NButton size="small" quaternary @click="resetFilters">清除筛选条件</NButton>
           </template>
-        </NEmpty>
+        </EmptyState>
       </div>
 
       <!-- 宽屏：表格 -->
@@ -1044,9 +1049,9 @@ onBeforeUnmount(() => {
         v-else
         tag="ul"
         class="flex list-none flex-col p-0"
-        enter-active-class="transition duration-[200ms] ease-out"
+        enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
         enter-from-class="opacity-0 translate-x-1"
-        move-class="transition duration-[200ms] ease-out"
+        move-class="transition duration-[var(--motion-dur-base)] ease-out"
       >
         <li
           v-for="order in orders"
@@ -1058,19 +1063,19 @@ onBeforeUnmount(() => {
             <div class="min-w-0">
               <RouterLink
                 :to="`/staff/orders/${order.id}`"
-                class="block truncate text-[13px] font-bold hover:underline"
-                :title="`${orderFileLabel(order)} — 点开看详情`"
+                class="block truncate text-sm font-bold hover:underline"
+                :title="`${orderFileLabel(order)} · 点开看详情`"
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
-              <p class="tnum mt-0.5 text-[11px] text-ink-4">
+              <p class="tnum mt-0.5 text-2xs text-ink-3">
                 #{{ order.id }} · {{ shortTime(order.create_time) }}
               </p>
             </div>
             <StatusTag :status="order.status" size="sm" />
           </div>
 
-          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-3">
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-3">
             <span>{{ order.owner_nickname ?? '（已注销）' }} · {{ order.owner_dorm ?? '—' }}</span>
             <!-- 联系方式单独一格而不是拼到上面那句里：拼在一起，窄屏上先被挤掉的
                  恰恰是它，而这行里最要紧的就是它（找不到人时昵称和宿舍都白搭）。 -->
@@ -1081,22 +1086,22 @@ onBeforeUnmount(() => {
 
           <!-- 邮件发不出去的那一档。宽屏在表格里是个小标签，窄屏得把原因一并写出来：
                手机上只看到「需人工通知」四个字，没人知道是要自己去通知什么。 -->
-          <p v-if="needsManualNotify(order)" class="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] leading-5">
+          <p v-if="needsManualNotify(order)" class="mt-2 flex flex-wrap items-center gap-1.5 text-xs leading-5">
             <span
-              class="inline-flex items-center rounded-full border px-1.5 py-[1px] text-[10px] font-bold whitespace-nowrap"
+              class="inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap"
               :style="NOTIFY_BADGE_STYLE"
             >
               需人工通知
             </span>
-            <span class="text-ink-3">没有可用邮箱，取件邮件发不出去，麻烦手动联系一下</span>
+            <span class="text-ink-3">没有可用邮箱 · 取件邮件发不出去，手动联系一下</span>
           </p>
 
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
                完全看不到「几份、什么纸」，这两样恰恰是他最需要知道的。
                口径与宽屏那两行完全一致：份数是牌子、单双面加粗，颜色和纸张退到后面。 -->
-          <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px] text-ink-3">
+          <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-ink-3">
             <span class="spec-chip tnum">{{ copiesLabel(order.copies) }}</span>
-            <span class="text-[13px] font-semibold text-ink">
+            <span class="text-sm font-semibold text-ink">
               {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             </span>
             <span>{{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}</span>
@@ -1104,38 +1109,38 @@ onBeforeUnmount(() => {
           </p>
 
           <!-- 预设服务那一句话。没有文件名可看，这句话就是这一单的全部内容 -->
-          <p v-if="order.preset_content" class="mt-2 text-[12px] leading-5">
-            <span class="text-ink-4">预设</span>
+          <p v-if="order.preset_content" class="mt-2 text-xs leading-5">
+            <span class="text-ink-3">预设</span>
             <span class="ml-1.5 text-ink-3">{{ order.preset_content }}</span>
           </p>
 
           <!-- 事后被归入的服务分组。下单选了预设的单不显示这一行：它上面「预设」
                那一句就是它的服务，同一件事写两遍会让人以为是两回事。 -->
-          <p v-if="!order.preset_id && order.preset_group_content" class="mt-2 text-[12px] leading-5">
-            <span class="text-ink-4">服务分组</span>
+          <p v-if="!order.preset_id && order.preset_group_content" class="mt-2 text-xs leading-5">
+            <span class="text-ink-3">服务分组</span>
             <span class="ml-1.5 text-ink-3">{{ order.preset_group_content }}</span>
           </p>
 
           <!-- 备注：学生的打印要求（「只打第 3 页」这类）。宽屏在表格里有单独一列，
                窄屏之前哪都没有 —— 管理员拿手机接单时完全看不到。
                没有备注就不占位：一排卡片每张都多一行「无备注」，扫视时全是噪声。 -->
-          <p v-if="order.remark" class="mt-2 text-[12px] leading-5">
-            <span class="text-ink-4">备注</span>
+          <p v-if="order.remark" class="mt-2 text-xs leading-5">
+            <span class="text-ink-3">备注</span>
             <span class="ml-1.5 text-ink-3">{{ order.remark }}</span>
           </p>
 
           <!-- 金额单独一行：它是这一屏上唯一跟钱有关的数字，跟规格、取件码挤在一行会被略过 -->
-          <p class="mt-2 flex flex-wrap items-center gap-x-3 text-[12px]">
+          <p class="mt-2 flex flex-wrap items-center gap-x-3 text-xs">
             <span
               :class="
                 order.price === null || order.price === undefined
-                  ? 'text-ink-4'
+                  ? 'text-ink-3'
                   : 'tnum font-bold'
               "
             >
               费用 {{ priceLabel(order.price) }}
             </span>
-            <span v-if="order.pricer_nickname" class="text-ink-4">
+            <span v-if="order.pricer_nickname" class="text-ink-3">
               由 {{ order.pricer_nickname }} 定价 {{ order.price_time ? shortTime(order.price_time) : '' }}
             </span>
           </p>
@@ -1248,7 +1253,7 @@ onBeforeUnmount(() => {
       @update:show="(value: boolean) => !value && (priceOrder = null)"
     >
       <template v-if="priceOrder">
-        <p class="mb-3 min-w-0 text-[13px] leading-6 text-ink-3">
+        <p class="mb-3 min-w-0 text-sm leading-6 text-ink-3">
           <span
             class="block truncate font-semibold text-ink"
             :title="priceOrder.preset_content ?? priceOrder.filename"
@@ -1267,7 +1272,7 @@ onBeforeUnmount(() => {
              不把它的那句话摆出来的话，管理员只能对着一颗空标题猜价钱。 -->
         <p
           v-if="priceOrder.preset_content"
-          class="mb-3 rounded-lg px-3 py-2 text-[12px] leading-5 whitespace-pre-wrap"
+          class="mb-3 px-3 py-2 text-xs leading-5 whitespace-pre-wrap"
           style="background-color: var(--muted)"
         >
           {{ priceOrder.preset_content }}
@@ -1276,16 +1281,18 @@ onBeforeUnmount(() => {
         <NInput
           v-model:value="priceInput"
           size="large"
-          placeholder="例如 3.50"
+          placeholder="例 3.50"
           :status="priceError ? 'error' : undefined"
           @keydown.enter="submitPrice"
         >
           <template #prefix>
-            <span class="font-heading font-bold" style="color: var(--primary)">¥</span>
+            <span class="font-heading font-bold" style="color: var(--accent-text)">¥</span>
           </template>
         </NInput>
-        <p class="mt-2 text-[11px]" :style="{ color: priceError ? 'var(--err)' : 'var(--ink-4)' }">
-          {{ priceError ?? '最多两位小数。计费完成后订单会从「待计费」进入「待打印」。' }}
+        <!-- 这行是 11px 的操作说明，属于要读的字，走三级文字色而不是四级。
+             原先的 var(--ink-4) 不存在（见 tokens.css 里 --color-ink-* 的说明），静默失效。 -->
+        <p class="mt-2 text-xs" :style="{ color: priceError ? 'var(--err)' : 'var(--text-tertiary)' }">
+          {{ priceError ?? '最多两位小数。计费后订单从「待计费」进入「待打印」。' }}
         </p>
 
         <NAlert
@@ -1294,7 +1301,7 @@ onBeforeUnmount(() => {
           :bordered="false"
           class="mt-3"
         >
-          这单当前金额是 ¥{{ priceOrder.price.toFixed(2) }}，修改后学生端会立即看到新金额。
+          当前 ¥{{ priceOrder.price.toFixed(2) }} · 改完学生端立即看到新金额。
         </NAlert>
       </template>
 

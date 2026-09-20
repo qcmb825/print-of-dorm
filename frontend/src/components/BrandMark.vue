@@ -8,19 +8,19 @@ withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 <template>
   <RouterLink to="/" class="flex items-center gap-2.5 no-underline" style="color: inherit">
     <span
-      class="grid size-9 shrink-0 place-items-center rounded-[10px] border"
+      class="grid size-9 shrink-0 place-items-center border"
       style="
         background-color: var(--accent-tint-soft);
         border-color: var(--accent-tint-border);
-        color: var(--primary);
+        color: var(--accent-text);
       "
       aria-hidden="true"
     >
       <Printer :size="18" />
     </span>
     <span v-if="!compact" class="flex flex-col leading-none">
-      <span class="font-heading text-[15px] font-bold tracking-tight">猫娘打印服务</span>
-      <span class="tech-label mt-0.5 text-ink-4">Neko Print</span>
+      <span class="font-heading text-base font-bold tracking-tight">猫娘打印服务</span>
+      <span class="tech-label mt-0.5 text-ink-3 text-2xs">Neko Print</span>
     </span>
   </RouterLink>
 </template>

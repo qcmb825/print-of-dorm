@@ -61,7 +61,7 @@ async function onFile(event: Event): Promise<void> {
     return
   }
   if (file.size > MAX_BYTES) {
-    message.error('图片太大了（上限 2 MB），请压缩后再上传')
+    message.error('图片超过 2 MB · 压缩后再上传')
     return
   }
 
@@ -72,7 +72,7 @@ async function onFile(event: Event): Promise<void> {
     broken.value = false
     message.success('收款码已更新')
   } catch (err) {
-    message.error(err instanceof ApiError ? err.message : '上传失败，请稍后重试')
+    message.error(err instanceof ApiError ? err.message : '上传失败 · 稍后重试')
   } finally {
     busy.value = false
   }
@@ -81,7 +81,7 @@ async function onFile(event: Event): Promise<void> {
 async function onRemove(): Promise<void> {
   const ok = await confirmAction({
     title: '删除收款码',
-    content: '删除后取件邮件里不再带收款码图片，会改成让学生到取件点找你付款。',
+    content: '删除后取件邮件不再带收款码，学生到取件点找你付款。',
     positiveText: '删除',
     dangerous: true,
   })
@@ -94,7 +94,7 @@ async function onRemove(): Promise<void> {
     broken.value = false
     message.success('收款码已删除')
   } catch (err) {
-    message.error(err instanceof ApiError ? err.message : '删除失败，请稍后重试')
+    message.error(err instanceof ApiError ? err.message : '删除失败 · 稍后重试')
   } finally {
     busy.value = false
   }
@@ -114,31 +114,35 @@ async function onRemove(): Promise<void> {
       <NAlert type="info" :bordered="false">
         <!-- 正文里的「你」要落到实处：这条最容易被误解成「传一张全站公用的码」，
              所以第一句先说清归属，再说发不出去的后果。 -->
-        谁接的单，学生就付给谁 —— 所以这张码只代表你自己。
-        上传后它会出现在你接单的取件邮件里；不上传也能用，只是邮件里不带图。
+        学生付给接单人，这张码只代表你自己。
+        上传后出现在你接单的取件邮件里；不上传也能用，只是邮件里不带图。
       </NAlert>
 
       <div
-        class="grid min-h-[200px] place-items-center rounded-md border border-dashed p-4"
+        class="grid min-h-[200px] place-items-center border border-dashed p-4"
         style="border-color: var(--border); background-color: var(--muted)"
       >
+        <!-- 底板永远是白的，且留出 8px 静区（二维码规范里四周必须留白，不然扫不出来）。
+             上传的图可能带透明通道，本身也可能是深色底截图 —— 压在暗色面上这些都会读不出。
+             二维码是**印刷件**，扫的是黑白关系，所以这一处的白不跟随主题。 -->
         <img
           v-if="hasQr"
           :src="previewUrl"
           alt="我的微信收款码"
-          class="max-h-[260px] w-auto max-w-full rounded-sm object-contain"
+          class="max-h-[260px] w-auto max-w-full object-contain p-2"
+          style="background-color: #fff"
           @error="broken = true"
         />
         <div v-else class="flex flex-col items-center gap-2 text-center">
           <QrCode :size="34" class="opacity-40" aria-hidden="true" />
-          <p class="text-[13px] font-semibold">
+          <p class="text-sm font-semibold">
             {{ broken ? '这张图读不到了' : '还没有上传收款码' }}
           </p>
-          <p class="text-[12px] opacity-60">
+          <p class="text-xs text-ink-3">
             {{
               broken
-                ? '服务端还记着它，但文件已经不在了，重新上传一张即可。'
-                : '上传后，学生收到的取件邮件里会带上它。'
+                ? '服务端还有记录，文件已经不在，重传一张即可。'
+                : '上传后，取件邮件里会带上它。'
             }}
           </p>
         </div>
@@ -165,9 +169,9 @@ async function onRemove(): Promise<void> {
         </NButton>
       </div>
 
-      <p class="text-[12px] leading-relaxed opacity-60">
-        支持 PNG / JPG，不超过 2 MB。建议用微信「收付款 - 二维码收款」里保存下来的那张原图，
-        截图也行，但别裁掉码四周的留白 —— 留白没了有些手机扫不出来。
+      <p class="text-xs leading-relaxed text-ink-3">
+        PNG / JPG，≤ 2 MB。用微信「收付款 · 二维码收款」里保存的原图最好，
+        截图也行，但别裁掉四周留白 —— 裁了有些手机扫不出来。
       </p>
     </div>
   </NModal>

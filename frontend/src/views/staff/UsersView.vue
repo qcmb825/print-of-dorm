@@ -26,7 +26,6 @@ import {
   NButton,
   NDataTable,
   NDropdown,
-  NEmpty,
   NInput,
   NModal,
   NSelect,
@@ -47,6 +46,7 @@ import {
   type RestoreConflict,
   type Role,
 } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import RoleTag from '@/components/RoleTag.vue'
 import { confirmAction } from '@/composables/feedback'
@@ -86,7 +86,9 @@ const advanced = computed(() => auth.advanced)
 const STATUS_COLOR: Record<AccountStatus, string> = {
   active: 'var(--ok)',
   disabled: 'var(--err)',
-  closed: 'var(--ink-3)',
+  /* 注销态。原先写的是 var(--ink-3) —— 那支不存在（见 tokens.css 里 --color-ink-* 的说明），
+     声明静默失效、落到行文字色，跟「正常」看着一样。这里是状态标签，要读，走三级文字色。 */
+  closed: 'var(--text-tertiary)',
 }
 
 /* 筛选只列两种：列表接口在 SQL 层就把第三种角色挡在外面了，
@@ -196,7 +198,7 @@ async function toggleStatus(user: AdminUser): Promise<void> {
 async function closeUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '注销账号',
-    content: `确定注销「${user.nickname}」吗？该账号会立刻失去登录资格，昵称和学号也会被让出来（别人可以注册同名）。订单与工单全部保留，之后可以从这里恢复。`,
+    content: `注销「${user.nickname}」后立刻失去登录资格，昵称与学号会让出来（别人可以注册同名）。订单与工单全部保留，之后可以恢复。`,
     positiveText: '注销',
   })
   if (!ok) return
@@ -213,13 +215,13 @@ async function closeUser(user: AdminUser): Promise<void> {
 async function restoreUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '恢复账号',
-    content: `确定恢复「${user.nickname}」吗？恢复后这个账号重新可以登录。若昵称或学号已被别人占用，本次恢复会被拒绝。`,
+    content: `恢复「${user.nickname}」后重新可以登录。若昵称或学号已被占用，本次恢复会被拒绝。`,
     positiveText: '恢复',
   })
   if (!ok) return
   try {
     await adminApi.restoreUser(user.id)
-    message.success('账号已恢复，现在可以用原学号登录')
+    message.success('账号已恢复 · 可以用原学号登录')
     await load(true)
   } catch (error) {
     if (error instanceof ApiError) {
@@ -335,11 +337,11 @@ function openDialog(user: AdminUser, kind: DialogKind): void {
  *  那正是这两个函数存在的原因。 */
 const profileIssue = computed<string | null>(() => {
   if (!NICKNAME_RE.test(profileForm.nickname.trim()))
-    return '昵称需为 2-20 位中文、字母、数字或下划线'
-  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名需为 2-20 位中文或字母'
-  if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号需为 4-20 位数字'
+    return '昵称 2-20 位：中文、字母、数字或下划线'
+  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名 2-20 位中文或字母'
+  if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号 4-20 位数字'
   const dorm = profileForm.dorm.trim()
-  if (dorm.length < 2 || dorm.length > 50) return '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
+  if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符，写到门牌号'
   const qqBad = qqIssue(profileForm.qq)
   if (qqBad) return qqBad
   return otherContactIssue(profileForm.contact_type, profileForm.contact ?? '')
@@ -349,7 +351,7 @@ const profileIssue = computed<string | null>(() => {
  *  确认框是注册（自己打字）防手滑用的，管理员重置是打一串临时密码交给本人。 */
 const passwordIssueText = computed<string | null>(() => {
   const pwd = newPassword.value
-  if (!pwd) return '请填写新密码'
+  if (!pwd) return '填写新密码'
   const issue = passwordIssue(pwd)
   if (issue) return issue
   const target = dialog.target
@@ -414,7 +416,7 @@ async function saveProfile(target: AdminUser): Promise<void> {
 async function savePassword(target: AdminUser): Promise<void> {
   await adminApi.resetPassword(target.id, newPassword.value)
   // 回执里绝不重复密码本身：提示会挂在屏幕上，密码就跟着被截图了。
-  message.success(`已重置「${target.nickname}」的密码，请把新密码转告本人`)
+  message.success(`已重置「${target.nickname}」的密码 · 请转告本人`)
 }
 
 async function sendTicket(target: AdminUser): Promise<void> {
@@ -465,13 +467,13 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       width: 150,
       render: (row) =>
         h('div', { class: 'min-w-0' }, [
-          h('div', { class: 'truncate text-[13px] font-semibold' }, [
+          h('div', { class: 'truncate text-sm font-semibold' }, [
             row.nickname,
             // 标注自己那一行不是装饰：对自己，改角色/禁用/注销在菜单里都是灰的
             // （后端一律 400），不标出来会让人以为是页面坏了。
-            row.is_self ? h('span', { class: 'ml-1 text-[11px] opacity-60' }, '（你自己）') : null,
+            row.is_self ? h('span', { class: 'ml-1 text-xs text-ink-3' }, '（你自己）') : null,
           ]),
-          h('div', { class: 'tnum text-[11px] opacity-60' }, `#${row.id}`),
+          h('div', { class: 'tnum text-2xs text-ink-3' }, `#${row.id}`),
         ]),
     },
     {
@@ -480,15 +482,15 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       width: 150,
       render: (row) =>
         h('div', { class: 'min-w-0' }, [
-          h('div', { class: 'truncate text-[13px]' }, row.real_name || '—'),
-          h('div', { class: 'tnum truncate text-[11px] opacity-60' }, row.student_id || '—'),
+          h('div', { class: 'truncate text-sm' }, row.real_name || '—'),
+          h('div', { class: 'tnum truncate text-2xs text-ink-3' }, row.student_id || '—'),
         ]),
     },
     {
       title: '宿舍',
       key: 'dorm',
       width: 118,
-      render: (row) => h('span', { class: 'truncate text-[12px]' }, row.dorm || '—'),
+      render: (row) => h('span', { class: 'truncate text-xs' }, row.dorm || '—'),
     },
     {
       title: '联系方式',
@@ -505,10 +507,10 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
           row.contact_type && row.contact_type !== 'qq'
             ? `${OTHER_CONTACT_LABELS[row.contact_type]} ${row.contact}`
             : ''
-        if (!qq && !other) return h('span', { class: 'text-[12px] opacity-60' }, '—')
+        if (!qq && !other) return h('span', { class: 'text-xs text-ink-3' }, '—')
         const lines = []
-        if (qq) lines.push(h('span', { class: 'tnum truncate text-[12px]' }, `QQ ${qq}`))
-        if (other) lines.push(h('span', { class: 'truncate text-[11px] opacity-70' }, other))
+        if (qq) lines.push(h('span', { class: 'tnum truncate text-xs' }, `QQ ${qq}`))
+        if (other) lines.push(h('span', { class: 'truncate text-2xs text-ink-3' }, other))
         // 没有 QQ 号时把话说清楚：这不算「联系方式填得不对」，
         // 而是根本没有能推出发件邮箱的联系方式 —— 取件提醒发不到他手上，
         // 得有人去补一个。没有这行字，管理员只会以为这人留的是别的联系方式。
@@ -516,8 +518,8 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
           lines.push(
             h(
               'span',
-              { class: 'text-[11px]', style: { color: 'var(--warn)' } },
-              '缺 QQ 号（收不到取件邮件）',
+              { class: 'text-2xs', style: { color: 'var(--warn)' } },
+              '缺 QQ 号 · 收不到取件邮件',
             ),
           )
         return h('div', { class: 'flex min-w-0 flex-col gap-0.5' }, lines)
@@ -536,7 +538,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'tech-label', style: { color: STATUS_COLOR[row.status] } },
+          { class: 'tech-label tech-label--cn', style: { color: STATUS_COLOR[row.status] } },
           ACCOUNT_STATUS_LABELS[row.status],
         ),
     },
@@ -545,14 +547,14 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       key: 'order_count',
       width: 96,
       render: (row) =>
-        h('span', { class: 'tnum text-[12px]' }, `${row.order_count} / ${row.claimed_count}`),
+        h('span', { class: 'tnum text-xs' }, `${row.order_count} / ${row.claimed_count}`),
     },
     {
       title: '注册 / 最后登录',
       key: 'last_login',
       width: 140,
       render: (row) =>
-        h('div', { class: 'tnum text-[11px] opacity-70' }, [
+        h('div', { class: 'tnum text-2xs text-ink-3' }, [
           h('div', {}, shortTime(row.create_time)),
           h('div', {}, shortTime(row.last_login)),
         ]),
@@ -567,7 +569,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'tnum text-[12px]', style: { color: 'var(--warn)' } },
+          { class: 'tnum text-xs', style: { color: 'var(--warn)' } },
           row.password ?? '—',
         ),
     })
@@ -650,14 +652,14 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="账号管理"
-      subtitle="名单对所有管理员可见；改角色、禁用、注销等操作会写入审计日志"
+      subtitle="名单对所有管理员可见；改角色、禁用、注销会写入审计日志"
     >
       <template #actions>
         <span v-if="advanced" class="flex items-center gap-2">
-          <NSwitch v-model:value="withPassword" size="small" @update:value="load()" />
+          <NSwitch :round="false" v-model:value="withPassword" size="small" @update:value="load()" />
           <button
             type="button"
-            class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3"
+            class="tech-label flex cursor-pointer select-none items-center gap-1 text-ink-3 tech-label--cn text-xs"
             @click="toggleWithPassword"
           >
             <Eye :size="12" />
@@ -684,9 +686,9 @@ onMounted(load)
         aria-label="角色筛选"
       />
       <span v-if="advanced" class="flex items-center gap-2">
-        <NSwitch v-model:value="includeClosed" size="small" @update:value="load()" />
+        <NSwitch :round="false" v-model:value="includeClosed" size="small" @update:value="load()" />
         <span
-          class="tech-label cursor-pointer select-none text-ink-3"
+          class="tech-label cursor-pointer select-none text-ink-3 tech-label--cn text-xs"
           @click="toggleIncludeClosed"
         >
           含已注销
@@ -696,7 +698,7 @@ onMounted(load)
            会变成一场谁也说不清的争执。
            开关打开时不能再报这条：那些账号此刻就在列表里，
            再说一句「未列出」等于自己打自己（浏览器里看到过这条自相矛盾的文案）。 -->
-      <span class="tech-label ml-auto text-ink-4">
+      <span class="tech-label ml-auto text-ink-3 tech-label--cn text-xs">
         显示 {{ filtered.length }} / {{ users.length }} 个账号<span
           v-if="closedTotal && !includeClosed"
         >
@@ -707,22 +709,22 @@ onMounted(load)
 
     <p
       v-if="withPassword"
-      class="mb-3 rounded-lg border px-3 py-2 text-[12px]"
+      class="mb-3 border px-3 py-2 text-xs"
       style="
         border-color: var(--warn-tint-border);
         background-color: var(--warn-tint);
         color: var(--warn);
       "
     >
-      正在显示全部账号的明文密码。此操作已被记录到安全日志，请勿截图或外传。
+      正在显示全部账号的明文密码。此操作已记入安全日志，勿截图、勿外传。
     </p>
 
-    <div class="panel overflow-hidden">
+    <div class="bracket panel overflow-hidden">
       <div v-if="loading && !users.length" class="flex flex-col gap-2 p-3">
         <NSkeleton v-for="index in 6" :key="index" height="48px" :sharp="false" />
       </div>
       <div v-else-if="!filtered.length" class="grid place-items-center py-14">
-        <NEmpty description="没有匹配的账号" />
+        <EmptyState code="00 / NO MATCH" title="没有匹配的账号" hint="换个关键词，或把筛选清掉" />
       </div>
       <NDataTable
         v-else
@@ -746,7 +748,7 @@ onMounted(load)
       :mask-closable="false"
     >
       <template v-if="dialog.target">
-        <p class="mb-3 text-[13px] leading-6 text-ink-3">
+        <p class="mb-3 text-sm leading-6 text-ink-3">
           目标账号
           <span class="font-heading font-bold text-ink">{{ dialog.target.nickname }}</span>
           <span class="ml-1 font-mono">#{{ dialog.target.id }}</span>
@@ -755,7 +757,7 @@ onMounted(load)
         <template v-if="dialog.kind === 'profile'">
           <div class="flex flex-col gap-3">
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">昵称</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">昵称</span>
               <NInput
                 v-model:value="profileForm.nickname"
                 :maxlength="20"
@@ -763,7 +765,7 @@ onMounted(load)
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">姓名</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">姓名</span>
               <NInput
                 v-model:value="profileForm.real_name"
                 :maxlength="20"
@@ -771,28 +773,28 @@ onMounted(load)
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">学号（登录名）</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">学号（登录名）</span>
               <NInput v-model:value="profileForm.student_id" :maxlength="20" placeholder="4-20 位数字" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">宿舍</span>
-              <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="请写到门牌号" />
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">宿舍</span>
+              <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="写到门牌号" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">
+              <span class="tech-label text-ink-3 tech-label--cn">
                 QQ 号
-                <span class="ml-1 font-normal opacity-60">（收件提醒用，必填）</span>
+                <span class="ml-1 font-normal">（收件提醒用，必填）</span>
               </span>
               <NInput
                 v-model:value="profileForm.qq"
                 :maxlength="12"
-                placeholder="5-12 位数字，不能以 0 开头"
+                placeholder="5-12 位数字，不以 0 开头"
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3">
+              <span class="tech-label text-ink-3 tech-label--cn">
                 其他联系方式
-                <span class="ml-1 font-normal opacity-60">（选填，也可整组留空）</span>
+                <span class="ml-1 font-normal">（选填，也可整组留空）</span>
               </span>
               <div class="flex gap-2">
                 <!-- 类型可以清空回「不填」：其他联系方式是整组选填的，
@@ -817,17 +819,18 @@ onMounted(load)
               </div>
             </label>
           </div>
-          <p class="mt-3 text-[12px] leading-5 text-ink-4">
-            学号是登录名，改完本人必须用新学号登录。这里不核对学生名单 ——
-            名单是注册的闸门，而改资料是人工介入，名单本身就可能落后于现实。
-            QQ 号必填的原因很实际：取件提醒只能发到 <span class="tnum">&lt;QQ号&gt;@qq.com</span>，
-            缺了它这个账号收不到任何通知（列里会标出来）。
+          <p class="mt-3 text-xs leading-5 text-ink-3">
+            学号是登录名，改完本人必须用新学号登录。这里不核对名单：
+            名单是注册的闸门，改资料是人工介入。
+            QQ 号必填的原因很实际 —— 取件提醒只能发到
+            <span class="tnum">&lt;QQ号&gt;@qq.com</span>，缺了它这个账号收不到任何通知
+            （列里会标出来）。
           </p>
         </template>
 
         <template v-else-if="dialog.kind === 'password'">
           <NAlert type="warning" :bordered="false" class="mb-3">
-            新密码立即生效，请当面或通过可靠方式转告本人。此操作会记入审计日志，
+            新密码立即生效，当面或可靠方式转告本人。此操作记入审计日志，
             但日志里不会出现密码本身。
           </NAlert>
           <NInput
@@ -842,8 +845,8 @@ onMounted(load)
 
         <template v-else>
           <NAlert type="info" :bordered="false" class="mb-3">
-            工单归属这个学生，第一条消息以他的名义发出 ——
-            学生端打开会话看到的就是自己提的问题，接着回复即可。
+            工单归属这个学生，第一条消息以他的名义发出；
+            学生端打开会话看到的就是自己提的问题。
           </NAlert>
           <div class="flex flex-col gap-3">
             <NInput
@@ -858,12 +861,12 @@ onMounted(load)
               :rows="4"
               :maxlength="BODY_MAX"
               show-count
-              placeholder="把情况写清楚：订单号、文件名、时间……"
+              placeholder="写清订单号、文件名、时间…"
             />
           </div>
         </template>
 
-        <p v-if="dialogIssue" class="mt-2 text-[12px]" style="color: var(--err)">
+        <p v-if="dialogIssue" class="mt-2 text-xs" style="color: var(--err)">
           {{ dialogIssue }}
         </p>
       </template>
@@ -887,21 +890,21 @@ onMounted(load)
       :bordered="false"
     >
       <NAlert v-if="conflicts.target" type="warning" :bordered="false" class="mb-3">
-        「{{ conflicts.target.nickname }}」注销时把昵称和学号让了出去，现在被下面这些账号占着。
-        请先和对方确认怎么处理（改名，或者就这样算了），系统不会替任何人改名。
+        「{{ conflicts.target.nickname }}」注销时把昵称与学号让了出去，现在被下面这些账号占着。
+        先和对方确认怎么处理（改名，或就这样）；系统不会替任何人改名。
       </NAlert>
       <ul class="flex flex-col gap-2">
         <li
           v-for="item in conflicts.items"
           :key="`${item.label}:${item.value}`"
-          class="flex flex-wrap items-center gap-x-2 rounded-[10px] border px-3 py-2 text-[13px]"
+          class="flex flex-wrap items-center gap-x-2 border px-3 py-2 text-sm"
           style="border-color: var(--border)"
         >
-          <span class="tech-label text-ink-4">{{ item.label }}</span>
+          <span class="tech-label text-ink-3 tech-label--cn text-xs">{{ item.label }}</span>
           <span class="font-mono">{{ item.value }}</span>
-          <span class="text-ink-4">已被</span>
+          <span class="text-ink-3">已被</span>
           <span class="font-semibold">{{ item.owner_nickname }}</span>
-          <span class="font-mono text-[12px] text-ink-4">#{{ item.owner_id }}</span>
+          <span class="font-mono text-xs text-ink-3">#{{ item.owner_id }}</span>
           <NButton size="tiny" quaternary class="!ml-auto" @click="locateOwner(item.owner_nickname)">
             在列表里找它
           </NButton>

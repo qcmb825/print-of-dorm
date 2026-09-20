@@ -264,7 +264,8 @@
 | 前端组件库 | Naive UI |
 | 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
 | 前端图标 | Lucide |
-| 字体 | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、取件码），@fontsource 随产物自带，不走外部 CDN |
+| 字体（拉丁） | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、取件码），@fontsource 随产物自带，不走外部 CDN |
+| 字体（中文） | 思源黑体（OFL-1.1），由 `cn-font-split` 切成带 `unicode-range` 的分片放在 `src/assets/fonts/`（数 MB，随产物入库；中文覆盖广，首次访问就会取到全部分片） |
 | 前端构建 | Vite（产物直接落进 `static/app/`，由 Flask 托管） |
 | 图表 | ECharts（按需引入，只有看板页会加载） |
 
@@ -483,9 +484,16 @@ npm run dev          # 开发服务器 :5173，已把 /api 反代到 :8080
 改完要发布时：
 
 ```powershell
-npm run typecheck    # 只做类型检查，可选
-npm run build        # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
+npm run typecheck        # 只做类型检查，可选
+npm run build            # 先跑 vue-tsc 类型检查，再打包进 ../static/app/
+npm run audit:contrast   # 对比度断言：全部 must 通过；未登记的不达标会返回非零码
 ```
+
+`audit:contrast` 是**改界面时的验收门槛**，不是可选项：它解析 `styles/tokens.css`，
+按 WCAG 的算法逐组算对比度。改了任何颜色都该跑一遍。
+
+中文字体是**生成物**（`npm run fonts:build`，源字体思源黑体，OFL-1.1）——
+`src/assets/fonts/` 里的分片不要手改，重新生成即可。它只在换字体或加字重时才需要跑。
 
 `build` 里串了类型检查，**类型不过就不会出包**；急着出包可以临时用
 `npm run build:only` 跳过，但别养成习惯。构建完记得把 `static/app/` 一起提交，
@@ -786,10 +794,12 @@ print-of-dorm/
 │   │   │   └── student/   #     上传下单、我的订单、工单
 │   │   ├── components/    #   跨页面复用组件（含审核申请弹窗）
 │   │   ├── composables/   #   组合式函数（统一的操作反馈）
+│   │   ├── assets/fonts/  #   中文分片（生成物，不手改）
 │   │   ├── charts/        #   ECharts 按需注册与图表 option 构造函数
 │   │   ├── stores/        #   Pinia：登录态、主题、公告
 │   │   ├── utils/         #   时间格式化、状态色映射、校验规则（后端规则的镜像）
 │   │   └── router/        #   路由表与按角色的访问守卫
+│   ├── scripts/           #   两个本地工具：中文子集化（fonts:build）、对比度断言（audit:contrast）
 │   ├── tsconfig.json
 │   └── package.json
 ├── requirements.txt       # 依赖清单

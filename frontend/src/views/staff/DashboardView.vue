@@ -36,7 +36,11 @@ const palette = computed<ChartPalette>(() => {
     text: t.textPrimary,
     textMuted: t.textTertiary,
     border: t.border,
-    primary: t.primary,
+    /* 图表序列色属于「线」：它画在图表自己的底上，浅色下是白/近白，
+       荧光黄 #fffa00 铺上去只有 1.11:1 会整条消失。走 --accent-text。
+       注意 options.ts 会在这串色值后面拼十六进制 alpha（如 `${p.primary}59`），
+       所以它必须是 6 位 hex —— --accent-text 在两套主题下都是字面 hex，成立。 */
+    primary: t.accentText,
     secondary: t.secondary,
     ok: t.ok,
     err: t.err,
@@ -158,9 +162,9 @@ onMounted(load)
           :value="orderStats?.unpriced ?? 0"
           :icon="CircleDollarSign"
           accent
-          hint="待接单后填金额"
+          hint="接单后填金额"
         />
-        <StatCard label="累计计费" :value="revenueLabel" :icon="Wallet" hint="已定价订单的金额合计" />
+        <StatCard label="累计计费" :value="revenueLabel" :icon="Wallet" hint="已定价订单合计" />
         <StatCard label="账号总数" :value="userStats?.total ?? 0" :icon="Users" />
         <StatCard label="启用中" :value="userStats?.active ?? 0" />
         <StatCard label="已禁用" :value="userStats?.disabled ?? 0" />
@@ -169,39 +173,45 @@ onMounted(load)
 
       <div class="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <section class="panel p-4">
-          <h3 class="mb-1 font-heading text-[15px] font-bold">近 14 天订单量</h3>
-          <p class="tech-label mb-3 text-ink-4">Orders / day</p>
+          <h3 class="mb-1 font-heading text-base font-bold">近 14 天订单量</h3>
+          <p class="tech-label mb-3 text-ink-3 text-2xs">Orders / day</p>
           <ChartBox :option="trend" :height="248" :empty="!hasTrendData" />
         </section>
 
-        <section class="panel p-4">
-          <h3 class="mb-1 font-heading text-[15px] font-bold">订单状态分布</h3>
-          <p class="tech-label mb-3 text-ink-4">By status</p>
+        <!-- 右列。lg 起这条左线是**分栏线**：两块并排时只靠间隙分不出
+             "这是一栏还是两块"。行与行之间会断开 16px（grid 的 gap）——
+             接受这个断口：它是"每行一栏"的读法，而不是一条贯穿全页的竖线。 -->
+        <section class="panel p-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
+          <h3 class="mb-1 font-heading text-base font-bold">订单状态分布</h3>
+          <p class="tech-label mb-3 text-ink-3 text-2xs">By status</p>
           <ChartBox :option="byStatus" :height="248" :empty="!hasStatusData" />
         </section>
 
         <section class="panel p-4">
-          <h3 class="mb-1 font-heading text-[15px] font-bold">打印规格分布</h3>
-          <p class="tech-label mb-3 text-ink-4">Color / duplex</p>
+          <h3 class="mb-1 font-heading text-base font-bold">打印规格分布</h3>
+          <p class="tech-label mb-3 text-ink-3 text-2xs">Color / duplex</p>
           <ChartBox :option="splitBar" :height="248" />
         </section>
 
-        <section class="panel p-4">
-          <h3 class="mb-1 font-heading text-[15px] font-bold">接单排行</h3>
-          <p class="tech-label mb-3 text-ink-4">Top 5 claimers</p>
+        <!-- 右列。lg 起这条左线是**分栏线**：两块并排时只靠间隙分不出
+             "这是一栏还是两块"。行与行之间会断开 16px（grid 的 gap）——
+             接受这个断口：它是"每行一栏"的读法，而不是一条贯穿全页的竖线。 -->
+        <section class="panel p-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
+          <h3 class="mb-1 font-heading text-base font-bold">接单排行</h3>
+          <p class="tech-label mb-3 text-ink-3 text-2xs">Top 5 claimers</p>
           <ChartBox :option="rank" :height="248" :empty="!hasRankData" empty-text="还没有接单记录" />
         </section>
       </div>
 
       <section class="panel mt-4 p-4">
-        <h3 class="mb-3 font-heading text-[15px] font-bold">账号角色分布</h3>
+        <h3 class="mb-3 font-heading text-base font-bold">账号角色分布</h3>
         <div class="flex flex-wrap gap-6">
           <div v-for="(count, role) in userStats?.by_role ?? {}" :key="role">
-            <div class="tech-label mb-1 text-ink-4">{{ role }}</div>
+            <div class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">{{ role }}</div>
             <div class="tnum font-heading text-2xl font-bold">{{ count }}</div>
           </div>
-          <p v-if="!Object.keys(userStats?.by_role ?? {}).length" class="text-[13px] text-ink-3">
-            暂无账号数据
+          <p v-if="!Object.keys(userStats?.by_role ?? {}).length" class="text-sm text-ink-3">
+            无账号数据
           </p>
         </div>
       </section>

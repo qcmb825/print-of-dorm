@@ -4,12 +4,12 @@
 import { computed } from 'vue'
 import VChart from 'vue-echarts'
 import 'vue-echarts/style.css'
-import { NEmpty } from 'naive-ui'
 import type { EChartsOption } from 'echarts'
+import EmptyState from '@/components/EmptyState.vue'
 
 const props = withDefaults(
   defineProps<{ option: EChartsOption; height?: number; empty?: boolean; emptyText?: string }>(),
-  { height: 260, empty: false, emptyText: '暂无数据' },
+  { height: 260, empty: false, emptyText: '无数据' },
 )
 
 const boxHeight = computed(() => `${props.height}px`)
@@ -19,7 +19,7 @@ const boxHeight = computed(() => `${props.height}px`)
   <div class="relative w-full" :style="{ height: boxHeight }">
     <VChart v-if="!empty" :option="option" autoresize />
     <div v-else class="grid h-full place-items-center">
-      <NEmpty :description="emptyText" size="small" />
+      <EmptyState code="00 / NO DATA" :title="emptyText" />
     </div>
   </div>
 </template>

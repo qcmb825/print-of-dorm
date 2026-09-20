@@ -35,10 +35,10 @@ const options = computed<DropdownOption[]>(() => [
     type: 'render',
     render: () =>
       h('div', { class: 'px-3 py-2' }, [
-        h('div', { class: 'text-[13px] font-bold' }, auth.user?.real_name || auth.displayName),
+        h('div', { class: 'text-sm font-bold' }, auth.user?.real_name || auth.displayName),
         h(
           'div',
-          { class: 'tnum mt-0.5 text-[11px] opacity-60' },
+          { class: 'tnum mt-0.5 text-xs text-ink-3' },
           `学号 ${auth.user?.student_id || '—'}`,
         ),
       ]),
@@ -83,7 +83,7 @@ async function onSelect(key: string): Promise<void> {
   if (key !== 'logout') return
   const ok = await confirmAction({
     title: '退出登录',
-    content: '确定要退出当前账号吗？',
+    content: '退出后需要重新用学号登录。',
     positiveText: '退出',
   })
   if (!ok) return
@@ -107,8 +107,8 @@ async function onSelect(key: string): Promise<void> {
     >
       <span class="flex w-full min-w-0 items-center gap-2">
         <span
-          class="grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold"
-          style="background-color: var(--muted); color: var(--primary)"
+          class="grid size-7 shrink-0 place-items-center text-xs font-bold"
+          style="background-color: var(--muted); color: var(--accent-text)"
           aria-hidden="true"
         >
           {{ initial }}
@@ -116,7 +116,7 @@ async function onSelect(key: string): Promise<void> {
 
         <template v-if="props.stacked">
           <span class="flex min-w-0 flex-col items-start gap-0.5">
-            <span class="block w-full truncate text-[13px] leading-tight font-semibold">
+            <span class="block w-full truncate text-sm leading-tight font-semibold">
               {{ auth.displayName }}
             </span>
             <RoleTag v-if="auth.user" :role="auth.user.role" />
@@ -127,7 +127,7 @@ async function onSelect(key: string): Promise<void> {
           <!-- truncate 要求元素是块级/行内块，inline 上不生效；
                外层还要有 min-w-0，否则 flex 子项不肯收缩，长昵称会顶破布局。
                昵称在 md 出现、角色标签到 lg 才出现：两者同时挤进顶栏会和导航打架。 -->
-          <span class="hidden min-w-0 truncate text-[13px] font-semibold md:block">
+          <span class="hidden min-w-0 truncate text-sm font-semibold md:block">
             {{ auth.displayName }}
           </span>
           <!-- 包一层来控制显隐：RoleTag 根节点自带 inline-flex，

@@ -48,16 +48,16 @@ const authorLine = computed(() => {
        退场原先写的是 ease-in：它会「慢慢起步再加速」，而起步那一刻正是用户盯着看的时候，
        观感上比 200ms 的 ease-out 还慢。UI 上的进出场一律 ease-out。 -->
   <Transition
-    enter-active-class="transition duration-[180ms] ease-out"
+    enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
     enter-from-class="-translate-y-2 opacity-0"
-    leave-active-class="transition duration-[150ms] ease-out"
+    leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
     leave-to-class="-translate-y-2 opacity-0"
   >
-    <div v-if="store.visible && announcement" class="px-3 pt-3 sm:px-5 sm:pt-4">
+    <div v-if="store.visible && announcement" class="px-3 pt-3 pb-3 sm:px-5 sm:pt-4 sm:pb-4">
       <section
         role="status"
         aria-label="站点公告"
-        class="mx-auto flex max-w-6xl items-start gap-3 rounded-[12px] border p-3 sm:p-4"
+        class="hazard-left mx-auto flex max-w-6xl items-start gap-3 border p-3 sm:p-4"
         :style="{
           backgroundColor: 'var(--paper)',
           borderColor: 'var(--paper-line)',
@@ -65,7 +65,7 @@ const authorLine = computed(() => {
         }"
       >
         <span
-          class="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md"
+          class="mt-0.5 grid size-7 shrink-0 place-items-center"
           style="background-color: var(--accent-tint-soft); color: var(--paper-accent)"
           aria-hidden="true"
         >
@@ -75,11 +75,11 @@ const authorLine = computed(() => {
           <p class="whitespace-pre-wrap break-words" :style="bodyStyle">
             {{ announcement.content }}
           </p>
-          <p class="tech-label mt-1.5" style="color: var(--paper-muted)">{{ authorLine }}</p>
+          <p class="tech-label mt-1.5 tech-label--cn text-xs" style="color: var(--paper-muted)">{{ authorLine }}</p>
         </div>
         <NButton
           quaternary
-          circle
+          class="tap-area !h-8 !w-8 !p-0"
           size="small"
           aria-label="关闭公告"
           style="color: var(--paper-muted)"

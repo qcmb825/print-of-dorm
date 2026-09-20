@@ -1,4 +1,13 @@
-/* 设计令牌 —— 视觉语言取自 maaend.com（黄 + 青、细边框、磨砂面板、方角主按钮）。
+/* 设计令牌 —— 工业平面语言：工业黄 + 高对比黑白 + 少量青，细描边、纯平、方角。
+ *
+ * 强调色的用法有一条硬分工，改任何一处都要先读：
+ *   --primary      **只用于可承载深色内容的大面积填充**（主按钮、菜单/分页激活块、
+ *                  徽标底）。它自己不是「可读的颜色」，是「可垫在深色下面的颜色」。
+ *   --accent-text  一切**文字、图标、描边、细线、色条、图表序列**。
+ * 这条分工不是审美选择，是测量结果：荧光黄 #fffa00 压在本主题的浅底上只有 1.01~1.10:1，
+ * 当文字、当描边、当图表线都是看不见的；而压在它上面的黑字有 18.93:1。
+ * 整条黄谱都救不回描边——#c9b800 1.93、#b3a300 2.45、#a89a00 2.74，全都到不了非文本图形的 3:1，
+ * 要到 3:1 就得压成橄榄/芥末色，那已经不是黄了。所以线状用途一律走 --accent-text。
  *
  * 分两层：
  *   1) 原始层（--background / --primary / --industrial-yellow ...）在此声明，浅深各一套；
@@ -28,33 +37,42 @@
   --foreground: #111111;
   --card: #ffffffcc;
   --card-foreground: #111111;
-  --primary: #d4a017;
+  /* 主色指向原始层的 --industrial-yellow（见文件末尾的「原始层」一节）。
+   * 深色主题那一支也指向同一个名字，改强调色只需要动 --industrial-yellow 一处。 */
+  --primary: var(--industrial-yellow);
   --primary-foreground: #000000;
-  --secondary: #008fa6;
+  --secondary: var(--tech-cyan);
   --secondary-foreground: #ffffff;
-  --muted: #f4f4f4;
+  --muted: var(--deep-void);
   --muted-foreground: #71717a;
-  --accent: #c49102;
+  /* 通用强调色。全站零消费（只映射到 Tailwind 的 --color-accent），
+   * 留着一处是为了让「强调色」这个概念有名字，值跟着 --primary 走。 */
+  --accent: var(--primary);
   --accent-foreground: #000000;
-  /* 强调色**当文字用**时的深度。（注意它不是「铺在 accent 底上的前景色」，
-   * 那是 --accent-foreground。）
+  /* 强调色**当文字、图标、描边、细线、色条、图表序列用**时的深度。
+   * （注意它不是「铺在 accent 底上的前景色」，那是 --accent-foreground。）
    *
-   * 浅色下 --primary(#d4a017) 和 --accent(#c49102) 都只够做色块与色条：铺在
-   * --muted(#f4f4f4) 上分别只有 2.16:1 / 2.58:1，13px 的侧栏激活项、11px 的底部
-   * 标签栏文字都读不清（WCAG AA 小字要 4.5:1）。但这两支都不能直接压深：
-   * --primary 同时还当背景用（.nav-link::before 的色条、焦点轮廓、换场扫描线、
-   * 排行榜的条形），改了会把色块一起改掉；--accent 是通用强调色（还挂在 Tailwind
-   * 的 --color-accent 上），为了一个「当文字用」的场景压低它，等于顺手改了调色板。
-   * 所以这件事单独给一支令牌。
+   * 这是本主题下强调色的**唯一可见形态**：--primary 的荧光黄 #fffa00 压在浅底上只有
+   * 1.05:1，当文字、当描边、当图表线全都看不见（详见文件头的分工说明）。
+   * 而 --primary 本身不能压深——它还当背景用（主按钮、菜单激活块、分页激活块），
+   * 压深就不再是想要的那个荧光黄了。所以线状用途单独给这一支。
    *
-   * #866400 跟 #d4a017 同属约 44° 的金黄色相，不是随手抓的暗黄。往深里走两档后：
-   * --muted 上 4.98:1、页面底 #f9f9f9 上 5.20:1、.panel 卡面（80% 白的 --card 叠在
-   * #f9f9f9 上 ≈ #fefefe）5.43:1、accent-tint-soft 上 4.82:1、accent-tint 上 5.03:1。
-   * 小字（≥4.5:1）和大字（≥3:1）都在 AA 之上，浅色下看着仍然是「金」而不是「棕」。 */
-  --accent-text: #866400;
-  --border: #e2e2e2;
+   * #756a00 与 #fffa00 同属约 60° 的黄色相（上一版是 #866400，对应旧的 44° 金），
+   * 往深里走是唯一的办法。实测：页面底 #f9f9f9 上 5.22:1、--muted(#f4f4f4) 上 5.00:1、
+   * .panel 卡面（80% 白的 --card 叠在 #f9f9f9 上 ≈ #fefefe）5.45:1、
+   * accent-tint(10% 荧光黄叠页底) 上 5.16:1、accent-tint-soft(13%) 上 5.14:1、
+   * accent-tint-soft 叠在 --muted 上 4.97:1。小字（≥4.5）与大号字（≥3）都过 AA。
+   *
+   * 深色主题不需要这一支：那儿的 --primary 本身就是 #fffa00，在 #050505 上有 18.37:1，
+   * 文字、描边、图表线直接沿用它（见 .dark 块的 --accent-text: var(--primary)）。 */
+  --accent-text: #756a00;
+  --border: var(--technical-grey);
+  /* 浅色下 --border(#e2e2e2) 与 --border-subtle(#00000014 合成 ≈#e5e5e5) 实测不可分辨，
+   * RGB 距离只有 3/255、对比度 1.230 vs 1.191。深色那侧差 13/255 是可分辨的。
+   * 这一档在浅色下等于不存在 —— 保留名字是为了两套主题的令牌清单对齐，
+   * 但不要在浅色下指望「subtle 比 border 更淡」能看出层次。 */
   --border-subtle: #00000014;
-  --input: #e2e2e2;
+  --input: var(--technical-grey);
   --input-foreground: #111111;
 
   --text-primary: #111111;
@@ -63,7 +81,16 @@
   --text-quaternary: #11111166;
   --text-disabled: #1111114d;
 
-  --industrial-yellow: #d4a017;
+  /* ── 原始层 ────────────────────────────────────────────────
+   * 这四个是「色调来源」，只在这里定值，上面那些语义令牌指向它们。
+   * 强调色要换色，改 --industrial-yellow 一处即可（两套主题各一个值）。
+   *
+   * 注意 --deep-void / --technical-grey 这两支在深浅两套主题里承担的**角色不同**：
+   *   浅色：--deep-void 是「比页底稍暗的凹陷面」= --muted；--technical-grey 是分隔线 = --border
+   *   深色：--deep-void 是「最底层」= --background（也是换场面板 --veil-mat）；--technical-grey 是凹陷面 = --muted
+   * 这是有意为之，不是写错了：同一支中性色在浅色下最该当边框、在深色下最该当暗面。
+   * 所以别把它们当成「同一个灰的两个主题版本」来用，改值前先确认落在哪个角色上。 */
+  --industrial-yellow: #fffa00;
   --tech-cyan: #008fa6;
   --deep-void: #f4f4f4;
   --technical-grey: #e2e2e2;
@@ -73,7 +100,11 @@
   --status-pending-bg: #f4f4f4;
   --status-printing: #0e7490;
   --status-printing-bg: #ecfeff;
-  --status-ready: #8a6d00;
+  /* 「可取了」的黄与管理员角色徽章的黄，都跟着强调色走。
+   * 它们原来各自写死 #8a6d00（当时与 --primary 的旧值同族），强调色换成荧光黄后
+   * 若不跟着走，调色板里会同时存在三个不同的黄。实测 #756a00 铺在 --status-ready-bg
+   * (#fef9c3) 上是 4.83:1，比原来的 4.58:1 更宽裕。 */
+  --status-ready: var(--accent-text);
   --status-ready-bg: #fef9c3;
   --status-done: #15803d;
   --status-done-bg: #dcfce7;
@@ -90,24 +121,30 @@
    * 颜色不同就是最显眼的记号。所以这里直接指向 admin 那一对，让它肉眼不可区分。 */
   --role-user: #0e7490;
   --role-user-bg: #ecfeff;
-  --role-admin: #8a6d00;
+  --role-admin: var(--accent-text);
   --role-admin-bg: #fef9c3;
   --role-super: var(--role-admin);
   --role-super-bg: var(--role-admin-bg);
 
   --ok: #15803d;
   --err: #b91c1c;
-  --warn: #a16207;
+  /* 警告文字。比常见的琥珀再深一档：它要压的底有两种 —— 页面底与 **下沉面 --muted**
+     （设置页那几张卡片就是），后者更暗，原值压在它上面只有 4.48:1，差一口气。 */
+  --warn: #8f5a06;
   --info: #0e7490;
   /* 错误色的低透明度填充（驳回标签、失败提示的底）。
    * 跟状态色一样拆出 -bg 一支：--err 直接当背景会是一块刺眼的红。 */
   --err-bg: #fef2f2;
 
   /* 主色的低透明度填充：图标底、自己的消息气泡、提示条等。
-   * 单独做成令牌是因为深色下要用霓虹黄，直接写浅色那支会发闷。 */
-  --accent-tint: rgb(212 160 23 / 0.1);
-  --accent-tint-soft: rgb(212 160 23 / 0.13);
-  --accent-tint-border: rgb(212 160 23 / 0.34);
+   * 填充用荧光黄本身（都是浅底，压在上面的文字一律走 --accent-text，实测 ≥4.97:1）。
+   *
+   * 描边单独走 --accent-text 而不是荧光黄：34% 的荧光黄叠在页底上是 #fbf9a4，
+   * 与页底只有 1.04:1 —— 描边会彻底消失。取 --accent-text 的 34% 得 #ccc8a4（1.61:1），
+   * 仍是「淡黄描边」的观感，但看得见。 */
+  --accent-tint: rgb(255 250 0 / 0.1);
+  --accent-tint-soft: rgb(255 250 0 / 0.13);
+  --accent-tint-border: color-mix(in srgb, var(--accent-text) 34%, transparent);
   --warn-tint: rgb(251 191 36 / 0.1);
   --warn-tint-border: rgb(251 191 36 / 0.4);
 
@@ -125,24 +162,100 @@
   --paper: #ffffff;
   --paper-line: #e7e7e7;
   --paper-ink: #1f2328;
-  --paper-accent: #d4a017;
+  /* 纸面上的强调色（公告条上那些小图标）。纸面在两个主题下都接近纯色，
+   * 所以它属于「线状/小图形」用途，浅色走 --accent-text。#fffa00 铺在白纸上是 1.11:1。 */
+  --paper-accent: var(--accent-text);
   --paper-muted: #71717a;
 
-  /* 顶部环境光，对应参考站那层很淡的径向渐变 */
-  --ambient: radial-gradient(at 12% 0%, rgb(212 160 23 / 0.1) 0%, transparent 45%),
-    radial-gradient(at 88% 8%, rgb(0 143 166 / 0.08) 0%, transparent 40%);
+  /* ── 遮罩阶梯（scrim）─────────────────────────────────────────
+   * 这套语言**不用投影表达层级**，用黑色半透明遮罩：把下层压暗来突出上层。
+   * 十级梯度取自鹰角官网 CSS 的实测（rgba(0,0,0,.05/.1/.15/.3/.4/.5/.6/.7/.8/.9)）。
+   *
+   * **刻意不跟随主题，所以只在这一处声明**（:root 就是 <html>，深色块同样拿得到）。
+   * 深色下黑遮罩照样有效 —— 它压暗的是本来就暗的底，观感是「视线被收拢」而不是「更黑」。
+   *
+   * 替掉的是三组「柔和光晕」语汇，它们与纯平、硬边的目标正好相反：
+   *   --shadow-panel / --shadow-raised  卡片浮起
+   *   --glow-primary / --glow-secondary 主按钮与状态点的发光
+   *   --ambient                         顶部径向环境光
+   * 弹层（Dialog / Drawer / Dropdown / Select / Message）现在靠**遮罩压暗下层 + 1px 硬描边**
+   * 与背景分离，而不是给上层加投影。 */
+  /* 危险斜纹的墨色。鹰角官网实测是 `#1f1f22`（**近黑**，不是通用工业符号那种亮黄黑），
+   * 铺在中性面上只是「这块有约束」的暗示。这里从 --foreground 派生而不是写死：
+   * 浅色主题得到近黑条纹（同官网），深色主题得到近白条纹 —— 写死 #1f1f22 的话
+   * 在深色面板上等于看不见。 */
+  --hazard-ink: color-mix(in srgb, var(--foreground) 34%, transparent);
 
-  --glow-primary: 0 0 20px 0 rgb(212 160 23 / 0.35);
-  --glow-secondary: 0 0 20px 0 rgb(0 143 166 / 0.3);
-  --shadow-panel: 0 1px 2px rgb(17 17 17 / 0.03), 0 12px 32px rgb(17 17 17 / 0.035);
-  --shadow-raised: 0 2px 5px rgb(17 17 17 / 0.05), 0 18px 40px rgb(17 17 17 / 0.07);
+  /* 背景网格的两档线色。原来只有一档（直接借 --border-subtle），而单一密度的重复图案
+   * 在视觉上等价于噪点 —— 它不产生层次，只产生"平"。加一档更重的线（每 5 格一条）之后
+   * 画面立刻有了主次。实测鹰角官网就是三档刻度间距（4/6、6/9、8/12px）。 */
+  --grid-line: #00000008;
+  --grid-major: #0000000e;
 
-  --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', ui-sans-serif, system-ui,
+  /* 显示面：这一层做的是**背光**，不是打光。
+   * 上一版是 135° 的对角打光（斜上方的白光 + 对角阴影），那是纸在摄影棚里的样子；
+   * 屏是自发光的，光从上往下衰减，没有"斜上方来的一束"。
+   * 幅度仍然只有 ±2% 亮度 —— 够让大片纯色不再死平，又不足以被认成"有光"。
+   * 它与网格线是两类东西：这个**不产生线条结构**，不碰"纹理压文字"那条红线。 */
+  --surface-sheen: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.45) 0%,
+    transparent 34%,
+    rgb(17 17 17 / 0.022) 100%
+  );
+
+  /* 屏幕像元栅格：单像素点、4px 间距。
+   * 这是"电子"与"纸"最省力的一处材质差别 —— 纸的材质是有方向的（纤维、毛边），
+   * 屏的材质是无方向的像元阵列。点阵在文字底下不会连成通路，所以 48px 细线那次的
+   * 教训在这里不成立：那一次是线（有结构，会被读成内容的一部分），这里只是均匀微噪。
+   * 幅度按"停住看得出、扫一眼看不出"取：单点 4.5%，平均压暗约 0.22%。 */
+  --raster-dot: rgb(17 17 17 / 0.045);
+
+  /* 扫描高光 / 光标 / 状态灯的墨色。这几件只落在**没有正文的地方**（分隔基线、
+   * 状态读数旁边），所以可以直接用强调色，不必再降一档。 */
+  --scan-ink: var(--accent-text);
+  /* 图纸底图（登录页）的墨色：**铅笔稿**。从 --foreground 派生（不是青色 ——
+     那一版被评"不好看"，而且青色和表单的探活读数、链接色撞车）。
+     分三支，靠"两档透明度 + 强调色"分主次：
+       ink       常规笔画（轮廓、桁架弦杆、舱体）
+       ink-fine  细部（剖面线、刻度、中心线、尺寸线）—— 一张图纸的大部分面积其实是它
+       accent    只给"要被看到的那几处"：引出编号、图框角标、剖切详图的内圈
+     强调色走 --accent-text（浅色下是深黄），不走 --primary：荧光黄铺在浅底上只有
+     1.1:1，整条消失。这套分工和站内"强调色当墨用"是同一条规矩。 */
+  --blueprint-ink: color-mix(in srgb, var(--foreground) 42%, transparent);
+  --blueprint-ink-fine: color-mix(in srgb, var(--foreground) 20%, transparent);
+  --blueprint-accent: color-mix(in srgb, var(--accent-text) 60%, transparent);
+
+  --scrim-05: rgb(0 0 0 / 0.05);
+  --scrim-10: rgb(0 0 0 / 0.1);
+  --scrim-15: rgb(0 0 0 / 0.15);
+  --scrim-30: rgb(0 0 0 / 0.3);
+  --scrim-40: rgb(0 0 0 / 0.4);
+  --scrim-50: rgb(0 0 0 / 0.5);
+  --scrim-60: rgb(0 0 0 / 0.6);
+  --scrim-70: rgb(0 0 0 / 0.7);
+  --scrim-80: rgb(0 0 0 / 0.8);
+  --scrim-90: rgb(0 0 0 / 0.9);
+
+  /* 字体栈：**拉丁在前、中文在后**。
+   *
+   * 前面三支是拉丁字体（Space Grotesk / DM Sans / JetBrains Mono），'Noto Sans SC' 排在它们
+   * 之后 —— 字体匹配是按字符逐个回落的，拉丁字符在前面的字体里就能命中，走不到中文字体；
+   * 汉字则一路回落到 'Noto Sans SC'。反过来放会让拉丁也走思源黑体，丢掉 Space Grotesk 的
+   * 工业感字形。
+   *
+   * 思源黑体是切片自托管的（见 scripts/build-cn-font.mjs），只覆盖 6763 个常用汉字。
+   * 它后面的 'Microsoft YaHei' / 'PingFang SC' 是兜底：生僻字（人名、专业术语）会落到系统字体，
+   * 同一行里出现两种字形 —— 这是切片方案已知的取舍。
+   *
+   * --stack-mono 也要带中文字族：换场场记读数里有中文页名，而它走的是等宽栈。少了这一支，
+   * 那几个汉字会落到浏览器默认的衬线字体上，字号字距与旁边的西文代号断裂。 */
+  --stack-heading: 'Space Grotesk Variable', 'Space Grotesk', 'Noto Sans SC', ui-sans-serif,
+    system-ui, 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --stack-body: 'DM Sans Variable', 'DM Sans', 'Noto Sans SC', ui-sans-serif, system-ui,
     'Microsoft YaHei', 'PingFang SC', sans-serif;
-  --stack-body: 'DM Sans Variable', 'DM Sans', ui-sans-serif, system-ui, 'Microsoft YaHei',
-    'PingFang SC', sans-serif;
-  --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, Consolas,
-    'Courier New', monospace;
+  --stack-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'Noto Sans SC', ui-monospace,
+    Consolas, 'Courier New', monospace;
 
   /* 换场扫描/网点专用的青色。
    * 这条令牌原先只在 .dark 里定义过 —— 浅色下引用它会静默变成无效值（图层凭空消失或
@@ -151,22 +264,33 @@
    * 引用处仍写 var(--scan-line, var(--secondary)) 兜底。 */
   --scan-line: var(--status-printing);
 
-  /* 换场幕布（RouteVeil）。
+  /* 换场面板的材质（RouteVeil）。
    *
-   * 两个主题都用「暗幕」而不是各自的 --background：浅色的 --background 是 #f9f9f9，
-   * 闭合那一刻就是一次全屏白闪 —— 整场最亮的事件反而落在峰值上，跟「闭黑换手」的意图正好
-   * 相反，站点里唯一的近黑表面先例是 --surface-tooltip。深色那边直接取 --deep-void。
+   * 两个主题都用「暗面」而不是各自的 --background：浅色的 --background 是 #f9f9f9，
+   * 面板滑到盖住那一刻就是一次全屏白闪 —— 整场最亮的事件反而落在峰值上，跟「闭黑换手」
+   * 的意图正好相反，站点里唯一的近黑表面先例是 --surface-tooltip。深色那边直接取
+   * --deep-void。
    *
    * 配套的网格线与内缘发丝线因此也固定是「暗底上的浅线」，**不能复用 --border-subtle**：
-   * 它在浅色主题是黑的，铺在暗幕布上什么都看不见。 */
+   * 它在浅色主题是黑的，铺在暗面板上什么都看不见。 */
   --veil-mat: color-mix(in srgb, var(--foreground) 90%, var(--background));
   --veil-grid: rgb(255 255 255 / 0.06);
   --veil-hairline: rgb(255 255 255 / 0.14);
+  /* 面板前缘最外那 1px 的"热核心"：整条边里最亮的一线。
+     面板在两个主题下都是暗的，所以这一支也刻意不跟随主题。 */
+  --veil-edge-core: rgb(255 255 255 / 0.72);
+  /* 面板上的强调色淡档：前缘扫描边的光晕。
+   *
+   * 这一支像上面两条一样**只在浅色块声明、两主题共用**，因为它脚下永远是暗面板。
+   * 不能用 --accent-tint-border 代替：那一支跟着主题走，浅色主题下是深黄（#756a00 系），
+   * 铺到暗面板上比面板本身还暗，发光会变成一块脏斑。 */
+  --veil-accent-tint: rgb(255 250 0 / 0.34);
 
-  /* 场记读数里的青色代号。**不能直接用 --secondary**：幕布在两个主题下都是暗底，
-     而浅色的 --secondary 是 #008fa6，铺在 #262627 上只有约 3.85:1 —— 11px 小字不达
-     WCAG AA（要 4.5:1）。深色那一支本来就是 #00f0ff，在同一个底上有 10:1，所以
-     只有浅色需要单独给值，直接取深色主题用的那支 cyan-300 即可，不引入新色相。 */
+  /* 中心读数里的青色一支（英文引导行、页名代号）。**不能直接用 --secondary**：
+     面板在两个主题下都是暗底，而浅色的 --secondary 是 #008fa6，铺在 #262627 上只有约
+     3.85:1 —— 11px 小字不达 WCAG AA（要 4.5:1）。深色那一支本来就是 #00f0ff，在同一个底
+     上有 10:1，所以只有浅色需要单独给值，直接取深色主题用的那支 cyan-300 即可，
+     不引入新色相。 */
   --veil-ink-code: #67e8f9;
 }
 
@@ -174,17 +298,17 @@
 .dark {
   color-scheme: dark;
 
-  --background: #050505;
+  --background: var(--deep-void);
   --foreground: #ffffff;
   --card: #ffffff05;
   --card-foreground: #ffffff;
-  --primary: #ffd000;
+  --primary: var(--industrial-yellow);
   --primary-foreground: #000000;
-  --secondary: #00f0ff;
+  --secondary: var(--tech-cyan);
   --secondary-foreground: #000000;
-  --muted: #27272a;
+  --muted: var(--technical-grey);
   --muted-foreground: #a1a1aa;
-  --accent: #ffe600;
+  --accent: var(--primary);
   --accent-foreground: #000000;
   /* 深色下 --primary 的 #ffd000 铺在任何深色底上都远超 AA（#27272a 上 10.1:1、
    * #050505 上 13.9:1），文字直接沿用它就够了，不需要另造一个更深的值。
@@ -202,7 +326,7 @@
   --text-quaternary: #ffffff66;
   --text-disabled: #ffffff4d;
 
-  --industrial-yellow: #ffd000;
+  --industrial-yellow: #fffa00;
   --tech-cyan: #00f0ff;
   --deep-void: #050505;
   --technical-grey: #27272a;
@@ -211,8 +335,8 @@
   --status-pending-bg: #ffffff0f;
   --status-printing: #22d3ee;
   --status-printing-bg: #00f0ff1a;
-  --status-ready: #ffd000;
-  --status-ready-bg: #ffd0001f;
+  --status-ready: var(--primary);
+  --status-ready-bg: #fffa001f;
   --status-done: #4ade80;
   --status-done-bg: #4ade801f;
   --status-unpriced: #c084fc;
@@ -220,8 +344,8 @@
 
   --role-user: #22d3ee;
   --role-user-bg: #00f0ff1a;
-  --role-admin: #ffd000;
-  --role-admin-bg: #ffd0001f;
+  --role-admin: var(--primary);
+  --role-admin-bg: #fffa001f;
   /* 同浅色那套：跟 admin 完全一致，不靠颜色区分。 */
   --role-super: var(--role-admin);
   --role-super-bg: var(--role-admin-bg);
@@ -232,14 +356,20 @@
   --info: #22d3ee;
   --err-bg: #f871711f;
 
-  /* 深色下换成霓虹黄的填充，浅色那支在深底上会显得发闷 */
-  --accent-tint: rgb(255 208 0 / 0.12);
-  --accent-tint-soft: rgb(255 208 0 / 0.15);
-  --accent-tint-border: rgb(255 208 0 / 0.34);
+  /* 深色下填充与描边都用荧光黄本身：#fffa00 在 #050505 上有 18.37:1、
+   * 在 --muted(#27272a) 上 13.42:1，文字/描边/图表线全都够用（见 --accent-text）。 */
+  --accent-tint: rgb(255 250 0 / 0.12);
+  --accent-tint-soft: rgb(255 250 0 / 0.15);
+  --accent-tint-border: rgb(255 250 0 / 0.34);
   --warn-tint: rgb(251 191 36 / 0.12);
   --warn-tint-border: rgb(251 191 36 / 0.38);
 
-  --surface-overlay: #111113;
+  /* 浮层底在暗色下要**比页面亮一档**，不能只靠那圈发丝线。
+     #111113 与页底 #050505 只有 1.08:1，弹层（下拉/对话框/抽屉都没有投影）
+     在这种差值下就是"同一片黑上多了一圈线"；提到 #1c1c1f 之后是 1.22:1，
+     正好落在既有的表面阶梯上（表格头 #18181b、凹陷面 #27272a）。
+     浅色那边不用动：白面板压 #f9f9f9 本来就是同一档差。 */
+  --surface-overlay: #1c1c1f;
   --surface-table-head: #18181b;
   --surface-input: #0f0f11;
   --surface-tooltip: #18181b;
@@ -252,16 +382,32 @@
   --paper: #111113;
   --paper-line: #ffffff1a;
   --paper-ink: #ffffff;
-  --paper-accent: #ffd000;
+  --paper-accent: var(--primary);
   --paper-muted: #a1a1aa;
 
-  --ambient: radial-gradient(at 12% 0%, rgb(255 208 0 / 0.07) 0%, transparent 45%),
-    radial-gradient(at 88% 8%, rgb(0 240 255 / 0.06) 0%, transparent 40%);
+  /* 背景网格两档线色与对角打光：深色下要反过来（浅色主题那套是黑线，
+   * 压在 #050505 上等于没有）。 */
+  --grid-line: #ffffff06;
+  --grid-major: #ffffff12;
+  /* 深色下的背光是"屏幕自身在发光"，所以顶部那一段比浅色下更亮一档；
+     底部压得更黑，让内容区看起来是被一块屏托着而不是悬在虚空里。 */
+  --surface-sheen: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.05) 0%,
+    transparent 36%,
+    rgb(0 0 0 / 0.3) 100%
+  );
+  /* 像元栅格在深色下换成浅点（浅色主题那套是暗点，压在 #050505 上等于没有）。 */
+  --raster-dot: rgb(255 255 255 / 0.03);
+  /* 图纸墨色：同一组表达式，深色下从 --foreground 派生的两支自动变亮、
+     --accent-text 自动取荧光黄。 */
+  /* 深色下墨的透明度要比浅色低一档：白墨压在近黑底上会明显变浅，
+     正文压上去的兜底对比度刚好卡不过 4.5（audit 的 @blueprint 那条会拦）。 */
+  --blueprint-ink: color-mix(in srgb, var(--foreground) 40%, transparent);
+  --blueprint-ink-fine: color-mix(in srgb, var(--foreground) 19%, transparent);
+  --blueprint-accent: color-mix(in srgb, var(--accent-text) 58%, transparent);
 
-  --glow-primary: 0 0 24px 0 rgb(255 208 0 / 0.35);
-  --glow-secondary: 0 0 24px 0 rgb(0 240 255 / 0.35);
-  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.28), 0 14px 38px rgb(0 0 0 / 0.2);
-  --shadow-raised: 0 3px 8px rgb(0 0 0 / 0.38), 0 22px 48px rgb(0 0 0 / 0.32);
+  /* 遮罩阶梯、投影与发光都不在这里声明：前者主题无关（见浅色块），后两组已删除。 */
 
   /* 路由转场扫描线专用颜色（深色下降低饱和度，避免霓虹色过于刺眼） */
   --scan-line: #67e8f9;
@@ -289,66 +435,116 @@
 
   /* 时长：交互反馈 < 200ms，内容切换 180~240ms —— 再长就"钝"了。
    *
-   * route-* 一族是这条规矩的**唯一例外**：它管的是整页换场，不是控件反馈。
-   * 页面切换要让人看清"系统完成了一次接入"，280ms 扫过全宽等于 9000px/s，
-   * 观感是闪一下而不是扫一遍，所以按"看得清"而不是"察觉不到"来定。 */
+   * route-* 一族是这条规矩的**例外**，而且这个例外被反复推翻过两次：先是因为"要让读数
+   * 看得清"拉到 1500/1950ms，2026-09-18 又跟着"高频导航不该有演出"压回 300ms。同一天
+   * 晚些时候恢复成 1360/1580ms —— 读数从"盖住的那一瞬间一闪"搬到了屏幕正中，它就成了一件
+   * 真正要读的东西，例外这才有了站得住的理由。详见 base.css 换场区块顶部的说明。 */
   --motion-dur-press: 120ms;
   --motion-dur-fast: 150ms;
   --motion-dur-base: 180ms;
   --motion-dur-slow: 240ms;
 
+  /* 电子件自己的两档节奏，比上面那四档慢两个数量级 —— 它们是"设备在待机"的背景
+   * 呼吸，不是交互反馈，所以**不适用**上面那条"时长 < 200ms"的规矩：
+   *   scan  扫描高光走完一条基线，7 秒一遍（一个屏幕尺寸的位移摊到 7 秒 = 约 160px/s，
+   *         比人眼会去追的速度慢得多，观感是"一条数据在传"，不是"有个东西在动"）；
+   *   blink 光标与状态灯，1.1 秒一次明灭 = 0.9Hz，低于 WCAG 2.3.1 的三次/秒闪阈，
+   *         而且变化的是 opacity（不是亮度闪烁），不落在前庭敏感的位移那一类。
+   * 两件都只挂在**极小面积**的元素上（1px 基线、4px 灯），这也是它们敢常驻的原因。 */
+  --motion-dur-scan: 7s;
+  --motion-dur-blink: 1.1s;
+
+  /* 「切页时整页的回响」这一族（刻度重排、水印漂移、斜切块顶一下、读数重读）的统一时长。
+     它必须**短于面板盖住屏幕的那一拍**（--motion-dur-route-gate-inline 320ms）——
+     过了那一帧整屏被盖住，动画再长也没人看见。这几个回响原来各写 200/420/520ms，
+     比滑动还长，等于每一场都有一截在幕布后面空跑。 */
+  --motion-dur-decor: 300ms;
+
+  /* 认证回执条（大面积横条，跑满一屏宽）自己的节奏：
+     · in    400ms —— 它横跨的就是整个视口，用交互反馈那档 240ms 等于 6000px/s，
+             观感是"啪"地贴上而不是滑进来（被评过"生硬"）；
+     · out   300ms —— 退场只需要离开，比进场短一档；
+     · lag    90ms —— 两层之间那一拍：黄带先进/后走，数据带随后。
+     曲线不走 ease-out（起步最快），走 --motion-ease-drawer —— 它起步温和、收尾重，
+     正是"一条带子被推过来"的手感。 */
+  --motion-dur-band: 400ms;
+  --motion-dur-band-out: 300ms;
+  --motion-dur-band-lag: 90ms;
+
+  /* 视差的全局闸门：各元素的 --depth 乘上它才是真实幅度。
+     "整套太晃 / 太弱"只改这一支（临时关掉 = 设 0）。
+     1.4 是 2026-09-18 调大的一档（原 0.85）：0.85 时最大一件（水印 20px）实测只走 17px，
+     指针从正中划到角落几乎看不出层次；现在水印走 28px、工作台网格走 12px，
+     "近处多走、远处少走"才读得出来。
+     ⚠️ 再往上调之前先验一条**几何余量**：贴着纸边的那几件（四角括角 / 边缘刻度 / 斜切块）
+     必须满足「静止位 + 最大游程 ≤ 内容区内边距」，否则会滑到文字上（实测过一次）。 */
+  --parallax-gain: 1.4;
+
   /* 子页档：布局内子页之间换场（StudentLayout 的 3 页 / StaffLayout 的 5 页）
-   * 外壳档：登录 / 学生端 / 管理端之间的整壳切换，整场 1950ms。
+   * 外壳档：登录 / 学生端 / 管理端之间的整壳切换。
    *
-   * 两档的时长在 2026-09-15 整体放慢过一轮（外壳 1440→1950、子页 1100→1500）。
-   * 起因是「过场太快、缝里的字来不及看清」：总时长只占一半责任，另一半是场记读数
-   * 当时只有约 170ms 的满不透明窗口（veil-hud-pass 把 停留:开幕 的比例写死在
-   * 关键帧百分比里，停留一短读数就跟着短）。现在读数单独挂在 --veil-hold 上，
-   * 窗口与停留等长，见 base.css 的 veil-hud-pass。 */
-  --motion-dur-route-enter: 600ms;
-  --motion-dur-route-leave: 420ms;
-  --motion-dur-route-sweep: 620ms;
+   * 两档各自的总时长 = latch + gate + hold + part：
+   *   子页 0 + 320 + 160 + 320 = 800ms，外壳 0 + 360 + 180 + 360 = 900ms。
+   * 2026-09-18 起比上一版慢一倍以上（子页原来是 300ms 一场）。慢下来的原因不是"想要更
+   * 隆重"，而是屏幕正中现在有一行字要读：**中文字的停留时长由阅读决定，不由动画决定**。
+ * 上一版把这段字塞在盖住的那一瞬间里、只给约 170ms，用户反馈"来不及看清"；这一版干脆
+ * 让它独占整块全黑板面，长度按"四到六个汉字扫一眼"给足。 */
+  --motion-dur-route-enter: 320ms;
+  --motion-dur-route-leave: 320ms;
 
-  --motion-dur-route-shell-leave: 600ms;
-  --motion-dur-route-shell-enter: 750ms;
+  --motion-dur-route-shell-leave: 360ms;
+  --motion-dur-route-shell-enter: 360ms;
 
-  /* 换场三拍：合闸空拍 → 咬合 → 闭死停留。
-   * 两档都必须满足「空拍 + 咬合 = 对应的 leave 时长」这个恒等式 ——
-   * 幕布必须恰好在 @after-leave 那一刻闭死，早一帧少一点遮挡、晚一帧就露馅。
-   *   外壳：150 + 450 = 600 = --motion-dur-route-shell-leave
-   *   子页： 90 + 330 = 420 = --motion-dur-route-leave
-   * 改了其中一个忘了另一个，换手就会从半开的缝里透出来。 */
-  --motion-dur-route-latch: 150ms;
-  --motion-dur-route-gate: 450ms;
-  --motion-dur-route-hold: 600ms;
-  --motion-dur-route-latch-inline: 90ms;
-  --motion-dur-route-gate-inline: 330ms;
-  --motion-dur-route-hold-inline: 480ms;
-
-  /* 套准线那一闪：全程唯一一次"快"，必须短到能落在任何一档的停留里（最短 200ms）。 */
-  --motion-dur-route-rule: 160ms;
-
-  /* 出纸缝没有自己的时长令牌：它现在是两扇幕布各自的内缘（.route-veil__mat::before），
-   * 跟着幕布一起动，不需要任何时序对齐。曾经这里有一条 --motion-dur-route-seam 是给
-   * 独立的「缝」元素补时间差用的，那个结构已经删掉了。 */
+  /* 换场三拍：起手空拍 → 面板滑进来盖住 → 盖住之后的停留。
+   * 读数的进场在第二拍里就发生完了（见 base.css 的 veil-read-in），所以第三拍很短 ——
+   * 它买的是"读一行字的余量"与换手帧之后那口呼吸，不是读数的可见时长。
+   * 两档都必须满足「空拍 + 转进来 = 对应的 leave 时长」这个恒等式 ——
+   * 面板必须恰好在 @after-leave 那一刻完全盖住屏幕，早一帧露馅、晚一帧白遮。
+   *   外壳：0 + 360 = 360 = --motion-dur-route-shell-leave
+   *   子页：0 + 320 = 320 = --motion-dur-route-leave
+   * 改了其中一个忘了另一个，换手就会从面板的边缘透出来。
+   *
+   * **空拍归零是刻意的**：原来那 90/150ms 是留给「旧页先自己淡掉一点」的，
+   * 但旧页的离场曲线前 1/3 几乎不动，那段时间等于白等；而这是高频操作，
+   * 点下去就得有反应。 */
+  --motion-dur-route-latch: 0ms;
+  --motion-dur-route-gate: 360ms;
+  --motion-dur-route-hold: 180ms;
+  --motion-dur-route-latch-inline: 0ms;
+  --motion-dur-route-gate-inline: 320ms;
+  /* 子页档的停留和外壳档同量级：屏幕正中的读数**两档都出**。
+     曾经这条是 0、读数只挂外壳档 —— 那个决定在 2026-09-18 被撤掉：
+     普通切屏现在自己报目标页，于是也不再另出那条横贯全屏的回执条了。
+     停留的长度只由**读数要读多久**决定：读数在出相位（面板扫进来那一段）就开始浮出，
+     盖死时它已经满亮了，所以停留只是"读一行字"的余量，而不是它的全部窗口。
+     它同时还管着另一件事：换手那一帧之后不能马上揭开，得留出一点呼吸。 */
+  --motion-dur-route-hold-inline: 160ms;
 
   /* 减少动效下唯一保留的那一次明暗过渡（压暗一次、提亮一次，总时长是它的两倍）。
-     跟着上面那轮放慢一起加长，否则开着减少动效会比正常档快一截，两档的"性格"就分家了。 */
-  --motion-dur-route-still: 520ms;
+     跟换场一起收短：对前庭敏感的用户，一次全屏亮度大幅摇摆 1 秒以上，比"没有过渡"更难接受。 */
+  --motion-dur-route-still: 320ms;
 
   /* 换场几何 */
-  --motion-route-cut: 12%; /* 套准线起手时铺开的比例 */
-  --motion-route-enter-x: 20px; /* 子页档内容横移（站点既有的横向接入语汇） */
-  --motion-route-leave-x: -12px;
-  /* 出纸缝。用 clamp 的下限兜底：横屏手机（约 400px 高）按 vh 算只有十几像素，
-     撑不住一行读数，而那道缝正是整个转场的信息落点。
-     vh 系数与上下限在 2026-09-15 整体调大一档（30/4.4vh/48 → 40/5.6vh/62），
-     配合场记读数字号加大 —— 原来 11px 的字塞在 30px 的缝里，用户反馈"有点小"。 */
-  --motion-route-slit: clamp(40px, 5.6vh, 62px);
-  --motion-route-slit-inline: clamp(32px, 4.4vh, 50px);
-  /* 缝唇那排半调网点 */
-  --motion-route-dot: 7px;
-  --motion-route-dot-lip: 84px;
+  --motion-route-enter-x: 6px; /* 子页档内容横移（只作"接入"的暗示，不再是主体） */
+  --motion-route-leave-x: -4px;
+  /* 擦除面板前缘的斜切角。0 就是纯竖直擦除；4deg 让那条边斜过来，
+     整块面板单向穿过屏幕时才有"切过去"的观感而不是"翻页"。 */
+  --motion-route-wipe-skew: 4deg;
+  /* 黄层比黑层多走的距离（按面板自身宽度算）。整个行程都多走这么多，于是两个相位里
+     都能从黑层的边下露出一条黄边：出相位它领先（黑层的边还没扫到，它先铺过去了）、
+     入相位它殿后（黑层让开一条，它还在下面）—— 与回执条"黄带先进后出"是同一条规矩。
+     上限由面板的余量定：面板静止在 −9%、宽 118%，所以这个值换算到视口宽度之后
+     必须小于 9%（换算系数 1.18），否则"正好盖住"那一帧黄层的左边会先露出来。 */
+  --motion-route-wipe-lead: 3%;
+}
+
+/* ============ 外壳几何 ============
+ *
+ * 窄屏底部标签栏占掉的高度。两处读同一支：标签栏自己的 height，以及页面右下角那枚
+ * 巨号编号水印的让位距离（见 base.css 的 .watermark）。**必须是同一支** ——
+ * 各写一个数的话，改栏高时水印会被栏的上沿切开，露出半截大字，像渲染坏了。 */
+:root {
+  --chrome-tabbar-h: 60px;
 }
 
 /* ============ 换场覆盖层的两个档位 ============
@@ -361,10 +557,10 @@
  * （App 外壳 → 布局 → <main> → 子页 stage），而自定义属性是继承属性 ——
  * 子页 stage 自己不匹配 [data-profile='shell']，也就没有自己的声明，于是它读到的不是
  * :root 那份子页值，而是从外壳 stage 继承下来的外壳值（leave 600 / hold 600 / part 750）。
- * 症状不是报错，是上面那条恒等式在子页导航里静默失效：幕布按子页档 420ms 闭死，
- * 内容层却按外壳档 600ms 才离场完，开幕结束后新页还在淡入。
- * 幕布本身不受影响（它 Teleport 到 body，不是外壳 stage 的后代），所以症状恰好是
- * 「幕布和内容各跑一套时钟」。元素自身的声明恒胜继承值，因此下面这样两档各自写全即可。
+ * 症状不是报错，是上面那条恒等式在子页导航里静默失效：面板按子页档 420ms 滑到盖住，
+ * 内容层却按外壳档 480ms 才离场完，开幕结束后新页还在淡入。
+ * 覆盖层本身不受影响（它 Teleport 到 body，不是外壳 stage 的后代），所以症状恰好是
+ * 「覆盖层和内容各跑一套时钟」。元素自身的声明恒胜继承值，因此下面这样两档各自写全即可。
  *
  * 注意：**不要**把 `calc(var(--veil-hold) + var(--veil-part))` 这类派生值声明成令牌。
  * 自定义属性里的 var() 是在**声明它的那个元素**上完成代换的（继承下来的是算好的值），
@@ -372,7 +568,6 @@
  * 派生值一律写在**使用处**（见 base.css 的 .route-veil__hud）。
  */
 [data-profile='inline'] {
-  --veil-slit: var(--motion-route-slit-inline);
   --veil-latch: var(--motion-dur-route-latch-inline);
   --veil-gate: var(--motion-dur-route-gate-inline);
   --veil-hold: var(--motion-dur-route-hold-inline);
@@ -381,20 +576,11 @@
 }
 
 [data-profile='shell'] {
-  --veil-slit: var(--motion-route-slit);
   --veil-latch: var(--motion-dur-route-latch);
   --veil-gate: var(--motion-dur-route-gate);
   --veil-hold: var(--motion-dur-route-hold);
   --veil-part: var(--motion-dur-route-shell-enter);
   --veil-leave: var(--motion-dur-route-shell-leave);
-}
-
-/* 窄屏把网点收细：7px 在 390px 宽的屏上会显出摩尔纹，看着像脏点而不是半调。 */
-@media (max-width: 640px) {
-  :root {
-    --motion-route-dot: 6px;
-    --motion-route-dot-lip: 64px;
-  }
 }
 
 /* ============ 映射到 Tailwind 工具类 ============ */
@@ -416,6 +602,11 @@
   --color-input: var(--input);
   --color-input-foreground: var(--input-foreground);
 
+  /* ⚠️ 这五支是 **Tailwind 的命名空间**，不是 CSS 变量。
+   * Tailwind 的 `text-ink-3` 类能用；但 `var(--ink-3)` **不存在**，写下去不会报错 ——
+   * 自定义属性缺失时该声明在计算值阶段失效、落到继承色，界面上只是"颜色不对"。
+   * 组件里要取变量请用 `var(--text-tertiary)` / `var(--text-quaternary)` 这一组真名字。
+   * （这个坑在 UsersView / AuditView / OrdersView 各踩过一次，已修。） */
   --color-ink: var(--text-primary);
   --color-ink-2: var(--text-secondary);
   --color-ink-3: var(--text-tertiary);
@@ -464,5 +655,57 @@
   --ease-out: var(--motion-ease-out);
   --ease-in-out: var(--motion-ease-in-out);
 
-  --radius-panel: 12px;
+  /* 强调色的「线状/文字」版本，同样要能从 Tailwind 用（text-accent-text / border-accent-text）。 */
+  --color-accent-text: var(--accent-text);
+
+  /* ── 字号阶梯 ────────────────────────────────────────────────
+   * 目标风格靠**极端的字号落差**建立层级（官方产物实测字号从 .375rem 排到 18rem，
+   * 上下比接近 1:48），而本项目原来正文 15px、面板小标题也是 15px、指标值 26~30px，
+   * 落差不足，层级只能靠卡片与阴影去补 —— 那正是要拆掉的东西。
+   *
+   * 覆盖 Tailwind 自带的 --text-* 是**有意的**：这样既有的 text-sm / text-base 用法
+   * 会一起被收进新阶梯，不需要逐个文件改。改动方向是「正文变紧、标题变大」：
+   *   xs 12（不变）、sm 13（原 14）、base 15（原 16）、lg 17（原 18）、
+   *   xl 20（不变）、2xl 24（不变）、3xl 30（不变）、4xl 44（原 36）
+   * 只覆盖字号、不覆盖 --text-*--line-height，所以 Tailwind 自带的行高比例仍然生效。
+   *
+   * 2xs 是本项目新增的一档，给「面板小标题」用（配合 .tech-label 的大写字距）。
+   * 注意：11px 的中文在复杂字（藏、髓、繁、备）上笔画区分度会下降，
+   * 所以中文小标题有 12px 的下限，只有纯拉丁标签可以用 11px。 */
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 44px;
+
+  /* 行高必须**显式写**，不能靠 Tailwind 的比例。
+   *
+   * Tailwind 的行高是按比例算的（--text-sm--line-height: calc(1.25/0.875) 之类），
+   * 所以上面把字号调小之后，行高会跟着等比缩水：text-sm 从 14px/20px 变成 13px/18.6px、
+   * text-base 从 16px/24px 变成 15px/22.5px。那是**无意引入的回归** —— 字号是为了收紧，
+   * 行高跟着缩会让正文变挤。这里把两档按原来的绝对行高钉住：
+   *   sm   13px / 20px（原来 14px 配的 --leading-5）
+   *   base 15px / 24px（原来 16px 配的默认 1.5rem）
+   * 其余几档与 Tailwind 的比例算出来几乎一致，一并钉住只为「改了字号不用回头看行高」。
+   *
+   * 注意：元素上若另写了 leading-*（如 leading-6），那个仍然优先 —— 显式工具类赢主题变量。
+   * 全站有若干处「px 字号 + 显式 leading」的组合，收敛字号时要一并看。 */
+  --text-2xs--line-height: 16px;
+  --text-xs--line-height: 16px;
+  --text-sm--line-height: 20px;
+  --text-base--line-height: 24px;
+  --text-lg--line-height: 26px;
+  --text-xl--line-height: 28px;
+  --text-2xl--line-height: 32px;
+  --text-3xl--line-height: 36px;
+  --text-4xl--line-height: 48px;
+
+  /* 面板圆角。归零 —— 这套语言的圆角几乎不存在（实测鹰角官网主 CSS 里
+   * border-radius:0 出现四次、其余值都 ≤16px）。Naive 组件那一侧靠
+   * theme/naive.ts 的 common.borderRadius / borderRadiusSmall 一起归零。 */
+  --radius-panel: 0;
 }

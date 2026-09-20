@@ -15,8 +15,10 @@ import {
 } from '@lucide/vue'
 import { NDrawer, NDrawerContent, useMessage } from 'naive-ui'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -116,6 +118,17 @@ const activeNav = computed(() => {
   return navItems.value.some((item) => item.to === parent) ? parent : path
 })
 
+/** 页码读数：`P.03/07`。取的是**当前栏位在导航里的序号**（activeNav 已经把
+ *  "详情页算在它所属的栏目下"这件事处理掉了），不是路由序号 ——
+ *  订单详情那种子页面如果按路由序号走，序号会跟着订单 id 变，那就不是页码了。
+ *  不在任何栏目下时给 `--/--`，不猜一个数字出来。 */
+const pageNo = computed(() => {
+  const index = navItems.value.findIndex((item) => item.to === activeNav.value)
+  if (index < 0) return '--/--'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(index + 1)}/${pad(navItems.value.length)}`
+})
+
 /** 导航成功就清掉品牌连点定时器：连点 logo 1-4 下之后立刻点侧栏导航，
  *  那个 700ms 的 setTimeout 并不会因为换了页就失效 —— 到点仍会把用户拽回首页。
  *  这里用路由变化当作「导航成功」的信号，侧栏、抽屉、程序化跳转都能覆盖到。 */
@@ -139,14 +152,19 @@ onMounted(() => {
 
 <template>
   <div class="flex min-h-full">
+    <!-- 侧栏同样去掉了卡底（原先是 60% 的 --card 半透明底）。现在全站的区块都只有
+         细线与留白，侧栏也只剩右侧那一条描边 —— 它是页面 chrome 的一部分，不再是一块面板。 -->
     <aside
       class="sticky top-0 hidden h-screen w-[236px] shrink-0 flex-col border-r lg:flex"
-      style="border-color: var(--border); background-color: color-mix(in srgb, var(--card) 60%, transparent)"
+      style="border-color: var(--border)"
     >
+      <span class="vticks pointer-events-none absolute top-0 right-0 bottom-0" aria-hidden="true" />
       <!-- 品牌图标上挂着高级视图的隐藏入口（连点 5 次，见 onBrandClick）。
            .capture 是必须的：要在 RouterLink 自己处理之前决定这一下要不要放行。 -->
-      <div class="px-5 py-5" @click.capture="onBrandClick">
+      <div class="px-5 pt-5 pb-4" @click.capture="onBrandClick">
         <BrandMark />
+        <!-- 状态牌：纯装饰的技术读数，与页面标题下那行同一套字（.readout）。 -->
+        <p class="readout mt-3">STAFF CONSOLE</p>
       </div>
       <!-- 导航一项的文字：激活态走 --accent-text 而不是 --primary ——
            --primary 是给色条/色块用的，#d4a017 铺在 --muted 上只有 2.16:1，
@@ -158,7 +176,7 @@ onMounted(() => {
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+          class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
           :class="activeNav === item.to && 'nav-link--active'"
           :style="
             activeNav === item.to
@@ -170,9 +188,9 @@ onMounted(() => {
           {{ item.label }}
         </RouterLink>
       </nav>
-      <!-- 这里原本还有一个主题切换按钮。主题系统本身留着（tokens.css 的 .dark、
-           theme/naive.ts 都还在用），拆掉的只是这个入口 —— 深色由系统偏好决定。
-           账号区现在整行都是它，所以允许收缩（min-w-0）。 -->
+      <!-- 账号区下面一行是外壳动作（主题、去学生端）。原来这里只有账号那一个按钮，
+           主题入口拆掉过一次；现在两个都回来了 —— 管理端还有一个反方向的缺口：
+           学生端那边早就有一项「管理控制台」，管理端却只能手敲 URL 才能过去。 -->
       <!-- 高级视图开着的时候给一条可见的提示。不给提示的话，管理员会分不清
            自己看到的界面是不是别人也这样 —— 而这两个界面恰恰是不同的。
            退出按钮只对已经打开的人可见，所以它不算泄露入口。
@@ -180,7 +198,7 @@ onMounted(() => {
            --primary 只有 2.09:1，而小字要 4.5:1（--accent-text 在同底上 4.82:1）。 -->
       <div
         v-if="auth.advanced"
-        class="mx-3 mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]"
+        class="mx-3 mb-2 flex items-center gap-2 border px-3 py-2 text-xs"
         style="
           border-color: var(--accent-tint-border);
           background-color: var(--accent-tint-soft);
@@ -194,19 +212,23 @@ onMounted(() => {
         </button>
       </div>
       <div
-        class="mt-auto flex items-center gap-1 border-t px-3 py-3"
+        class="mt-auto flex flex-col gap-1 border-t px-3 py-3"
         style="border-color: var(--border)"
       >
-        <UserMenu stacked class="min-w-0 flex-1" />
+        <UserMenu stacked class="min-w-0" />
+        <ChromeActions student-switch />
       </div>
     </aside>
 
     <div class="flex min-w-0 flex-1 flex-col">
       <header
-        class="sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 backdrop-blur-xl lg:hidden"
+        class="hazard-bottom sticky top-0 z-20 flex h-14 items-center gap-2 border-b px-3 lg:hidden"
         style="
-          background-color: color-mix(in srgb, var(--background) 85%, transparent);
+          background-color: color-mix(in srgb, var(--background) 96%, transparent);
           border-color: var(--border);
+          padding-top: env(safe-area-inset-top);
+          padding-left: calc(0.75rem + env(safe-area-inset-left));
+          padding-right: calc(0.75rem + env(safe-area-inset-right));
         "
       >
         <NDrawer v-model:show="drawerOpen" :width="248" placement="left">
@@ -225,7 +247,7 @@ onMounted(() => {
                 v-for="item in navItems"
                 :key="item.to"
                 :to="item.to"
-                class="nav-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-semibold no-underline"
+                class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
                 :class="activeNav === item.to && 'nav-link--active'"
                 :style="
                   activeNav === item.to
@@ -243,7 +265,7 @@ onMounted(() => {
 
         <button
           type="button"
-          class="grid size-9 place-items-center rounded-lg"
+          class="icon-btn grid size-9 place-items-center"
           style="color: var(--text-secondary)"
           aria-label="打开导航菜单"
           @click="drawerOpen = true"
@@ -251,16 +273,17 @@ onMounted(() => {
           <Menu :size="19" />
         </button>
         <span class="flex items-center gap-2">
-          <Printer :size="16" style="color: var(--primary)" aria-hidden="true" />
-          <span class="font-heading text-[15px] font-bold">{{ currentTitle }}</span>
+          <Printer :size="16" style="color: var(--accent-text)" aria-hidden="true" />
+          <span class="font-heading text-base font-bold">{{ currentTitle }}</span>
         </span>
         <div class="ml-auto flex items-center gap-1">
+          <ChromeActions student-switch />
           <!-- 窄屏没有侧栏那条提示带，所以把标识收成一颗图标 —— 点它就退出。 -->
           <button
             v-if="auth.advanced"
             type="button"
-            class="grid size-9 place-items-center rounded-lg"
-            style="color: var(--primary)"
+            class="icon-btn grid size-9 place-items-center"
+            style="color: var(--accent-text)"
             title="退出高级视图"
             aria-label="退出高级视图"
             @click="exitAdvanced"
@@ -273,15 +296,86 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="min-w-0 flex-1 px-3 py-4 sm:px-5 sm:py-6">
+      <main class="sheet relative min-w-0 flex-1 overflow-x-clip px-3 py-4 sm:px-5 sm:py-6 lg:pl-8">
+        <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
+        <span
+          class="frame-brackets pointer-events-none absolute inset-1.5"
+          data-parallax
+style="--depth: 4px"
+          aria-hidden="true"
+        />
+        <span
+          class="vticks pointer-events-none absolute top-0 bottom-0 left-0 lg:left-2"
+          data-parallax
+style="--depth: 4px"
+          aria-hidden="true"
+        />
+        <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
+             所以不会像之前括角与竖刻度那样叠在一起。
+             （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
+        <span
+          class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
+          data-parallax
+style="--depth: 3px"
+          aria-hidden="true"
+        />
+      <span
+        class="watermark"
+        data-parallax
+style="--depth: 20px"
+        aria-hidden="true"
+      >
+        {{ route.meta.code }}
+      </span>
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
              窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
-        <RouterView v-slot="{ Component }">
-          <RouteTransition :transition-key="currentPath" profile="inline">
-            <component :is="Component" />
-          </RouteTransition>
-        </RouterView>
-      </main>
+        <!-- 页面内容本体也是一层：它比纸边刻度更近、比水印更远。
+             这一层只加 transform，不动布局；站内没有任何 fixed/sticky 在 views/ 与
+             components/ 里（已核对），所以给内容加包含块是安全的。 -->
+        <div data-parallax style="--depth: 5px">
+          <RouterView v-slot="{ Component }">
+            <RouteTransition :transition-key="currentPath" profile="inline">
+              <component :is="Component" />
+            </RouteTransition>
+          </RouterView>
+        </div>
+            <!-- 底部状态带：与用户端同一块状态栏 —— 活的灯 + 当前栏位 + 导航序号。
+           两侧共用同一件东西是有意的：它是这套界面的"外壳"，而外壳在两端应当是同一个。 -->
+            <!-- 状态带留在文档流里（随页面滚动），但**参与视差** ——
+           它与上面的内容同属"这一页的纸"，所以取同一个深度（内容层也是 5）。
+           曾经把它做成 sticky 浮在视口底部，那会压住滚动中的内容（要实底），
+           而且窄屏还要躲开固定标签栏 —— 代价大于收益，退回文档流。 -->
+      <div
+        class="mt-8 flex items-center gap-3 border-t pt-1.5"
+        style="border-color: var(--border); --depth: 5px"
+        data-parallax
+      >
+        <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
+             不是一条要读的信息（"已登录"从页面本身就看得出）——
+             而会呼吸的读数进朗读流只会变成噪声。 -->
+        <span class="flex shrink-0 items-center gap-1.5" aria-hidden="true">
+          <span class="status-led" />
+          <span class="readout">SESSION ACTIVE</span>
+        </span>
+        <span class="readout hidden shrink-0 sm:inline">
+          {{ route.meta.code ?? '--' }} // PRINT SERVICE
+        </span>
+        <span class="ticks min-w-8 flex-1" aria-hidden="true" />
+        <span class="readout shrink-0" aria-hidden="true">P.{{ pageNo }}</span>
+      </div>
+      <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
+           放在文档流末尾，所以永远不会压到内容上。 -->
+      <DecorStrip :code="route.meta.code" />
+
+      <!-- 左下角的斜切色块：四角里唯一"没有功能"的一角，用一块平行四边形压住空处。
+           它贴在左下、尺寸很小，且不载任何文字，所以不碰"纹理压文字"那条红线。 -->
+      <span
+        class="cut pointer-events-none absolute bottom-6 left-0 h-3.5 w-10 bg-[var(--accent-tint)] lg:left-2.5"
+        data-parallax
+style="--depth: 6px"
+        aria-hidden="true"
+      />
+    </main>
     </div>
   </div>
 </template>

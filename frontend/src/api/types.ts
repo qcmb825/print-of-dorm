@@ -42,9 +42,9 @@ export const DUPLEX_LABELS: Record<Duplex, string> = { single: '单面', double:
 export type ContactType = 'wechat' | 'qq' | 'email'
 
 export const CONTACT_LABELS: Record<ContactType, string> = {
-  wechat: '微信号',
-  qq: 'QQ 号',
-  email: '邮箱地址',
+  wechat: '微信',
+  qq: 'QQ',
+  email: '邮箱',
 }
 
 /** 「其他联系方式」的可选类型：微信 / 邮箱，**不含 QQ**。

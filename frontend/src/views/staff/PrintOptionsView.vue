@@ -16,7 +16,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { FileStack, Pencil, Plus, Printer, RefreshCw, Trash2 } from '@lucide/vue'
 import {
   NButton,
-  NEmpty,
   NFormItem,
   NInput,
   NSkeleton,
@@ -26,6 +25,7 @@ import {
 import { ApiError } from '@/api/client'
 import { staffPrintOptionsApi } from '@/api/endpoints'
 import type { PaperType, PrintPreset } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
 import { shortTime } from '@/utils/format'
@@ -163,8 +163,8 @@ async function removePreset(item: PrintPreset): Promise<void> {
   const ok = await confirmAction({
     title: '删除预设打印服务',
     content: used
-      ? `这项预设已经被 ${used} 个订单用过。删除后学生不能再选它，但那些订单里记着的文字不受影响。确定删除吗？`
-      : '确定删除这项预设打印服务吗？删除后不可恢复。',
+      ? `已被 ${used} 个订单用过。删除后学生不能再选它；那些订单里记着的文字不受影响。`
+      : '删除后不可恢复。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -183,8 +183,8 @@ async function removePaper(item: PaperType): Promise<void> {
   const ok = await confirmAction({
     title: '删除纸张类型',
     content: used
-      ? `这种纸已经被 ${used} 个订单用过。删除后学生不能再选它，但那些订单里记着的名字不受影响。确定删除吗？`
-      : '确定删除这种纸张吗？删除后不可恢复。',
+      ? `已被 ${used} 个订单用过。删除后学生不能再选它；那些订单里记着的名字不受影响。`
+      : '删除后不可恢复。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -205,7 +205,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="打印选项"
-      subtitle="预设打印服务与纸张类型都在这里维护，学生下单时可选。停用后只对新订单消失，旧订单记录不受影响。"
+      subtitle="预设打印服务与纸张类型在这里维护，学生下单时可选。停用只对新订单生效，旧订单记录不变。"
     >
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -219,11 +219,11 @@ onMounted(load)
       <!-- ============ 预设打印服务 ============ -->
       <section class="flex min-w-0 flex-col gap-4">
         <div class="panel p-4">
-          <h3 class="mb-3 flex items-center gap-2 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
             <component
               :is="editingPresetId === null ? Plus : Pencil"
               :size="15"
-              style="color: var(--primary)"
+              style="color: var(--accent-text)"
             />
             {{ editingPresetId === null ? '新建预设打印服务' : `编辑预设 #${editingPresetId}` }}
           </h3>
@@ -238,15 +238,15 @@ onMounted(load)
               placeholder="例：A4 黑白双面，装订成册，次日中午前可取"
             />
           </NFormItem>
-          <p class="mb-3 text-[11px] text-ink-4">
-            预设只有这一句话，没有名字 —— 再加一个「名称」字段，两处说法迟早会对不上。
+          <p class="mb-3 text-xs text-ink-3">
+            预设只有这一句话，没有名字。
             这句话会原样显示给学生，也会被订单存下来。
           </p>
 
           <div class="flex items-center gap-2">
             <NButton
               type="primary"
-              class="!font-bold shadow-[var(--glow-primary)]"
+              class="!font-bold"
               :loading="saving"
               :disabled="!canSubmitPreset"
               @click="submitPreset"
@@ -261,9 +261,9 @@ onMounted(load)
         </div>
 
         <div>
-          <h3 class="mb-3 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 font-heading text-base font-bold">
             预设列表
-            <span class="tech-label ml-2 text-ink-4">{{ presets.length }} 项</span>
+            <span class="tech-label ml-2 text-ink-3 tech-label--cn text-xs">{{ presets.length }} 项</span>
           </h3>
 
           <div v-if="loading && !presets.length" class="flex flex-col gap-2">
@@ -271,30 +271,32 @@ onMounted(load)
           </div>
 
           <div v-else-if="!presets.length" class="panel grid place-items-center py-10">
-            <NEmpty description="还没有配置预设打印服务" size="small">
-              <template #icon><Printer :size="28" /></template>
-            </NEmpty>
+            <EmptyState code="00 / NO PRESET" title="还没有配置预设打印服务" hint="左侧新建一条，学生端就能选到">
+              <template #icon><Printer :size="26" /></template>
+            </EmptyState>
           </div>
 
           <TransitionGroup
             v-else
             tag="ul"
             class="flex list-none flex-col gap-3 p-0"
-            enter-active-class="transition duration-[200ms] ease-out"
+            enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
             enter-from-class="opacity-0 translate-x-1"
-            move-class="transition duration-[200ms] ease-out"
+            leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
+            leave-to-class="opacity-0"
+            move-class="transition duration-[var(--motion-dur-base)] ease-out"
           >
             <li
               v-for="item in presets"
               :key="item.id"
               class="panel p-3.5"
-              :class="item.is_active === 1 && 'border-primary/40'"
+              :class="item.is_active === 1 && 'border-[var(--accent-tint-border)]'"
             >
               <div class="flex items-start justify-between gap-3">
-                <p class="min-w-0 flex-1 text-[13px] leading-relaxed whitespace-pre-wrap">
+                <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
                   {{ item.content }}
                 </p>
-                <NSwitch
+                <NSwitch :round="false"
                   :value="item.is_active === 1"
                   size="small"
                   @update:value="togglePresetActive(item)"
@@ -302,7 +304,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5"
+                  class="tech-label px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
@@ -311,7 +313,7 @@ onMounted(load)
                 >
                   {{ item.is_active === 1 ? '启用中' : '已停用' }}
                 </span>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-3">
                   #{{ item.id }} · {{ item.author ?? '系统' }} ·
                   {{ shortTime(item.update_time) }}
                 </span>
@@ -327,7 +329,7 @@ onMounted(load)
                 </NButton>
                 <!-- 用过多少单要写在删除按钮旁边，而不是藏进二次确认里：
                      点了删除才知道「这玩意儿有 87 单在用」，后退一步很尴尬。 -->
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-3">
                   {{ item.used_count ? `已被 ${item.used_count} 单使用` : '还没有人用过' }}
                 </span>
                 <NButton size="tiny" quaternary class="ml-auto" @click="removePreset(item)">
@@ -341,13 +343,14 @@ onMounted(load)
       </section>
 
       <!-- ============ 纸张类型 ============ -->
-      <section class="flex min-w-0 flex-col gap-4">
+      <!-- 分栏线：两块并排时只靠间隙分不出"这是一栏还是两块"。 -->
+      <section class="flex min-w-0 flex-col gap-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
         <div class="panel p-4">
-          <h3 class="mb-3 flex items-center gap-2 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
             <component
               :is="editingPaperId === null ? Plus : Pencil"
               :size="15"
-              style="color: var(--primary)"
+              style="color: var(--accent-text)"
             />
             {{ editingPaperId === null ? '新增纸张类型' : `编辑纸张 #${editingPaperId}` }}
           </h3>
@@ -368,15 +371,15 @@ onMounted(load)
               placeholder="例：80g，只有二楼那台机能出"
             />
           </NFormItem>
-          <p class="mb-3 text-[11px] text-ink-4">
-            备注主要是给打印的人看的（哪台机器、多少克重）。学生端只在名称后面带一句，
+          <p class="mb-3 text-xs text-ink-3">
+            备注是给打印的人看的（哪台机器、多少克重）；学生端只在名称后面带一句。
             不选纸张也能下单。
           </p>
 
           <div class="flex items-center gap-2">
             <NButton
               type="primary"
-              class="!font-bold shadow-[var(--glow-primary)]"
+              class="!font-bold"
               :loading="saving"
               :disabled="!canSubmitPaper"
               @click="submitPaper"
@@ -391,9 +394,9 @@ onMounted(load)
         </div>
 
         <div>
-          <h3 class="mb-3 font-heading text-[15px] font-bold">
+          <h3 class="mb-3 font-heading text-base font-bold">
             纸张列表
-            <span class="tech-label ml-2 text-ink-4">{{ papers.length }} 种</span>
+            <span class="tech-label ml-2 text-ink-3 tech-label--cn text-xs">{{ papers.length }} 种</span>
           </h3>
 
           <div v-if="loading && !papers.length" class="flex flex-col gap-2">
@@ -401,35 +404,37 @@ onMounted(load)
           </div>
 
           <div v-else-if="!papers.length" class="panel grid place-items-center py-10">
-            <NEmpty description="还没有配置纸张类型" size="small">
-              <template #icon><FileStack :size="28" /></template>
-            </NEmpty>
+            <EmptyState code="00 / NO PAPER" title="还没有配置纸张类型" hint="左侧新建一条，订单里的「纸张」才有得选">
+              <template #icon><FileStack :size="26" /></template>
+            </EmptyState>
           </div>
 
           <TransitionGroup
             v-else
             tag="ul"
             class="flex list-none flex-col gap-3 p-0"
-            enter-active-class="transition duration-[200ms] ease-out"
+            enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
             enter-from-class="opacity-0 translate-x-1"
-            move-class="transition duration-[200ms] ease-out"
+            leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
+            leave-to-class="opacity-0"
+            move-class="transition duration-[var(--motion-dur-base)] ease-out"
           >
             <li
               v-for="item in papers"
               :key="item.id"
               class="panel p-3.5"
-              :class="item.is_active === 1 && 'border-primary/40'"
+              :class="item.is_active === 1 && 'border-[var(--accent-tint-border)]'"
             >
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
-                  <p class="text-[13px] font-semibold">{{ item.name }}</p>
+                  <p class="text-sm font-semibold">{{ item.name }}</p>
                   <!-- 备注为空时什么都不画。写「无备注」会让列表里多出一行噪音，
                        而且和真的备注写着「无」分不开。 -->
-                  <p v-if="item.remark" class="mt-0.5 text-[12px] text-ink-3">
+                  <p v-if="item.remark" class="mt-0.5 text-xs text-ink-3">
                     {{ item.remark }}
                   </p>
                 </div>
-                <NSwitch
+                <NSwitch :round="false"
                   :value="item.is_active === 1"
                   size="small"
                   @update:value="togglePaperActive(item)"
@@ -437,7 +442,7 @@ onMounted(load)
               </div>
               <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span
-                  class="tech-label rounded-full px-2 py-0.5"
+                  class="tech-label px-2 py-0.5 tech-label--cn text-xs"
                   :style="
                     item.is_active === 1
                       ? { backgroundColor: 'var(--status-ready-bg)', color: 'var(--status-ready)' }
@@ -446,7 +451,7 @@ onMounted(load)
                 >
                   {{ item.is_active === 1 ? '启用中' : '已停用' }}
                 </span>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-3">
                   #{{ item.id }} · {{ item.author ?? '系统' }} ·
                   {{ shortTime(item.update_time) }}
                 </span>
@@ -460,7 +465,7 @@ onMounted(load)
                   <template #icon><Pencil :size="12" /></template>
                   编辑
                 </NButton>
-                <span class="text-[11px] text-ink-4">
+                <span class="text-xs text-ink-3">
                   {{ item.used_count ? `已被 ${item.used_count} 单使用` : '还没有人用过' }}
                 </span>
                 <NButton size="tiny" quaternary class="ml-auto" @click="removePaper(item)">

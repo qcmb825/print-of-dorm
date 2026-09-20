@@ -8,6 +8,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:only": "vite build",
     "typecheck": "vue-tsc --noEmit",
+    "audit:contrast": "node scripts/contrast-audit.mjs",
+    "fonts:build": "node scripts/build-cn-font.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -25,9 +27,11 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@reogrid/font-sc": "^2.0.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.5.1",
     "@vitejs/plugin-vue": "^6.0.8",
+    "cn-font-split": "^7.4.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.3.0",

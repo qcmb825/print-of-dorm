@@ -16,6 +16,16 @@ export interface Tokens {
   card: string
   primary: string
   primaryForeground: string
+  /** 强调色**当文字、图标、描边、细线、图表序列用**的深度。
+   *
+   *  与 primary 的分工不是审美选择，是测量结果：浅色下 primary 是荧光黄 #fffa00，
+   *  压在浅底上只有 1.01~1.10:1 —— 当文字、当描边、当图表线全都看不见（整条黄谱都救不回来，
+   *  最深的 #a89a00 也只有 2.74:1，到不了非文本图形的 3:1）。深色下 primary 本身有 18.37:1，
+   *  这支就等于 primary。
+   *
+   *  **凡是「线」而不是「面」的用途都读它，不要读 primary。** primary 只用于
+   *  可承载 primaryForeground 的大面积填充（主按钮、菜单/分页激活块）。 */
+  accentText: string
   secondary: string
   secondaryForeground: string
   muted: string
@@ -56,6 +66,7 @@ const VAR_MAP: Record<
   card: '--card',
   primary: '--primary',
   primaryForeground: '--primary-foreground',
+  accentText: '--accent-text',
   secondary: '--secondary',
   secondaryForeground: '--secondary-foreground',
   muted: '--muted',
@@ -99,8 +110,17 @@ export function readTokens(): Tokens {
 
 export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides {
   const p = derive(t.primary, isDark)
+  /* 「线」用途的派生色。强调色的描边/细线一律走 --accent-text，不走 primary —— 理由见
+   * Tokens.accentText 的注释。 */
+  const at = derive(t.accentText, isDark)
   const panel = t.surfaceOverlay
-  const brandFont = '16px'
+  const brandFont = '17px'
+  /* 聚焦光晕。原先是写死的 #d4a01726 / #ffd00026，等于把 primary 的 hex 抄了一份 ——
+   * 强调色一换它就静默漂移。改成从令牌派生的 color-mix。 */
+  /* 聚焦提示：**2px 实心环**，不是柔和光晕。
+   * 这套语言里没有模糊光晕，但焦点指示属于必须保留的无障碍信号（WCAG 2.4.11 要 3:1）。
+   * 实心环既符合硬边语汇，实测又够：浅色 #756a00 压白底 5.22:1、深色 #fffa00 压 #050505 18.4:1。 */
+  const focusRing = `0 0 0 2px ${t.accentText}`
 
   return {
     common: {
@@ -130,7 +150,9 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColor2: t.textSecondary,
       textColor3: t.textTertiary,
       textColorDisabled: t.textDisabled,
-      placeholderColor: t.textQuaternary,
+      /* 输入框占位符原先是 t.textQuaternary（40% 黑，2.61:1）—— 占位符是**要读的**
+       * 提示文字，不是装饰。mutedForeground 是现成的合格值（#71717a，4.59:1）。 */
+      placeholderColor: t.mutedForeground,
       placeholderColorDisabled: t.textDisabled,
       iconColor: t.textTertiary,
       iconColorHover: t.textSecondary,
@@ -166,38 +188,47 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
 
       fontFamily: t.stackBody,
       fontFamilyMono: t.stackMono,
+      /* 字号对齐 tokens.css 的 --text-* 阶梯（正文收窄、标题放大，拉开落差）。
+       * 改这里之前先看 tokens.css 里那张阶梯表。 */
       fontSize: '15px',
-      fontSizeMini: '12px',
+      fontSizeMini: '11px',
       fontSizeTiny: '12px',
       fontSizeSmall: '13px',
       fontSizeMedium: '15px',
-      fontSizeLarge: '16px',
-      fontSizeHuge: '18px',
+      fontSizeLarge: '17px',
+      fontSizeHuge: '20px',
       lineHeight: '1.6',
 
       // 参考站的面板圆角是 12px、主按钮是方角；这里圆角给中等值，
       // 主按钮的方角在各自组件上单独覆盖。
-      borderRadius: '8px',
-      borderRadiusSmall: '6px',
+      /* 圆角全局归零。这一条与下一行足够 —— 已验证 button / card / dialog / input /
+       * tag / tooltip / popover / menu / alert / upload / drawer / switch / pagination /
+       * tabs / notification / message / radio / slider 的圆角都从这两个 common 变量派生，
+       * 所以各组件块里那些重复的 borderRadius 键已一并删除。
+       * 例外只有三处，都不归 common 管、必须单独处理：checkbox 走 borderRadiusSmall（这里也归零了）、
+       * NProgress 是组件 prop（UploadView 里两处已改 0）、NBadge 的计数泡硬编码 9px（见 base.css 末尾）。 */
+      borderRadius: '0',
+      borderRadiusSmall: '0',
       heightMini: '24px',
       heightTiny: '28px',
       heightSmall: '32px',
       heightMedium: '38px',
       heightLarge: '44px',
       heightHuge: '50px',
-      boxShadow1: isDark ? '0 8px 24px rgb(0 0 0 / 0.5)' : '0 8px 24px rgb(0 0 0 / 0.08)',
-      boxShadow2: isDark ? '0 12px 32px rgb(0 0 0 / 0.55)' : '0 12px 32px rgb(0 0 0 / 0.1)',
-      boxShadow3: isDark ? '0 16px 44px rgb(0 0 0 / 0.6)' : '0 16px 44px rgb(0 0 0 / 0.12)',
+      /* 三级投影全部置 none。这套语言用黑色半透明遮罩（--scrim-*）压暗下层来分层，
+       * 不给上层加投影 —— 实测鹰角官网主 CSS 里 box-shadow 总共只出现一次。
+       * 弹层因此失去与背景的分离手段，所以 base.css 末尾给它们补了 1px 硬描边。 */
+      boxShadow1: 'none',
+      boxShadow2: 'none',
+      boxShadow3: 'none',
     },
     Card: {
-      borderRadius: '12px',
       color: panel,
       borderColor: t.border,
       titleFontSizeMedium: brandFont,
       titleFontWeight: '700',
     },
     Button: {
-      borderRadiusMedium: '8px',
       fontWeight: '700',
       fontWeightStrong: '700',
       textColorPrimary: t.primaryForeground,
@@ -205,6 +236,39 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColorPressedPrimary: t.primaryForeground,
       textColorFocusPrimary: t.primaryForeground,
       paddingMedium: '0 18px',
+      /* 禁用态。Naive 的默认是「主按钮仍然黄底，字换成 baseColor（浅色下就是白）」，
+       * 再乘一层 --n-opacity-disabled（0.5）—— 实测 1.03:1，浅色下那颗禁用的「提交订单」
+       * 整个读不出来（用户截图报的就是它）。
+       * 改成：黄让位给中性底、字用三级文字色、描边透明。
+       * 「不可点」由颜色不再冒充动作来表达，不由看不清来表达。 */
+      colorDisabledPrimary: t.muted,
+      textColorDisabledPrimary: t.textTertiary,
+      borderDisabledPrimary: '1px solid transparent',
+      /* 文字型 / quaternary 按钮的禁用态走同一支。仓库里有几颗「禁用但保留可见 + title 写明
+       * 原因」的按钮（我的订单那颗「撤回」就是）——那种标签是特意留着给人读的，
+       * 掉到 2.5:1 等于白留。 */
+      textColorDisabled: t.textTertiary,
+      textColorTextDisabled: t.textTertiary,
+      textColorGhostDisabled: t.textTertiary,
+    },
+    Radio: {
+      /* 选中态。Naive 的默认是 buttonColorActive=baseColor（白）、buttonTextColorActive=
+       * primaryColor —— 也就是「白底 + 荧光黄的字」，浅色下 1.11:1，「黑白」「单面」这些
+       * 选项名直接看不见（配色的老规矩：primary 只做能承载深色内容的面，从来不当字用）。
+       * 改成「黄底 + 深色内容」，与导航激活项、主按钮同一条规矩。 */
+      buttonColorActive: t.primary,
+      buttonTextColorActive: t.primaryForeground,
+      buttonBorderColorActive: t.primary,
+      /* 悬停态 Naive 同样给 primaryColor 当字，铺在白底上同样读不出。 */
+      buttonTextColorHover: t.accentText,
+      /* 焦点环也是它给的 primaryColor —— 荧光黄当环只有约 1.05:1，
+       * 键盘用户看不到焦点落在哪个选项上（WCAG 2.4.11）。 */
+      buttonBoxShadowFocus: `inset 0 0 0 1px ${t.accentText}, 0 0 0 2px ${t.border}`,
+      boxShadowFocus: `inset 0 0 0 1px ${t.accentText}, 0 0 0 2px ${t.border}`,
+      /* 圆点型（NRadio）虽然眼下没用，但同样的坑：黄点在白底上不可见。 */
+      dotColorActive: t.accentText,
+      /* 禁用但仍是选项名（「使用预设打印服务」在没有预设时），读得出来才知道有这条路。 */
+      textColorDisabled: t.textTertiary,
     },
     DataTable: {
       borderColor: t.border,
@@ -213,31 +277,27 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       thFontWeight: '700',
       tdColorHover: isDark ? '#ffffff0d' : '#00000005',
       tdColorStriped: isDark ? '#ffffff05' : '#00000002',
-      borderRadius: '12px',
       thPaddingMedium: '10px 14px',
       tdPaddingMedium: '12px 14px',
-      fontSizeMedium: '14px',
+      fontSizeMedium: '13px',
     },
     Input: {
-      borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
-      borderHover: `1px solid ${derive(t.primary, isDark).hover}`,
-      borderFocus: `1px solid ${p.base}`,
-      boxShadowFocus: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
+      borderHover: `1px solid ${at.hover}`,
+      borderFocus: `1px solid ${t.accentText}`,
+      boxShadowFocus: focusRing,
     },
     InternalSelection: {
-      borderRadius: '8px',
       color: t.surfaceInput,
       border: `1px solid ${t.border}`,
-      borderHover: `1px solid ${derive(t.primary, isDark).hover}`,
-      borderFocus: `1px solid ${p.base}`,
-      borderActive: `1px solid ${p.base}`,
-      boxShadowFocus: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
-      boxShadowActive: `0 0 0 2px ${isDark ? '#ffd00026' : '#d4a01726'}`,
+      borderHover: `1px solid ${at.hover}`,
+      borderFocus: `1px solid ${t.accentText}`,
+      borderActive: `1px solid ${t.accentText}`,
+      boxShadowFocus: focusRing,
+      boxShadowActive: focusRing,
     },
     Tag: {
-      borderRadius: '999px',
       heightMedium: '26px',
       fontWeightStrong: '700',
       colorBordered: 'transparent',
@@ -248,18 +308,17 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       itemColorActiveHover: p.hover,
       itemTextColorActiveHover: t.primaryForeground,
       itemTextColorActiveHoverHorizontal: t.primaryForeground,
-      borderRadius: '8px',
       itemHeight: '42px',
     },
     Tabs: {
       tabTextColorActiveLine: t.foreground,
       tabTextColorHoverLine: t.foreground,
-      barColor: p.base,
+      /* 标签指示条是「线」不是「面」，走 accentText —— 荧光黄当线在浅色下 1.05:1，会消失。 */
+      barColor: t.accentText,
       tabFontWeightActive: '700',
       tabFontWeight: '600',
     },
     Dialog: {
-      borderRadius: '12px',
       color: panel,
       titleFontSize: '17px',
       titleFontWeight: '700',
@@ -267,17 +326,36 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
     Upload: {
       draggerColor: 'transparent',
       draggerBorder: `1px dashed ${t.border}`,
-      draggerBorderHover: `1px dashed ${p.base}`,
-      borderRadius: '12px',
+      draggerBorderHover: `1px dashed ${t.accentText}`,
     },
     Statistic: {
-      valueFontSize: '28px',
+      /* 指标值是全站字号落差的顶端（正文 13、面板小标题 11，这里是 44）。
+       * 目标风格靠这种极端落差建立层级，而不是靠卡片与阴影。 */
+      valueFontSize: '44px',
       labelFontSize: '12px',
       labelTextColor: t.textTertiary,
       valueTextColor: t.textPrimary,
     },
+    Switch: {
+      /* 轨道与按钮的圆角**默认是从轨道高度算出来的**（18/2=9px、14/2=7px），走的是
+       * 「round 为真则取高度一半」那条路 —— 和 Button 的 circle 属性同一个机制，
+       * 所以光把 common.borderRadius 置 0 不够，每个 <NSwitch> 还得显式传 :round="false"
+       * （界面上的 7 处已经都传了）。
+       * 这里再显式置 0 是为了让「圆角归零」在主题里也留个痕 —— 否则后人看到 Switch 没有
+       * 任何圆角配置，会以为我们漏了它。 */
+      railBorderRadiusSmall: '0',
+      railBorderRadiusMedium: '0',
+      railBorderRadiusLarge: '0',
+      buttonBorderRadiusSmall: '0',
+      buttonBorderRadiusMedium: '0',
+      buttonBorderRadiusLarge: '0',
+      /* 旋钮的投影是 naive 里**硬编码**的 `0 1px 4px rgba(0,0,0,.3)`，
+       * 不派生自 boxShadow1/2/3 —— 所以只把那三支置 none 是不够的，实测这处会漏网。 */
+      buttonBoxShadow: 'none',
+      /* 聚焦同样改成 2px 实心环，与 Input / InternalSelection 一致。 */
+      boxShadowFocus: focusRing,
+    },
     Pagination: {
-      itemBorderRadius: '6px',
       itemTextColorActive: t.primaryForeground,
       itemColorActive: p.base,
     },
@@ -285,13 +363,10 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       color: t.surfaceTooltip,
       // 提示框底在深浅主题下都是深色，所以文字固定用白色，不跟着主题走
       textColor: '#ffffff',
-      borderRadius: '6px',
     },
     Alert: {
-      borderRadius: '10px',
     },
     Message: {
-      borderRadius: '8px',
       colorInfo: panel,
       colorSuccess: panel,
       colorWarning: panel,
@@ -300,7 +375,7 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColorSuccess: t.textPrimary,
       textColorWarning: t.textPrimary,
       textColorError: t.textPrimary,
-      boxShadow: isDark ? '0 8px 24px rgb(0 0 0 / 0.5)' : '0 8px 24px rgb(0 0 0 / 0.1)',
+      boxShadow: 'none',
     },
     Form: {
       labelFontWeight: '600',
@@ -308,7 +383,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       feedbackHeightMedium: '22px',
     },
     Empty: {
-      iconColor: t.textQuaternary,
+      /* 空态的插图是「图形」，WCAG 要 3:1；textQuaternary 只有 2.61:1。 */
+      iconColor: t.textTertiary,
       textColor: t.textTertiary,
     },
   }

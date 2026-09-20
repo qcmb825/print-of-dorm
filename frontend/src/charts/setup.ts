@@ -5,6 +5,7 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { prefersReducedMotion } from '@/composables/motion'
 
 use([CanvasRenderer, BarChart, LineChart, PieChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -30,6 +31,13 @@ export function baseOption(palette: ChartPalette) {
     // 这段绘制正好和页面过场、骨架屏收尾抢同一个窗口。
     // 不整个关掉，是因为 ChartBox 用的是响应式 :option —— 切主题时也会重放一遍动画，
     // 全关掉会让主题切换显得"跳"。
+    // 减少动效下整段关掉：柱/线/扇区的"生长"是整片区域的缩放与位移，
+    // 与视差、换场面板同类，属于该撤的那一类。这里是**一处覆盖五张图**的地方 ——
+    // 看板上的图全部从 baseOption 派生，不用逐张改。
+    // 它读的是模块级的 prefersReducedMotion（不是每张图各自 matchMedia 一次）：
+    // 会话中途改系统设置时，已经建好的 option 要等调用方重算才会跟上，
+    // 而调用方是依赖配色的 computed —— 切主题时正好会重算。
+    animation: !prefersReducedMotion.value,
     animationDuration: 300,
     animationEasing: 'cubicOut' as const,
     grid: { left: 8, right: 12, top: 28, bottom: 4, containLabel: true },
@@ -44,7 +52,9 @@ export function baseOption(palette: ChartPalette) {
     legend: {
       top: 0,
       right: 0,
-      icon: 'roundRect',
+      // rect 而不是 roundRect：全站圆角归零之后，图例里那块小色块是唯一还带圆角的
+      // 方形记号（ECharts 的默认值跟 CSS 无关，改主题覆盖也管不到它）。
+      icon: 'rect',
       itemWidth: 8,
       itemHeight: 8,
       textStyle: { color: palette.textMuted, fontSize: 11 },

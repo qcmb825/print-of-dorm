@@ -179,7 +179,7 @@ const quotaColor = computed(() => {
   const percent = quotaPercent.value
   if (percent >= 95) return 'var(--err)'
   if (percent >= 80) return 'var(--warn)'
-  return 'var(--primary)'
+  return 'var(--accent-text)'
 })
 
 /** 老账号没补 QQ：这条提示比别的都靠前，因为它直接决定收不收得到取件邮件。 */
@@ -191,7 +191,7 @@ async function load(resetForm = true): Promise<void> {
     overview.value = await authApi.overview()
     if (resetForm) fillForm()
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '加载设置失败，请稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '加载设置失败 · 稍后重试')
   } finally {
     loading.value = false
   }
@@ -230,7 +230,7 @@ async function saveProfile(): Promise<void> {
     }
     notify.success('资料已更新')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '保存失败，请稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '保存失败 · 稍后重试')
   } finally {
     savingProfile.value = false
   }
@@ -246,7 +246,7 @@ async function changePassword(): Promise<void> {
     passwordForm.confirm = ''
     notify.success(response.msg || '密码已修改')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '修改密码失败，请稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '修改密码失败 · 稍后重试')
   } finally {
     savingPassword.value = false
   }
@@ -270,7 +270,7 @@ async function doLogout(): Promise<void> {
   if (loggingOut.value) return
   const ok = await confirmAction({
     title: '退出登录',
-    content: '确定要退出当前账号吗？退出后需要重新用学号和密码登录。',
+    content: '退出后需要重新用学号和密码登录。',
     positiveText: '退出',
   })
   if (!ok) return
@@ -282,7 +282,7 @@ async function doLogout(): Promise<void> {
     // 界面其实已经算「未登录」了，只是服务端那个会话可能没断干净。
     // 提示一句再照常回登录页 —— 停在这一页更糟：用户会看到一个已经登出、
     // 却还显示着设置页的界面，比直接走更让人困惑。
-    notify.error(error instanceof ApiError ? error.message : '退出登录请求没成功，请重新登录确认')
+    notify.error(error instanceof ApiError ? error.message : '退出登录没成功 · 重新登录确认')
   } finally {
     loggingOut.value = false
     // replace 而不是 push：退出之后按浏览器后退键不该再回到设置页。
@@ -301,7 +301,7 @@ onMounted(() => {
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h1 class="font-heading text-lg font-bold sm:text-xl">设置</h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">账号资料 · 密码 · 取件提醒 · 存储用量</p>
+        <p class="mt-0.5 text-sm text-ink-3">账号资料 · 密码 · 取件提醒 · 存储用量</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="refresh()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -318,28 +318,28 @@ onMounted(() => {
            而缺了它连「改个宿舍」都保存不了（见下面那句说明）。 -->
       <NAlert v-if="needsQq" type="warning" :bordered="false" class="mb-3">
         <template #icon><TriangleAlert :size="16" /></template>
-        这个账号还没有 QQ 号，<strong>收不到取件邮件提醒</strong>，而且任何资料改动都保存不了。
-        请在下面「QQ 号」那一栏补上（5-12 位数字）。
+        还没有 QQ 号：<strong>收不到取件邮件提醒</strong>，资料也保存不了。
+        在下面「QQ 号」那一栏补上（5-12 位数字）。
       </NAlert>
 
       <!-- 我的下单概况 -->
       <section class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">我的单数</div>
+          <div class="tech-label text-ink-3 tech-label--cn">我的单数</div>
           <div class="tnum font-heading text-xl font-bold">{{ orders?.total ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">进行中</div>
+          <div class="tech-label text-ink-3 tech-label--cn">进行中</div>
           <div class="tnum font-heading text-xl font-bold">{{ orders?.in_progress ?? 0 }}</div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">待取件</div>
-          <div class="tnum font-heading text-xl font-bold" style="color: var(--primary)">
+          <div class="tech-label text-ink-3 tech-label--cn">待取件</div>
+          <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
             {{ orders?.ready ?? 0 }}
           </div>
         </div>
         <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-4">累计花费</div>
+          <div class="tech-label text-ink-3 tech-label--cn">累计花费</div>
           <!-- 金额走 format.ts 的 priceLabel，不在模板里 toFixed：
                同一个数在别处显示成另一种写法时，没人会去查是哪一处写的。 -->
           <div class="tnum font-heading text-xl font-bold">
@@ -351,23 +351,23 @@ onMounted(() => {
       <!-- 存储用量 -->
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
         <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h2 class="flex items-center gap-1.5 font-heading text-[14px] font-bold">
-            <HardDrive :size="15" class="opacity-60" />
+          <h2 class="flex items-center gap-1.5 font-heading text-base font-bold">
+            <HardDrive :size="15"  />
             存储用量
           </h2>
-          <span class="tnum text-[12px] text-ink-3">
+          <span class="tnum text-xs text-ink-3">
             {{ usage ? formatBytes(usage.used_bytes) : '—' }} /
             {{ usage ? formatBytes(usage.quota_bytes) : '—' }}
           </span>
         </div>
 
-        <div class="mt-2.5 h-2 w-full overflow-hidden rounded-full" style="background-color: var(--muted)">
+        <div class="mt-2.5 h-2 w-full overflow-hidden" style="background-color: var(--muted)">
           <!-- 宽度条：重新拉取数据时会从旧值滑到新值，所以这条 transition 不能省。
                时长/曲线一律走 --motion-* 令牌（项目规矩：组件里不写裸毫秒和 cubic-bezier）；
                .transitions 这种工具类本仓并不存在 —— 写了不报错，只是没有任何效果。
                减少动效的兜底由 base.css 里那条全局 `* { transition-duration: .001ms !important }` 负责。 -->
           <div
-            class="h-full rounded-full"
+            class="h-full"
             :style="{
               width: `${quotaPercent}%`,
               backgroundColor: quotaColor,
@@ -376,60 +376,60 @@ onMounted(() => {
           />
         </div>
 
-        <dl class="mt-3 grid gap-2 text-[12px] sm:grid-cols-2">
-          <div class="rounded-lg px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-4">订单里的文件</dt>
+        <dl class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+          <div class="px-2.5 py-2" style="background-color: var(--muted)">
+            <dt class="tech-label text-ink-3 tech-label--cn">订单里的文件</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.orders_count ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.orders_bytes) : '—' }}</span>
-              <span class="mt-0.5 block text-ink-4">还没打完的单，文件要留着给打印员</span>
+              <span class="mt-0.5 block text-ink-3">还没打完的单，文件要留着给打印员</span>
             </dd>
           </div>
-          <div class="rounded-lg px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-4">没传完的上传</dt>
+          <div class="px-2.5 py-2" style="background-color: var(--muted)">
+            <dt class="tech-label text-ink-3 tech-label--cn">没传完的上传</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.chunks_count ?? 0 }} / {{ usage?.chunks_max ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.chunks_bytes) : '—' }}</span>
-              <span class="mt-0.5 block text-ink-4">上传中断留下的临时数据，重传或放弃即可</span>
+              <span class="mt-0.5 block text-ink-3">上传中断留下的临时数据，重传或放弃即可</span>
             </dd>
           </div>
         </dl>
 
-        <p class="mt-3 mb-0 text-[12px] leading-5 text-ink-4">
-          两类占用都算进配额，因为它们在磁盘上都是真占地方。快满时先看第二类 ——
-          那些是没传完的临时文件，取消掉就回来了。
+        <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
+          两类都算进配额：它们在磁盘上一样占地方。快满时先看第二类 ——
+          没传完的临时文件，取消掉就回来了。
         </p>
       </section>
 
       <!-- 账号资料 -->
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
-        <h2 class="mb-3 flex items-center gap-1.5 font-heading text-[14px] font-bold">
-          <UserCog :size="15" class="opacity-60" />
+        <h2 class="mb-3 flex items-center gap-1.5 font-heading text-base font-bold">
+          <UserCog :size="15"  />
           账号资料
         </h2>
 
-        <dl class="mb-3 grid gap-x-4 gap-y-2 text-[13px] sm:grid-cols-2">
+        <dl class="mb-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-4">学号（登录名）</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">学号（登录名）</dt>
             <dd class="tnum m-0 font-semibold">{{ account?.student_id }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-4">姓名</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">姓名</dt>
             <dd class="m-0 font-semibold">{{ account?.real_name }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-4">注册时间</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">注册时间</dt>
             <dd class="tnum m-0 text-ink-2">{{ shortTime(account?.create_time) }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-4">上次登录</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">上次登录</dt>
             <dd class="tnum m-0 text-ink-2">{{ shortTime(account?.last_login) }}</dd>
           </div>
         </dl>
 
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">昵称</span>
+            <span class="tech-label text-ink-3 tech-label--cn">昵称</span>
             <NInput
               v-model:value="profileForm.nickname"
               :maxlength="20"
@@ -437,17 +437,17 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">宿舍</span>
+            <span class="tech-label text-ink-3 tech-label--cn">宿舍</span>
             <NInput
               v-model:value="profileForm.dorm"
               :maxlength="50"
-              placeholder="请写到门牌号，例：3 号楼 502"
+              placeholder="写到门牌号，例：3 号楼 502"
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">
+            <span class="tech-label text-ink-3 tech-label--cn">
               QQ 号
-              <span class="ml-1 font-normal opacity-60">（取件提醒用，必填）</span>
+              <span class="ml-1 font-normal">（取件提醒用，必填）</span>
             </span>
             <NInput
               v-model:value="profileForm.qq"
@@ -456,9 +456,9 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">
+            <span class="tech-label text-ink-3 tech-label--cn">
               其他联系方式
-              <span class="ml-1 font-normal opacity-60">（选填，也可整组留空）</span>
+              <span class="ml-1 font-normal">（选填，可整组留空）</span>
             </span>
             <div class="flex gap-2">
               <!-- 类型可以清空回「不填」：这一组是整组选填的，
@@ -478,7 +478,7 @@ onMounted(() => {
                 :placeholder="
                   profileForm.contact_type
                     ? OTHER_CONTACT_PLACEHOLDER[profileForm.contact_type]
-                    : '先选类型，或留空'
+                    : '—'
                 "
               />
             </div>
@@ -486,9 +486,9 @@ onMounted(() => {
         </div>
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <p class="m-0 text-[12px] leading-5 text-ink-4">
+          <p class="m-0 text-xs leading-5 text-ink-3">
             <template v-if="profileIssue">{{ profileIssue }}</template>
-            <template v-else-if="profileDirty">改完记得点保存。</template>
+            <template v-else-if="profileDirty">改完点保存。</template>
             <template v-else>学号和姓名由管理员核实，本人改不了；其余随改随生效。</template>
           </p>
           <NButton
@@ -508,73 +508,73 @@ onMounted(() => {
            「信发到哪、什么时候发、没收到找谁」这三件事，
            塞在表单底下会被当成又一段免责声明直接跳过去。 -->
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
-        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-[14px] font-bold">
-          <Mail :size="15" class="opacity-60" />
+        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-base font-bold">
+          <Mail :size="15"  />
           取件提醒
         </h2>
-        <p class="mb-3 text-[12px] leading-5 text-ink-4">
-          单子打印好、状态变成「可取了」的时候，系统自动给你发一封邮件，
-          标题里带取件码、正文里带取件地点和付款方式 —— 不用一直回网页刷。
+        <p class="mb-3 text-xs leading-5 text-ink-3">
+          状态变成「可取了」时自动发一封邮件：标题带取件码，正文带取件地点与付款方式。
+          不用一直回网页刷。
         </p>
 
-        <dl class="grid gap-2 text-[13px] sm:grid-cols-2">
-          <div class="rounded-lg px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-4">发到哪个邮箱</dt>
+        <dl class="grid gap-2 text-sm sm:grid-cols-2">
+          <div class="px-2.5 py-2" style="background-color: var(--muted)">
+            <dt class="tech-label text-ink-3 tech-label--cn">发到哪个邮箱</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               <template v-if="account?.qq">
                 <span class="tnum font-semibold">&lt;{{ account.qq }}&gt;@qq.com</span>
-                <span class="mt-0.5 block text-ink-4">
+                <span class="mt-0.5 block text-ink-3">
                   由上面「QQ 号」那一栏自动拼出来，不用单独填邮箱
                 </span>
               </template>
               <template v-else>
                 <span style="color: var(--warn)">还没有 QQ 号，暂时收不到提醒</span>
-                <span class="mt-0.5 block text-ink-4">在上面「QQ 号」那一栏补上即可</span>
+                <span class="mt-0.5 block text-ink-3">在上面「QQ 号」那一栏补上即可</span>
               </template>
             </dd>
           </div>
-          <div class="rounded-lg px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-4">什么时候发</dt>
+          <div class="px-2.5 py-2" style="background-color: var(--muted)">
+            <dt class="tech-label text-ink-3 tech-label--cn">什么时候发</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               订单变成「可取了」的时刻
-              <span class="mt-0.5 block text-ink-4">
-                每单只发一次，不会因为改价、改状态重复打扰
+              <span class="mt-0.5 block text-ink-3">
+                每单只发一次 · 改价、改状态不会重复打扰
               </span>
             </dd>
           </div>
         </dl>
 
-        <p class="mt-3 mb-0 text-[12px] leading-5 text-ink-4">
-          为什么只认 QQ：微信号推不出任何邮箱地址，「其他联系方式」里的邮箱<strong>只是备用</strong>，
-          系统优先发 QQ 邮箱。没收到的话按这个顺序查 ——
-          ① 翻一下 QQ 邮箱的<strong>垃圾箱</strong>和「未读邮件」折叠项；
-          ② 确认上面那一栏的 QQ 号没填错（拼出来的地址是
-          <span class="tnum">&lt;QQ号&gt;@qq.com</span>，填错一位就寄到别人那里去了）；
-          ③ 还是没收到就在「问题反馈」里留个言，管理员能看到订单的具体情况。
+        <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
+          只认 QQ：微信号推不出邮箱，「其他联系方式」里的邮箱<strong>只是备用</strong>。
+          没收到就按这个顺序查 ——
+          ① 翻 QQ 邮箱的<strong>垃圾箱</strong>与「未读邮件」；
+          ② 核对上面那栏 QQ 号（地址是
+          <span class="tnum">&lt;QQ号&gt;@qq.com</span>，填错一位就寄给别人了）；
+          ③ 还没有就在「问题反馈」里留言，管理员能看到订单。
         </p>
       </section>
 
       <!-- 密码 -->
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
-        <h2 class="mb-3 flex items-center gap-1.5 font-heading text-[14px] font-bold">
-          <KeyRound :size="15" class="opacity-60" />
+        <h2 class="mb-3 flex items-center gap-1.5 font-heading text-base font-bold">
+          <KeyRound :size="15"  />
           修改密码
         </h2>
 
         <div class="grid gap-3 sm:grid-cols-3">
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">当前密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn">当前密码</span>
             <NInput
               v-model:value="passwordForm.current"
               type="password"
               show-password-on="click"
               :maxlength="64"
-              placeholder="请输入当前密码"
+              placeholder="当前密码"
               autocomplete="current-password"
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">新密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn">新密码</span>
             <NInput
               v-model:value="passwordForm.next"
               type="password"
@@ -585,7 +585,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3">确认新密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn">确认新密码</span>
             <NInput
               v-model:value="passwordForm.confirm"
               type="password"
@@ -599,7 +599,7 @@ onMounted(() => {
         </div>
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <p class="m-0 text-[12px] leading-5 text-ink-4">
+          <p class="m-0 text-xs leading-5 text-ink-3">
             <template v-if="passwordTouched && passwordIssueText">{{ passwordIssueText }}</template>
             <template v-else>改完当前这台设备保持登录，别处会被踢下线。</template>
           </p>
@@ -613,23 +613,22 @@ onMounted(() => {
           </NButton>
         </div>
 
-        <p class="mt-3 mb-0 text-[12px] leading-5 text-ink-4">
-          其它设备（包括之前复制出去的登录状态）会被一起登出 ——
-          「改密码」这件事的意义本来就是「怀疑别人也能进来」。
-          密码只以哈希形式存库，管理员也看不到原文。
+        <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
+          其它设备（含之前复制出去的登录状态）会一起登出 ——
+          改密码的意义本来就是「怀疑别人也能进来」。密码只存哈希，管理员也看不到原文。
         </p>
       </section>
 
       <!-- 账号与其他。收尾的一块：前四块都是「改自己的东西」，
            这一块是「离开 / 找人说事」，混进上面任何一块都会让那一块的标题变味。 -->
       <section class="panel panel-raised p-3.5 sm:p-4">
-        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-[14px] font-bold">
-          <MessageSquare :size="15" class="opacity-60" />
+        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-base font-bold">
+          <MessageSquare :size="15"  />
           账号与其他
         </h2>
-        <p class="mb-3 text-[12px] leading-5 text-ink-4">
-          与订单无关的问题（打印出错、退款、账号异常）走工单，管理员看得到订单情况；
-          退出登录只影响当前这台设备，其它设备上的登录状态要改密码才能一起下线。
+        <p class="mb-3 text-xs leading-5 text-ink-3">
+          与订单无关的问题（打印出错、退款、账号异常）走工单，管理员能看到订单情况。
+          退出登录只影响当前这台设备；其它设备要改密码才会下线。
         </p>
 
         <div class="flex flex-wrap items-center gap-2">
@@ -645,11 +644,11 @@ onMounted(() => {
           </NButton>
         </div>
 
-        <p class="mt-3 mb-0 text-[12px] leading-5 text-ink-4">
-          <strong>注销账号（退学、毕业不再使用）目前不在这里</strong> ——
-          注销会让昵称和学号被让出来、别人可以注册同名，这一步必须由管理员在账号管理里确认，
-          本人无法一键完成。真要注销的话，请在「我的工单」里说明学号，
-          管理员核实后会处理；注销后订单与工单记录都会保留，需要时可以恢复。
+        <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
+          <strong>注销账号（退学、毕业不再使用）不在这里</strong> ——
+          注销会让昵称与学号被让出来、别人可以注册同名，必须由管理员在账号管理里确认，
+          本人做不了。真要注销就在「我的工单」里说明学号，管理员核实后处理；
+          注销后订单与工单记录都会保留，需要时可以恢复。
         </p>
       </section>
     </template>

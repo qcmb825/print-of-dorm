@@ -12,7 +12,6 @@ import { Check, ClipboardCheck, RefreshCw, Undo2, X } from '@lucide/vue'
 import {
   NAlert,
   NButton,
-  NEmpty,
   NInput,
   NModal,
   NSkeleton,
@@ -23,6 +22,7 @@ import {
 import { ApiError } from '@/api/client'
 import { auditApi } from '@/api/endpoints'
 import { AUDIT_STATUSES, CONTACT_LABELS, type AuditRequest, type AuditStatus } from '@/api/types'
+import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { fullTime } from '@/utils/format'
 
@@ -51,7 +51,7 @@ const STATUS_META: Record<AuditStatus, { label: string; color: string; bg: strin
 /** 待审核 0 条时给一句解释，否则管理员会以为是页面坏了 */
 const emptyHint = computed(() =>
   status.value === 'pending'
-    ? '没有待处理的申请。学生注册时学号不在名单上，才会进来一条。'
+    ? '没有待处理的申请。'
     : '这个状态下还没有记录。',
 )
 
@@ -100,7 +100,7 @@ async function confirm(): Promise<void> {
   reviewing.value = true
   try {
     await auditApi.review(target.id, dialog.action, note.value.trim())
-    message.success(dialog.action === 'approve' ? '已通过，对方现在可以注册了' : '已驳回')
+    message.success(dialog.action === 'approve' ? '已通过 · 对方可以注册了' : '已驳回')
     dialog.show = false
     // 处理完刷新：这条会从当前页签消失（待审核 → 已通过/已驳回），三个角标也跟着变。
     await load(true)
@@ -126,8 +126,8 @@ onMounted(load)
     </PageHeader>
 
     <NAlert type="info" :bordered="false" class="mb-4" :show-icon="true">
-      通过只是给予「可以用这个学号注册」的资格，账号仍由本人注册产生 ——
-      这里不代替任何人设密码，也不会自动建号。一个学号只有一条申请记录，处理过的可以改判。
+      通过只给「可以用这个学号注册」的资格，账号仍由本人注册；
+      这里不设密码、不自动建号。一个学号一条记录，处理过可以改判。
     </NAlert>
 
     <NTabs v-model:value="status" type="line" animated @update:value="load()">
@@ -136,9 +136,11 @@ onMounted(load)
           <span class="inline-flex items-center gap-1.5">
             {{ tab.label }}
             <span
-              class="rounded-full px-1.5 py-px text-[11px] font-bold"
+              class="px-1.5 py-px text-2xs font-bold"
               :style="{
-                color: counts[tab.key] ? STATUS_META[tab.key].color : 'var(--ink-4)',
+                // 计数为 0 时刻意弱化（标签名本身已经说明了这一栏是什么），走四级文字色。
+                // 原先的 var(--ink-4) 不存在，静默失效 —— 0 会显示成和计数非 0 一样的颜色。
+                color: counts[tab.key] ? STATUS_META[tab.key].color : 'var(--text-quaternary)',
                 backgroundColor: counts[tab.key] ? STATUS_META[tab.key].bg : 'transparent',
               }"
             >
@@ -152,7 +154,7 @@ onMounted(load)
         </div>
 
         <div v-else-if="!list.length" class="panel flex flex-col items-center gap-3 py-12">
-          <NEmpty :description="emptyHint" />
+          <EmptyState code="00 / NO REQUEST" :title="emptyHint" hint="学生提交审核申请后会出现在这里" />
         </div>
 
         <ul v-else class="flex flex-col gap-3">
@@ -160,10 +162,10 @@ onMounted(load)
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-heading text-[16px] font-bold">{{ item.real_name }}</span>
-                  <span class="font-mono text-[13px] text-ink-3">{{ item.student_id }}</span>
+                  <span class="font-heading text-lg font-bold">{{ item.real_name }}</span>
+                  <span class="font-mono text-sm text-ink-3">{{ item.student_id }}</span>
                   <span
-                    class="rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    class="px-2 py-0.5 text-xs font-bold"
                     :style="{
                       color: STATUS_META[item.status].color,
                       backgroundColor: STATUS_META[item.status].bg,
@@ -171,17 +173,17 @@ onMounted(load)
                   >
                     {{ item.status_label ?? STATUS_META[item.status].label }}
                   </span>
-                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-4">
+                  <span v-if="item.reviewer_nickname" class="tech-label text-ink-3 tech-label--cn text-xs">
                     由 {{ item.reviewer_nickname }} 处理
                   </span>
-                  <span v-else class="tech-label text-ink-4">#{{ item.id }}</span>
+                  <span v-else class="tech-label text-ink-3 text-2xs">#{{ item.id }}</span>
                 </div>
 
-                <p class="mt-2 text-[12px] text-ink-3">
+                <p class="mt-2 text-xs text-ink-3">
                   {{ CONTACT_LABELS[item.contact_type] }}：
                   <span class="font-mono">{{ item.contact }}</span>
                 </p>
-                <p class="mt-1 text-[12px] text-ink-4">提交于 {{ fullTime(item.create_time) }}</p>
+                <p class="mt-1 text-xs text-ink-3">提交于 {{ fullTime(item.create_time) }}</p>
               </div>
 
               <div class="flex shrink-0 items-center gap-2">
@@ -212,22 +214,22 @@ onMounted(load)
               </div>
             </div>
 
-            <div v-if="item.note" class="mt-3 border-l-2 pl-3 text-[13px] leading-6" style="border-color: var(--border)">
-              <div class="tech-label mb-1 text-ink-4">申请人说明</div>
+            <div v-if="item.note" class="mt-3 border-l-2 pl-3 text-sm leading-6" style="border-color: var(--border)">
+              <div class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">申请人说明</div>
               <p class="whitespace-pre-wrap break-words">{{ item.note }}</p>
             </div>
 
             <div
               v-if="item.review_note"
-              class="mt-3 rounded-[10px] px-3 py-2 text-[13px] leading-6"
+              class="mt-3 px-3 py-2 text-sm leading-6"
               :style="{
                 backgroundColor: STATUS_META[item.status].bg,
                 color: STATUS_META[item.status].color,
               }"
             >
-              <span class="tech-label">处理备注</span>
+              <span class="tech-label tech-label--cn text-xs">处理备注</span>
               <p class="mt-1 whitespace-pre-wrap break-words">{{ item.review_note }}</p>
-              <p v-if="item.review_time" class="mt-1 text-[11px] opacity-80">
+              <p v-if="item.review_time" class="mt-1 text-2xs opacity-80">
                 {{ fullTime(item.review_time) }}
               </p>
             </div>
@@ -245,7 +247,7 @@ onMounted(load)
       :mask-closable="false"
     >
       <template v-if="dialog.target">
-        <p class="mb-3 text-[13px] leading-6 text-ink-3">
+        <p class="mb-3 text-sm leading-6 text-ink-3">
           <span class="font-heading font-bold text-ink">{{ dialog.target.real_name }}</span>
           <span class="mx-1.5 font-mono">{{ dialog.target.student_id }}</span>
           ·
@@ -254,11 +256,11 @@ onMounted(load)
         </p>
 
         <NAlert v-if="dialog.action === 'approve'" type="default" :bordered="false" class="mb-3">
-          通过后这个人就能用该学号完成注册。备注可以不填，会一并展示给申请人。
+          通过后对方可以用该学号注册。备注可不填，会一并展示给申请人。
         </NAlert>
         <NAlert v-else type="warning" :bordered="false" class="mb-3">
-          驳回必须填理由 —— <strong>申请人看得到这段字</strong>，请写清楚缺什么、或者去哪补。
-          写「不符合条件」对方只会再交一次。
+          驳回必须填理由，<strong>申请人看得到</strong>：写清缺什么、去哪补。
+          「不符合条件」只会让对方再交一次。
         </NAlert>
 
         <NInput
@@ -270,7 +272,7 @@ onMounted(load)
           :placeholder="
             dialog.action === 'approve'
               ? '例：已核对 2025 级新生名单，属实'
-              : '例：名单里这个学号对应的是「李四」，请确认学号是否填错'
+              : '例：名单里这个学号对应的是「李四」，请确认是否填错'
           "
         />
       </template>

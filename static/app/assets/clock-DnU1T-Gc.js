@@ -1,0 +1,1 @@
+import{K as e,W as t,vt as n}from"./endpoints-DwTyeYJL.js";function r(){let e=new Date,t=e=>String(e).padStart(2,`0`);return`${t(e.getHours())}:${t(e.getMinutes())}:${t(e.getSeconds())}`}function i(){let i=n(``),a;return e(()=>{i.value=r(),a=window.setInterval(()=>{i.value=r()},1e3)}),t(()=>{a!==void 0&&window.clearInterval(a)}),i}export{i as t};

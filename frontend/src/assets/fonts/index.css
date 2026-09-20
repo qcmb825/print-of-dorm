@@ -1,0 +1,3 @@
+/* 由 scripts/build-cn-font.mjs 生成，不要手改。重新生成：npm run fonts:build */
+@import './regular/regular.css';
+@import './bold/bold.css';

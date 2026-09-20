@@ -8,7 +8,6 @@ import {
   NButton,
   NDrawer,
   NDrawerContent,
-  NEmpty,
   NFormItem,
   NInput,
   NModal,
@@ -19,6 +18,8 @@ import {
 import { ApiError } from '@/api/client'
 import { ticketApi } from '@/api/endpoints'
 import type { Ticket, TicketStatus } from '@/api/types'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import TicketDetail from '@/components/TicketDetail.vue'
 import { TICKET_STATUS_LABEL, shortTime } from '@/utils/format'
 
@@ -75,7 +76,7 @@ async function createTicket(): Promise<void> {
   creating.value = true
   try {
     const data = await ticketApi.create(form.subject.trim(), form.body.trim())
-    message.success('工单已提交，等待管理员回复')
+    message.success('工单已提交 · 等待回复')
     createOpen.value = false
     form.subject = ''
     form.body = ''
@@ -102,17 +103,23 @@ onMounted(async () => {
 
 <template>
   <div class="mx-auto max-w-6xl">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 class="flex items-center gap-2 font-heading text-lg font-bold sm:text-xl">
-          {{ staff ? '工单处理' : '问题反馈' }}
-          <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
-        </h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">
-          {{ staff ? '学生提交的问题与需求，回复后对方会看到未读提示' : '有打印相关的问题，在这里留言给管理员' }}
-        </p>
-      </div>
-      <div class="flex items-center gap-2">
+    <!-- 走公共的 PageHeader：这一页原先手写了一个标题（理由是"h1 里要嵌未读角标"），
+         代价是它少了铭牌行、字段行（PATH/CODE/SYNC）与扇区读数 —— 全站 13 个页面里
+         只有这一页没有"文件头"。现在给 PageHeader 补了 title-append 槽，
+         编号仍取自 route.meta.code（学生端 04 / 管理端 07 各自不同），角标进槽。 -->
+    <PageHeader
+      heading="md"
+      :title="staff ? '工单处理' : '问题反馈'"
+      :subtitle="
+        staff
+          ? '学生提交的问题与需求，回复后对方会看到未读提示'
+          : '有打印相关的问题，在这里留言给管理员'
+      "
+    >
+      <template #title-append>
+        <NBadge v-if="unreadTotal" :value="unreadTotal" type="warning" />
+      </template>
+      <template #actions>
         <NSelect
           v-model:value="statusFilter"
           :options="statusOptions"
@@ -124,8 +131,8 @@ onMounted(async () => {
           <template #icon><Plus :size="15" /></template>
           新建工单
         </NButton>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <div class="grid gap-4 lg:grid-cols-[minmax(260px,340px)_1fr]">
       <!-- 列表 -->
@@ -134,9 +141,13 @@ onMounted(async () => {
           <NSkeleton v-for="index in 4" :key="index" height="58px" :sharp="false" />
         </div>
         <div v-else-if="!tickets.length" class="grid place-items-center py-12">
-          <NEmpty :description="staff ? '暂无工单' : '还没有工单'" size="small">
-            <template #icon><Inbox :size="30" /></template>
-          </NEmpty>
+          <EmptyState
+            code="00 / NO TICKET"
+            :title="staff ? '无工单' : '还没有工单'"
+            :hint="staff ? '学生提交后会自动出现在这里' : '有打印相关的问题，点右上角新建'"
+          >
+            <template #icon><Inbox :size="28" /></template>
+          </EmptyState>
         </div>
         <!-- 工单按 update_time 倒序：新工单从上方落下，有人回复的旧工单会移回顶部。
              那段「让位 / 回到顶部」的位移由 move-class 负责 —— 30 秒轮询下这是唯一能看出
@@ -145,9 +156,9 @@ onMounted(async () => {
           v-else
           tag="ul"
           class="flex max-h-[62vh] list-none flex-col overflow-y-auto p-0"
-          enter-active-class="transition duration-[200ms] ease-out"
+          enter-active-class="transition duration-[var(--motion-dur-base)] ease-out"
           enter-from-class="opacity-0 translate-x-1"
-          move-class="transition duration-[200ms] ease-out"
+          move-class="transition duration-[var(--motion-dur-base)] ease-out"
         >
           <li v-for="ticket in tickets" :key="ticket.id">
             <button
@@ -161,20 +172,20 @@ onMounted(async () => {
               @click="open(ticket)"
             >
               <div class="flex items-start justify-between gap-2">
-                <span class="min-w-0 flex-1 truncate text-[13px] font-semibold">
+                <span class="min-w-0 flex-1 truncate text-sm font-semibold">
                   {{ ticket.subject }}
                 </span>
                 <NBadge v-if="ticket.unread" :value="ticket.unread" type="warning" />
                 <span
                   v-else
-                  class="tech-label shrink-0"
-                  :style="{ color: ticket.status === 'open' ? 'var(--secondary)' : 'var(--text-quaternary)' }"
+                  class="tech-label shrink-0 tech-label--cn text-xs"
+                  :style="{ color: ticket.status === 'open' ? 'var(--status-printing)' : 'var(--text-tertiary)' }"
                 >
                   {{ TICKET_STATUS_LABEL[ticket.status] }}
                 </span>
               </div>
-              <p class="mt-1 line-clamp-2 text-[12px] text-ink-3">{{ ticket.last_body }}</p>
-              <p class="tech-label mt-1.5 text-ink-4">
+              <p class="mt-1 line-clamp-2 text-xs text-ink-3">{{ ticket.last_body }}</p>
+              <p class="tech-label mt-1.5 text-ink-3 tech-label--cn text-xs">
                 #{{ ticket.id }}
                 <template v-if="staff && ticket.owner_nickname"> · {{ ticket.owner_nickname }}</template>
                 · {{ shortTime(ticket.update_time) }} · {{ ticket.msg_count }} 条
@@ -185,7 +196,10 @@ onMounted(async () => {
       </div>
 
       <!-- 详情：宽屏常驻 -->
-      <div class="panel hidden min-h-[420px] overflow-hidden lg:block">
+      <!-- 分栏线：左列表右详情，一条 1px 线把"一栏"说清楚。 -->
+      <div
+        class="panel hidden min-h-[420px] overflow-hidden lg:block lg:border-l lg:border-[var(--border)] lg:pl-4"
+      >
         <TicketDetail
           v-if="selected"
           :key="selected.id"
@@ -195,9 +209,9 @@ onMounted(async () => {
           @changed="load(true)"
         />
         <div v-else class="grid h-full place-items-center py-16">
-          <NEmpty description="从左侧选一个工单查看详情" size="small">
-            <template #icon><MessageSquarePlus :size="30" /></template>
-          </NEmpty>
+          <EmptyState code="00 / NO TICKET" title="从左侧选一个工单查看详情" hint="窄屏会以抽屉形式打开">
+            <template #icon><MessageSquarePlus :size="28" /></template>
+          </EmptyState>
         </div>
       </div>
     </div>
@@ -236,7 +250,7 @@ onMounted(async () => {
           :maxlength="1000"
           show-count
           :autosize="{ minRows: 4, maxRows: 8 }"
-          placeholder="请写清订单号、遇到的问题和期望的处理方式"
+          placeholder="写清订单号、遇到的问题、期望的处理方式"
         />
       </NFormItem>
       <template #footer>

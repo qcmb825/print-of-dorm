@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, dateZhCN, zhCN } from 'naive-ui'
-import { computed } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
+import TransitionReceipt from '@/components/TransitionReceipt.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import RouteVeil from '@/components/RouteVeil.vue'
 import { useThemeStore } from '@/stores/theme'
+import { usePointerParallax } from '@/composables/motion'
 
 const theme = useThemeStore()
 const route = useRoute()
+
+// 指针视差：减少动效与触屏情况下它什么都不做（见 composables/motion.ts）
+usePointerParallax()
 
 /** 外壳只在登录、学生、管理三种结构互换时切一次，子页面由各自布局处理。
  *  子页导航不改变这个 key，所以外壳那层 Transition 不会被内层导航连带触发。 */
@@ -24,7 +29,7 @@ const shellTransitionKey = computed(() => {
  *  所以首帧渲染时 currentRoute 仍是 START_LOCATION：path 是 '/'、matched 是空的。
  *  那时 shellTransitionKey 会算出 'student'，等路由落定再变成 'guest' 或 'staff' ——
  *  key 一变就是一次完整的外壳换场，而它的「旧页」是一棵空树。
- *  结果是：用户什么都没点，冷加载却先看 1.95 秒幕布（减少动效下约 1040ms），
+ *  结果是：用户什么都没点，冷加载却先看一整场换场（减少动效下也要几百毫秒），
  *  缝上还写着 GUEST / 接入终端 —— 正是 RouteTransition.vue 顶部说好不要的那种「推迟可用时间」。
  *
  *  首帧本来就只会渲染出一个空的 RouterView（没有任何组件可挂），所以这里干脆等落定
@@ -33,9 +38,39 @@ const shellTransitionKey = computed(() => {
  *  后端慢或不可达时用户连环境光背景都看不到。 */
 const routed = computed(() => route.matched.length > 0)
 
+/** 给开屏层放行：index.html 里那一层盖着屏幕，它等的是这里这一下。
+ *
+ *  时机是「第一帧内容真的画出来了」，而不是「路由解析完了」—— 两者之间还隔着一次渲染，
+ *  早一帧放行就会让开屏层在应用还没画出东西时开始让位，中间那一帧是一屏白。
+ *  所以等下一次绘制（rAF 一次还在当前帧里，两次之后才是新的一帧）。
+ *
+ *  通信走 <html> 上的 data-boot，与 data-veil-phase / data-receipt 同一套做法。
+ *  用属性而不是事件，是因为开屏层比应用先执行：它没法订阅一个"还没发生过"的事件，
+ *  由它轮询属性反而与加载顺序无关。 */
+function releaseBootLayer(): void {
+  if (document.documentElement.dataset.boot === 'ready') return
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.dataset.boot = 'ready'
+      })
+    })
+  })
+}
+
+// 只管第一次：路由落定之后放行一次就够，之后的导航是换场层的事。
+watch(
+  routed,
+  (isRouted) => {
+    if (isRouted) releaseBootLayer()
+  },
+  { immediate: true },
+)
+
 /** 外壳档的场记读数。必须在这里写死，不能从 route.meta 取：换场那一刻读到的 meta
  *  是**目标页**的，登录 → 学生端会读到「下单打印」，而这一层换掉的是整个外壳，
  *  说「学生终端」才对。代号走等宽大写，是站内 .tech-label 既有的语气。 */
+
 const shellLabel = computed(() => {
   switch (shellTransitionKey.value) {
     case 'guest':
@@ -56,6 +91,16 @@ const shellLabel = computed(() => {
     :date-locale="dateZhCN"
     class="h-full"
   >
+    <!-- 装饰层：固定铺满视口、在内容之下，承载随指针做视差的那几件装饰。
+         **必须放在换场 stage 之外**：stage 在换场时会被 transform，而 transform 会给
+         固定定位的后代换掉包含块，这一层就会跟着内容一起飘。
+         它是 aria-hidden 且 pointer-events: none 的，不参与交互。 -->
+    <!-- data-guest：登录页有自己的底图（那张图纸），这一层让位。
+         **一页只能有一套底线** —— 48px 网格与图纸叠在一起就是"两层网格"那个老问题。 -->
+    <div class="decor-layer" :data-guest="shellTransitionKey === 'guest' ? '' : undefined" aria-hidden="true">
+      <span class="decor-layer__grid" data-parallax style="--depth: 9px" />
+    </div>
+
     <NMessageProvider :max="3" placement="top">
       <NDialogProvider>
         <NLoadingBarProvider>
@@ -74,6 +119,10 @@ const shellLabel = computed(() => {
           <!-- 换场覆盖层：全站唯一实例，Teleport 到 body。
                放在 provider 里只是为了拿到应用上下文，DOM 上它不在 #app 内。 -->
           <RouteVeil />
+          <!-- 转场回执：**有结果的事件**才出一条（登录成功、下单成功…）。
+               普通导航的"去哪"由换场覆盖层自己在屏幕正中报，不在这里出。
+               跨换场留在屏幕上（理由见组件顶部）。 -->
+          <TransitionReceipt />
         </NLoadingBarProvider>
       </NDialogProvider>
     </NMessageProvider>

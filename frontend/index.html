@@ -18,9 +18,473 @@
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
       } catch (e) {}
     </script>
+
+    <!-- ══ 开屏层 ══════════════════════════════════════════════════════════════
+         整站启动时盖住屏幕的那一块：把首屏盖住、把启动进度读出来，最后像换场那样
+         用一块斜切面板扫开，把页面让出来。
+
+         **为什么它写在 index.html 里，而不是做成 Vue 组件**
+         它要盖住的正是「CSS 与 JS 产物还没到」的那一段 —— 宿舍 wifi 上这段是整次加载
+         里最长的一截。做成组件的话，它只能在应用挂载之后才出现，那之前屏幕仍然是白的，
+         等于没盖。
+         代价是这一层读不到 tokens.css / base.css（那时还没解析到），所以下面这段自带
+         排版与颜色，**与样式表无关地自成一体的**；只有出场那一下例外 —— 那时样式表一定
+         已经装上了，于是它交给 base.css 去写，好与换场面板共用同一套几何与时长
+         （见 base.css 的 .boot__*）。
+
+         几条与站内一致的纪律：
+         · 会动的读数不进朗读流（视觉部分整块 aria-hidden），只留一句 sr-only 给读屏；
+         · 读数**必须是真的**：下面三行里程碑各自对应一件真实发生过的事
+           （产物执行完 / 字体就位 / 应用报出第一帧），没有一行是定时器编出来的；
+         · 参考站那一屏的语汇是"仪表在自检"，本站的对应物是刻度、机读读数、
+           一条竖着的进度柱与右下的三角阵列；
+         · 减少动效下不做横扫（与换场同一个判断，理由见 base.css）。
+    ═══════════════════════════════════════════════════════════════════════ -->
+    <style>
+      /* 这一段在样式表之前就要画出来，所以全是字面值。
+         两个颜色与站内同源：底色 #050505 就是上面 theme-color 的那个值（也是深色主题的
+         换场面板色），进度黄 #fffa00 就是 --primary 的取值。刻意不跟随浅色主题 ——
+         开屏那一下属于"屏"而不是"纸"，深底在深浅两个主题下都是对的。 */
+      .boot {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        z-index: 200; /* 布局 chrome 的 20、换场层的 100 之上，Naive 弹层最低的 2000 之下 */
+        overflow: hidden;
+        /* **容器自己不画任何东西**：盖住屏幕的是下面的 .boot__mat。
+           这里给一块底色看起来更保险，但那样面板扫开之后露出来的还是这块底色 ——
+           整屏黑到底，页面永远不出现（踩过一次：出场动画全对，就是看不见应用）。
+           启动期间这一层是"还没轮到你操作"：吃掉指针与触摸（含滚动手势）。 */
+        touch-action: none;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .boot__mat,
+      .boot__under {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        /* 比屏幕宽出两侧各 12%：出场时面板要斜切 4deg 滑走，不留这个余量，
+           斜过去的那条边会在上下角先露出页面（换场面板留余量出于同一个理由）。 */
+        left: -12%;
+        width: 124%;
+      }
+
+      /* 黑层：一直盖着屏幕的那一块。**不给它 transform** —— 出场那一下由 base.css
+         平移它，两处各写一份平移量迟早对不上。 */
+      .boot__mat {
+        background-color: #050505;
+      }
+
+      /* 黄层：垫在黑层下面，出场时殿后一个 --motion-route-wipe-lead。露出的那条黄边
+         就是参考站"载入完成"那一下的闪光，只是换成本站的规矩（与换场、回执条同一条：
+         黄带先进后出）。出场之前它整个在黑层底下，看不见。 */
+      .boot__under {
+        background-color: #fffa00;
+      }
+
+      .boot__hud {
+        position: absolute;
+        inset: 0;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+        color: #ffffff;
+      }
+
+      /* 一圈内缩的细框：与登录页那张图纸的图框、页面四角的括角是同一件事 ——
+         读作"一块被框起来的屏"，不是一张无边无际的黑。 */
+      .boot__frame {
+        position: absolute;
+        inset: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+
+      .boot__top,
+      .boot__band {
+        position: absolute;
+        right: 26px;
+        left: 26px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        align-items: baseline;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.4);
+      }
+
+      .boot__top {
+        top: 26px;
+      }
+
+      .boot__band {
+        bottom: 22px;
+      }
+
+      .boot__cn {
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      /* 靠右那一格走 margin-left:auto，不为它单开一层容器。 */
+      .boot__right {
+        margin-left: auto;
+      }
+
+      /* 左下角那一块：三角阵列（中间那格刻意空着 —— 与换场读数右下角同一处记号）
+         → 巨号百分比 → 一行机读读数。 */
+      .boot__foot {
+        position: absolute;
+        bottom: 54px;
+        left: 26px;
+      }
+
+      .boot__tri {
+        display: flex;
+        gap: 5px;
+        margin-bottom: 12px;
+      }
+
+      .boot__tri > i {
+        width: 9px;
+        height: 9px;
+        background-color: #fffa00;
+        /* 下左三角。用 clip-path 画而不是用「◣」那个字形：字形随平台字体变，阵列会歪。 */
+        clip-path: polygon(0 100%, 0 0, 100% 100%);
+      }
+
+      /* 空着的那一格**什么都不画**：换场读数右下角那组三角也是这么处理的（.is-blank
+         只把底色去掉）。给它描一圈边就变成了"没勾选的复选框" —— 那是个表单控件的形状，
+         而这里的语汇是"阵列里没点亮的一格"。 */
+      .boot__tri > .is-blank {
+        background-color: transparent;
+      }
+
+      .boot__num {
+        display: flex;
+        align-items: baseline;
+        font-size: clamp(44px, 7vw, 76px);
+        font-weight: 700;
+        line-height: 0.9;
+        letter-spacing: -0.02em;
+        color: #fffa00;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* 等宽数字 + 锁住三位宽度：0 → 100 之间整数位在变，不锁宽度的话百分号会跟着
+         左右跳 —— 一个正在读数的仪表不该抖。 */
+      .boot__num > span {
+        display: inline-block;
+        min-width: 3ch;
+        text-align: right;
+      }
+
+      .boot__num > b {
+        font-size: 0.34em;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+
+      .boot__cap {
+        display: block;
+        margin-top: 10px;
+      }
+
+      /* 左边那条竖着的进度柱：参考站那一屏最有辨识度的一件，也是"进度"最直白的写法
+         （高度就是读数）。整条只有 6px 宽，占屏面积不到 1%，合站内「黄是点不是面」
+         那条分工。只动 transform，不去改 height。 */
+      .boot__fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 6px;
+        height: 100%;
+        background-color: #fffa00;
+        transform: scaleY(var(--boot-p, 0));
+        transform-origin: top;
+      }
+
+      /* 自检读数：三行里程碑，压在底部那条细线上方、靠右。 */
+      .boot__log {
+        position: absolute;
+        right: 26px;
+        bottom: 54px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .boot__row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        color: rgba(255, 255, 255, 0.36);
+      }
+
+      .boot__row > i {
+        width: 5px;
+        height: 5px;
+        border: 1px solid rgba(255, 255, 255, 0.32);
+      }
+
+      .boot__row > b {
+        font-weight: 600;
+      }
+
+      .boot__row > span {
+        margin-left: auto;
+      }
+
+      /* 里程碑点亮：方块填实、读数转成强调黄。状态是**真的**，见下面的脚本。 */
+      .boot__row[data-state='ok'] {
+        color: rgba(255, 255, 255, 0.66);
+      }
+
+      .boot__row[data-state='ok'] > i {
+        background-color: #fffa00;
+        border-color: #fffa00;
+      }
+
+      .boot__row[data-state='ok'] > span {
+        color: #fffa00;
+      }
+
+      /* 入场：几块依次升起落位，像一次读数从上往下扫过。
+         曲线与 --motion-ease-out 是同一条（这里读不到 token，值只能抄一份）。
+         排期与控制器里的 MIN_MS 对齐：六块错开 40ms 起步、240ms 落位，最后一块
+         恰好在**放行那一刻**到位。于是本机这种几百毫秒就起来的加载也能看见完整版面，
+         而不是只闪一下数字就扫走；加载真慢的那次（窄带上产物还没到）本来就停得久。
+         改这里的延时就要回头看一眼 MIN_MS —— 早了会出现"数字还半透明就开始扫"，
+         那是这张脸上唯一的破绽。 */
+      @keyframes boot-in {
+        from {
+          opacity: 0;
+          transform: translate3d(0, 8px, 0);
+        }
+      }
+
+      .boot__in {
+        animation: boot-in 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+        animation-delay: var(--d, 0ms);
+      }
+
+      .boot__sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+        white-space: nowrap;
+      }
+
+      /* 减少动效下入场不做位移，直接在位。 */
+      @media (prefers-reduced-motion: reduce) {
+        .boot__in {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot" class="boot" role="status">
+      <span class="boot__sr">正在接入服务</span>
+
+      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在黑层下面。 -->
+      <i class="boot__under" aria-hidden="true"></i>
+      <i class="boot__mat" aria-hidden="true"></i>
+
+      <div class="boot__hud" aria-hidden="true">
+        <i class="boot__frame boot__in" style="--d: 0ms"></i>
+        <i class="boot__fill boot__in" style="--d: 120ms"></i>
+
+        <div class="boot__top boot__in" style="--d: 40ms">
+          <span class="boot__cn">正在接入</span>
+          <span>NEKO PRINT SERVICE</span>
+          <span class="boot__right">SEC 00</span>
+        </div>
+
+        <ul class="boot__log boot__in" style="--d: 160ms">
+          <li class="boot__row" data-step="bundle"><i></i><b>BUNDLE</b><span>--</span></li>
+          <li class="boot__row" data-step="fonts"><i></i><b>FONTS</b><span>--</span></li>
+          <li class="boot__row" data-step="session"><i></i><b>SESSION</b><span>--</span></li>
+        </ul>
+
+        <div class="boot__foot boot__in" style="--d: 80ms">
+          <span class="boot__tri"><i></i><i class="is-blank"></i><i></i></span>
+          <div class="boot__num"><span id="boot-pct">0</span><b>%</b></div>
+          <span class="boot__cap" id="boot-cap">LOADING</span>
+        </div>
+
+        <div class="boot__band boot__in" style="--d: 200ms">
+          <span>猫娘打印服务 · NEKO PRINT SERVICE</span>
+          <span class="boot__right">SEC 00</span>
+        </div>
+      </div>
+
+      <noscript>
+        <style>
+          #boot {
+            display: none;
+          }
+        </style>
+      </noscript>
+    </div>
+
     <div id="app"></div>
+
+    <script>
+      /* 开屏层的控制器。三件事：把真实里程碑换算成进度、把读数画出来、到点出场。
+       *
+       * 进度不是定时器编的：四个目标值各自对应一件真的发生过的事。所以"卡在 60%"
+       * 是个有意义的状态（产物到了、应用还没起来），而不是一句安慰。
+       *
+       * 出场由应用放行：App.vue 在第一帧内容真的画出来之后往 <html> 上写
+       * data-boot="ready"（与 data-veil-phase / data-receipt 同一套跨层通信），
+       * 这里轮询它 —— 开屏层在应用之前执行，改成事件就得反过来依赖加载顺序。 */
+      ;(function () {
+        var boot = document.getElementById('boot')
+        if (!boot) return
+
+        var num = document.getElementById('boot-pct')
+        var cap = document.getElementById('boot-cap')
+        var root = document.documentElement
+
+        var START = 6
+        // 放行的最早时刻。这个数不是"等一会儿"，而是与入场排期绑在一起的：
+        // index.html 里那六块读数最晚的在 200ms 起步、240ms 落位，400ms 正好是
+        // "整块版面刚刚到位"。低于它，本机这种秒开的加载会看见"数字还半透明，
+        // 面板就开始扫"—— 那不是设计，是没排好。
+        var MIN_MS = 400
+        var WATCHDOG_MS = 8000 // 产物 404 / 脚本挂了时，用户不能被锁在开屏层里
+        var EXIT_FALLBACK_MS = 1200 // 出场动画的兜底时长（那份样式没到时也要能摘掉这一层）
+
+        var t0 = performance.now()
+        var target = START
+        var shown = START
+        var last = t0
+        var lastInt = -1
+        var ready = false
+        var exiting = false
+
+        function mark(name, ok) {
+          var row = boot.querySelector('[data-step="' + name + '"]')
+          if (!row) return
+          row.setAttribute('data-state', ok ? 'ok' : 'wait')
+          row.lastElementChild.textContent = ok ? 'OK' : '--'
+        }
+
+        function bump(to) {
+          if (to > target) target = to
+        }
+
+        // 1. 产物执行完（type=module 一定在 DOMContentLoaded 之前跑完）—— 应用该挂上了
+        function onBundle() {
+          mark('bundle', true)
+          bump(35)
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onBundle)
+        else onBundle()
+
+        // 2. 所有子资源到齐
+        window.addEventListener('load', function () {
+          bump(60)
+        })
+
+        // 3. 字体就位（中文字体是分片的，窄带上这一段并不短）
+        if (document.fonts && document.fonts.ready) {
+          document.fonts.ready.then(function () {
+            mark('fonts', true)
+            bump(85)
+          })
+        } else {
+          mark('fonts', true)
+          bump(85)
+        }
+
+        function exit() {
+          if (exiting) return
+          exiting = true
+          boot.setAttribute('data-phase', 'exit')
+          cap.textContent = 'READY'
+
+          // 摘除时机：面板扫完的那一刻。**听 transitionend 而不是定时器** ——
+          // 定时器要猜一个时长，而那个时长归 base.css 的令牌管；猜短了会把还在扫的面板
+          // 掐掉（露一半），猜长了这一层会在页面上多留一会儿。
+          var mat = boot.querySelector('.boot__mat')
+          var removed = false
+          function finish() {
+            if (removed) return
+            removed = true
+            boot.style.transition = 'opacity 160ms linear'
+            boot.style.opacity = '0'
+            window.setTimeout(function () {
+              boot.remove()
+            }, 200)
+          }
+          if (mat) {
+            mat.addEventListener('transitionend', function (event) {
+              if (event.propertyName === 'transform') finish()
+            })
+          }
+          // 兜底：出场那几条规则在 base.css 里，万一那份样式没到（或者被拦了），
+          // 上面那个事件永远不会来，这里也得把这一层收掉 —— 否则就是一块永远盖着的黑。
+          window.setTimeout(finish, EXIT_FALLBACK_MS)
+        }
+
+        function frame(now) {
+          if (exiting) return
+          var elapsed = now - t0
+
+          // 应用放行（见上面注释）。轮询而不是监听事件：开屏层先于应用执行，
+          // 事件可能在我们挂上监听之前就已经发过了。
+          if (!ready && elapsed > 120 && root.dataset.boot === 'ready') {
+            ready = true
+            mark('session', true)
+            bump(100)
+          }
+
+          // 指数逼近：每帧吃掉剩余距离的一部分。与站内视差的平滑同一个手法 ——
+          // 帧率无关，也不会像线性插值那样"匀速跳到目标值"。
+          var dt = Math.min(now - last, 64)
+          last = now
+          shown += (target - shown) * (1 - Math.pow(0.001, dt / 420))
+          if (target - shown < 0.4) shown = target
+
+          var value = Math.floor(shown)
+          if (value !== lastInt) {
+            lastInt = value
+            num.textContent = String(value)
+          }
+          boot.style.setProperty('--boot-p', String(shown / 100))
+
+          // 出场等读数真的落在 100 上（而不是等目标值）：否则面板会在数字还停在 93 的
+          // 时候就扫开 —— 那一眼就是整屏唯一的破绽。
+          if (shown >= 100 && elapsed >= MIN_MS) {
+            exit()
+            return
+          }
+          if (elapsed > WATCHDOG_MS) {
+            exit()
+            return
+          }
+          requestAnimationFrame(frame)
+        }
+
+        requestAnimationFrame(frame)
+      })()
+    </script>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

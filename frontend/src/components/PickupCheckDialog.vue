@@ -94,7 +94,7 @@ async function lookup(): Promise<void> {
     order.value = data.order
     if (data.order.status !== READY) missHint.value = ''
   } catch (error) {
-    missHint.value = error instanceof ApiError ? error.message : '查不到这一单，核对一下取件码'
+    missHint.value = error instanceof ApiError ? error.message : '查不到这一单 · 核对取件码'
   } finally {
     looking.value = false
   }
@@ -109,8 +109,8 @@ async function lookup(): Promise<void> {
  *  本来就已经显示着这一单的状态了。 */
 function confirmBlockReason(current: PickupOrder): string | null {
   if (current.status === DONE) return '这一单已经取走了'
-  if (current.status === WAIT_PRICE) return '这一单还没计费，先在订单台把金额填上'
-  if (current.status !== READY) return `现在是「${current.status}」，还没到可取件那一步`
+  if (current.status === WAIT_PRICE) return '还没计费 · 先在订单台填金额'
+  if (current.status !== READY) return `当前「${current.status}」· 还不能交件`
   return null
 }
 
@@ -150,8 +150,8 @@ function close(): void {
     title="取件核对"
     :bordered="false"
   >
-    <p class="mb-3 text-[12px] leading-5 text-ink-4">
-      输入取件码后回车。核一眼姓名、学号、份数再交件 —— 交错了，纸就找不回来了。
+    <p class="mb-3 text-xs leading-5 text-ink-3">
+      输入取件码回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
     </p>
 
     <NInput
@@ -159,7 +159,7 @@ function close(): void {
       v-model:value="code"
       size="large"
       clearable
-      placeholder="取件码，例如 0012"
+      placeholder="取件码 · 例 0012"
       :status="missHint ? 'error' : undefined"
       @keydown.enter="lookup"
     >
@@ -173,25 +173,25 @@ function close(): void {
       </template>
     </NInput>
 
-    <p v-if="missHint" class="mt-2 flex items-start gap-1.5 text-[12px] leading-5" style="color: var(--err)">
+    <p v-if="missHint" class="mt-2 flex items-start gap-1.5 text-xs leading-5" style="color: var(--err)">
       <CircleAlert :size="14" class="mt-0.5 shrink-0" />
       <span>{{ missHint }}</span>
     </p>
 
     <template v-if="order">
       <div
-        class="mt-4 rounded-lg border p-3"
+        class="mt-4 border p-3"
         style="border-color: var(--border); background-color: var(--muted)"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <p
-              class="truncate text-[13px] font-bold"
+              class="truncate text-sm font-bold"
               :title="order.preset_content ?? order.filename"
             >
               {{ orderFileLabel(order) }}
             </p>
-            <p class="tnum mt-0.5 text-[11px] text-ink-4">
+            <p class="tnum mt-0.5 text-2xs text-ink-3">
               #{{ order.id }} · {{ shortTime(order.create_time) }}
             </p>
           </div>
@@ -203,13 +203,13 @@ function close(): void {
              份数单独做一个牌子、单双面放在它旁边。 -->
         <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span class="spec-chip">{{ copiesLabel(order.copies) }}</span>
-          <span class="text-[13px] font-bold">
+          <span class="text-sm font-bold">
             {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
             <span class="font-normal text-ink-3">
               · {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
             </span>
           </span>
-          <span class="text-[12px] text-ink-3" :title="order.paper_remark ?? undefined">
+          <span class="text-xs text-ink-3" :title="order.paper_remark ?? undefined">
             {{ paperLabel(order.paper_name) }}
           </span>
         </div>
@@ -217,26 +217,26 @@ function close(): void {
         <!-- 姓名和学号放在最显眼的一格：这一屏存在的理由就是「把纸交对人」，
              昵称是学生自己起的、重名和改名都很常见，对不上柜台前的人。 -->
         <div class="mt-3 border-t pt-3" style="border-color: var(--border)">
-          <p class="tech-label mb-1 text-ink-4">核对领取人</p>
-          <p class="text-[15px] leading-6 font-bold">
+          <p class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">核对领取人</p>
+          <p class="text-base leading-6 font-bold">
             {{ order.owner_real_name ?? order.owner_nickname ?? '（账号已注销）' }}
-            <span class="tnum ml-1 text-[12px] font-normal text-ink-3">
+            <span class="tnum ml-1 text-xs font-normal text-ink-3">
               {{ order.owner_student_id ? `学号 ${order.owner_student_id}` : '名单里没有学号' }}
             </span>
           </p>
-          <p class="mt-0.5 text-[12px] text-ink-3">
+          <p class="mt-0.5 text-xs text-ink-3">
             {{ order.owner_nickname ?? '（已注销）' }} · {{ order.owner_dorm ?? '—' }}
           </p>
           <!-- 联系方式：本人来不了、托室友代取的情况，得有个能当场打过去的电话 -->
-          <p class="mt-0.5 truncate text-[12px] text-ink-3">
+          <p class="mt-0.5 truncate text-xs text-ink-3">
             {{ contactLabel(order.owner_contact_type, order.owner_contact) }}
           </p>
         </div>
 
-        <div class="mt-3 flex flex-wrap items-center gap-x-3 border-t pt-3 text-[12px]" style="border-color: var(--border)">
+        <div class="mt-3 flex flex-wrap items-center gap-x-3 border-t pt-3 text-xs" style="border-color: var(--border)">
           <span
             :class="
-              order.price === null || order.price === undefined ? 'text-ink-4' : 'tnum font-bold'
+              order.price === null || order.price === undefined ? 'text-ink-3' : 'tnum font-bold'
             "
           >
             费用 {{ priceLabel(order.price) }}
@@ -244,7 +244,7 @@ function close(): void {
           <span class="tnum text-ink-3">
             取件码 {{ pickupCodeLabel(order.pickup_code) }}
           </span>
-          <span v-if="order.claimer_nickname" class="text-ink-4">
+          <span v-if="order.claimer_nickname" class="text-ink-3">
             接单 {{ order.claimer_nickname }}
           </span>
         </div>
@@ -252,7 +252,7 @@ function close(): void {
         <!-- 预设服务那一句话：没有文件可看，这句话就是这一单的全部内容 -->
         <p
           v-if="order.preset_content"
-          class="mt-3 border-t pt-3 text-[12px] leading-5 whitespace-pre-wrap text-ink-3"
+          class="mt-3 border-t pt-3 text-xs leading-5 whitespace-pre-wrap text-ink-3"
           style="border-color: var(--border)"
         >
           {{ order.preset_content }}
@@ -260,7 +260,7 @@ function close(): void {
       </div>
 
       <NAlert v-if="justPicked" type="success" :bordered="false" class="mt-3">
-        这一单已标记为「已取件」，可以交给同学了。
+        已标记「已取件」，可以交件了。
       </NAlert>
       <NAlert v-else-if="blockReason" type="warning" :bordered="false" class="mt-3">
         {{ blockReason }}
