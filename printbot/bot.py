@@ -12,7 +12,7 @@
   /code 编号  → 查某一单的取件码
   /help       → 这份说明
 
-「订单可取了」自动推送：后台线程按 EVENTS_POLL_SECONDS 轮询
+「订单可取件」自动推送：后台线程按 EVENTS_POLL_SECONDS 轮询
 /api/bot/events，游标存本地文件，重启不丢不重（详见 _notify_loop）。
 
 铁律（QQbot对接大纲.md 第 0 节）：
@@ -947,7 +947,7 @@ def handle_event(client, event):
             log.warning('回话失败（连接不可用）qq=%s', qq)
 
 
-# ---- 「可取了」自动推送 -----------------------------------------------------
+# ---- 「可取件」自动推送 -----------------------------------------------------
 
 def _load_state():
     """读游标与已推清单。文件坏了当没存过（重新从 0 扫一遍顶多重复推一次，
@@ -1007,7 +1007,7 @@ def _notify_loop():
             except OneBotError:
                 log.warning('推送中断（连接不可用），游标保持 %s', cursor)
                 break
-            log.info('已推送「可取了」通知：订单 #%s → qq=%s', ev.get('order_id'), ev.get('qq'))
+            log.info('已推送「可取件」通知：订单 #%s → qq=%s', ev.get('order_id'), ev.get('qq'))
             notified.add(ev.get('order_id'))
         else:
             # for 没被 break 才走这里：这一批全推完了，游标才推进。

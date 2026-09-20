@@ -1248,7 +1248,7 @@ def api_update_status(order_id):
         conn.execute('''
             UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?
         ''', (new_status, order_id))
-        # 「从什么改成什么」必须记下来：状态被连着改两次（可取了 → 打印中 → 可取了）之后，
+        # 「从什么改成什么」必须记下来：状态被连着改两次（可取件 → 打印中 → 可取件）之后，
         # 光看最终状态和一个 update_time，谁也说不清中间那一步是谁做的。
         log_event(order_id, ORDER_LOG_STATUS,
                   '「%s」→「%s」' % (row['status'], new_status), conn=conn,
@@ -1314,7 +1314,7 @@ def api_confirm_pickup():
     with db_conn() as conn:
         # 条件写进 UPDATE 而不是先查后写：两个人同时点「确认取件」时，
         # 只有第一条能改到行，第二条 rowcount = 0 —— 这正是我们要的效果，
-        # 同一份件不能交给两个人。状态只认「可取了」：
+        # 同一份件不能交给两个人。状态只认「可取件」：
         # 打印中的单被柜台取走，等于纸还没出来就记账说已经给过了。
         #
         # 参数顺序要跟问号一一对上：SET 的那个问号在最前面，然后是 IN 里的一串，
@@ -1628,7 +1628,7 @@ def api_board():
             '''.format(extra=extra), (mine,)).fetchone()
             return {'count': mine, 'rank': row['ahead'] + 1, 'ranked': row['ranked']}
 
-        # 我自己各状态的单数，一条 GROUP BY 全出（卡片上只用到「进行中 / 可取了」两格）。
+        # 我自己各状态的单数，一条 GROUP BY 全出（卡片上只用到「进行中 / 可取件」两格）。
         # 之所以只查自己：总单数 / 近 7 天 / 账号数这类站点规模不再出库（见本函数开头），
         # 学生要的是「我自己的进度」，不是「这个站一共印了多少张纸」。
         # 分头查几个数字的写法也不可取：口径改一处漏一处，就会出现
@@ -1649,7 +1649,7 @@ def api_board():
         # 这里发的是**有序数组**，不是 {状态: 数量} 字典 —— 顺序是这个接口的一部分。
         # 用字典的话，在 config 里按流程摆好的先后到了前端就没了：Flask 的 JSON
         # 序列化默认对键排序（app.json.sort_keys，Flask 2.3+ 起默认 True），
-        # 排出来是「可取了 / 待打印 / 待计费 / 打印中」，看着像随手撒的。
+        # 排出来是「可取件 / 待打印 / 待计费 / 打印中」，看着像随手撒的。
         # 排队这一行要的是流程顺序（哪一档堵住了得一眼看出来），
         # 而 JSON 对象的键顺序在规范里本来就不作数，所以让数组来担这个保证。
         statuses = [{'status': status, 'count': counted.get(status, 0)}

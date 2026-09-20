@@ -513,7 +513,7 @@ onMounted(() => {
           取件提醒
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          状态变成「可取了」时自动发一封邮件：标题带取件码，正文带取件地点与付款方式。
+          状态变成「可取件」时自动发一封邮件：标题带取件码，正文带取件地点与付款方式。
           不用一直回网页刷。
         </p>
 
@@ -536,7 +536,7 @@ onMounted(() => {
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
             <dt class="tech-label text-ink-3 tech-label--cn">什么时候发</dt>
             <dd class="mt-1 mb-0 text-ink-2">
-              订单变成「可取了」的时刻
+              订单变成「可取件」的时刻
               <span class="mt-0.5 block text-ink-3">
                 每单只发一次 · 改价、改状态不会重复打扰
               </span>

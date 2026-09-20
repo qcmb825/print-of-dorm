@@ -75,7 +75,7 @@ def _derive_to_status(action, detail, stored):
     if action == ORDER_LOG_PICKUP:
         return ST_DONE
     if action == ORDER_LOG_STATUS and detail:
-        # detail 形如「「待打印」→「可取了」」：取箭头右边、剥掉书名号再校验
+        # detail 形如「「待打印」→「可取件」」：取箭头右边、剥掉书名号再校验
         tail = detail.rsplit('→', 1)
         if len(tail) == 2:
             candidate = tail[1].strip().strip('「」')

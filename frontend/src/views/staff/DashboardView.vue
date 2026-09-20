@@ -57,7 +57,7 @@ const statusColors = computed<Record<string, string>>(() => ({
   待计费: theme.tokens.statusUnpriced,
   待打印: theme.tokens.statusPending,
   打印中: theme.tokens.statusPrinting,
-  可取了: theme.tokens.statusReady,
+  可取件: theme.tokens.statusReady,
   已取件: theme.tokens.statusDone,
 }))
 

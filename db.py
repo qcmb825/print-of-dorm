@@ -8,8 +8,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ROLE_SUPER, ST_DONE, ST_UNPRICED,
-                    STATUS_CLOSED, logger)
+from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ROLE_SUPER, ST_DONE, ST_READY,
+                    ST_UNPRICED, STATUS_CLOSED, logger)
 from security import audit_action, make_password_records
 from utils import generate_pickup_code
 
@@ -232,7 +232,7 @@ def find_paper_type(conn, paper_type_id):
 #            筛选就静默失效了。新记录一律写列；**老记录不倒推**（沿项目惯例：
 #            没有事实就不编），查询时用 `to_status = ? OR detail LIKE '%→「?」%'`
 #            把两种都认下来。纯加列，不重建表。
-SCHEMA_VERSION = '16'
+SCHEMA_VERSION = '17'
 
 
 
@@ -350,6 +350,41 @@ def _migrate_release_unique_names(cursor, current_version):
     logger.info('users 表迁移完成')
     return backup
 
+
+
+def _migrate_ready_status_wording(cursor, current_version):
+    """v16 -> v17：「可取件」这个状态值改叫「可取件」。
+
+    为什么要动**库里的数据**、而不是只改代码里的字面量：
+    `待计费/待打印/打印中/可取件/已取件` 这几个字符串**同时是展示文案和前后端共用的标识**
+    （config.ORDER_STATUSES 上面那段讲的就是这件事）。文案一改，库里的旧值就成了
+    「代码不认识的状态」——界面拿不到状态色、筛选器漏掉这些单、`PUT /status` 也认不出来，
+    而这几处**都不会报错**，只会静默不对。所以它是迁移，不是改几个字。
+
+    要改三处，少一处就漏：
+      · `orders.status` —— 状态值本身；
+      · `order_logs.to_status` —— v16 起留痕里记的「改成了哪个状态」，历史记录页按它筛；
+      · `order_logs.detail` —— 形如「「待打印」→「可取件」」的**机器生成**文本；
+        历史记录页的老留痕兜底正是靠 LIKE 这段文字找的，不一起改就再也匹配不上了。
+        （这是唯一一处改写留痕文本的地方，理由：它是状态标识的载体，不是自由文本。）
+
+    三条都是幂等 UPDATE（改完再跑一次没有可改的行），且只在老库上执行。
+    """
+    if _migration_version(current_version) >= 17:
+        return
+    # ⚠️ 下面三句里的 WHERE / REPLACE / LIKE 用的是**旧值**「可取了」——
+    # 它们正是要被改掉的东西；批量改字面量时很容易被一起替换掉，
+    # 那样迁移就成了空动作（改完还是原样，而且不报错）。
+    orders = cursor.execute("UPDATE orders SET status = ? WHERE status = '可取了'",
+                            (ST_READY,)).rowcount
+    logs = cursor.execute("UPDATE order_logs SET to_status = ? WHERE to_status = '可取了'",
+                          (ST_READY,)).rowcount
+    details = cursor.execute(
+        "UPDATE order_logs SET detail = REPLACE(detail, '可取了', ?) WHERE detail LIKE '%可取了%'",
+        (ST_READY,)).rowcount
+    if orders or logs or details:
+        logger.info('迁移：状态「可取了」改名为「可取件」（订单 %d 条 / 留痕 %d 条 / 详情 %d 条）',
+                    orders, logs, details)
 
 
 def _migrate_relax_real_name_unique(cursor, current_version):
@@ -827,6 +862,14 @@ def init_database():
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
+
+        # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
+        # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，
+        # 老库当场 `no such column: to_status`，**整个 init_database 挂掉**，
+        # 于是补列、建索引、写版本号一个都执行不到（老库升级脚本一次报出十几条 FAIL）。
+        # 这与 v12「索引建在补列之前」、v16「ALTER 在建表之前」是同一类坑的第三种：
+        # **用结构的语句，必须排在产生该结构的语句之后**。
+        _migrate_ready_status_wording(cursor, current_version)
 
         if _pickup_index_ok and _qq_index_ok:
             cursor.execute(

@@ -71,7 +71,7 @@ ALLOWED_EXTENSIONS = tuple(
     ext.strip().lstrip('.').lower()
     for ext in _raw_extensions.replace('，', ',').split(',') if ext.strip())
 
-# 「订单可取了」的推送轮询间隔（秒）。大纲第 5.2 节：30 秒一次，
+# 「订单可取件」的推送轮询间隔（秒）。大纲第 5.2 节：30 秒一次，
 # 一天约 2880 个短请求，对服务器毫无压力；再密就是白烧跨洋流量。
 EVENTS_POLL_SECONDS = int(os.getenv('EVENTS_POLL_SECONDS', '30') or '30')
 

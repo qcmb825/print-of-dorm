@@ -92,7 +92,7 @@
                                           其余 --viz-* 是供饼图区分实体的分类色，不动。 */
             --viz-pending: #b45309;   /* 待打印 */
             --viz-printing: #0369a1;  /* 打印中 */
-            --viz-ready: #16a34a;     /* 可取了 */
+            --viz-ready: #16a34a;     /* 可取件 */
             --viz-done: #7c3aed;      /* 已取件 */
             --viz-a: #2a78d6;         /* 通用第 1 类 */
             --viz-b: #eb6834;         /* 通用第 2 类 */
@@ -326,7 +326,7 @@
         button:active:not(:disabled) { transform: scale(.97); }
         button.ghost { background: var(--surface-soft); color: var(--ink); border-color: var(--line); box-shadow: none; }
         button.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); box-shadow: none; }
-        /* 「次级实心」：给订单行里那一排「→ 打印中 / → 可取了」用。
+        /* 「次级实心」：给订单行里那一排「→ 打印中 / → 可取件」用。
            之前它们和「接单」一样是通体渐变，一行里四五个同样饱和的按钮互相抢，
            主操作（接单）反而喊不出来。现在按钮分三档，一眼能看出轻重：
              实心渐变 = 主操作（接单、发送、提交）
@@ -385,7 +385,7 @@
             font-size: var(--fs-xs); line-height: 1.4; white-space: nowrap; display: inline-block; }
         .st-待打印 { background: var(--warn-bg); color: var(--warn); }
         .st-打印中 { background: var(--info-bg); color: var(--info); }
-        .st-可取了 { background: var(--ok-bg); color: var(--ok); }
+        .st-可取件 { background: var(--ok-bg); color: var(--ok); }
         .st-已取件 { background: var(--neutral-bg); color: var(--neutral); }
         .role-user  { background: var(--role-user-bg);  color: var(--role-user-ink); }
         .role-admin { background: var(--role-admin-bg); color: var(--role-admin-ink); }
@@ -814,7 +814,7 @@
         'use strict';
 
         // ==== 全局状态与常量 ====
-        const STATUSES = ['待打印', '打印中', '可取了', '已取件'];
+        const STATUSES = ['待打印', '打印中', '可取件', '已取件'];
         const ROLE_LABELS = { user: '普通用户', admin: '管理员' };
         // 一条公告最多自动弹几次。超过之后只留在「公告」页的历史列表里。
         // 为什么要有上限：公告是「告知」，不是「弹窗广告」。同一条内容反复打断同一个用户，
@@ -2216,7 +2216,7 @@
             // 订单状态：与表格里的状态徽章同色系，看图就能对上表
             '待打印': 'var(--viz-pending)',
             '打印中': 'var(--viz-printing)',
-            '可取了': 'var(--viz-ready)',
+            '可取件': 'var(--viz-ready)',
             '已取件': 'var(--viz-done)',
             // 角色：只有两种对外角色。这里故意不给第三档配色 ——
             // 配色一旦存在，早晚会有人把某个角色接上去，图表上就会长出一块

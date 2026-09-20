@@ -67,15 +67,15 @@ const WAIT_PRICE: OrderStatus = '待计费'
 /** 已取件。取件时钱是当面结清的，所以这个是金额的终点，改价一路挡到这里为止。 */
 const DONE: OrderStatus = '已取件'
 
-/** 可取了。它同时是「学生到底收没收到提醒」这件事唯一有意义的位置 ——
+/** 可取件。它同时是「学生到底收没收到提醒」这件事唯一有意义的位置 ——
  *  取件邮件只在进入这个状态时发一次。 */
-const READY: OrderStatus = '可取了'
+const READY: OrderStatus = '可取件'
 
 /** 需人工通知：已经可取件了，但这位学生推不出邮箱，邮件那一路发不出去。
  *
  *  判定用的是后端给的 owner_mailbox_missing，**不在这里重写一遍 QQ_RE** ——
  *  那套规则改一个字，本地这份不会跟着改，界面就会开始说谎，而且不报错。
- *  条件里的「可取了」不能省：别的状态还没走到发通知那一步，
+ *  条件里的「可取件」不能省：别的状态还没走到发通知那一步，
  *  提前挂个标签等于催管理员去做一件现在还不该做的事。 */
 function needsManualNotify(order: Order): boolean {
   return order.status === READY && order.owner_mailbox_missing === true
@@ -230,7 +230,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)
 const poolSummary = computed(() => ({
   pool: orders.value.filter((order) => order.claimed_by === null).length,
   mine: orders.value.filter((order) => order.claimed_by === currentUserId.value).length,
-  ready: orders.value.filter((order) => order.status === '可取了').length,
+  ready: orders.value.filter((order) => order.status === '可取件').length,
   unpriced: orders.value.filter((order) => order.status === WAIT_PRICE).length,
 }))
 
@@ -875,7 +875,7 @@ async function setGroup(order: Order, key: string): Promise<void> {
 }
 
 /** 取件核对窗口交了一单。不用等下一次轮询：柜台这边刚把纸递出去，
- *  屏幕上那一行还写着「可取了」的话，下一个人来取件时很容易看错行。 */
+ *  屏幕上那一行还写着「可取件」的话，下一个人来取件时很容易看错行。 */
 function onPickupDone(): void {
   void load(true)
 }
@@ -944,7 +944,7 @@ onBeforeUnmount(() => {
       <StatCard label="本页待接单" :value="poolSummary.pool" accent />
       <StatCard label="本页待计费" :value="poolSummary.unpriced" />
       <StatCard label="本页我接的" :value="poolSummary.mine" />
-      <StatCard label="本页可取了" :value="poolSummary.ready" />
+      <StatCard label="本页可取件" :value="poolSummary.ready" />
     </div>
 
     <div class="panel mb-3 flex flex-wrap items-center gap-2 p-2.5">
@@ -1322,7 +1322,7 @@ onBeforeUnmount(() => {
     </NModal>
 
     <!-- 取件核对二级窗口。@done 里去刷一下列表：刚交出去的那一单在本地还是
-         「可取了」，不刷的话下一个人来取件时很容易看错行。 -->
+         「可取件」，不刷的话下一个人来取件时很容易看错行。 -->
     <PickupCheckDialog v-model:show="pickupOpen" @done="onPickupDone" />
   </div>
 </template>

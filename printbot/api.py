@@ -228,5 +228,5 @@ def order_file(qq, file_name, file_bytes, color='black', duplex='single',
 
 
 def events(since):
-    """拉「该通知谁」：自 since 以来变成可取了、现在还停在那儿的订单。"""
+    """拉「该通知谁」：自 since 以来变成可取件、现在还停在那儿的订单。"""
     return _request('GET', '/api/bot/events?%s' % urllib.parse.urlencode({'since': since}))

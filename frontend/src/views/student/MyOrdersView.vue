@@ -41,7 +41,7 @@ const summary = computed(() => ({
   active: orders.value.filter(
     (o) => o.status === '待计费' || o.status === '待打印' || o.status === '打印中',
   ).length,
-  ready: orders.value.filter((o) => o.status === '可取了').length,
+  ready: orders.value.filter((o) => o.status === '可取件').length,
   done: orders.value.filter((o) => o.status === '已取件').length,
 }))
 
@@ -170,10 +170,10 @@ async function withdraw(order: Order): Promise<void> {
           {{ summary.active }}
         </div>
       </div>
-      <!-- 「可取了」那格的数字本来就是强调色，所以这一跳在它身上看不见 ——
+      <!-- 「可取件」那格的数字本来就是强调色，所以这一跳在它身上看不见 ——
            不给它另发明第二种信号（同一页里两种变化反馈比少一种更容易误读）。 -->
       <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-3 tech-label--cn text-xs">可取了</div>
+        <div class="tech-label text-ink-3 tech-label--cn text-xs">可取件</div>
         <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
           {{ summary.ready }}
         </div>
@@ -319,7 +319,7 @@ async function withdraw(order: Order): Promise<void> {
               <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">取件码</div>
               <div
                 class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"
-                :style="order.status === '可取了' ? { color: 'var(--accent-text)' } : undefined"
+                :style="order.status === '可取件' ? { color: 'var(--accent-text)' } : undefined"
               >
                 {{ pickupCodeLabel(order.pickup_code) }}
               </div>

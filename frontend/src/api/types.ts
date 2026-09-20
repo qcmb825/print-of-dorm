@@ -17,15 +17,15 @@ export const ROLE_LABELS: Record<Role, string> = {
  *  后端按它落库（config.ST_*），前端按它取颜色 —— 不要单独翻译或重命名。
  *  改这里记得同时改 utils/format.ts 的两张颜色表，否则新状态会取不到颜色，
  *  表现为标签没背景色而不是报错。 */
-export type OrderStatus = '待计费' | '待打印' | '打印中' | '可取了' | '已取件'
+export type OrderStatus = '待计费' | '待打印' | '打印中' | '可取件' | '已取件'
 
-export const ORDER_STATUSES: OrderStatus[] = ['待计费', '待打印', '打印中', '可取了', '已取件']
+export const ORDER_STATUSES: OrderStatus[] = ['待计费', '待打印', '打印中', '可取件', '已取件']
 
 /** 管理员能手动切到的状态，比上面少一个「待计费」。
  *  待计费只能由计费动作产生（后端 POST /api/order/<id>/price）；
  *  允许切回去就造得出「已标了价却又退回待计费」的单，
  *  而前端会照旧把那个金额显示出来，没人看得出它其实还没被确认。 */
-export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '可取了', '已取件']
+export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '可取件', '已取件']
 
 /** 「按打印服务筛选」里代表「什么都没归」的那个取值。
  *
@@ -235,7 +235,7 @@ export interface Order {
    *
    *  由服务端算（用的就是发信那一路的判定函数），前端不镜像那套正则 ——
    *  镜像必然漂移，而且漂了不报错，只是界面上的标签开始说谎。
-   *  界面上只在状态是「可取了」时才展示它：别的状态本来也没到发通知那一步。 */
+   *  界面上只在状态是「可取件」时才展示它：别的状态本来也没到发通知那一步。 */
   owner_mailbox_missing?: boolean
   claimer_nickname?: string | null
   /** 计费人昵称，仅管理端列表返回 */
@@ -620,7 +620,7 @@ export interface ServiceBoard extends ApiEnvelope {
     total: number
     /** 进行中：待计费 / 待打印 / 打印中。刚提交完在等报价的也算 */
     active: number
-    /** 我还没取的件数（状态「可取了」） */
+    /** 我还没取的件数（状态「可取件」） */
     ready: number
     /** 我在累计榜上的名次。**没下过单时后端也返回 1**，页面必须先判 total */
     rank: number
@@ -632,7 +632,7 @@ export interface ServiceBoard extends ApiEnvelope {
      *
      *  为什么是数组不是 `{ 状态: 数量 }`：Flask 的 JSON 序列化默认对键排序
      *  （`app.json.sort_keys`，Flask 2.3+ 起默认 True），字典里在 config 中按流程
-     *  摆好的顺序，发出去会变成「可取了 / 待打印 / 待计费 / 打印中」这种字面顺序。
+     *  摆好的顺序，发出去会变成「可取件 / 待打印 / 待计费 / 打印中」这种字面顺序。
      *  排队这一行要的正是顺序，而 JSON 对象的键顺序规范上不作数，只能交给数组。
      *
      *  **没有「已取件」**：它已经出队，而且那是个累计数、属站点规模，

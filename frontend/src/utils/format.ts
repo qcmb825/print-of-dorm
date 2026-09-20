@@ -35,7 +35,7 @@ export const STATUS_COLOR_VAR: Record<OrderStatus, string> = {
   待计费: 'var(--status-unpriced)',
   待打印: 'var(--status-pending)',
   打印中: 'var(--status-printing)',
-  可取了: 'var(--status-ready)',
+  可取件: 'var(--status-ready)',
   已取件: 'var(--status-done)',
 }
 
@@ -43,7 +43,7 @@ export const STATUS_BG_VAR: Record<OrderStatus, string> = {
   待计费: 'var(--status-unpriced-bg)',
   待打印: 'var(--status-pending-bg)',
   打印中: 'var(--status-printing-bg)',
-  可取了: 'var(--status-ready-bg)',
+  可取件: 'var(--status-ready-bg)',
   已取件: 'var(--status-done-bg)',
 }
 
