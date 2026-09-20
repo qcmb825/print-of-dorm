@@ -648,7 +648,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 那台机器上、`python -m printbot.bot` 启动即可，**不 import 项目里任何模块**。
 
 ```
-QQ 客户端（NapCat） --正向 WS--> printbot --HTTP+BOT_TOKEN--> Flask（/api/bot/*）
+QQ 客户端 / QQ 协议（LLBot） --正向 WS--> printbot --HTTP+BOT_TOKEN--> Flask（/api/bot/*）
                          ↑                                        │
                          └──────────── 「可取了」推送 ←────────────┘
 ```
@@ -666,8 +666,22 @@ QQ 客户端（NapCat） --正向 WS--> printbot --HTTP+BOT_TOKEN--> Flask（/ap
 | `BOT_TOKEN` | 必须与 `.env` 里的 `BOT_TOKEN` 一致 |
 | `SITE_URL` | 文案里引导回网页的地址，默认 `https://print.qcmb.cloud` |
 
-QQ 框架用 **NapCat Shell**（`NapCatShell/`，配置在 `config/onebot11_<QQ号>.json`，正向 WS 端口 8085）。
-项目根的 `启动服务.bat` 是**一条命令起全套**：网页服务（:8080）→ NapCat（:8085）→ printbot，
+QQ 框架用 **LLOneBot**（LLBot CLI 2.1.0 / LLBot 8.2.1，包在 `LLBot-CLI-win-x64-v8/`，
+跑 headless 直连、本机不需要挂 QQ 客户端）：
+
+```powershell
+# 首次：把授权 token 粘进这个文件（在 https://auth.luckylillia.com 领）
+#   LLBot-CLI-win-x64-v8in\llbot\datauth_token.txt
+# 然后：启动（二维码在它自己的窗口里，扫一次即登记该 QQ；登录态会存下来）
+LLBot-CLI-win-x64-v8\llbot.exe --qq=<机器人QQ>
+```
+
+> token 与 QQ 号是绑定的：**新 QQ 第一次扫码登录一次就会自动登记**
+> （管理站「绑定的 QQ 号」那栏会从 0/3 变成 1/3）。没登记时签名服务回 403
+> `uin ... not in your allowed list`、Bot 打印完就退出。token 是凭据，只落在上面那个文件里。
+> OneBot 正向 WS 在 `127.0.0.1:8085`，access token 与 `printbot/.env` 的 `ONEBOT_ACCESS_TOKEN` 必须一致。
+> 它的管理页在 `http://127.0.0.1:3080`。
+项目根的 `启动服务.bat` 是**一条命令起全套**：网页服务（:8080）→ LLBot（:8085）→ printbot，
 每一步都先探测再启动（已在跑的不会重复拉起），并会等端口就绪。QQ 掉线这类现场它也会给提示。
 脚本是 **GBK 编码 + CRLF**（cmd 按控制台代码页解析中文），改它时别存成 UTF-8、也别改成 LF ——
 `.gitattributes` 里 `*.bat -text` 就是为了保证这两点原样进原样出。
