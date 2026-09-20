@@ -1,309 +1,505 @@
 """botcard.py —— 给 QQ 机器人渲染「数据卡」图片（Pillow）。
 
-为什么要有它：订单 / 工单 / 预设 / 我的 这几类回复是**表格型**的，
-纯文本发出去在手机 QQ 里是一大坨、层级全糊。渲染成一张卡，
-读起来像站内那些面板。
+为什么要有它：订单 / 工单 / 预设 / 我的 / 帮助 这几类回复是**表格型**的，
+纯文本发出去在手机 QQ 里是一大坨、层级全糊。渲染成一张卡读起来像站内的面板。
 
-风格**与网页端同源**（`frontend/src/styles/tokens.css` 的深色一套）：深底、
-工业黄、1px 描边、方角、等宽数字、蓝图括角与斜纹。两边的值刻意各写一份
-（前端用 var()、这里用常量），改一边记得改另一边 —— 这与 `utils/validators.py`
-镜像后端校验是同一类约定：**不共享代码，靠注释互相指路**。
+## 视觉：明日方舟·终末地那套工业语言 + 磨砂玻璃
+参数取自对官方站 CSS 的实测（见 AGENTS.md 的「数据卡」一节），要点：
+  - 底 `#101110`（带一点绿，不用死黑）、面板 `#181A18`、玻璃 `#1F2422`；
+  - **信号黄 `#FFFA00` 只做点缀**（面积 ≤5%：竖条、发光、进度填充、状态点），
+    铺面会立刻廉价；第二强调青 `#00FFA2`、品红 `#FF1AAC` 只点一个方块；
+  - 母题：4px 细网格、8px 刻度条、**-45° 三像素斜纹当「选中」底纹**、
+    6px 粗规线、纯色实心进度条（无圆角无渐变）、圆角克制（面板 0–4，玻璃最多 8–12）；
+  - 排版：英文小标签**全大写 + 宽字距**（`+.08em`）并用「—◆—」夹住，
+    数字一律等宽（取件码、金额、时间对齐），同屏最多两档字重。
 
-字体：优先 .env 的 `CARD_FONT_PATH`，其次系统常见 CJK 字体。
-**一个都找不到时不硬撑**：`render()` 返回 None，调用方退回纯文本 ——
-宁可难看，也不能发一张全是方块的图出去。
+## 磨砂玻璃在**静态图**里的做法（关键，别用「半透明白色蒙版」糊弄）
+没有 backdrop-filter，纯半透明面板只会像蒙了层灰。正确顺序：
+  ① 先画背景（渐变 + 网格 + 角落光斑 + 刻度/等高线这类母题）——
+     背景必须**有东西可模糊**，否则玻璃看起来还是平的；
+  ② 把面板区域的背景**裁出来做高斯模糊**（12–20px）；
+  ③ 用圆角蒙版贴回，再叠半透明底色 `#1F2422`；
+  ④ 叠斜向高光（顶部更亮）、1px 描边（顶边更亮）、底部内阴影；
+  ⑤ 面板底下垫一层模糊的暗色 → 悬空感。
+
+## 与站内其它部分的关系
+颜色是 `frontend/src/styles/tokens.css` 的**镜像**（那边 `var()`、这边常量），
+字体用站内那几支（见 `assets/fonts/README.md`）。改一边记得改另一边 ——
+与 `utils/validators.py` 镜像后端校验是同一类约定。
+
+服务器没有 CJK 字体时 `render()` 返回 None，调用方退回纯文本：
+**绝不发一张全是方块的图**。
 """
 
 import io
 import os
+import time
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from config import logger
 
-# ---- 视觉令牌（镜像 frontend/src/styles/tokens.css 的 .dark 一套）----------
-BG = (15, 15, 17)            # 面板底（--n-color / surface-overlay 那支深色）
-BG_OUTER = (5, 5, 5)         # 最外层底（--deep-void #050505）
-GRID = (255, 255, 255, 10)   # 蓝图网格（极淡）
-BORDER = (255, 255, 255, 26)  # --border #ffffff1a
-ACCENT = (255, 250, 0)       # --industrial-yellow #fffa00
-CYAN = (0, 240, 255)         # --tech-cyan #00f0ff
-INK = (255, 255, 255)        # --text-primary
-INK_2 = (255, 255, 255, 204)  # --text-secondary #ffffffcc
-INK_3 = (255, 255, 255, 153)  # --text-tertiary  #ffffff99
-INK_4 = (255, 255, 255, 102)  # --text-quaternary #ffffff66
+# ---- 原始色（镜像 tokens.css 深色一套 + 官方站实测值）----------------------
+VOID = (16, 17, 16)          # #101110 底（带绿倾向，不是死黑）
+VOID_DEEP = (8, 9, 8)        # 渐变下端
+GLASS = (31, 36, 34)         # #1F2422 玻璃底
+LINE_SOFT = (255, 255, 255, 18)
+RULE_HEAVY = (53, 55, 60)    # #35373C 粗规线
+INK = (245, 245, 240)        # #F5F5F0 正文
+INK_2 = (245, 245, 240, 190)
+INK_3 = (137, 141, 137)      # #898D89 次要
+INK_4 = (137, 141, 137, 150)
+YELLOW = (255, 250, 0)       # 信号黄（点缀用）
+CYAN = (0, 255, 162)         # 第二强调
+MAGENTA = (255, 26, 172)     # 品红（只点一个方块）
 
-# 订单状态 → (前景, 背景)。与 tokens.css 里 .dark 的 --status-* 一一对应。
+# 状态色：与 tokens.css 深色那套的 --status-* 对齐
 STATUS_INK = {
     '待计费': (192, 132, 252),
-    '待打印': (161, 161, 170),
-    '打印中': (34, 211, 238),
-    '可取了': (255, 250, 0),
-    '已取件': (74, 222, 128),
+    '待打印': (137, 141, 137),
+    '打印中': (0, 255, 162),
+    '可取件': (255, 250, 0),
+    '已取件': (79, 191, 92),
 }
 
-W = 1080            # 卡片宽（手机 QQ 里约等于整屏宽，再宽就要缩着看了）
-PAD = 40
-ROW_H = 62
+# ---- 版面（1080px 宽；字号按调研的「标题:副标:正文:注释」阶梯放大）----------
+W = 1080
+PAD = 30                      # 画布到面板
+PANEL_PAD = 40                # 面板内边距
+RADIUS = 12                   # 玻璃圆角（官方更克制，这里为玻璃悬浮感放宽）
+ROW_H = 88
+BLUR = 16                     # 背景模糊半径（12–20 区间取中）
 
-# 字体候选：先 .env 指定，再 Windows，再 Linux 常见 CJK。都是「正文用」的常规体。
-_FONT_CANDIDATES = (
-    'CARD_FONT_PATH',
-    r'C:\Windows\Fonts\msyh.ttc',
-    r'C:\Windows\Fonts\simhei.ttf',
-    r'C:\Windows\Fonts\Deng.ttf',
-    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-    '/usr/share/fonts/truetype/arphic/uming.ttc',
-)
-_MONO_CANDIDATES = (
-    'CARD_MONO_FONT_PATH',
-    r'C:\Windows\Fonts\consola.ttf',
-    '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
-)
+T_TITLE = 52
+T_EYEBROW = 24
+T_BODY = 30
+T_CODE = 28
+T_META = 22
+T_CHIP = 22
 
-
-def _first_existing(names, env_key=None):
-    if env_key:
-        custom = (os.getenv(env_key) or '').strip()
-        if custom and os.path.exists(custom):
-            return custom
-    for name in names:
-        if name.endswith(('.ttf', '.ttc', '.otf')) and os.path.exists(name):
-            return name
-    return None
-
-
-_font_path = None
-_mono_path = None
+_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'fonts')
+_font_paths = {}
 _probed = False
+_font_cache = {}
+
+
+def _pick(env_key, filename):
+    """优先 .env 指定的路径，其次仓库里自带的那份。"""
+    custom = (os.getenv(env_key) or '').strip()
+    if custom and os.path.exists(custom):
+        return custom
+    local = os.path.join(_FONT_DIR, filename)
+    return local if os.path.exists(local) else None
 
 
 def _probe():
-    """探一次字体（结果缓存）。找不到就是找不到，别每渲染一次都摸一遍磁盘。"""
-    global _font_path, _mono_path, _probed
+    global _probed
     if _probed:
         return
     _probed = True
-    _font_path = _first_existing(_FONT_CANDIDATES, 'CARD_FONT_PATH')
-    _mono_path = _first_existing(_MONO_CANDIDATES, 'CARD_MONO_FONT_PATH') or _font_path
-    if _font_path:
-        logger.info('QQ 卡片字体：%s（等宽：%s）', _font_path, _mono_path)
+    _font_paths['cjk'] = _pick('CARD_FONT_PATH', 'SourceHanSans-SC-Regular.ttf')
+    _font_paths['cjk_bold'] = _pick('CARD_FONT_BOLD_PATH', 'SourceHanSans-SC-Bold.ttf') or _font_paths['cjk']
+    _font_paths['display'] = _pick('CARD_DISPLAY_FONT_PATH', 'SpaceGrotesk-Variable.ttf')
+    _font_paths['mono'] = _pick('CARD_MONO_FONT_PATH', 'JetBrainsMono-Variable.ttf')
+    if _font_paths['cjk']:
+        logger.info('QQ 卡片字体：%s（拉丁 %s / 等宽 %s）', os.path.basename(_font_paths['cjk']),
+                    os.path.basename(str(_font_paths['display'])),
+                    os.path.basename(str(_font_paths['mono'])))
     else:
-        logger.error('QQ 卡片渲染：找不到任何 CJK 字体，卡片功能会自动退回纯文本。'
-                     '可在 .env 里用 CARD_FONT_PATH 指定一个 ttf/ttc。')
+        logger.error('QQ 卡片渲染：找不到中文字体，卡片功能会自动退回纯文本。'
+                     '可用 .env 的 CARD_FONT_PATH 指定一个 ttf/otf。')
 
 
 def available():
-    """能不能渲染（没有可用字体就返回 False）。"""
     _probe()
-    return bool(_font_path)
+    return bool(_font_paths.get('cjk'))
 
 
-def _font(size, mono=False):
-    return ImageFont.truetype(_mono_path if mono else _font_path, size)
+def _font(role, size, weight=None):
+    """取字体。role: cjk / cjk_bold / display / mono；weight 只对变量字体有效。"""
+    _probe()
+    key = (role, size, weight)
+    if key in _font_cache:
+        return _font_cache[key]
+    path = _font_paths.get(role) or _font_paths['cjk']
+    font = ImageFont.truetype(path, size)
+    if weight is not None:
+        try:
+            font.set_variation_by_axes([weight])
+        except Exception:  # noqa: BLE001 —— 静态字体没有轴，用默认字重即可
+            pass
+    _font_cache[key] = font
+    return font
 
 
-def _font_for(text, size, mono=False):
-    """按**这段文字本身**选字体。
+# ---- 基础绘制 ---------------------------------------------------------------
 
-    ⚠️ 等宽那支（Consolas / DejaVu Mono）只有拉丁字形：拿它去画「码 0198」「2.0 元」
-    这类带中文的串，中文会变成豆腐块方框 —— 卡片整体看着没错、只有几个字是方块，
-    真机上就是这么发现的（本地渲染样张一眼看见）。
-    所以：要等宽效果的地方，先看这段文字是不是纯 ASCII；不是就用 CJK 那支。
+def _rgba(color, alpha):
+    return (color[0], color[1], color[2], alpha)
+
+
+# 面板的「等效实色」：玻璃在模糊背景上叠加后的代表色。
+# 用它做**预先混色**的底 —— 半透明色块（胶囊底、斜纹、进度槽）都不必再走 alpha，
+# 因为 Pillow 的 `paste(img, mask)` 会**直接替换像素**、最后 `convert('RGB')` 又把
+# alpha 丢掉：半透明的白会被当成纯白（第一版整块面板糊成浅灰就是这么来的）。
+PANEL_SOLID = (26, 30, 28)
+
+
+def _over(color, alpha, base=PANEL_SOLID):
+    """把 color 按 alpha（0-255）混到 base 上，返回实色。"""
+    k = alpha / 255.0
+    if len(color) == 4:
+        k *= color[3] / 255.0
+    return (int(color[0] * k + base[0] * (1 - k)),
+            int(color[1] * k + base[1] * (1 - k)),
+            int(color[2] * k + base[2] * (1 - k)))
+
+
+def _text_font(text, size, weight=None, mono=False):
+    """按**这段文字本身**选字体：含中文时一律用 CJK 那支。
+
+    ⚠️ 等宽（JetBrains Mono）与拉丁（Space Grotesk）都**只有拉丁字形**：
+    拿它们画「取件码 0198」「· 测试」会出豆腐块方框 —— 整张卡看着没错、
+    只有几个字是方块，第一版就是这么翻车的（meta 行的昵称、取件码标签全成了方块）。
     """
-    if mono and text and all(ord(ch) < 128 for ch in str(text)):
-        return _font(size, mono=True)
-    return _font(size)
+    text = str(text or '')
+    ascii_only = bool(text) and all(ord(ch) < 128 for ch in text)
+    if mono and ascii_only:
+        return _font('mono', size, weight)
+    return _font('cjk', size, None)
 
 
-def _blend(color, alpha=None):
-    """把带透明度的颜色叠到卡片底色上，得到不透明的近似色。
+def _rounded_mask(size, radius):
+    mask = Image.new('L', size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1],
+                                           radius=radius, fill=255)
+    return mask
 
-    Pillow 画线/描边**不支持 alpha**（传 4 元组会被当成 RGB 用掉前三个），
-    所以透明度得自己算：颜色可以是 (r,g,b) 或 (r,g,b,a)，也可以用第二个参数
-    显式给一个 alpha（覆盖元组里的那个）。
+
+def _scene(w, h):
+    """背景场景：渐变 + 角落光斑 + 细网格 + 等高线弧 + 坐标刻度。
+
+    玻璃要有东西可模糊，背景就不能是纯色 —— 这几样都是官方站里真有的母题。
     """
-    r, g, b = color[:3]
-    if alpha is None:
-        alpha = color[3] / 255 if len(color) > 3 else 1.0
-    else:
-        alpha = alpha / 255 if alpha > 1 else alpha
-    return (int(r * alpha + BG[0] * (1 - alpha)), int(g * alpha + BG[1] * (1 - alpha)),
-            int(b * alpha + BG[2] * (1 - alpha)))
+    img = Image.new('RGB', (w, h), VOID)
+    dr = ImageDraw.Draw(img)
+
+    # ① 竖向渐变（上暖下冷，制造纵深）
+    for y in range(h):
+        k = y / max(1, h - 1)
+        dr.line([(0, y), (w, y)], fill=(int(VOID[0] * (1 - k) + VOID_DEEP[0] * k),
+                                        int(VOID[1] * (1 - k) + VOID_DEEP[1] * k),
+                                        int(VOID[2] * (1 - k) + VOID_DEEP[2] * k)))
+
+    # ② 角落光斑（强调色 8–10%，大半径模糊）—— 玻璃模糊后就是这几团光
+    glow = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    for cx, cy, radius, color, alpha in (
+            (int(w * 0.16), int(h * 0.10), int(w * 0.46), YELLOW, 26),
+            (int(w * 0.94), int(h * 0.84), int(w * 0.40), CYAN, 20),
+            (int(w * 0.84), int(h * 0.04), int(w * 0.20), MAGENTA, 10)):
+        gd.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=_rgba(color, alpha))
+    img = Image.alpha_composite(img.convert('RGBA'),
+                                glow.filter(ImageFilter.GaussianBlur(int(w * 0.09)))).convert('RGB')
+    dr = ImageDraw.Draw(img)
+
+    # ③ 细网格：官方 1px 高 / ~1.4% 白 / 周期 4px；竖线 1% 白 / 周期 120px
+    grid = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grid)
+    for y in range(0, h, 4):
+        gd.line([(0, y), (w, y)], fill=(255, 255, 255, 4))
+    for x in range(0, w, 120):
+        gd.line([(x, 0), (x, h)], fill=(255, 255, 255, 3))
+    img = Image.alpha_composite(img.convert('RGBA'), grid).convert('RGB')
+
+    # ④ 等高线弧（1px / 3–6% 白）：右上一族同心弧，呼应「地形 / 扫描」
+    arcs = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    ad = ImageDraw.Draw(arcs)
+    for i in range(7):
+        rr = int(w * 0.24) + i * 46
+        ad.arc([w - rr - 40, -rr + 60, w + rr - 40, rr + 60], start=90, end=180,
+               fill=(255, 255, 255, 10), width=1)
+    img = Image.alpha_composite(img.convert('RGBA'), arcs).convert('RGB')
+
+    # ⑤ 边缘坐标刻度（工业图纸味）：每 5 格一根长刻度
+    dr = ImageDraw.Draw(img)
+    for y in range(80, h - 80, 34):
+        long_tick = (y // 34) % 5 == 0
+        dr.line([(12, y), (12 + (18 if long_tick else 9), y)],
+                fill=_rgba(INK, 60 if long_tick else 30))
+    for x in range(80, w - 80, 34):
+        long_tick = (x // 34) % 5 == 0
+        dr.line([(x, h - 12), (x, h - 12 - (18 if long_tick else 9))],
+                fill=_rgba(INK, 60 if long_tick else 30))
+    return img
 
 
-def _text_w(draw, text, font):
-    return draw.textlength(text, font=font)
+def _glass(img, box, radius=RADIUS):
+    """在背景上落一块磨砂玻璃面板。
 
-
-def _draw_blueprint(draw, box):
-    """蓝图底纹：极淡的网格 + 四角括角 + 底部斜纹带。全是装饰，绝不压字。"""
+    ⚠️ 实现上唯一容易翻车的地方：**别拿半透明图层去 `paste(..., mask)`**。
+    `paste` 是「替换像素」而不是「混合」，之后 `convert('RGB')` 又会把 alpha 直接丢掉 ——
+    结果半透明白高光变成实心白，整块面板糊成浅灰（第一版就是这样，看着像白卡）。
+    正确做法：把「模糊背景 + 玻璃底色 + 斜向高光」先混成**一张不透明图**，
+    再按圆角形状贴回去；描边这类只有 1px 的东西直接画在底上、用预先混好的实色。
+    """
     x0, y0, x1, y1 = box
-    step = 48
-    for x in range(x0 + step, x1, step):
-        draw.line([(x, y0 + 8), (x, y1 - 8)], fill=_blend(GRID), width=1)
-    for y in range(y0 + step, y1, step):
-        draw.line([(x0 + 8, y), (x1 - 8, y)], fill=_blend(GRID), width=1)
-    # 括角（站点里的 frame-brackets）
-    arm = 26
-    corners = [(x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)]
-    for cx, cy, sx, sy in corners:
-        draw.line([(cx, cy), (cx + arm * sx, cy)], fill=_blend((*ACCENT, 150)), width=3)
-        draw.line([(cx, cy), (cx, cy + arm * sy)], fill=_blend((*ACCENT, 150)), width=3)
+    size = (x1 - x0, y1 - y0)
+    mask = _rounded_mask(size, radius)
+
+    # ① 投影：模糊的深色垫在面板下方 → 悬空感（这一层是 alpha_composite，语义正确）
+    shadow = Image.new('RGBA', img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle([x0 + 2, y0 + 12, x1 + 2, y1 + 14],
+                                             radius=radius, fill=(0, 0, 0, 165))
+    img = Image.alpha_composite(img, shadow.filter(ImageFilter.GaussianBlur(24)))
+
+    # ② 玻璃本体：把面板区域的背景糊掉，按 72% 混上 #1F2422 —— 得到一张不透明图
+    blurred = img.crop(box).convert('RGB').filter(ImageFilter.GaussianBlur(BLUR))
+    glass = Image.blend(blurred, Image.new('RGB', size, GLASS), 0.72)
+
+    # ③ 斜向高光（顶部亮、往下淡出）：直接混进那张不透明图，圆角由 mask 收边
+    gd = ImageDraw.Draw(glass)
+    for i in range(size[1]):
+        a = int(22 * max(0.0, 1 - i / (size[1] * 0.6)))
+        if a:
+            gd.line([(0, i), (size[0], i)], fill=_over((255, 255, 255), a, GLASS))
+    # 左上角再补一小片对角光（玻璃常见的「反光」）
+    for i in range(min(size[1], 90)):
+        w_line = int(size[0] * 0.34 * max(0.0, 1 - i / 90))
+        if w_line:
+            gd.line([(0, i), (w_line, i)], fill=_over((255, 255, 255), 12, GLASS))
+
+    img.paste(glass, (x0, y0), mask)
+
+    # ④ 描边：1px 白；顶边更亮（顶光），底边压一条深色（内阴影）
+    dr = ImageDraw.Draw(img)
+    dr.rounded_rectangle([x0, y0, x1, y1], radius=radius,
+                         outline=_over(INK, 52, VOID), width=1)
+    dr.line([(x0 + radius, y0 + 1), (x1 - radius, y0 + 1)], fill=_over(INK, 86, GLASS))
+    dr.line([(x0 + radius, y1 - 1), (x1 - radius, y1 - 1)], fill=_over((0, 0, 0), 120, GLASS))
+    return img
 
 
-def _draw_hazard(draw, y, x0, x1, height=8, period=18):
-    """底部斜纹带（站点里的 hazard）。用平行四边形拼，别用图案填充 —— 那样要额外依赖。"""
-    color = _blend((*ACCENT, 120))
-    for x in range(x0, x1, period * 2):
-        draw.polygon([(x, y + height), (x + period, y + height),
-                      (x + period + height, y), (x + height, y)], fill=color)
-    draw.line([(x0, y), (x1, y)], fill=_blend(BORDER), width=1)
+# ---- 母题零件 ---------------------------------------------------------------
+
+def _tracked(draw, xy, text, font, fill, tracking=0.0, anchor='la'):
+    """带字距的文本（Pillow 没有 letter-spacing，只能逐字画）。
+
+    tracking 单位 em：官方小标签 +.05~.08、大标题 -.02~-.04。
+    """
+    step = font.size * tracking
+    total = sum(draw.textlength(ch, font=font) + step for ch in text) - step
+    x, y = xy
+    if anchor.endswith('m'):
+        x -= total / 2
+    elif anchor.endswith('r'):
+        x -= total
+    for ch in text:
+        draw.text((x, y), ch, font=font, fill=fill)
+        x += draw.textlength(ch, font=font) + step
+    return total
 
 
-def _chip(draw, x, y, text, ink, font):
-    """状态胶囊：方角 + 同色描边 + 低透明底色（与站内 StatusTag 一个形状）。"""
-    w = _text_w(draw, text, font) + 22
+def _eyebrow(draw, x, y, text, fill=None):
+    """英文小标签：全大写 + 宽字距，右侧接「—◆—」（官方版本图里的用法）。"""
+    label = str(text).upper()
+    font = _text_font(label, T_EYEBROW) if not label.isascii() else _font('display', T_EYEBROW, 600)
+    fill = fill or INK_3
+    w_label = _tracked(draw, (-9999, y), label, font, fill, 0.08)
+    _tracked(draw, (x - w_label, y), label, font, fill, 0.08)
+    dx = x - w_label - 44
+    cy = y + T_EYEBROW * 0.55
+    draw.line([(dx, cy), (dx + 16, cy)], fill=_rgba(fill[:3], 120))
+    draw.polygon([(dx + 27, cy), (dx + 22, cy - 5), (dx + 17, cy), (dx + 22, cy + 5)],
+                 fill=YELLOW)
+    return w_label
+
+
+def _chip(draw, x, y, text, ink, hazard=False):
+    """状态胶囊：方角 + 同色描边 + 低透底色。
+
+    hazard=True 时底下铺 -45° 三像素斜纹 —— 官方拿警示纹当「选中/需注意」的块底，
+    这里用在「可取件」那档，比加个感叹号更符合这套语言。
+    """
+    font = _font('cjk', T_CHIP)
+    x, y = int(x), int(y)
+    w = int(draw.textlength(text, font=font)) + 26
     h = 34
-    fill = (int(ink[0] * 0.12 + BG[0] * 0.88), int(ink[1] * 0.12 + BG[1] * 0.88),
-            int(ink[2] * 0.12 + BG[2] * 0.88))
-    draw.rectangle([x, y, x + w, y + h], fill=fill, outline=ink, width=1)
-    draw.text((x + 11, y + h / 2), text, font=font, fill=ink, anchor='lm')
+    fill = _over(ink, 30)
+    if hazard:
+        # -45°、3px 实 3px 空：官方拿它当「选中/需注意」的块底（这里给「可取件」）。
+        # 斜纹**必须裁在胶囊矩形内**：直接按 x 起点画会伸到胶囊外面去（第一版就是这样）。
+        # 做法是把条纹画进一张胶囊大小的图，再整块贴回来 —— 天然就是裁好的。
+        block = Image.new('RGB', (w, h), _over(YELLOW, 22, PANEL_SOLID))
+        bd = ImageDraw.Draw(block)
+        stripe = _over(YELLOW, 150, PANEL_SOLID)
+        for i in range(-h, w + h, 6):
+            bd.polygon([(i, h), (i + 3, h), (i + 3 + h, 0), (i + h, 0)], fill=stripe)
+        draw._image.paste(block, (x, y))
+        fill = None
+    if fill:
+        draw.rectangle([x, y, x + w, y + h], fill=fill)
+    draw.rectangle([x, y, x + w, y + h], outline=_over(ink, 190), width=1)
+    draw.text((x + 13, y + h / 2 + 1), text, font=_text_font(text, T_CHIP), fill=ink, anchor='lm')
     return w
 
 
-def _header(draw, title, meta_right):
-    """卡头：黄色竖条 + 标题（中文粗体感靠字号）+ 右侧等宽读数。"""
-    y = PAD + 6
-    draw.rectangle([PAD, y + 4, PAD + 6, y + 40], fill=ACCENT)
-    draw.text((PAD + 20, y + 22), title, font=_font(34), fill=INK, anchor='lm')
-    if meta_right:
-        draw.text((W - PAD, y + 26), meta_right, font=_font_for(meta_right, 22, mono=True), fill=INK_3, anchor='rm')
-    line_y = y + 62
-    draw.line([(PAD, line_y), (W - PAD, line_y)], fill=_blend(BORDER), width=1)
-    return line_y + 22
+def _rule(draw, x0, x1, y):
+    """粗规线 + 细线（官方 6px 实线下方常跟一条 1px 细线）。"""
+    draw.rectangle([x0, y, x1, y + 4], fill=RULE_HEAVY)
+    draw.line([(x0, y + 4), (x1, y + 4)], fill=_rgba(INK, 30))
 
 
-def _footer(draw, left, right):
-    draw.text((PAD, H_LAST[0] - PAD - 34), left, font=_font(20), fill=INK_4)
-    if right:
-        draw.text((W - PAD, H_LAST[0] - PAD - 34), right, font=_font(20, mono=True), fill=INK_4, anchor='ra')
+def _tick_strip(draw, x, y, width, height=7, on=7, off=4):
+    """刻度条：8px 实 + 4px 空（周期 12），官方实测值。"""
+    for i, xx in enumerate(range(int(x), int(x + width), on + off)):
+        h = height if i % 3 else int(height * 1.6)
+        draw.rectangle([xx, y + (height - h), xx + on, y + height], fill=_over(INK, 110))
 
 
-H_LAST = [0]  # 由 render() 填：给 _footer 用（避免到处传高度）
+def _hazard_line(draw, x0, x1, y, height=8):
+    """底部警示斜纹带：-45°、3px 实 3px 空。"""
+    for i in range(int(x0), int(x1), 6):
+        draw.polygon([(i, y + height), (i + 3, y + height),
+                      (i + 3 + height, y), (i + height, y)], fill=_over(YELLOW, 130))
+    draw.line([(x0, y - 1), (x1, y - 1)], fill=_rgba(INK, 26))
 
 
-def _empty_hint(draw, y, text):
-    draw.text((PAD + 4, y + 8), text, font=_font(26), fill=INK_3)
-    return y + ROW_H
+def _progress(draw, x, y, width, ratio, height=10):
+    """纯色实心进度条（官方就是这样：无圆角、无渐变）。"""
+    draw.rectangle([x, y, x + width, y + height], fill=_over(INK, 22))
+    draw.rectangle([x, y, x + max(2, int(width * max(0.0, min(1.0, ratio)))), y + height],
+                   fill=YELLOW)
 
 
-def _rows_orders(draw, y, payload):
-    f_id = _font(24, mono=True)
-    f_title = _font(26)
-    f_meta = _font(22, mono=True)
-    for item in payload['orders']:
-        draw.text((PAD + 4, y + 4), '#%s' % item['order_id'], font=f_id, fill=INK_3)
-        title = item['title'] or '（无标题）'
-        # 标题过长就截断：卡片宽度有限，宁可截也不换行（换行会让行高乱掉）
-        while _text_w(draw, title, f_title) > 470 and len(title) > 4:
-            title = title[:-2]
-        draw.text((PAD + 92, y + 2), title, font=f_title, fill=INK)
-        ink = STATUS_INK.get(item['status'], INK_2)
-        _chip(draw, PAD + 92, y + 34, item['status'], ink, _font(20))
-        detail = []
-        if item.get('copies'):
-            detail.append('%s 份' % item['copies'])
-        if item.get('price') is not None:
-            detail.append('%s 元' % item['price'])
-        else:
-            detail.append('未计费')
-        draw.text((PAD + 250, y + 40), ' · '.join(detail), font=_font(20), fill=INK_3)
-        draw.text((W - PAD, y + 6), '码 %s' % (item.get('pickup_code') or '—'),
-                  font=_font_for('码', 22, mono=True), fill=INK_2, anchor='ra')
-        draw.text((W - PAD, y + 38), (item.get('create_time') or '')[5:16], font=f_meta, fill=INK_4, anchor='ra')
+def _truncate(draw, text, font, limit):
+    """超宽就截断加省略号（换行会让行高乱掉，宁可截）。"""
+    if draw.textlength(text, font=font) <= limit:
+        return text
+    while text and draw.textlength(text + '…', font=font) > limit:
+        text = text[:-1]
+    return text + '…'
+
+
+# ---- 各类型的行 ---------------------------------------------------------------
+
+def _rows_orders(draw, y, x0, x1, payload):
+    for item in payload.get('orders') or []:
+        status = item.get('status') or ''
+        ink = STATUS_INK.get(status, INK_2)
+        draw.text((x0, y + 8), '#%s' % item.get('order_id'),
+                  font=_font('mono', T_META, 500), fill=INK_4)
+        draw.text((x0 + 92, y + 1),
+                  _truncate(draw, (item.get('title') or '（无标题）').replace('\n', ' '),
+                            _font('cjk', T_BODY), 430),
+                  font=_font('cjk', T_BODY), fill=INK)
+        _chip(draw, x0 + 92, y + 44, status, ink, hazard=(status == '可取件'))
+        bits = ['%s 份' % (item.get('copies') or 1),
+                '未计费' if item.get('price') is None else '%.2f 元' % item['price']]
+        draw.text((x0 + 262, y + 52), ' · '.join(bits), font=_font('cjk', T_META), fill=INK_3)
+        code = str(item.get('pickup_code') or '—')
+        draw.text((x1, y + 1), code, font=_font('mono', T_CODE, 600), fill=INK, anchor='ra')
+        code_w = draw.textlength(code, font=_font('mono', T_CODE, 600))
+        draw.text((x1 - code_w - 12, y + 8), '取件码',
+                  font=_font('cjk', T_META), fill=INK_3, anchor='ra')
+        draw.text((x1, y + 52), (item.get('create_time') or '')[5:16],
+                  font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
         y += ROW_H
-        draw.line([(PAD, y - 12), (W - PAD, y - 12)], fill=_blend((255, 255, 255, 12)), width=1)
+        draw.line([(x0, y - 22), (x1, y - 22)], fill=_over(INK, 18))
     return y
 
 
-def _rows_tickets(draw, y, payload):
-    f_id = _font(24, mono=True)
-    for item in payload['tickets']:
-        draw.text((PAD + 4, y + 4), '#%s' % item['ticket_id'], font=f_id, fill=INK_3)
-        subject = (item.get('subject') or '').replace('\n', ' ')
-        while _text_w(draw, subject, _font(26)) > 700 and len(subject) > 4:
-            subject = subject[:-2]
-        draw.text((PAD + 92, y + 2), subject, font=_font(26), fill=INK)
-        open_ = item.get('status') == 'open'
-        chip_w = _chip(draw, PAD + 92, y + 34, '进行中' if open_ else '已关闭',
-                       ACCENT if open_ else INK_3, _font(20))
+def _rows_tickets(draw, y, x0, x1, payload):
+    for item in payload.get('tickets') or []:
+        opened = item.get('status') == 'open'
+        draw.text((x0, y + 8), '#%s' % item.get('ticket_id'),
+                  font=_font('mono', T_META, 500), fill=INK_4)
+        draw.text((x0 + 92, y + 1),
+                  _truncate(draw, (item.get('subject') or '').replace('\n', ' '),
+                            _font('cjk', T_BODY), 600),
+                  font=_font('cjk', T_BODY), fill=INK)
+        w = _chip(draw, x0 + 92, y + 44, '进行中' if opened else '已关闭',
+                  YELLOW if opened else INK_3)
         if item.get('unread'):
-            # 与文本版同一口径：文本是「（有新回复）」，这里给一个小黄标。
-            # 别只放在文本那条路上 —— 用卡片看一遍却看不出有新回复，等于漏消息。
-            _chip(draw, PAD + 92 + chip_w + 8, y + 34, '有新回复', CYAN, _font(20))
+            # 品红只点一个方块：官方拿它当「有动静」的极简标记
+            draw.rectangle([x0 + 92 + w + 14, y + 55, x0 + 92 + w + 22, y + 63], fill=MAGENTA)
+            draw.text((x0 + 92 + w + 32, y + 52), '有新回复',
+                      font=_font('cjk', T_META), fill=MAGENTA)
         last = (item.get('last_body') or '').replace('\n', ' ')
         if last:
-            while _text_w(draw, last, _font(20)) > 380 and len(last) > 4:
-                last = last[:-2]
-            draw.text((PAD + 250, y + 40), '最新：%s' % last, font=_font(20), fill=INK_3)
-        draw.text((W - PAD, y + 6), (item.get('update_time') or '')[5:16],
-                  font=_font(22, mono=True), fill=INK_4, anchor='ra')
+            draw.text((x0 + 320, y + 47), _truncate(draw, last, _font('cjk', T_META), 300),
+                      font=_font('cjk', T_META), fill=INK_3)
+        draw.text((x1, y + 44), (item.get('update_time') or '')[5:16],
+                  font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
         y += ROW_H
-        draw.line([(PAD, y - 12), (W - PAD, y - 12)], fill=_blend((255, 255, 255, 12)), width=1)
+        draw.line([(x0, y - 16), (x1, y - 16)], fill=LINE_SOFT)
     return y
 
 
-def _rows_presets(draw, y, payload):
-    for item in payload['presets']:
-        draw.rectangle([PAD + 4, y + 12, PAD + 44, y + 52], fill=_blend((*ACCENT, 28)), outline=ACCENT, width=1)
-        draw.text((PAD + 24, y + 32), str(item['preset_id']), font=_font(24, mono=True), fill=ACCENT, anchor='mm')
-        content = (item.get('content') or '').replace('\n', ' ')
-        while _text_w(draw, content, _font(28)) > 620 and len(content) > 4:
-            content = content[:-2]
-        draw.text((PAD + 70, y + 18), content, font=_font(28), fill=INK)
-        if item.get('paper_name'):
-            draw.text((W - PAD, y + 22), item['paper_name'], font=_font(20), fill=INK_4, anchor='ra')
-        y += ROW_H + 6
+def _rows_presets(draw, y, x0, x1, payload):
+    for item in payload.get('presets') or []:
+        # 编号做成方框铭牌（黄框 + 低透黄底）
+        draw.rectangle([x0, y + 12, x0 + 46, y + 58], fill=_over(YELLOW, 34), outline=YELLOW, width=1)
+        draw.text((x0 + 23, y + 36), str(item.get('preset_id')),
+                  font=_font('mono', 26, 700), fill=YELLOW, anchor='mm')
+        draw.text((x0 + 74, y + 16),
+                  _truncate(draw, (item.get('content') or '').replace('\n', ' '),
+                            _font('cjk', 32), 700),
+                  font=_font('cjk', 32), fill=INK)
+        draw.text((x1, y + 26), '可用', font=_font('cjk', T_META), fill=INK_4, anchor='ra')
+        y += ROW_H + 4
+        draw.line([(x0, y - 16), (x1, y - 16)], fill=LINE_SOFT)
     return y
 
 
-def _rows_me(draw, y, payload):
-    orders = payload['orders']
-    cells = [('我的单数', str(orders['total']), INK),
-             ('进行中', str(orders['in_progress']), INK),
-             ('待我取件', str(orders['ready']), ACCENT),
-             ('已取件', str(orders['done']), INK_2)]
-    cw = (W - PAD * 2) // len(cells)
-    for i, (label, value, color) in enumerate(cells):
-        x = PAD + i * cw
-        draw.text((x + 4, y), label, font=_font(22), fill=INK_3)
-        draw.text((x + 4, y + 30), value, font=_font(44, mono=True), fill=color)
-    y += 100
-    draw.line([(PAD, y), (W - PAD, y)], fill=_blend(BORDER), width=1)
-    y += 24
-    spent = orders['spent']
-    draw.text((PAD + 4, y), '累计花费', font=_font(22), fill=INK_3)
-    draw.text((PAD + 150, y - 10), '%.2f 元' % spent,
-              font=_font_for('元', 38, mono=True), fill=CYAN)
+def _rows_me(draw, y, x0, x1, payload):
+    orders = payload.get('orders') or {}
     usage = payload.get('usage') or {}
+    cells = [('我的单数', str(orders.get('total', 0)), INK),
+             ('进行中', str(orders.get('in_progress', 0)), INK),
+             ('待我取件', str(orders.get('ready', 0)), YELLOW),
+             ('已取件', str(orders.get('done', 0)), INK_2)]
+    cw = (x1 - x0) // len(cells)
+    for i, (label, value, color) in enumerate(cells):
+        cx = x0 + i * cw
+        draw.text((cx, y), label, font=_font('cjk', T_META), fill=INK_3)
+        draw.text((cx, y + 32), value, font=_font('mono', 52, 600), fill=color)
+        if i:
+            draw.line([(cx - 18, y + 4), (cx - 18, y + 76)], fill=_over(INK, 18))
+    y += 108
+    draw.line([(x0, y), (x1, y)], fill=_over(INK, 18))
+    y += 26
+    draw.text((x0, y + 12), '累计花费', font=_font('cjk', T_META), fill=INK_3)
+    spent = orders.get('spent') or 0
+    draw.text((x0 + 150, y), '%.2f' % spent, font=_font('mono', 46, 600), fill=CYAN)
+    draw.text((x0 + 150 + draw.textlength('%.2f' % spent, font=_font('mono', 46, 600)) + 10,
+               y + 20), '元', font=_font('cjk', T_META), fill=CYAN)
     used, quota = usage.get('used_bytes') or 0, usage.get('quota_bytes') or 0
     if quota:
-        y += 64
-        draw.text((PAD + 4, y), '存储用量', font=_font(22), fill=INK_3)
-        draw.text((PAD + 150, y - 4), '%s / %s' % (_human(used), _human(quota)),
-                  font=_font(24, mono=True), fill=INK_2)
+        y += 68
+        draw.text((x0, y + 8), '存储用量', font=_font('cjk', T_META), fill=INK_3)
+        draw.text((x0 + 150, y), '%s / %s' % (_human(used), _human(quota)),
+                  font=_font('mono', 26, 500), fill=INK_2)
         y += 40
-        bar_w = W - PAD * 2 - 8
-        draw.rectangle([PAD + 4, y, PAD + 4 + bar_w, y + 12], outline=_blend(BORDER), width=1)
-        ratio = min(1.0, used / quota) if quota else 0
-        if ratio > 0:
-            # 至少给 2px：用量极小时 int() 会把它算成 0 宽，
-            # 而 Pillow 对 x1 < x0 的矩形直接抛 ValueError（本地样张踩过）
-            wpx = max(2, int(bar_w * ratio))
-            draw.rectangle([PAD + 5, y + 1, PAD + 5 + wpx, y + 11], fill=ACCENT)
-        y += 40
+        _progress(draw, x0, y, x1 - x0, used / quota if quota else 0)
+        y += 26
+    return y
+
+
+def _rows_help(draw, y, x0, x1, payload):
+    """帮助卡：命令清单分节排（左命令、右说明），命令名用等宽好对齐。"""
+    for section in payload.get('help') or []:
+        _tracked(draw, (x0, y), str(section.get('title') or '').upper(),
+                 _font('display', 22, 600), YELLOW, 0.08)
+        draw.line([(x0 + 150, y + 15), (x1, y + 15)], fill=LINE_SOFT)
+        y += 42
+        for item in section.get('items') or []:
+            cmd = item.get('cmd') or ''
+            draw.text((x0 + 8, y + 2), cmd, font=_text_font(cmd, 28, 600, mono=True), fill=INK)
+            draw.text((x0 + 300, y + 4), item.get('desc') or '',
+                      font=_font('cjk', T_META), fill=INK_2)
+            y += 44
+        y += 14
     return y
 
 
@@ -314,32 +510,25 @@ def _human(n):
     return '%d B' % n
 
 
-_TITLES = {
-    'orders': '我的订单',
-    'tickets': '问题反馈',
-    'presets': '打印服务',
-    'me': '我的概况',
-}
-_KINDS_META = {
-    'orders': 'ORDERS',
-    'tickets': 'TICKETS',
-    'presets': 'PRESETS',
-    'me': 'PROFILE',
-}
-_ROW_RENDERERS = {
-    'orders': _rows_orders,
-    'tickets': _rows_tickets,
-    'presets': _rows_presets,
-    'me': _rows_me,
-}
+_TITLES = {'orders': '我的订单', 'tickets': '问题反馈', 'presets': '打印服务',
+           'me': '我的概况', 'help': '使用说明'}
+# 英文小标签走官方那套「名词 // 读数」的写法
+_EYEBROW = {'orders': 'ORDERS', 'tickets': 'TICKETS', 'presets': 'PRESETS',
+            'me': 'PROFILE', 'help': 'MANUAL'}
+_EXTRA_H = {'orders': 0, 'tickets': 0, 'presets': 0, 'me': 150, 'help': 40}
+_EMPTY = {'orders': '还没有订单 —— 把要打印的文件直接发给我就行。',
+          'tickets': '还没有提过工单。发「反馈 你的问题」就能提。',
+          'presets': '管理员还没配置打印服务。',
+          'me': '还没有数据。',
+          'help': '帮助内容暂时取不到。'}
+_ROW_FN = {'orders': _rows_orders, 'tickets': _rows_tickets, 'presets': _rows_presets,
+           'me': _rows_me, 'help': _rows_help}
 
 
 def _count_of(kind, payload):
     """这一类的「行数」—— 既决定画几行，也决定卡片高度。
 
-    'me' 恒为 1：概况卡是固定几个读数，一单没下过也有内容要显示
-    （四个计数 + 花费 + 用量条），不该掉进「还没有数据」那一支
-    —— 本地样张就是这么露了馅：概况卡永远显示「还没有数据」。
+    me / help 不是列表：me 恒为 1（几个固定读数），help 按分节条目数算。
     """
     if kind == 'orders':
         return len(payload.get('orders') or [])
@@ -347,54 +536,71 @@ def _count_of(kind, payload):
         return len(payload.get('tickets') or [])
     if kind == 'presets':
         return len(payload.get('presets') or [])
+    if kind == 'help':
+        return sum(len(s.get('items') or []) for s in payload.get('help') or [])
     return 1
 
 
-# 各类卡在「行高预算」之外还要多少垂直空间。
-# 行高预算是按列表行算的，概况卡不是列表 —— 几个读数 + 花费 + 用量条约这么高。
-_EXTRA_H = {'orders': 0, 'tickets': 0, 'presets': 0, 'me': 150}
-
-
 def render(kind, payload):
-    """把一份数据渲染成 PNG 字节。没有可用字体时返回 None（调用方退回文本）。
+    """把一份数据渲染成 PNG 字节；没有可用字体时返回 None（调用方退回文本）。
 
-    kind 只认 orders / tickets / presets / me —— 都是「查询某些表」那类回复；
-    一句话就能说清的内容**不要**做成卡片（手机里点开图比读一行字慢得多）。
+    kind：orders / tickets / presets / me / help。
+    一句话能说清的内容**不要**做成卡片（取件码、下单成功这些仍走文本）——
+    手机里点开一张图比读一行字慢。
     """
-    if kind not in _ROW_RENDERERS:
+    if kind not in _ROW_FN:
         raise ValueError('未知的卡片类型：%s' % kind)
     if not available():
         return None
 
     rows = _count_of(kind, payload)
-    height = PAD * 2 + 150 + max(rows, 1) * (ROW_H + 6) + 30 + _EXTRA_H[kind]
-    img = Image.new('RGB', (W, height), BG_OUTER)
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([10, 10, W - 10, height - 10], fill=BG, outline=_blend(BORDER), width=1)
-    _draw_blueprint(draw, (10, 10, W - 10, height - 10))
+    head_h = 152
+    body_h = max(rows, 1) * (ROW_H + 4 if kind in ('orders', 'tickets') else ROW_H + 10)
+    height = PAD * 2 + PANEL_PAD * 2 + head_h + body_h + 68 + _EXTRA_H[kind]
 
-    nickname = payload.get('nickname') or ''
-    count = _count_of(kind, payload)
-    meta = '%s' % _KINDS_META[kind]
-    if kind in ('orders', 'tickets'):
-        meta = '%s // %d' % (_KINDS_META[kind], count)
-    y = _header(draw, _TITLES[kind], meta)
+    base = _scene(W, height).convert('RGBA')
+    box = (PAD, PAD, W - PAD, height - PAD)
+    _glass(base, box, RADIUS)
+    draw = ImageDraw.Draw(base)
 
-    H_LAST[0] = height
+    x0 = PAD + PANEL_PAD
+    x1 = W - PAD - PANEL_PAD
+    y = PAD + PANEL_PAD
+
+    # 标题：黄色竖条 + 中文大标题 + 右侧英文小标签
+    draw.rectangle([x0, y + 6, x0 + 5, y + T_TITLE - 4], fill=YELLOW)
+    draw.text((x0 + 24, y), _TITLES[kind], font=_font('cjk_bold', T_TITLE), fill=INK)
+    eyebrow = _EYEBROW[kind]
+    if kind in ('orders', 'tickets', 'presets') and rows:
+        eyebrow = '%s // %02d' % (eyebrow, rows)
+    _eyebrow(draw, x1, y + 16, eyebrow)
+    y += T_TITLE + 24
+    _rule(draw, x0, x1, y)
+    y += 28
+
+    # 元信息行：账号（左）/ 同步时刻（右）
+    meta_left = 'QQ %s' % (payload.get('qq') or '—')
+    if payload.get('nickname'):
+        meta_left += ' · %s' % payload['nickname']
+    draw.text((x0, y), meta_left, font=_text_font(meta_left, T_META, 400, mono=True), fill=INK_4)
+    draw.text((x1, y), 'SYNC %s' % (payload.get('stamp') or time.strftime('%H:%M:%S')),
+              font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
+    y += 34
+    draw.line([(x0, y), (x1, y)], fill=LINE_SOFT)
+    y += 22
+
     if rows:
-        y = _ROW_RENDERERS[kind](draw, y, payload)
+        y = _ROW_FN[kind](draw, y, x0, x1, payload)
     else:
-        y = _empty_hint(draw, y, {
-            'orders': '还没有订单 —— 直接把要打印的文件发给我就行。',
-            'tickets': '还没有提过工单。发「反馈 你的问题」就能提。',
-            'presets': '管理员还没配置打印服务。',
-            'me': '还没有数据。',
-        }[kind])
+        draw.text((x0 + 4, y + 6), _EMPTY[kind], font=_font('cjk', T_BODY), fill=INK_3)
+        y += ROW_H
 
-    _draw_hazard(draw, height - 34, 12, W - 12)
-    _footer(draw, ('QQ %s · %s' % (payload.get('qq') or '', nickname)).strip(' ·'),
-            (payload.get('stamp') or ''))
+    # 底部：刻度条 + 斜纹带 + 一枚品红方块（整张卡唯一的品红）
+    foot = box[3] - PANEL_PAD
+    _tick_strip(draw, x0, foot - 28, x1 - x0)
+    _hazard_line(draw, x0, x1, foot - 6)
+    draw.rectangle([x1 - 8, foot - 42, x1, foot - 34], fill=MAGENTA)
 
     buf = io.BytesIO()
-    img.save(buf, format='PNG', optimize=True)
+    base.convert('RGB').save(buf, format='PNG', optimize=True)
     return buf.getvalue()
