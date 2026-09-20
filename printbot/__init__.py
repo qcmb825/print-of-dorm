@@ -1,4 +1,4 @@
-"""printbot —— 宿舍打印服务的 QQ 机器人独立进程。
+"""printbot —— 打印服务的 QQ 机器人独立进程。
 
 它不属于 Flask 那一层，本包**绝不 import 项目根的任何模块**（config / db / routes…）：
 它将来部署在国内那台跑 QQ 客户端（LLBot / NapCat）的机器上，

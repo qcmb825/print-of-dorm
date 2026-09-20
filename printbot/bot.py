@@ -35,7 +35,7 @@ from . import api, config
 from .onebot import OneBotClient, OneBotError
 
 HELP_TEXT = (
-    '我是宿舍打印服务的机器人，直接用就行：\n'
+    '我是打印服务的机器人，直接用就行：\n'
     '① 把要打的文件直接发给我（pdf / word / 图片），我会问你打印方式、份数、纸张\n'
     '　 （下单过程中想加备注，随时发「备注 你的内容」）\n'
     '② 「打印服务」看有哪些现成服务，「打印服务 编号」按那条服务下单（同样会问参数）\n'

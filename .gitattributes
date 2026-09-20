@@ -17,3 +17,10 @@ static/app/** -text
 # 只有这两处需要，因为其余源码都经过打包器重写，行尾由打包器自己决定。
 frontend/index.html text eol=lf
 frontend/public/** text eol=lf
+
+# 批处理脚本按二进制对待，不做行尾转换。
+# 两个原因：① 中文批处理必须是 GBK（cmd 按控制台代码页解析，存 UTF-8 会乱码）；
+# ② `* text=auto` 会把它规范化成 LF 再在检出时还原，中途任何一环没按预期来
+#   都会让 cmd 解析出错（LF 行尾的 .bat 在有些命令块上会直接跑飞）。
+# 这类脚本一共就一两个，锁死最省事。
+*.bat -text

@@ -667,7 +667,10 @@ QQ 客户端（NapCat） --正向 WS--> printbot --HTTP+BOT_TOKEN--> Flask（/ap
 | `SITE_URL` | 文案里引导回网页的地址，默认 `https://print.qcmb.cloud` |
 
 QQ 框架用 **NapCat Shell**（`NapCatShell/`，配置在 `config/onebot11_<QQ号>.json`，正向 WS 端口 8085）。
-项目根的 `启动QQ机器人.bat` 会把 NapCat 与 printbot 一起拉起来（脚本是 GBK 编码，改它时注意别存成 UTF-8）。
+项目根的 `启动服务.bat` 是**一条命令起全套**：网页服务（:8080）→ NapCat（:8085）→ printbot，
+每一步都先探测再启动（已在跑的不会重复拉起），并会等端口就绪。QQ 掉线这类现场它也会给提示。
+脚本是 **GBK 编码 + CRLF**（cmd 按控制台代码页解析中文），改它时别存成 UTF-8、也别改成 LF ——
+`.gitattributes` 里 `*.bat -text` 就是为了保证这两点原样进原样出。
 
 > 机器人一侧的纪律（改代码前先读）：只理私聊、群消息一律忽略；**建单类 POST 绝不自动重试**
 > （响应丢了重试等于重复下单），只读接口才重试一次；日志只记 QQ 号与动作，**不记消息正文和文件名**；
