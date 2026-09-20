@@ -12,14 +12,16 @@
  *     前端不另抄一份：抄的那份不会报错，只会在后端调整时静静地过期。
  */
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import { History, RefreshCw, Search, X } from '@lucide/vue'
-import { NButton, NDataTable, NDatePicker, NInput, NSelect, NTag } from 'naive-ui'
+import { RefreshCw, Search, X } from '@lucide/vue'
+import { NButton, NDataTable, NDatePicker, NInput, NSelect } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { historyApi } from '@/api/endpoints'
 import type { OrderLogRow, OrderLogStatsResponse, OrderStatus } from '@/api/types'
+import PageHeader from '@/components/PageHeader.vue'
+import StatusTag from '@/components/StatusTag.vue'
 import { notify } from '@/composables/feedback'
-import { LOG_ACTION_COLOR, STATUS_COLOR_VAR, fullTime } from '@/utils/format'
+import { LOG_ACTION_COLOR, fullTime } from '@/utils/format'
 
 const filters = reactive({
   range: null as [number, number] | null,
@@ -136,7 +138,7 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
     render: (row) =>
       h('span', { class: 'inline-flex items-center gap-1.5 text-[12px] font-semibold' }, [
         h('span', {
-          class: 'inline-block size-2 shrink-0 rounded-full',
+          class: 'inline-block size-2 shrink-0',
           style: `background-color: ${LOG_ACTION_COLOR[row.action] ?? 'var(--text-tertiary)'}`,
         }),
         row.action_label,
@@ -154,11 +156,7 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
     width: 110,
     render: (row) =>
       row.to_status
-        ? h(
-            NTag,
-            { size: 'small', bordered: false, color: { textColor: STATUS_COLOR_VAR[row.to_status] } },
-            { default: () => row.to_status },
-          )
+        ? h(StatusTag, { status: row.to_status, size: 'sm' })
         : h('span', { class: 'text-[12px] text-ink-4' }, '—'),
   },
   {
@@ -202,22 +200,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl">
-    <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h1 class="flex items-center gap-2 font-heading text-lg font-bold sm:text-xl">
-          <History :size="18" class="opacity-60" />
-          历史记录
-        </h1>
-        <p class="mt-0.5 text-[13px] text-ink-3">
-          全部订单操作的留痕 · 可按时间、类型、结果状态与关键词筛选
-        </p>
-      </div>
-      <NButton size="small" quaternary :loading="loading" @click="load">
-        <template #icon><RefreshCw :size="15" /></template>
-        刷新
-      </NButton>
-    </header>
+  <div class="mx-auto max-w-[1400px]">
+    <PageHeader title="历史记录" subtitle="全部订单操作的留痕 · 可按时间、类型、结果状态与关键词筛选">
+      <template #actions>
+        <NButton size="small" quaternary :loading="loading" @click="load">
+          <template #icon><RefreshCw :size="15" /></template>
+          刷新
+        </NButton>
+      </template>
+    </PageHeader>
 
     <!-- 筛选区 -->
     <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
@@ -293,12 +284,12 @@ onMounted(() => {
           <span
             v-for="item in stats.by_action"
             :key="item.action"
-            class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px]"
+            class="flex items-center gap-1.5 px-2 py-1 text-[12px]"
             :class="item.count === 0 ? 'opacity-45' : ''"
             style="background-color: var(--muted)"
           >
             <span
-              class="inline-block size-2 rounded-full"
+              class="inline-block size-2"
               :style="{ backgroundColor: LOG_ACTION_COLOR[item.action] ?? 'var(--text-tertiary)' }"
             />
             {{ item.label }}
@@ -319,7 +310,7 @@ onMounted(() => {
             <div
               v-for="day in trend"
               :key="day.date"
-              class="w-full max-w-[22px] shrink rounded-t"
+              class="w-full max-w-[22px] shrink"
               :style="{
                 height: `${Math.max(2, day.percent)}%`,
                 backgroundColor: 'var(--primary)',
@@ -338,10 +329,10 @@ onMounted(() => {
           <div
             v-for="item in statusFlow"
             :key="item.status"
-            class="flex items-baseline justify-between rounded-lg px-2.5 py-1.5 text-[12px]"
+            class="flex items-baseline justify-between px-2.5 py-1.5 text-[12px]"
             style="background-color: var(--muted)"
           >
-            <dt :style="{ color: STATUS_COLOR_VAR[item.status] }">{{ item.status }}</dt>
+            <dt><StatusTag :status="item.status" size="sm" /></dt>
             <dd class="tnum m-0 font-semibold">{{ item.count }}</dd>
           </div>
         </dl>

@@ -1,0 +1,1 @@
+import{B as e,St as t}from"./endpoints-C2GocQfh.js";function n(n,r){return t(n,e=>{e!==void 0&&(r.value=e)}),e(()=>n.value===void 0?r.value:n.value)}export{n as t};

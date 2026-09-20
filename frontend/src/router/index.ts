@@ -97,7 +97,8 @@ const routes: RouteRecordRaw[] = [
         path: 'logs',
         name: 'staff-logs',
         component: () => import('@/views/staff/LogsView.vue'),
-        meta: { title: '历史记录' },
+        // 页码同「订单台 / 订单详情」一族的 01：它读的就是同一批订单的留痕
+        meta: { title: '历史记录', code: '01' },
       },
       {
         path: 'dashboard',

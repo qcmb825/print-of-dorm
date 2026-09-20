@@ -104,6 +104,24 @@
 </td>
 </tr>
 <tr>
+<td><b>QQ 机器人</b></td>
+<td>
+
+- **QQ 号就是身份**：加机器人好友后直接发消息即可，没有绑定码、没有验证码 ——
+  机器人拿私聊消息的发送者 QQ 去 `users.qq` 里找在用账号（私聊的发送者号码由 OneBot
+  登录态给出，伪造不了）
+- 发文件（pdf / word / 图片）即下单：机器人**追问打印方式 → 份数 → 纸张**，
+  过程中随时可发「备注 内容」；也可以「打印服务」按预设服务下单
+- 查「订单」「取件码 单号」「我的」「公告」；订单变成**可取了会主动推送**取件码
+- 有疑问发「反馈 内容」提工单，「工单」看进展、「回复工单 单号 内容」接着聊；
+  「撤回 单号」撤回还没被接单的单（删除类操作会再要一遍完整命令当二次确认）
+- 没注册的 QQ 会被引导去网页注册（**机器人不代注册**，否则绕开了学号名单核验）；
+  一个 QQ 同时命中多个在用账号时拒绝操作
+- 完整设计见 `memoryandtest/QQbot对接大纲.md` 与实施记录（这两个文件不进仓库）
+
+</td>
+</tr>
+<tr>
 <td><b>下单与接单</b></td>
 <td>
 
@@ -546,6 +564,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `ALLOWED_EXTENSIONS` | `pdf,jpg,jpeg,png,doc,docx` | 上传白名单 |
 | `SECRET_KEY` | 空 | 会话签名密钥，**必须固定**，否则每次重启全体掉线 |
 | `PASSWORD_ENC_KEY` | 空 | 密码加密密钥，**必须固定且与数据库同寿命**，换了旧密码解不开 |
+| `BOT_TOKEN` | 空 | QQ 机器人（独立进程）访问 `/api/bot/*` 的 Bearer 令牌。**留空 = 整组接口 503**（不是不设防）；启用时单独生成随机值，不要复用 `SECRET_KEY` |
 | `SESSION_DAYS` | `7` | 登录状态保持天数 |
 | `SESSION_COOKIE_SECURE` | `false` | cookie 是否只走 HTTPS。**拿到证书之后再改成 `true`**，提前改会变成「登录成功但一刷新就退出」 |
 | `TRUST_PROXY` | `false` | 前面是否挂了反向代理（Nginx 等）。开了才会采用 `X-Forwarded-For` 里的真实客户端 IP；**直接暴露在公网时必须保持 `false`**，否则客户端可以伪造 IP 绕过限流、污染日志。开了之后来源 IP 取 `X-Forwarded-For` 的**最左值**，而标准反代用 `$proxy_add_x_forwarded_for` 是**追加**语义，最左项就是客户端自己写的值——因此开了它就必须保证应用不能被直连（只监听回环 / 防火墙限制），且反代应当**覆盖式写入**而不是追加。否则登录锁定、注册与审核限流、以及日志里的 `ip=` 全部可被伪造。 |
@@ -611,9 +630,48 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `POST` | `/api/admin/user/<id>/restore` | 内置账号 | 恢复已注销账号；昵称或学号被占走时 409，响应里列出占用者 |
 | `POST` | `/api/admin/user/<id>/ticket` | 内置账号 | 代发工单，首条消息以该学生的名义入库 |
 
+| `GET` | `/api/bot/orders` `/api/bot/code` `/api/bot/me` `/api/bot/presets` `/api/bot/print-options` `/api/bot/announcement` | Bot | 机器人只读接口，都带 `?qq=` 认身份（该 QQ 的在用账号）。**整组挂在 `/api/bot/` 前缀下**，闸门在 `app.py` 的 `identify_bot_request`：没配 `BOT_TOKEN` 返回 503、令牌不对 401 并记安全事件 |
+| `POST` | `/api/bot/order/file` `/api/bot/order/preset` | Bot | 机器人下单（文件 / 预设），复用网页端同一套建单函数与**同一把上传频控**，留痕里操作人是学生本人 |
+| `POST` | `/api/bot/order/withdraw` | Bot | 机器人代学生撤回未接单的订单（守卫逐条对齐网页端） |
+| `GET`/`POST` | `/api/bot/events` | Bot | 「可取了」等事件的轮询游标，机器人据此推送 |
+| `GET` | `/api/bot/ticket{,s}` / `POST /api/bot/ticket{,/reply}` | Bot | 工单：发起（管理员 403、进行中数量有上限）/ 看列表（看即已读）/ 回复 |
+| `GET` | `/api/admin/order-logs` | 管理员 | **历史记录**：全部订单留痕的筛选 + 分页。`action=`（十种操作类型）、`status=`（被改成了哪个状态）、`from=` / `to=`（本地日期）、`q=`（订单号精确 + 说明/操作人模糊） |
+| `GET` | `/api/admin/order-logs/stats` | 管理员 | 与列表**同一套筛选条件**下的统计：动作分布（十种全给）、状态流转（五个按流程顺序）、按天趋势（≤60 天）、操作人排行 |
+
 > 公告、工单、看板等其余接口不逐一列出，实现见 `routes/` 下对应的模块。
 
 ---
+
+## 💬 QQ 机器人
+
+机器人是**独立进程** `printbot/`，与 Flask 服务只有 HTTP(S) 的距离 —— 它整个目录拷到跑 QQ 客户端的
+那台机器上、`python -m printbot.bot` 启动即可，**不 import 项目里任何模块**。
+
+```
+QQ 客户端（NapCat） --正向 WS--> printbot --HTTP+BOT_TOKEN--> Flask（/api/bot/*）
+                         ↑                                        │
+                         └──────────── 「可取了」推送 ←────────────┘
+```
+
+服务端要做的事只有三件：`.env` 里配好 `BOT_TOKEN`、确认接口在 `/api/bot/` 前缀下（闸门按前缀拦）、
+以及让 `users.qq` 是学生**真实的**那个号。
+
+`printbot/.env`：
+
+| 键 | 说明 |
+| :--- | :--- |
+| `ONEBOT_WS` | OneBot 正向 WS 地址，默认 `ws://127.0.0.1:8085` |
+| `ONEBOT_ACCESS_TOKEN` | OneBot 侧的 access token，没有就留空 |
+| `API_BASE` | 站点地址，默认 `http://127.0.0.1:8080` |
+| `BOT_TOKEN` | 必须与 `.env` 里的 `BOT_TOKEN` 一致 |
+| `SITE_URL` | 文案里引导回网页的地址，默认 `https://print.qcmb.cloud` |
+
+QQ 框架用 **NapCat Shell**（`NapCatShell/`，配置在 `config/onebot11_<QQ号>.json`，正向 WS 端口 8085）。
+项目根的 `启动QQ机器人.bat` 会把 NapCat 与 printbot 一起拉起来（脚本是 GBK 编码，改它时注意别存成 UTF-8）。
+
+> 机器人一侧的纪律（改代码前先读）：只理私聊、群消息一律忽略；**建单类 POST 绝不自动重试**
+> （响应丢了重试等于重复下单），只读接口才重试一次；日志只记 QQ 号与动作，**不记消息正文和文件名**；
+> 收帧与事件处理必须分线程（同一个线程里等动作响应会把唯一的读帧循环卡死，真机上踩过）。
 
 ## 🗄️ 数据模型
 
@@ -621,9 +679,9 @@ SQLite 单库，共 10 张表：
 
 | 表 | 用途 |
 | :--- | :--- |
-| `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段） |
+| `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段，v15 起 `qq` 上有一条部分唯一索引：`qq <> '' AND status <> 'closed'` 的行里一个 QQ 只能绑一个在用账号） |
 | `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
-| `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么） |
+| `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么）。v16 加 `to_status`：这一单被改成了哪个状态，历史记录页据此筛「改成可取了 / 已取件」；**不倒推历史数据**，老留痕按 detail 里的「「旧」→「新」」认 |
 | `audit_requests` | 身份审核申请（学号唯一，只允许提一次） |
 | `announcements` | 公告 |
 | `tickets` / `ticket_messages` | 工单与消息 |
@@ -765,6 +823,9 @@ print-of-dorm/
 │   ├── recipients.py      #   收件人：谁能收到提醒
 │   ├── sender.py          #   发信
 │   └── template.py        #   正文模板
+├── printbot/              # QQ 机器人独立进程（自包含，**绝不 import 项目模块**）：
+│                          #   正向 WS 接 OneBot、中文命令、打印参数追问、推送游标
+│                          #   整个目录拷到跑 QQ 客户端的机器上，`python -m printbot.bot`
 ├── routes/                # 按功能域拆分的 Blueprint
 │   ├── __init__.py        #   蓝图注册
 │   ├── account.py         #   注册 / 登录 / 登出 / 当前用户
@@ -773,6 +834,8 @@ print-of-dorm/
 │   ├── order_options.py   #   打印预设与纸张规格（学生端读、管理端维护）
 │   ├── upload_chunks.py   #   大文件分片上传
 │   ├── admin.py           #   账号管理 / 数据看板
+│   ├── history.py         #   历史记录：订单留痕的筛选 / 统计（只读）
+│   ├── bot.py             #   QQ 机器人接口（/api/bot/*，整组走 BOT_TOKEN 闸门）
 │   ├── announcements.py   #   公告
 │   └── tickets.py         #   工单
 ├── templates/
@@ -874,7 +937,7 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 - [ ] **钱只记了金额，没记支付状态**。现在只能“订单一笔款已收/未收”全靠人工对账，订单表里没有 `paid` 之类的字段，也没有任何对账单据导出。
 - [ ] **没有自动化测试**。主要流程靠手工验证；前端有 `vue-tsc` 类型检查兜底，后端没有。（#6）
 - [ ] **限流只在单进程内有效**。所有限流都落在 `security.py` 的两个**模块级字典**里：登录失败计数 `_login_failures`（键是「IP + 学号」，默认 5 次 / 锁 300 秒；只服务登录）和通用计数器 `_hits`（按窗口内的次数挡手抖与刷量）。两者都不落盘、不共享。`_hits` 里目前有 7 组键：注册 `register:`（1 小时 20 次提交；只数「提交」这一件事，字段格式没过的请求不计入 —— 昵称或学号填重了再改一次，不该把自己那栋楼的出口 IP 封掉）、上传与预设下单 `upload:`（60 秒 20 次）、分片建会话 `chunkinit:`（60 秒 30 次）、分片上传 `chunkpart:`（60 秒 240 次）、工单轮询 `ticketpoll:`（60 秒 240 次），以及**两个未登录也能调的接口** —— 提交身份审核申请 `audit:`（1 小时 3 次）和查审核进度 `auditquery:`（1 小时 20 次）。所以单进程的 `waitress` 是对的；一旦换成多进程（如 `gunicorn -w 4`），每个进程各算各的，阈值会被成倍放宽且毫无提示。真要多进程，得先把这些计数器挪到 Redis。（#33）
-- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据 —— 所以 `SCHEMA_VERSION` 现在是 `'14'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
+- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据。`v14 → v15` 给 `users.qq` 加部分唯一索引（`qq <> '' AND status <> 'closed'`，于是「一个 QQ 至多绑一个在用账号」由数据库保证；建失败只记 error 不推进版本号）。`v15 → v16` 给 `order_logs` 加 `to_status` 列与 `idx_order_logs_time` 索引 —— **加列的那句 `ALTER TABLE` 必须排在 `order_logs` 建表之后**：老库的 `CREATE TABLE IF NOT EXISTS` 是空操作，顺序颠倒会让服务直接起不来，而所有回归脚本跑的都是全新库、发现不了（`memoryandtest/check_old_db_upgrade.py` 就是为此存在的）。两步都是纯加列 / 加索引，没有重建表 —— 所以 `SCHEMA_VERSION` 现在是 `'16'`。**v13 落地后所有人都会掉线一次**：升级前发出去的 Cookie 里没有这个值，第一个请求就会被判失效、要求重新登录 —— 这是「改密码即让旧 Cookie 失效」的必然代价，不是故障。**老订单的选项快照列一律是 NULL，不会被强制回填**（`copies`、`paper_name` 这些编一个默认值出来，只会让人分不清哪一单是真的选过；`claim_alert_time` 的 NULL 含义是「还没提醒过」，回填等于把没提醒过的单说成提醒过了）。**升级前务必备份数据库和上传目录。**（#5）
 - [ ] **窄屏没有专门放大触控目标**。新版组件尺寸沿用 Naive UI 的默认高度，手机上的按钮偏小，要补得先覆写组件库的尺寸令牌。（#35）
 - [ ] **两套前端要各自维护**。新版已经拆成模块（`frontend/src/`），经典版仍是单文件 `templates/index.html`。长期打算是让经典版退役，短期内改公共逻辑（比如后端字段改名）必须**两边同时改** —— 漏掉一边的典型症状是图表静默空白，不报错。（#46）
 
