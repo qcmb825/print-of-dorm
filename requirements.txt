@@ -18,3 +18,8 @@ waitress==3.0.2
 # password_enc 用 Fernet 加密，可逆，只在专设的接口里解密后返回。
 cryptography==46.0.3
 
+# QQ 机器人的数据卡渲染（botcard.py 画 PNG）。
+# 为什么用 Pillow 而不是「HTML 模板 + 无头浏览器」：后者要拖一个 chromium（约 150MB）
+# 进服务器，而我们只需要画几张固定版式的列表卡。Pillow 是普通 wheel，
+# Linux / Windows 都有现成的包。
+Pillow==12.3.0

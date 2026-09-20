@@ -24,9 +24,12 @@ create_preset_order），上传频控也与网页端**共用同一把计数器**
 
 import os
 import sqlite3
+import time
 import uuid
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
+
+import botcard
 
 from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ROLE_USER, ST_DONE,
                     ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED, STATUS_ACTIVE,
@@ -109,13 +112,26 @@ def api_bot_orders():
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
-    with db_conn() as conn:
-        rows = conn.execute('''
-            SELECT o.id, o.status, o.pickup_code, o.price, o.filename,
-                   o.preset_content, o.copies,
-                   datetime(o.create_time, 'localtime') AS create_time
-            FROM orders o WHERE o.user_id = ? ORDER BY o.id DESC LIMIT ?
-        ''', (g.user['id'], BOT_ORDERS_LIMIT)).fetchall()
+    return jsonify({'code': 0, 'msg': 'ok', **_orders_payload(g.user['id'])})
+
+
+def _orders_payload(uid, conn=None):
+    """本人最近订单。文本回复与卡片**共用这一份取数** —— 两处各算一遍迟早对不上。
+
+    conn 传进来就复用调用方的连接（卡片那条路要连查好几张表，
+    每张表各开一次连接既慢、又容易在写库时互相撞锁）。
+    """
+    sql = '''
+        SELECT o.id, o.status, o.pickup_code, o.price, o.filename,
+               o.preset_content, o.copies,
+               datetime(o.create_time, 'localtime') AS create_time
+        FROM orders o WHERE o.user_id = ? ORDER BY o.id DESC LIMIT ?
+    '''
+    if conn is None:
+        with db_conn() as own:
+            rows = own.execute(sql, (uid, BOT_ORDERS_LIMIT)).fetchall()
+    else:
+        rows = conn.execute(sql, (uid, BOT_ORDERS_LIMIT)).fetchall()
     orders = []
     for row in rows:
         # 文件单报文件名、预设单报服务内容：bot 端拼的是同一条「这单要打什么」。
@@ -129,7 +145,7 @@ def api_bot_orders():
             'title': title[:60],
             'create_time': row['create_time'],
         })
-    return jsonify({'code': 0, 'msg': 'ok', 'orders': orders, 'nickname': g.user['nickname']})
+    return {'orders': orders}
 
 
 @bp.get('/api/bot/code')
@@ -159,13 +175,20 @@ def api_bot_code():
 @bp.get('/api/bot/presets')
 def api_bot_presets():
     """当前可用的预设打印服务清单（学生选一条来下单）。"""
-    with db_conn() as conn:
+    return jsonify({'code': 0, 'msg': 'ok', **_presets_payload()})
+
+
+def _presets_payload(conn=None):
+    """预设清单。文本回复与卡片共用（见 _orders_payload 的说明）。"""
+    if conn is None:
+        with db_conn() as own:
+            rows = _active_presets(own)
+    else:
         rows = _active_presets(conn)
-    presets = [{'preset_id': row['id'],
-                # 换行压成空格：QQ 消息里一段多行说明会把清单顶得没法看
-                'content': (row['content'] or '').replace('\n', ' ')}
-               for row in rows]
-    return jsonify({'code': 0, 'msg': 'ok', 'presets': presets})
+    return {'presets': [{'preset_id': row['id'],
+                         # 换行压成空格：QQ 消息里一段多行说明会把清单顶得没法看
+                         'content': (row['content'] or '').replace('\n', ' ')}
+                        for row in rows]}
 
 
 def _active_presets(conn):
@@ -226,18 +249,22 @@ def api_bot_me():
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
-    uid = g.user['id']
-    with db_conn() as conn:
-        counts = {r['status']: r['c'] for r in conn.execute(
-            'SELECT status, COUNT(*) AS c FROM orders WHERE user_id = ? GROUP BY status',
-            (uid,)).fetchall()}
-        spent = conn.execute(
-            'SELECT COALESCE(SUM(price), 0) AS s FROM orders WHERE user_id = ?',
-            (uid,)).fetchone()['s']
-    return jsonify({
-        'code': 0,
-        'msg': 'ok',
-        'nickname': g.user['nickname'],
+    return jsonify({'code': 0, 'msg': 'ok', **_me_payload(g.user['id'], g.user['nickname'])})
+
+
+def _me_payload(uid, nickname, conn=None):
+    """个人汇总（文本回复与卡片共用）。口径见上面的 docstring，别在这里另算一套。"""
+    sql_counts = 'SELECT status, COUNT(*) AS c FROM orders WHERE user_id = ? GROUP BY status'
+    sql_spent = 'SELECT COALESCE(SUM(price), 0) AS s FROM orders WHERE user_id = ?'
+    if conn is None:
+        with db_conn() as own:
+            counts = {r['status']: r['c'] for r in own.execute(sql_counts, (uid,)).fetchall()}
+            spent = own.execute(sql_spent, (uid,)).fetchone()['s']
+    else:
+        counts = {r['status']: r['c'] for r in conn.execute(sql_counts, (uid,)).fetchall()}
+        spent = conn.execute(sql_spent, (uid,)).fetchone()['s']
+    return {
+        'nickname': nickname,
         'orders': {
             'total': sum(counts.values()),
             'in_progress': sum(counts.get(s, 0) for s in (ST_UNPRICED, ST_PENDING, ST_PRINTING)),
@@ -246,7 +273,7 @@ def api_bot_me():
             'spent': round(spent or 0.0, 2),
         },
         'usage': quota_snapshot(uid),
-    })
+    }
 
 
 @bp.post('/api/bot/order/withdraw')
@@ -353,7 +380,15 @@ def api_bot_tickets():
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
-    uid = g.user['id']
+    return jsonify({'code': 0, 'msg': 'ok', **_tickets_payload(g.user['id'])})
+
+
+def _tickets_payload(uid):
+    """我的工单列表。文本回复与卡片共用。
+
+    **「看列表即已读」的口径写在这里**：两条路都必须做同一次标记，
+    否则用卡片看一遍、未读还在，用户会以为没看到过回复。
+    """
     with db_conn() as conn:
         rows = conn.execute('''
             SELECT t.id, t.subject, t.status,
@@ -372,11 +407,10 @@ def api_bot_tickets():
             conn.execute('UPDATE tickets SET user_read_time = CURRENT_TIMESTAMP '
                          'WHERE user_id = ?', (uid,))
             conn.commit()
-    tickets = [{'ticket_id': r['id'], 'subject': r['subject'], 'status': r['status'],
-                'unread': r['unread'], 'msg_count': r['msg_count'],
-                'last_body': r['last_body'] or '', 'update_time': r['update_time']}
-               for r in rows]
-    return jsonify({'code': 0, 'msg': 'ok', 'tickets': tickets})
+    return {'tickets': [{'ticket_id': r['id'], 'subject': r['subject'], 'status': r['status'],
+                         'unread': r['unread'], 'msg_count': r['msg_count'],
+                         'last_body': r['last_body'] or '', 'update_time': r['update_time']}
+                        for r in rows]}
 
 
 @bp.post('/api/bot/ticket/reply')
@@ -564,6 +598,47 @@ def api_bot_order_file():
                 pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
                     'pickup_code': pickup_code})
+
+
+@bp.get('/api/bot/card')
+def api_bot_card():
+    """把「表格型」回复渲染成一张 PNG 卡（订单 / 工单 / 预设 / 我的）。
+
+    为什么要它：那几类回复在手机 QQ 里是一大坨等宽文字，层级全糊；
+    渲染成一张卡更像站内的面板。**一句话能说清的内容不要做成卡**
+    （取件码、下单成功这些仍然走文本）—— 在手机里点开一张图比读一行字慢。
+
+    取数一律走 *_payload() 那几个共用函数，卡片与文本看到的是同一份数据。
+
+    渲染不出来（服务器没有中文字体）时回 **501**，机器人会自己退回纯文本 ——
+    宁可难看，也不能发一张全是方块的图。
+    """
+    error = _identify(request.args.get('qq'))
+    if error is not None:
+        return error
+    kind = (request.args.get('kind') or '').strip()
+    if kind not in ('orders', 'tickets', 'presets', 'me'):
+        return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
+    uid = g.user['id']
+    with db_conn() as conn:
+        if kind == 'orders':
+            payload = _orders_payload(uid, conn)
+        elif kind == 'tickets':
+            payload = _tickets_payload(uid)
+        elif kind == 'presets':
+            payload = _presets_payload(conn)
+        else:
+            payload = _me_payload(uid, g.user['nickname'], conn)
+    payload['nickname'] = g.user['nickname']
+    payload['qq'] = g.user['qq']
+    payload['stamp'] = time.strftime('%H:%M:%S')
+    png = botcard.render(kind, payload)
+    if png is None:
+        return jsonify({'code': 501, 'msg': '服务器没有可用的中文字体，卡片暂不可用'}), 501
+    resp = Response(png, mimetype='image/png')
+    # 卡片是给人看的快照，别让任何一层缓存住（数据每分钟都在变）
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @bp.get('/api/bot/events')

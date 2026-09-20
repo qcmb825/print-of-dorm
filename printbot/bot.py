@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -97,6 +98,37 @@ PENDING_DIR = Path(__file__).resolve().parent / 'data' / 'pending'
 
 _MODE_MAP = {'1': ('black', 'single'), '2': ('black', 'double'),
              '3': ('color', 'single'), '4': ('color', 'double')}
+
+# 渲染好的数据卡落这儿（启动时统一清一次）。**别发完就删**：框架那边是拿到文件、
+# 发完才回执的，抢在中间删会发出一张白图 —— 一张几十 KB，留着更稳。
+CARD_DIR = Path(__file__).resolve().parent / 'data' / 'cards'
+
+
+def _send_card_or_text(client, qq, kind, fallback):
+    """表格型的回复**优先发一张卡**，拿不到卡就发 fallback() 的文本。
+
+    哪些走卡、哪些走文本，判据是「这条回复是不是一张表」：
+    订单 / 工单 / 预设 / 我的 是表；取件码、下单成功、各种提示都不是 ——
+    在手机 QQ 里点开一张图比读一行字慢，一句话能说清的别做成图。
+
+    fallback 传**函数**而不是字符串：只在真的要用时才去拼那串文本。
+    """
+    try:
+        png = api.card(kind, qq)
+    except api.ApiError as exc:
+        log.warning('取卡片失败（%s），这条改发文本：%s', kind, exc)
+        png = None
+    if png:
+        try:
+            CARD_DIR.mkdir(parents=True, exist_ok=True)
+            path = CARD_DIR / ('%s-%s.png' % (kind, uuid.uuid4().hex[:10]))
+            with open(path, 'wb') as fh:
+                fh.write(png)
+            client.send_private_image(qq, path)
+            return
+        except Exception:  # noqa: BLE001 —— 发图这条路上任何一步失败，都别把消息吞掉
+            log.exception('发卡片失败（%s），这条改发文本', kind)
+    client.send_private_msg(qq, fallback())
 
 _COPIES_ASK = '打几份？（回复数字，比如 1；发「取消」可以放弃）'
 # 纸张是可选项：管理员没配纸张类型时这一步整个跳过（见 _consume_pending_answer），
@@ -423,21 +455,25 @@ def _clear_pending(qq):
 
 
 def _purge_pending_dir():
-    """启动时清掉上一轮残留的暂存文件。
+    """启动时清掉上一轮残留的暂存文件**和数据卡**。
 
     对话状态在内存里、重启即失效，这些文件不会再有主人认领 ——
     留着只会白占磁盘。返回清掉的数量（写进启动日志）。
+
+    卡片是发完就没用的渲染快照（见 _send_card_or_text），一并清掉；
+    两个目录都清，免得只清一个、另一个悄悄涨。
     """
     removed = 0
-    try:
-        for f in PENDING_DIR.glob('*'):
-            try:
-                os.remove(f)
-                removed += 1
-            except OSError:
-                pass
-    except OSError:
-        pass
+    for folder in (PENDING_DIR, CARD_DIR):
+        try:
+            for f in folder.glob('*'):
+                try:
+                    os.remove(f)
+                    removed += 1
+                except OSError:
+                    pass
+        except OSError:
+            pass
     return removed
 
 
@@ -622,15 +658,19 @@ def reply_orders(client, qq):
         client.send_private_msg(qq, '你还没有订单，把要打的文件直接发我就行。\n'
                                     '（网页端也能下单：%s）' % config.SITE_URL)
         return
-    lines = ['你最近的 %d 单：' % len(orders)]
-    for order in orders:
-        price = order.get('price')
-        price_text = '未计费' if price is None else ('%s 元' % price)
-        lines.append('#%s｜%s｜取件码 %s｜%s\n　%s' % (
-            order.get('order_id'), order.get('status'),
-            order.get('pickup_code') or '—', price_text,
-            order.get('title') or '（无标题）'))
-    client.send_private_msg(qq, '\n'.join(lines))
+    def text():
+        """纯文本版：卡片发不出去时的兜底，一个字都不能少。"""
+        lines = ['你最近的 %d 单：' % len(orders)]
+        for order in orders:
+            price = order.get('price')
+            price_text = '未计费' if price is None else ('%s 元' % price)
+            lines.append('#%s｜%s｜取件码 %s｜%s\n　%s' % (
+                order.get('order_id'), order.get('status'),
+                order.get('pickup_code') or '—', price_text,
+                order.get('title') or '（无标题）'))
+        return '\n'.join(lines)
+
+    _send_card_or_text(client, qq, 'orders', text)
 
 
 def reply_code(client, qq, argument):
@@ -660,12 +700,15 @@ def reply_preset(client, qq, argument):
             client.send_private_msg(qq, '现在还没有可选的打印服务，把文件直接发我就行。\n'
                                         '（管理员可以在网页端添加服务：%s）' % config.SITE_URL)
             return
-        lines = ['可用的打印服务（回复「打印服务 编号」下单）：']
-        for preset in presets:
-            content = preset.get('content') or ''
-            lines.append('　%s：%s' % (preset.get('preset_id'),
-                                       content[:40] + ('…' if len(content) > 40 else '')))
-        client.send_private_msg(qq, '\n'.join(lines))
+        def text():
+            lines = ['可用的打印服务（回复「打印服务 编号」下单）：']
+            for preset in presets:
+                content = preset.get('content') or ''
+                lines.append('　%s：%s' % (preset.get('preset_id'),
+                                           content[:40] + ('…' if len(content) > 40 else '')))
+            return '\n'.join(lines)
+
+        _send_card_or_text(client, qq, 'presets', text)
         return
     if not argument.isdigit():
         client.send_private_msg(qq, '用法：「打印服务 编号」，比如「打印服务 2」。'
@@ -744,17 +787,20 @@ def reply_me(client, qq):
     orders = resp.get('orders') or {}
     usage = resp.get('usage') or {}
     spent = orders.get('spent')
-    lines = [
-        '%s 的打印概况：' % resp.get('nickname', '你'),
-        '　我的单数：%s（进行中 %s · 待取件 %s · 已取件 %s）'
-        % (orders.get('total', 0), orders.get('in_progress', 0),
-           orders.get('ready', 0), orders.get('done', 0)),
-        '　累计花费：%s' % ('还没有已计费的单' if not spent else '%.2f 元' % spent),
-        '　存储用量：%s / %s（含未完成的分片）'
-        % (_human_bytes(usage.get('used_bytes')), _human_bytes(usage.get('quota_bytes'))),
-        '网页端「设置」里能看到完整明细：%s' % config.SITE_URL,
-    ]
-    client.send_private_msg(qq, '\n'.join(lines))
+
+    def text():
+        return '\n'.join([
+            '%s 的打印概况：' % resp.get('nickname', '你'),
+            '　我的单数：%s（进行中 %s · 待取件 %s · 已取件 %s）'
+            % (orders.get('total', 0), orders.get('in_progress', 0),
+               orders.get('ready', 0), orders.get('done', 0)),
+            '　累计花费：%s' % ('还没有已计费的单' if not spent else '%.2f 元' % spent),
+            '　存储用量：%s / %s（含未完成的分片）'
+            % (_human_bytes(usage.get('used_bytes')), _human_bytes(usage.get('quota_bytes'))),
+            '网页端「设置」里能看到完整明细：%s' % config.SITE_URL,
+        ])
+
+    _send_card_or_text(client, qq, 'me', text)
 
 
 # ---- 工单（问题反馈）---------------------------------------------------------
@@ -794,18 +840,21 @@ def reply_tickets(client, qq):
         client.send_private_msg(qq, '你还没有工单。有问题发「反馈 你的问题」，管理员会看到。\n'
                                     '网页端：%s' % config.SITE_URL)
         return
-    lines = ['你的工单（最近 %d 条）：' % len(rows)]
-    for t in rows:
-        unread = '（有新回复）' if t.get('unread') else ''
-        lines.append('#%s｜%s%s｜%s' % (
-            t.get('ticket_id'),
-            _TICKET_STATUS_TEXT.get(t.get('status'), t.get('status')),
-            unread, (t.get('subject') or '')[:20]))
-        last = (t.get('last_body') or '').replace('\n', ' ')
-        if last:
-            lines.append('　最新：%s' % (last[:50] + ('…' if len(last) > 50 else '')))
-    lines.append('要接着聊：发「回复工单 单号 内容」。')
-    client.send_private_msg(qq, '\n'.join(lines))
+    def text():
+        rows_out = ['你的工单（最近 %d 条）：' % len(rows)]
+        for t in rows:
+            unread = '（有新回复）' if t.get('unread') else ''
+            rows_out.append('#%s｜%s%s｜%s' % (
+                t.get('ticket_id'),
+                _TICKET_STATUS_TEXT.get(t.get('status'), t.get('status')),
+                unread, (t.get('subject') or '')[:20]))
+            last_text = (t.get('last_body') or '').replace('\n', ' ')
+            if last_text:
+                rows_out.append('　最新：%s' % (last_text[:50] + ('…' if len(last_text) > 50 else '')))
+        rows_out.append('要接着聊：发「回复工单 单号 内容」。')
+        return '\n'.join(rows_out)
+
+    _send_card_or_text(client, qq, 'tickets', text)
 
 
 def reply_ticket_reply(client, qq, argument):

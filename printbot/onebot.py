@@ -183,3 +183,16 @@ class OneBotClient:
         （大纲第 0 节把「不做群聊」列为硬边界）。"""
         return self.call_action('send_private_msg',
                                 {'user_id': int(user_id), 'message': text})
+
+    def send_private_image(self, user_id, path):
+        """发一张私聊图片（本地文件路径）。
+
+        用段数组 + `file` 给本地路径：图就在本机（服务端渲染好、printbot 存盘），
+        让框架自己去读，比塞 base64 省事、也省掉 33% 的体积。
+        前提是框架允许本地文件转 URL —— LLBot 那份配置里的 `enableLocalFile2Url`
+        就是干这个的（见 `LLBot-CLI-win-x64-v8/bin/llbot/data/config_<QQ>.json`）。
+        """
+        return self.call_action('send_private_msg', {
+            'user_id': int(user_id),
+            'message': [{'type': 'image', 'data': {'file': str(path)}}],
+        })

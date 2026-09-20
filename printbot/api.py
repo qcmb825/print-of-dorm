@@ -61,6 +61,34 @@ def _request(method, path, payload=None, timeout=30, retries=1):
     raise ApiError('服务器暂时不可达（%s）' % last_exc)
 
 
+def _request_bytes(path, timeout=60, retries=1):
+    """取二进制（数据卡 PNG）。只读，按既有口径连接层失败重试一次。
+
+    服务器返回 JSON（比如没字体时的 501）时返回 None —— 那是「这次没图」，
+    不是错误：调用方会退回纯文本，用户不该因此少看到任何内容。
+    """
+    url = config.API_BASE + path
+    headers = {'Authorization': 'Bearer ' + config.BOT_TOKEN}
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=headers, method='GET')
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read()
+            # 用文件头判断，而不是看 Content-Type：中间层改错头的情况见过
+            if body[:8] == b'\x89PNG\r\n\x1a\n':
+                return body
+            return None
+        except urllib.error.HTTPError:
+            # 4xx/5xx 都是明确回答（501 = 没字体、404 = 服务器还没这接口）
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+    raise ApiError('服务器暂时不可达（%s）' % last_exc)
+
+
 def _request_multipart(path, fields, file_field, file_name, file_bytes,
                        timeout=180):
     """multipart 文件上传（手工拼 body，标准库没有现成的）。
@@ -125,6 +153,19 @@ def announcement():
 def me(qq):
     """个人汇总：订单分档计数 + 累计花费 + 在盘用量。"""
     return _request('GET', '/api/bot/me?%s' % urllib.parse.urlencode({'qq': qq}))
+
+
+def card(kind, qq=None):
+    """取一张数据卡（PNG 字节）；取不到返回 None，调用方退回纯文本。
+
+    三种「取不到」都不算错误（详见 _request_bytes）：
+    服务器没装中文字体（501）、接口还没上线（404）、网络不通。
+    任何一种都只是「这次没图」，用户该看到的文字一个字都不能少。
+    """
+    query = {'kind': kind}
+    if qq is not None:
+        query['qq'] = qq
+    return _request_bytes('/api/bot/card?%s' % urllib.parse.urlencode(query))
 
 
 def withdraw_order(qq, order_id):
