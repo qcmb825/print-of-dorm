@@ -35,18 +35,56 @@ from pathlib import Path
 from . import api, config
 from .onebot import OneBotClient, OneBotError
 
-HELP_TEXT = (
-    '我是打印服务的机器人，直接用就行：\n'
-    '① 把要打的文件直接发给我（pdf / word / 图片），我会问你打印方式、份数、纸张\n'
-    '　 （下单过程中想加备注，随时发「备注 你的内容」）\n'
-    '② 「打印服务」看有哪些现成服务，「打印服务 编号」按那条服务下单（同样会问参数）\n'
-    '③ 「订单」查最近的订单和状态；「取件码 订单号」查某一单的取件码\n'
-    '④ 「我的」看下单概况和存储用量；「公告」看最新公告\n'
-    '⑤ 有问题发「反馈 你的问题」提交工单，「工单」看进展、「回复工单 单号 内容」接着聊\n'
-    '⑥ 「撤回 订单号」撤回还没被接单的订单（会要求再发一次「确认撤回 订单号」）\n'
-    '更完整的操作（指定纸张、改参数、看公告）在网页端：\n'
-    'https://print.qcmb.cloud'
-)
+# 使用说明**不再本地维护**：服务端存结构（config 里那份 BOT_HELP_SECTIONS），
+# 机器人拿它拼文本、服务端拿它画卡片 —— 两边各存一份必然漂移，而且不报错。
+# 这里只留一句「够不着服务器」时的兜底：帮助恰恰是网络不好时最想看到的东西。
+HELP_OFFLINE = ('机器人暂时连不上服务器，稍后再试一次。' + chr(10) +
+                               '网页端也能下单和查单：%s' % config.SITE_URL)
+
+
+def render_help_text(sections):
+    """把服务端给的帮助结构拼成文本（卡片的文本兜底走这条路）。"""
+    lines = ['我是打印服务的机器人，直接用就行：']
+    marks = '①②③④⑤⑥⑦⑧⑨'
+    for i, section in enumerate(sections or []):
+        title = section.get('title') or ''
+        if title:
+            lines.append('%s %s' % (marks[i] if i < len(marks) else '-', title))
+        for item in section.get('items') or []:
+            lines.append('　 「%s」%s' % (item.get('cmd') or '', item.get('desc') or ''))
+    lines.append('更完整的操作（指定纸张、改参数、看公告）在网页端：')
+    lines.append(config.SITE_URL)
+    return '\n'.join(lines)
+
+
+def reply_help(client, qq, prefix=''):
+    """发使用说明：优先发卡片，取不到卡就用服务端的结构拼文本。
+
+    prefix 是「这个命令我不认识。」这类前置话术 —— 它只在文本那条路上有意义
+    （卡片本身就是一份完整的说明书，前面再加一句反而怪）。
+    """
+    try:
+        png = api.card('help', qq)
+    except api.ApiError:
+        png = None
+    if png:
+        try:
+            CARD_DIR.mkdir(parents=True, exist_ok=True)
+            path = CARD_DIR / ('help-%s.png' % uuid.uuid4().hex[:10])
+            with open(path, 'wb') as fh:
+                fh.write(png)
+            client.send_private_image(qq, path)
+            return
+        except Exception:  # noqa: BLE001
+            log.exception('发帮助卡片失败，改发文本')
+    try:
+        resp = api.help_sections()
+        if resp.get('code') == 0:
+            client.send_private_msg(qq, prefix + render_help_text(resp.get('sections')))
+            return
+    except api.ApiError:
+        pass
+    client.send_private_msg(qq, prefix + HELP_OFFLINE)
 
 log = logging.getLogger('printbot')
 
@@ -901,14 +939,14 @@ def handle_event(client, event):
         # 也不是回答。带斜杠却认不出 = 想执行命令但写错了，明确说「不认识」；
         # 不带斜杠的就是普通聊天，只回帮助（让他知道发文件就能下单）。
         if text.strip()[:1] in ('/', '／'):
-            client.send_private_msg(qq, '这个命令我不认识。\n' + HELP_TEXT)
+            reply_help(client, qq, '这个命令我不认识。' + chr(10))
         else:
-            client.send_private_msg(qq, HELP_TEXT)
+            reply_help(client, qq)
         return
 
     try:
         if command == 'help':
-            client.send_private_msg(qq, HELP_TEXT)
+            reply_help(client, qq)
         elif command == 'orders':
             reply_orders(client, qq)
         elif command == 'code':
@@ -937,7 +975,7 @@ def handle_event(client, event):
             else:
                 client.send_private_msg(qq, '现在没有正在进行的操作。')
         else:
-            client.send_private_msg(qq, '这个命令我不认识。\n' + HELP_TEXT)
+            reply_help(client, qq, '这个命令我不认识。' + chr(10))
     except api.ApiError as exc:
         # 命令处理里的网络错误在这里统一兜底：服务器暂时够不着，
         # 也要给人回一句话，而不是让消息掉进没有回应的黑洞。

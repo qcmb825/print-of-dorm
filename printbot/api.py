@@ -168,6 +168,15 @@ def card(kind, qq=None):
     return _request_bytes('/api/bot/card?%s' % urllib.parse.urlencode(query))
 
 
+def help_sections():
+    """使用说明的结构（**服务端是唯一来源**，见 routes/bot.py 的 BOT_HELP_SECTIONS）。
+
+    机器人拿它拼正文、服务端拿它画卡片 —— 本地不再存一份文案：
+    两份必然漂移，而且改了一边不会报错，只是话术悄悄对不上。
+    """
+    return _request('GET', '/api/bot/help')
+
+
 def withdraw_order(qq, order_id):
     """撤回自己未接单的订单。**不重试**：这是删除类操作，重试没有意义还有风险。"""
     return _request('POST', '/api/bot/order/withdraw',

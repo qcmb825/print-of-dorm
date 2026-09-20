@@ -49,6 +49,30 @@ bp = Blueprint('bot', __name__)
 BOT_ORDERS_LIMIT = 10
 
 
+# 使用说明的**唯一来源**（2026-09-20）。以前这段文案只住在 printbot 里，
+# 现在「使用说明」也要渲染成卡片，卡片是服务端画的 —— 两边各存一份必然漂移：
+# 改了这边、那边还是老话术，而且不报错。
+# 所以：服务端存结构（`/api/bot/help` 出 JSON），**printbot 拿它拼文本、服务端拿它画卡**。
+# 帮助属于「机器人自己」的东西，与具体账号无关，因此不需要 qq 参数、也不查库。
+BOT_HELP_SECTIONS = [
+    {'title': '下单', 'items': [
+        {'cmd': '直接发文件', 'desc': 'pdf / word / 图片都行，我会问打印方式、份数、纸张'},
+        {'cmd': '备注 内容', 'desc': '下单过程中随时发，把备注加到这一单上'},
+        {'cmd': '打印服务', 'desc': '看有哪些现成服务；「打印服务 编号」按那条下单'},
+    ]},
+    {'title': '查询', 'items': [
+        {'cmd': '订单', 'desc': '最近的订单与状态（卡片）'},
+        {'cmd': '取件码 订单号', 'desc': '查某一单的取件码'},
+        {'cmd': '我的', 'desc': '下单概况与存储用量（卡片）'},
+        {'cmd': '公告', 'desc': '看最新公告'},
+    ]},
+    {'title': '其它', 'items': [
+        {'cmd': '反馈 你的问题', 'desc': '提交工单；「工单」看进展、「回复工单 单号 内容」接着聊'},
+        {'cmd': '撤回 订单号', 'desc': '撤回还没被接单的订单（会再要一次「确认撤回 订单号」）'},
+    ]},
+]
+
+
 @bp.get('/api/bot/ping')
 def api_bot_ping():
     """供独立 printbot 进程验证后端地址与令牌是否可用。"""
@@ -603,6 +627,12 @@ def api_bot_order_file():
                     'pickup_code': pickup_code})
 
 
+@bp.get('/api/bot/help')
+def api_bot_help():
+    """使用说明的结构化文本（机器人拼正文用）。内容与卡片同源，见 BOT_HELP_SECTIONS。"""
+    return jsonify({'code': 0, 'msg': 'ok', 'sections': BOT_HELP_SECTIONS})
+
+
 @bp.get('/api/bot/card')
 def api_bot_card():
     """把「表格型」回复渲染成一张 PNG 卡（订单 / 工单 / 预设 / 我的）。
@@ -620,7 +650,7 @@ def api_bot_card():
     if error is not None:
         return error
     kind = (request.args.get('kind') or '').strip()
-    if kind not in ('orders', 'tickets', 'presets', 'me'):
+    if kind not in ('orders', 'tickets', 'presets', 'me', 'help'):
         return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
     uid = g.user['id']
     with db_conn() as conn:
@@ -630,6 +660,8 @@ def api_bot_card():
             payload = _tickets_payload(uid)
         elif kind == 'presets':
             payload = _presets_payload(conn)
+        elif kind == 'help':
+            payload = {'help': BOT_HELP_SECTIONS}
         else:
             payload = _me_payload(uid, g.user['nickname'], conn)
     payload['nickname'] = g.user['nickname']
