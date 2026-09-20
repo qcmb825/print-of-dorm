@@ -695,8 +695,13 @@ def _rows_presets(draw, y, x0, x1, payload):
                   font=_font('cjk', T_META), fill=INK_4)
         # 「可用」跟**两行整体**垂直居中（原先跟着第一行，重心偏上）
         draw.text((x1, y + 42), '可用', font=_font('cjk', T_META), fill=INK_4, anchor='ra')
+        #    分隔线画在**本行内容之后**（内容画到 y+96 为止，线落在 y+106）。
+        #    ⚠️ 早先写成了「先推进 y、再画线」，线于是跑到**下一行内容的下方** ——
+        #    两行之间没有线，线却多出一条挂在末尾（自检量出来的：两行卡的墨迹
+        #    在 285–356 / 413–484，而唯一的线在 498）。
+        draw.rectangle([x0, y + DIVIDER_DY + 8, x1, y + DIVIDER_DY + 11],
+                       fill=_over(INK, 34))
         y += ROW_H + 16
-        draw.rectangle([x0, y + DIVIDER_DY + 8, x1, y + DIVIDER_DY + 10], fill=_over(INK, 26))
     return y
 
 
