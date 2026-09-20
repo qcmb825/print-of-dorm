@@ -399,6 +399,15 @@ def handle_file(client, qq, kind, data):
 # ---- 参数追问的状态机 --------------------------------------------------------
 
 def _remove_quiet(path):
+    """删掉暂存文件，删不掉也不吵。
+
+    ⚠️ 必须容忍 path 为空：**预设单没有文件**（`_pending[...]['path']` 就是 None），
+    取消 / 超时清理走到这里时 `os.remove(None)` 抛的是 TypeError 而不是 OSError ——
+    只 catch OSError 的写法会让「取消」整条流程崩掉，连回执都发不出去
+    （表现：用户发「取消」石沉大海，日志里一条 TypeError）。实测踩过。
+    """
+    if not path:
+        return
     try:
         os.remove(path)
     except OSError:
