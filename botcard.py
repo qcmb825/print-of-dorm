@@ -114,11 +114,13 @@ T_CODE = 36                   # 单号是本行的**主读数**，必须比正�
 T_META = 28                   # 26px 缩到 400px 只有 9.6px，再抬一档到 10.4px
 T_CHIP = 30                   # 胶囊文字原先 26（10.3px）是全卡最小的字，而状态是第一眼要读的
 
-# 标题区高度：必须与 `render()` 里那串推进**逐项对齐**
-# （T_TITLE + 24 → 规线 4 → 28 → 元信息行 T_META → 34 → 22）。
-# 写死一个漂亮数字（比如 152）会让内容整体比规划低 12px、悄悄吃掉底部内边距 ——
-# 这类偏移不会报错，只会让版面「看着有点挤」。
-HEAD_H = T_TITLE + 24 + 4 + 28 + T_META + 34 + 22
+# 标题区高度：必须等于 `render()` 里那串推进的**总和**。
+# ⚠️ 只算「推进量」，不要另加元素自身的高度：规线的 4px 在这 28 里、元信息行的
+# T_META 在这 34 里。多算一次（曾经算成 +192 而真实是 +160）会让面板底部凭空
+# 空出 32px，末行的分隔线还会被画到面板**外面**去 —— 不报错，只是难看。
+# 数与 render 对齐：T_TITLE + 24（标题）→ 28（规线 + 气）→ 34（元信息行）
+# → 22（收尾线 + 气）。
+HEAD_H = T_TITLE + 24 + 28 + 34 + 22
 
 _FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'fonts')
 _font_paths = {}
@@ -630,11 +632,14 @@ def _rows_orders(draw, y, x0, x1, payload):
                   font=_font('cjk', T_META), fill=INK_3)
         draw.text((x1, y + 52), (item.get('create_time') or '')[5:16],
                   font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
-        y += ROW_H
-        # 3px 线宽是硬要求：1080 缩到手机约 400px 时 1px 只剩 0.37px，
-        # 会被抗锯齿抹平 —— 「看不清」和「不存在」在用户眼里是一回事。
+        #    分隔线画在**本行之内**（内容到 y+96，线落在 y+98）。
+        #    ⚠️ 早先是「先推进 y、再画线」，线于是落到下一行内容的下方，
+        #    末行那条还会跑到面板外面去（自检脚本量出来的）。
         draw.rectangle([x0, y + DIVIDER_DY, x1, y + DIVIDER_DY + 3], fill=_over(INK, 34))
-    return y
+        y += ROW_H
+    #    收回末行没用完的那截：返回的 y 是「下一行的起点」，
+    #    而内容其实只到末行分隔线的下缘（y - ROW_H + DIVIDER_DY + 3）。
+    return y - (ROW_H - DIVIDER_DY - 3)
 
 
 def _rows_tickets(draw, y, x0, x1, payload):
@@ -669,11 +674,10 @@ def _rows_tickets(draw, y, x0, x1, payload):
                       font=_font('cjk', T_META), fill=INK_3)
         draw.text((x1, y + 56), (item.get('update_time') or '')[5:16],
                   font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
-        y += ROW_H
-        # 3px 线宽是硬要求：1080 缩到手机约 400px 时 1px 只剩 0.37px，
-        # 会被抗锯齿抹平 —— 「看不清」和「不存在」在用户眼里是一回事。
+        #    分隔线画在本行之内（同上：先画线、再推进）
         draw.rectangle([x0, y + DIVIDER_DY, x1, y + DIVIDER_DY + 3], fill=_over(INK, 34))
-    return y
+        y += ROW_H
+    return y - (ROW_H - DIVIDER_DY - 3)
 
 
 def _rows_presets(draw, y, x0, x1, payload):
@@ -702,7 +706,8 @@ def _rows_presets(draw, y, x0, x1, payload):
         draw.rectangle([x0, y + DIVIDER_DY + 8, x1, y + DIVIDER_DY + 11],
                        fill=_over(INK, 34))
         y += ROW_H + 16
-    return y
+    #    同样收回末行没用完的那截（这里行高是 ROW_H + 16）
+    return y - (ROW_H + 16 - DIVIDER_DY - 11)
 
 
 def _rows_me(draw, y, x0, x1, payload):
@@ -862,11 +867,8 @@ def _measure_body(kind, payload):
     top = PAD + PANEL_PAD + HEAD_H
     if not _count_of(kind, payload):
         return ROW_H
-    #    减去末行没用完的那截：行函数推进一整行（ROW_H），而末行的内容只画到分隔线
-    #    （y + DIVIDER_DY + 3）。不减的话，两行的工单卡底部会空出十几像素的死白，
-    #    配上钉底的页脚，看着像「内容没填满模板」（复评）。
-    used = _ROW_FN[kind](draw, top, x0, x1, payload) - top
-    return max(ROW_H, used - ROW_H + DIVIDER_DY + 6)
+    #    行函数返回的就是「内容真正画到哪儿」（含末行那条分隔线），直接用。
+    return max(ROW_H, _ROW_FN[kind](draw, top, x0, x1, payload) - top)
 
 
 def _chassis(draw, top, x0, x1, payload):
