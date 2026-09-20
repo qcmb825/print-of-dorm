@@ -112,7 +112,10 @@ def api_bot_orders():
     error = _identify(request.args.get('qq'))
     if error is not None:
         return error
-    return jsonify({'code': 0, 'msg': 'ok', **_orders_payload(g.user['id'])})
+    # nickname 一定要带上：机器人那边用它称呼本人，测试里也钉着这条
+    # （重构取数时漏过一次，test_bot_features 当场报出来）
+    return jsonify({'code': 0, 'msg': 'ok', 'nickname': g.user['nickname'],
+                    **_orders_payload(g.user['id'])})
 
 
 def _orders_payload(uid, conn=None):
