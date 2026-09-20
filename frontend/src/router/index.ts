@@ -57,6 +57,16 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/student/TicketsView.vue'),
         meta: { title: '问题反馈', code: '04' },
       },
+      {
+        // 设置**不进底部标签栏**：那一栏的 4 项都是「来干一件事」的目的地，
+        // 而设置是查资料、改自己的地方，塞进去会让它成为一个和另外四项性质不同的格子
+        // （而且管理员会变成 6 列，320px 下每列只剩 ~53px）。
+        // 入口在账号下拉菜单里（UserMenu.vue），顶栏和侧栏都够得着。
+        path: 'settings',
+        name: 'student-settings',
+        component: () => import('@/views/student/SettingsView.vue'),
+        meta: { title: '设置', code: '05' },
+      },
     ],
   },
   {

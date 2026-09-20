@@ -39,11 +39,10 @@ import { ApiError } from '@/api/client'
 import { adminApi, type AdminProfilePayload } from '@/api/endpoints'
 import {
   ACCOUNT_STATUS_LABELS,
-  CONTACT_LABELS,
+  OTHER_CONTACT_LABELS,
   ROLE_LABELS,
   type AccountStatus,
   type AdminUser,
-  type ContactType,
   type RestoreConflict,
   type Role,
 } from '@/api/types'
@@ -54,13 +53,14 @@ import { confirmAction } from '@/composables/feedback'
 import { useAuthStore } from '@/stores/auth'
 import { shortTime } from '@/utils/format'
 import {
-  CONTACT_HINT,
-  CONTACT_PLACEHOLDER,
   NICKNAME_RE,
+  OTHER_CONTACT_PLACEHOLDER,
+  OTHER_CONTACT_TYPES,
   REALNAME_RE,
   STUDENT_ID_RE,
+  otherContactIssue,
   passwordIssue,
-  validateContact,
+  qqIssue,
 } from '@/utils/validators'
 
 const auth = useAuthStore()
@@ -99,10 +99,13 @@ const roleOptions = [
   { label: ROLE_LABELS.admin, value: 'admin' },
 ]
 
-/** 联系方式类型的下拉选项。从 CONTACT_LABELS 反推，
- *  不另写一份中文 —— 两份迟早会对不上。 */
-const contactOptions = (Object.keys(CONTACT_LABELS) as ContactType[]).map((value) => ({
-  label: CONTACT_LABELS[value],
+/** 联系方式类型的下拉选项。**只剩微信和邮箱** —— QQ 号已经单列成上面那个必填框了。
+ *  这里曾经是「从 CONTACT_LABELS 反推三种」，那套键里带着 qq：
+ *  照着它的键建下拉框，界面上会多出一个 QQ 选项，而两头都能填 QQ 时，
+ *  取件提醒到底发给哪一个就说不清了。所以类型上就收窄（OtherContactType），
+ *  不只是把那一项从数组里去掉 —— 后者挡不住下次有人再反推一遍。 */
+const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
+  label: OTHER_CONTACT_LABELS[value],
   value,
 }))
 
@@ -111,7 +114,16 @@ const filtered = computed(() => {
   return users.value.filter((user) => {
     if (roleFilter.value !== 'all' && user.role !== roleFilter.value) return false
     if (!needle) return true
-    return [user.nickname, user.real_name, user.student_id, user.dorm, user.contact ?? '']
+    // qq 也要能搜到：它是现在唯一能收到取件提醒的那一栏，
+    // 学生报「没收到邮件」时管理员就是靠 QQ 号把人找出来的。
+    return [
+      user.nickname,
+      user.real_name,
+      user.student_id,
+      user.dorm,
+      user.qq ?? '',
+      user.contact ?? '',
+    ]
       .join(' ')
       .toLowerCase()
       .includes(needle)
@@ -260,13 +272,20 @@ const dialog = reactive<{ show: boolean; kind: DialogKind; target: AdminUser | n
 const submitting = ref(false)
 
 /** 资料表单。后端是全量覆盖，所以打开时必须把当前值填满 ——
- *  漏填一个字段不等于「这个字段不动」，等于把它清空了。 */
+ *  漏填一个字段不等于「这个字段不动」，等于把它清空了。
+ *
+ *  QQ 号单独一栏、必填；contact_type/contact 是选填的补充线索。
+ *  这跟注册表单是同一套口径（后端 utils.validate_identity_fields 分的组），
+ *  分成两个字段而不是旧的「三选一」：旧写法里 QQ 也只是一个可选项，
+ *  而取件提醒只能发到 <QQ号>@qq.com —— 把能收到提醒的那一栏做成可选，
+ *  等于允许录进一个「永远收不到通知」的账号，而界面上一点异样都没有。 */
 const profileForm = reactive<AdminProfilePayload>({
   nickname: '',
   real_name: '',
   student_id: '',
   dorm: '',
-  contact_type: 'wechat',
+  qq: '',
+  contact_type: null,
   contact: '',
 })
 
@@ -288,8 +307,19 @@ function openDialog(user: AdminUser, kind: DialogKind): void {
     profileForm.real_name = user.real_name ?? ''
     profileForm.student_id = user.student_id ?? ''
     profileForm.dorm = user.dorm ?? ''
-    profileForm.contact_type = user.contact_type ?? 'wechat'
-    profileForm.contact = user.contact ?? ''
+    // qq 老账号可能是 NULL：这里必须落成空串，好让上面的校验把它标出来 ——
+    // 打开弹窗时看见 QQ 框空着，就是「这人收不到提醒」的唯一提示。
+    // 老库里 QQ 号原本躺在 (contact_type='qq', contact) 这一对里，qq 列是 v14 才补的
+    // （db.py 只在补列那次启动里搬一遍）。这里再兜一道：万一是没搬到的行，
+    // 就把旧字段的值抬到 QQ 框里 —— 后端已经不接受 contact_type='qq' 了，
+    // 照原样提交会直接 400，而这个值本身是真 QQ 号，不该被当成脏数据丢掉。
+    const legacyQq = user.contact_type === 'qq' ? (user.contact ?? '') : ''
+    profileForm.qq = user.qq || legacyQq
+    // 其他联系方式整组可以为空，所以**不**像以前那样默认成微信：
+    // 默认值会让「本来没填」看起来像「填了微信」，
+    // 管理员一保存就把一个空组变成了半填组（值为空），反而存不进去。
+    profileForm.contact_type = user.contact_type === 'qq' ? null : (user.contact_type ?? null)
+    profileForm.contact = user.contact_type === 'qq' ? '' : (user.contact ?? '')
   } else if (kind === 'password') {
     // 每次打开都清空：上一次打的密码留在框里，容易被顺手再提交一遍。
     newPassword.value = ''
@@ -301,7 +331,10 @@ function openDialog(user: AdminUser, kind: DialogKind): void {
 }
 
 /** 资料校验，规则抄自 utils.validate_identity_fields（权威版本在后端）。
- *  两边不一致时以后端为准，但前端先拦一道能省一次往返。 */
+ *  两边不一致时以后端为准，但前端先拦一道能省一次往返。
+ *  QQ 与其他联系方式是两组规则：前者必填、后者整组选填，直接调
+ *  qqIssue / otherContactIssue —— 别在这里重写一遍正则，
+ *  那正是这两个函数存在的原因。 */
 const profileIssue = computed<string | null>(() => {
   if (!NICKNAME_RE.test(profileForm.nickname.trim()))
     return '昵称 2-20 位：中文、字母、数字或下划线'
@@ -309,9 +342,9 @@ const profileIssue = computed<string | null>(() => {
   if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号 4-20 位数字'
   const dorm = profileForm.dorm.trim()
   if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符，写到门牌号'
-  if (!validateContact(profileForm.contact_type, profileForm.contact.trim()))
-    return CONTACT_HINT[profileForm.contact_type]
-  return null
+  const qqBad = qqIssue(profileForm.qq)
+  if (qqBad) return qqBad
+  return otherContactIssue(profileForm.contact_type, profileForm.contact ?? '')
 })
 
 /** 新密码的校验。这里**不比「确认密码」**，是跟着后端走的：
@@ -362,13 +395,20 @@ async function confirmDialog(): Promise<void> {
 }
 
 async function saveProfile(target: AdminUser): Promise<void> {
+  // 其他联系方式整组留空时两个字段都要传 null（不是空串）：
+  // 后端 utils.validate_other_contact 判的是「两个都空 = 合法」，
+  // 传空串也一样能过，但库里就留下了 contact_type='' 这种既不是空值
+  // 也不是有效类型的第三种状态，之后凡是判 `contact_type is None` 的地方都会看走眼。
+  const otherType = profileForm.contact_type
+  const otherValue = (profileForm.contact ?? '').trim()
   await adminApi.setProfile(target.id, {
     nickname: profileForm.nickname.trim(),
     real_name: profileForm.real_name.trim(),
     student_id: profileForm.student_id.trim(),
     dorm: profileForm.dorm.trim(),
-    contact_type: profileForm.contact_type,
-    contact: profileForm.contact.trim(),
+    qq: profileForm.qq.trim(),
+    contact_type: otherType,
+    contact: otherType ? otherValue : null,
   })
   message.success('资料已更新')
 }
@@ -455,13 +495,35 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
     {
       title: '联系方式',
       key: 'contact',
-      width: 168,
-      render: (row) =>
-        h(
-          'span',
-          { class: 'truncate text-xs opacity-80' },
-          row.contact ? `${row.contact_type === 'wechat' ? '微信' : row.contact_type === 'qq' ? 'QQ' : '邮箱'} ${row.contact}` : '—',
-        ),
+      width: 190,
+      render: (row) => {
+        // QQ 号单独一行写：它是唯一能收到取件提醒的那一栏，
+        // 和旁边那组「补充线索」混在一格里，管理员就分不出哪个是要紧的。
+        // 老账号可能 qq 为空但 contact_type='qq'（迁移没搬到的行）——
+        // 那种情况按旧字段显示，不然会看着像这人什么联系方式都没留。
+        const legacyQq = row.contact_type === 'qq' ? (row.contact ?? '') : ''
+        const qq = (row.qq || legacyQq).trim()
+        const other =
+          row.contact_type && row.contact_type !== 'qq'
+            ? `${OTHER_CONTACT_LABELS[row.contact_type]} ${row.contact}`
+            : ''
+        if (!qq && !other) return h('span', { class: 'text-xs text-ink-3' }, '—')
+        const lines = []
+        if (qq) lines.push(h('span', { class: 'tnum truncate text-xs' }, `QQ ${qq}`))
+        if (other) lines.push(h('span', { class: 'truncate text-2xs text-ink-3' }, other))
+        // 没有 QQ 号时把话说清楚：这不算「联系方式填得不对」，
+        // 而是根本没有能推出发件邮箱的联系方式 —— 取件提醒发不到他手上，
+        // 得有人去补一个。没有这行字，管理员只会以为这人留的是别的联系方式。
+        if (!qq)
+          lines.push(
+            h(
+              'span',
+              { class: 'text-2xs', style: { color: 'var(--warn)' } },
+              '缺 QQ 号 · 收不到取件邮件',
+            ),
+          )
+        return h('div', { class: 'flex min-w-0 flex-col gap-0.5' }, lines)
+      },
     },
     {
       title: '角色',
@@ -476,7 +538,7 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'tech-label', style: { color: STATUS_COLOR[row.status] } },
+          { class: 'tech-label tech-label--cn', style: { color: STATUS_COLOR[row.status] } },
           ACCOUNT_STATUS_LABELS[row.status],
         ),
     },
@@ -719,17 +781,40 @@ onMounted(load)
               <NInput v-model:value="profileForm.dorm" :maxlength="50" placeholder="写到门牌号" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn text-xs">联系方式</span>
+              <span class="tech-label text-ink-3 tech-label--cn">
+                QQ 号
+                <span class="ml-1 font-normal">（收件提醒用，必填）</span>
+              </span>
+              <NInput
+                v-model:value="profileForm.qq"
+                :maxlength="12"
+                placeholder="5-12 位数字，不以 0 开头"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="tech-label text-ink-3 tech-label--cn">
+                其他联系方式
+                <span class="ml-1 font-normal">（选填，也可整组留空）</span>
+              </span>
               <div class="flex gap-2">
+                <!-- 类型可以清空回「不填」：其他联系方式是整组选填的，
+                     没有退路的必选下拉会让「这人只留了 QQ」变成存不进来的状态。 -->
                 <NSelect
                   v-model:value="profileForm.contact_type"
                   :options="contactOptions"
-                  class="!w-[120px]"
+                  class="!w-[110px]"
+                  clearable
+                  placeholder="不填"
                   :consistent-menu-width="false"
                 />
                 <NInput
                   v-model:value="profileForm.contact"
-                  :placeholder="CONTACT_PLACEHOLDER[profileForm.contact_type]"
+                  :disabled="!profileForm.contact_type"
+                  :placeholder="
+                    profileForm.contact_type
+                      ? OTHER_CONTACT_PLACEHOLDER[profileForm.contact_type]
+                      : '先选类型，或留空'
+                  "
                 />
               </div>
             </label>
@@ -737,6 +822,9 @@ onMounted(load)
           <p class="mt-3 text-xs leading-5 text-ink-3">
             学号是登录名，改完本人必须用新学号登录。这里不核对名单：
             名单是注册的闸门，改资料是人工介入。
+            QQ 号必填的原因很实际 —— 取件提醒只能发到
+            <span class="tnum">&lt;QQ号&gt;@qq.com</span>，缺了它这个账号收不到任何通知
+            （列里会标出来）。
           </p>
         </template>
 

@@ -47,6 +47,25 @@ export const CONTACT_LABELS: Record<ContactType, string> = {
   email: '邮箱',
 }
 
+/** 「其他联系方式」的可选类型：微信 / 邮箱，**不含 QQ**。
+ *
+ *  QQ 号已经单列成一个必填字段（见 User.qq），因为它能确定性拼出
+ *  `<QQ号>@qq.com`，而微信号推不出任何邮箱地址 —— 取件提醒是发邮件的。
+ *  两处都能填 QQ 的话，两边值不一样时谁也说不清信该发给哪一个。
+ *
+ *  与后端 config.OTHER_CONTACT_TYPES 对齐。身份审核申请（AuditRequestDialog）
+ *  仍走三选一的 CONTACT_LABELS：申请人还没有账号，他完全可能只有微信，
+ *  硬套「QQ 必填」等于先把他挡在门外 —— 而那正是审核通道要解决的事。
+ */
+export type OtherContactType = 'wechat' | 'email'
+
+export const OTHER_CONTACT_TYPES: OtherContactType[] = ['wechat', 'email']
+
+export const OTHER_CONTACT_LABELS: Record<OtherContactType, string> = {
+  wechat: '微信号',
+  email: '邮箱地址',
+}
+
 /** 账号状态。三种都要写全：'closed' 是注销 ——
  *  界面上要拿它区分「临时停用」和「已经走的人」，只写前两种的话，
  *  列表里已注销的行会取不到分支，看起来和正常账号一样（而且不报错）。 */
@@ -80,6 +99,13 @@ export interface User {
   dorm: string
   contact_type: ContactType | null
   contact: string | null
+  /** QQ 号。**必填**（注册/自助改资料时由后端 validate_qq 把关）。
+   *
+   *  取件提醒是发到 `<QQ号>@qq.com` 的，所以这一栏决定「能不能收到取件邮件」，
+   *  而 contact_type 那组只是备用线索。空串 = 老账号还没补填 ——
+   *  这列是 v14 才加的，SQLite 加不了 NOT NULL 列，历史账号一律为 NULL，
+   *  它们靠登录后的补填提示引导，不靠校验放水（见 utils.validate_qq 的 docstring）。 */
+  qq: string
   role: Role
   role_label?: string
   status?: AccountStatus
@@ -108,6 +134,74 @@ export interface User {
 export interface MeResponse extends ApiEnvelope {
   csrf: string
   user: User | null
+}
+
+/** 自助改资料的响应：只回**可改的那几个字段**，不是一整条 User。
+ *
+ *  后端刻意只给这几项（见 routes/account.py 的 api_me_update_profile），
+ *  因为这里的目的是刷新顶栏昵称、用户菜单里的姓名 —— 顺手把 role、状态
+ *  也发一遍，就多出一次「这些字段要不要同步进 store」的决定。
+ *  类型上照着后端那样只列这几项，多了反而会骗人。 */
+export interface ProfileUpdateResponse extends ApiEnvelope {
+  user: {
+    nickname: string
+    dorm: string
+    qq: string
+    contact_type: ContactType | null
+    contact: string | null
+  }
+}
+
+/** 磁盘配额快照，来自 `orders.quota_snapshot()`。
+ *
+ *  **字段名必须与后端一字不差**：对不上时 TS 查不出来（都是 number），
+ *  页面上只是静默少显示一个数。后端那份同时喂给上传闸门，
+ *  所以「设置页说还有余量、上传却被拦」这种矛盾不会出现。
+ *
+ *  分两类数量的原因：订单里的文件是**已经落盘、要留给打印的**，
+ *  而未完成的分片会话是**上传到一半的临时数据**。两者的处置方式完全不同
+ *  （等接单 / 撤单 vs 重新上传或放弃），页面得分开说，用户才知道该动哪一个。 */
+export interface UsageSnapshot {
+  /** 未接单、未取件的订单占用（这些文件还在服务器上等着打） */
+  orders_bytes: number
+  orders_count: number
+  /** 未完成的分片上传会话占用 */
+  chunks_bytes: number
+  chunks_count: number
+  /** 最多允许多少个未完成会话（后端 MAX_PENDING_PER_USER） */
+  chunks_max: number
+  /** 上面两项之和，也就是配额真正比对的数字 */
+  used_bytes: number
+  quota_bytes: number
+}
+
+/** 设置页（`GET /api/me/overview`）—— 只关于自己的那几项。
+ *
+ *  刻意**不含**全站单数、排名、别人昵称：那是 /api/board 的口径。
+ *  多给一个数就多一次「这个数该不该公开」的产品决定。 */
+export interface MeOverviewResponse extends ApiEnvelope {
+  account: {
+    nickname: string
+    real_name: string
+    student_id: string
+    dorm: string
+    qq: string
+    contact_type: ContactType | null
+    contact: string | null
+    create_time: string | null
+    last_login: string | null
+  }
+  orders: {
+    total: number
+    /** 待计费 + 待打印 + 打印中。待计费也算「没结束」——
+     *  不算进去的话，刚下单的人会看到「进行中 0」而以为没提交上。 */
+    in_progress: number
+    ready: number
+    done: number
+    /** 已计费订单的金额合计（元）。待计费的单价钱还不知道，不计入。 */
+    spent: number
+  }
+  usage: UsageSnapshot
 }
 
 export interface Order {
@@ -481,7 +575,9 @@ export interface DashboardStats extends ApiEnvelope {
  *
  *  别拿 DashboardStats 来复用：这条响应里**刻意没有金额**（revenue 只在管理端那份里），
  *  复用了类型就等于给前端开了个「顺手也把金额画出来」的口子。
- *  两边的字段名也确实不一样（比如这边叫 service、那边叫 users）。 */
+ *  两边的字段名也确实不一样（这边是 mine / queue / boards，那边是 users / orders），
+ *  而且管理端那份**保留**了 daily 与 orders.unclaimed，这边没有 —— 同一个数在业主的看板上
+ *  是本职，发给登录学生就是经营数据外泄，所以这两份类型不能互相顶上。 */
 export interface ServiceBoard extends ApiEnvelope {
   /** 我自己的概览。**刻意不含站点规模**（总单数 / 近 7 天 / 账号数）：
    *  那些是经营数据，后端 SQL 里就没查 —— 不是这里少一个字段，
@@ -499,8 +595,6 @@ export interface ServiceBoard extends ApiEnvelope {
     ranked: number
   }
   queue: {
-    /** 还没人接过的单 */
-    unclaimed: number
     /** 排队里各档各剩多少单，**按流程先后排好序的数组**（后端给全 4 档，没单的是 0）。
      *
      *  为什么是数组不是 `{ 状态: 数量 }`：Flask 的 JSON 序列化默认对键排序
@@ -510,12 +604,19 @@ export interface ServiceBoard extends ApiEnvelope {
      *
      *  **没有「已取件」**：它已经出队，而且那是个累计数、属站点规模，
      *  后端压根没往响应里放。所以这里也不是 `OrderStatus[]` ——
-     *  类型上就摆明「后端给什么画什么」，界面上那句「按后端给的顺序画」才是真的。 */
+     *  类型上就摆明「后端给什么画什么」，界面上那句「按后端给的顺序画」才是真的。
+     *
+     *  **原先这里还有一个 `unclaimed`（全站还没人接的单数）**，已随站点规模一起撤回：
+     *  它不是「哪一档堵住了」，而是站点总量，与上面四个数相加其实重叠。
+     *  现在后端不查也不发，所以类型里也没有 —— 这一条不是「界面不画」。 */
     statuses: { status: OrderStatus; count: number }[]
   }
-  daily: { date: string; count: number }[]
   /** 两个榜（近 30 天 / 累计）一次性都给，切换不再发请求：
-   *  两个查询都小，而切一下就要转圈的样子更像是页面卡住了。 */
+   *  两个查询都小，而切一下就要转圈的样子更像是页面卡住了。
+   *
+   *  这里原先还有 `daily`（近 14 天**全站**单量），已随站点规模一起撤回：
+   *  那条 SQL 里没有 user_id 条件，画的是所有人在干什么，属业主的经营数据。
+   *  要看自己的趋势得另开按 user_id 过滤的口径，不能把全站的数顺手发出去。 */
   boards: Board[]
 }
 

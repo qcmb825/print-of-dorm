@@ -1,0 +1,1 @@
+import{xt as e,z as t}from"./endpoints-Ba86-U5c.js";function n(n,r){return e(n,e=>{e!==void 0&&(r.value=e)}),t(()=>n.value===void 0?r.value:n.value)}export{n as t};

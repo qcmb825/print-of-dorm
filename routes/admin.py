@@ -54,7 +54,7 @@ def api_admin_users():
             params.append(STATUS_CLOSED)
         where = ('WHERE ' + ' AND '.join(conds)) if conds else ''
         rows = conn.execute('''
-            SELECT u.id, u.nickname, u.real_name, u.student_id, u.dorm, u.contact_type, u.contact,
+            SELECT u.id, u.nickname, u.real_name, u.student_id, u.dorm, u.qq, u.contact_type, u.contact,
                    u.password_enc, u.role, u.status,
                    datetime(u.create_time, 'localtime') AS create_time,
                    datetime(u.last_login, 'localtime') AS last_login,
@@ -260,11 +260,11 @@ def api_admin_set_profile(user_id):
 
             conn.execute('''
                 UPDATE users
-                   SET nickname = ?, real_name = ?, student_id = ?, dorm = ?,
-                       contact_type = ?, contact = ?
+                 SET nickname = ?, real_name = ?, student_id = ?, dorm = ?,
+                     qq = ?, contact_type = ?, contact = ?
                  WHERE id = ?
             ''', (fields['nickname'], fields['real_name'], fields['student_id'], fields['dorm'],
-                  fields['contact_type'], fields['contact'], user_id))
+                fields['qq'], fields['contact_type'], fields['contact'], user_id))
             conn.commit()
         except sqlite3.IntegrityError:
             # 上面查重到这句 UPDATE 之间还有一点缝（两个人同时改同一个昵称）。
@@ -283,10 +283,14 @@ def api_admin_set_profile(user_id):
     ]
     # 联系方式是一组两个字段（类型 + 号码）。只比号码的话，「把微信换成 QQ、
     # 号码一个字没动」会被算成「没有变化」—— 改动就这么从日志里消失了。
-    if (fields['contact_type'], fields['contact']) != (target['contact_type'], target['contact']):
-        changes.append('联系方式 %s:%s → %s:%s' % (
-            target['contact_type'], target['contact'],
-            fields['contact_type'], fields['contact']))
+    # 这里**不能**写 target.get('qq')：上面那句是 SELECT *，拿到的是 sqlite3.Row，
+    # 它有 __getitem__ 但没有 get()，调用会直接 AttributeError（500）。
+    # qq 是 v14 起就有的列，SELECT * 一定带着它，下标取就够。
+    if (fields['qq'], fields['contact_type'], fields['contact']) != (
+            target['qq'], target['contact_type'], target['contact']):
+        changes.append('联系方式 qq=%s %s:%s → qq=%s %s:%s' % (
+            target['qq'] or '(空)', target['contact_type'], target['contact'],
+            fields['qq'] or '(空)', fields['contact_type'], fields['contact']))
     if changes:
         audit_action('change_profile',
                      '目标 #%s/%s %s' % (user_id, target['nickname'], '；'.join(changes)))

@@ -6,7 +6,7 @@
  *  溢出到侧栏外面去，所以这里换成堆叠而不是靠截断硬挤。
  */
 import { computed, h, ref } from 'vue'
-import { ChevronDown, LogOut, QrCode } from '@lucide/vue'
+import { ChevronDown, LogOut, QrCode, Settings } from '@lucide/vue'
 import { NButton, NDropdown, type DropdownOption } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import PayQrDialog from '@/components/PayQrDialog.vue'
@@ -52,6 +52,16 @@ const options = computed<DropdownOption[]>(() => [
     : []),
   // 这里曾经还有一个「换个界面」—— 全站已经锁死新版了（app.py 的 UI_SWITCH_ENABLED），
   // 留着入口只会把用户送去一个打不开的经典版，所以连同它的图标一起拆了。
+
+  // 设置入口放在下拉里、不进底部标签栏：标签栏那 4 格都是「来干一件事」的目的地，
+  // 而设置是查自己资料、改自己资料的地方。塞进标签栏还会让管理员那一版变成 6 列，
+  // 320px 下每列只剩 50 多像素（底栏那句 w-full truncate 的注释就是为这个场景写的）。
+  // 这一项**对所有登录用户**都显示：/settings 在学生端外壳里，管理员点进去也能改自己的资料。
+  {
+    key: 'settings',
+    label: '设置',
+    icon: () => h(Settings, { size: 15 }),
+  },
   {
     key: 'logout',
     label: '退出登录',
@@ -62,6 +72,12 @@ const options = computed<DropdownOption[]>(() => [
 async function onSelect(key: string): Promise<void> {
   if (key === 'pay-qr') {
     showPayQr.value = true
+    return
+  }
+  if (key === 'settings') {
+    // 用 name 而不是写死 '/settings'：路径改了这里跟着走，写死就会静默掉进 404 兜底页。
+    // 直接点进设置页的学生不受路由守卫的角色分流影响（那条只管 '/upload'）。
+    await router.push({ name: 'student-settings' })
     return
   }
   if (key !== 'logout') return

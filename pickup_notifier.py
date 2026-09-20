@@ -45,7 +45,7 @@ from config import (CONTACT_LABELS, PAY_QR_FALLBACK_IMAGE, PAY_QR_FOLDER, PICKUP
 from db import db_conn
 from mail import (PAY_QR_CID, alert_recipients, compose_manual_body, compose_manual_subject,
                   compose_pickup_body, compose_pickup_html, compose_pickup_subject,
-                  contact_mailbox, is_configured, send_mail, user_mailbox)
+                  is_configured, send_mail, user_mailbox)
 
 # 同 notifier.py：线程只拉起一次。
 _start_lock = threading.Lock()
@@ -82,6 +82,7 @@ def _pending_orders(conn):
                o.color_type, o.duplex, o.paper_name, o.price,
                o.claimed_by,
                u.nickname AS owner,
+               u.qq AS owner_qq,
                u.contact_type AS owner_contact_type,
                u.contact AS owner_contact
         FROM orders o
@@ -245,8 +246,16 @@ def scan_once():
 
         manual = {}
         for order in claimed:
-            mailbox, reason = contact_mailbox(order['owner_contact_type'],
-                                              order['owner_contact'])
+            # user_mailbox 认的是 users 表的列名（qq / contact_type / contact），
+            # 而上面那条 SQL 为免和 orders 的列撞名，把它们整成了 owner_* 别名。
+            # 这里手工翻回去：两边对不上**不会报错**，只会静默落进
+            # 「推不出邮箱 -> 转人工」那条路 —— 学生明明填了 QQ 却收不到信，
+            # 而日志里只有一句「推不出邮箱」。
+            mailbox, reason = user_mailbox({
+                'qq': order.get('owner_qq'),
+                'contact_type': order.get('owner_contact_type'),
+                'contact': order.get('owner_contact'),
+            })
             if not mailbox:
                 # 微信 / 没填 / 填错 —— 三种都发不出去，但原因要写进日志：
                 # 「没填」该催用户补，「填了微信」是根本没法发，处理方式不一样。

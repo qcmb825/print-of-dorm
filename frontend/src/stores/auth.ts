@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { authApi } from '@/api/endpoints'
 import { setUnauthorizedHandler } from '@/api/client'
-import type { Role, User } from '@/api/types'
+import type { ProfileUpdateResponse, Role, User } from '@/api/types'
 
 /** 高级视图开关记忆在 sessionStorage 里，不是 localStorage：
  *  浏览器一关就忘，正好对上「本人盯着这一会儿屏幕」的意思。
@@ -133,6 +133,21 @@ export const useAuthStore = defineStore('auth', () => {
     user.value.pay_qr_version = version
   }
 
+  /** 保存资料成功后把这几个字段并回本地 user。
+   *
+   *  后端 PUT /api/me/profile 的响应里只带回昵称/宿舍/QQ/联系方式这几项
+   *  （学号、姓名、角色不可改，服务端也不回），所以合并而不是整体替换。
+   *  不更新的话，顶栏和账号菜单里的昵称还是旧的 —— 保存成功却看不出变化，
+   *  用户会以为没保存上再点一次，而他点的第二次是往已经改好的值上再写一遍。 */
+  function applyProfile(patch: ProfileUpdateResponse['user']): void {
+    if (!user.value) return
+    user.value.nickname = patch.nickname
+    user.value.dorm = patch.dorm
+    user.value.qq = patch.qq
+    user.value.contact_type = patch.contact_type
+    user.value.contact = patch.contact
+  }
+
   return {
     user,
     ready,
@@ -148,5 +163,6 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     setPayQr,
+    applyProfile,
   }
 })

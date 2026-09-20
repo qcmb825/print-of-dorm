@@ -16,6 +16,7 @@ from config import (
     COPIES_MIN,
     EMAIL_RE,
     NICKNAME_RE,
+    OTHER_CONTACT_TYPES,
     PRICE_MAX_YUAN,
     PRICE_RE,
     QQ_RE,
@@ -35,24 +36,35 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-# 文件头（魔数）对照表：扩展名 -> (开头必须出现的字节, 写给人看的格式名)。
+# 文件头（魔数）对照表：扩展名 -> ((开头必须出现的字节, 写给人看的格式名), ...)。
 #
 # 只认「文件开头就是它」，不做「前 N 字节里找一找」的宽松匹配 ——
 # 宽松匹配等于把绕过成本压到「在第 100 字节里塞一段魔数」。
+#
+# 值写成**一组**候选而不是单个前缀：同一个扩展名确实可能对应好几种合法容器
+# （最典型的就是 .doc，见下）。多候选和「放松校验」是两回事 ——
+# 候选照样要出现在第 0 字节，只是不再只认其中一种。
 _FILE_SIGNATURES = {
-    'pdf': (b'%PDF-', 'PDF'),
-    'png': (b'\x89PNG\r\n\x1a\n', 'PNG'),
+    'pdf': ((b'%PDF-', 'PDF'),),
+    'png': ((b'\x89PNG\r\n\x1a\n', 'PNG'),),
     # JPEG 的 SOI 标记本身只有 FF D8 两字节，但紧跟其后的 JFIF/EXIF 段一律以 FF 开头，
     # 所以真实文件的前三字节是 FF D8 FF。只认两字节的话，
     # 一个恰好以 FF D8 开头的其它容器也会被当成图片。
-    'jpg': (b'\xff\xd8\xff', 'JPEG'),
-    'jpeg': (b'\xff\xd8\xff', 'JPEG'),
-    # .doc 是 OLE2 复合文档（Word 97-2003 和同期的 Excel / PowerPoint 共用一个容器格式），
-    # 文件头是固定的这 8 个字节。有一类「.doc」其实是 RTF 文本流（部分导出工具这么干），
-    # 会被这一关挡住；真碰上了应该往表里补 {\rtf，而不是把校验放宽成「不校验」。
-    'doc': (b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1', 'OLE2 复合文档'),
+    'jpg': ((b'\xff\xd8\xff', 'JPEG'),),
+    'jpeg': ((b'\xff\xd8\xff', 'JPEG'),),
+    # .doc 有两种真实存在的写法，都得放行：
+    #   ① OLE2 复合文档 —— Word 97-2003 的容器格式，文件头是固定的那 8 个字节
+    #      （和同期的 Excel / PowerPoint 共用一个容器）；
+    #   ② RTF 文本流 —— 开头就是 {\rtf，纯 ASCII，很多导出工具（含部分在线文档、
+    #      邮件客户端）就是拿它当「.doc」存盘的。
+    # 早先只认 ①，结果这类 RTF 一律被拦在门外：文件是真的、能打开，
+    # 用户只会觉得「这系统传不了我的文件」，而我们这边连一条线索都没有。
+    # 补的是「也认 RTF」，不是「这一关不校验了」——
+    # 把校验放宽成「不校验」等于把改名过来的可执行体一起放进来。
+    'doc': ((b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1', 'OLE2 复合文档'),
+            (b'{\\rtf', 'RTF 文本')),
     # .docx 是 OOXML 的 zip 包，本地文件头固定以 PK\x03\x04 开头。
-    'docx': (b'PK\x03\x04', 'ZIP'),
+    'docx': ((b'PK\x03\x04', 'ZIP'),),
 }
 
 # 反解压炸弹的两个阈值，给得刻意宽松：正常的 docx 里图片、字体本来就压不动，
@@ -113,23 +125,28 @@ def content_signature_error(path, ext):
     entry = _FILE_SIGNATURES.get((ext or '').lower())
     if entry is None:
         return None
-    expected, kind = entry
+    # 一个扩展名可能有多种合法文件头，逐个试。读取长度取最长的那一个，
+    # 这样一次读取就够所有候选比对（短的候选按切片比，见下）。
+    # 不这样做的坏处很具体：像 {\rtf 只有 5 个字节，按它去读，
+    # 一个 OLE2 的开头就只拿来 5 字节、永远比不上 8 字节的那个候选。
+    longest = max(len(sig) for sig, _kind in entry)
     try:
         with open(path, 'rb') as fp:
-            head = fp.read(len(expected))
+            head = fp.read(longest)
     except OSError:
         # 读不到就当作「判定不了」放行，不在这里编一个错误：这个函数只回答「像不像」，
         # 读不了盘的异常留给后面如实报（那时候才知道该说「服务器问题」还是「文件问题」）。
         return None
-    if head != expected:
-        # 日志里不带路径：沿项目惯例，服务器绝对路径不出现在任何对外文本里，
-        # 而这条 warning 只给运维看，知道是哪个扩展名、头几个字节是什么就够了。
-        logger.warning('上传文件内容与扩展名不符：扩展名=%s 期望=%s 实际文件头=%r',
-                       ext, kind, head)
-        return _SIGNATURE_MISMATCH_HINT
-    if (ext or '').lower() == 'docx':
-        return _zip_archive_error(path)
-    return None
+    for sig, kind in entry:
+        if head[:len(sig)] == sig:
+            if (ext or '').lower() == 'docx':
+                return _zip_archive_error(path)
+            return None
+    # 日志里不带路径：沿项目惯例，服务器绝对路径不出现在任何对外文本里，
+    # 而这条 warning 只给运维看，知道是哪个扩展名、期望哪几种头、实际是什么就够了。
+    logger.warning('上传文件内容与扩展名不符：扩展名=%s 期望=%s 实际文件头=%r',
+                   ext, '|'.join(kind for _sig, kind in entry), head)
+    return _SIGNATURE_MISMATCH_HINT
 
 
 
@@ -278,13 +295,17 @@ def parse_copies(value):
 def validate_contact(data):
     """校验「联系方式」这一组字段，返回 (清洗后的字段, 错误信息)。
 
-    注册和身份审核申请都要收联系方式，所以规则只能有一份 ——
-    各写一套的话，改了一处忘了另一处，就会出现「注册时要求微信号字母开头、
-    申请时不管」这种前后不一：用户填同一个号，一个入口过、另一个入口不过。
+    ⚠️ 这个形状现在只给**身份审核申请**用（routes/audit.py）。
+    注册和管理端改资料走的是 validate_other_contact + validate_qq 那一套，
+    那边 QQ 号是单列必填的，不再混在「联系方式」里（原因见 config 的
+    OTHER_CONTACT_TYPES 上面那段）。
 
-    联系方式在注册时是必填的，理由不是为了骚扰用户，而是因为它**是唯一
-    能把线上账号和线下真人对上号的东西**：出了事（传了不该传的文件、
-    订单一直不取），管理员得能找得到这个人。
+    留着它是必要的：申请人的学号姓名都不在名单上，连人都还没进来，
+    除了一组联系方式没有别的东西能联系到他 —— 而且他完全可能只有微信号。
+    硬把他套进「QQ 必填」的新形状，等于让一个还没有账号的人先被规则挡住，
+    而我们本来要解决的恰恰是「怎么找到这个人」。
+
+    联系方式在申请时是必填的：它**是唯一能把线上申请和线下真人对上号的东西**。
     """
     contact_type = (data.get('contact_type') or '').strip().lower()
     contact = (data.get('contact') or '').strip()
@@ -304,13 +325,81 @@ def validate_contact(data):
 
 
 
+def validate_other_contact(data):
+    """校验「其他联系方式」（微信 / 邮箱），**整组选填**，返回 (字段, 错误信息)。
+
+    整组留空是合法的：返回一对 None。这不是「宽松」，而是这一栏的定位就是补充信息 ——
+    真正保证学生能收到取件提醒的是必填的 QQ 号（见 validate_qq），
+    微信和邮箱只是「万一 QQ 联系不上」的备用线索。
+
+    但**填一半不行**：只选类型不填号码，或者只填号码不选类型，
+    库里就会留下一个说不清是什么的东西 —— 界面上显示成「微信：」后面空着，
+    管理员看不出是用户没填完还是系统丢了数据。宁可当场让他补完。
+
+    类型里刻意不含 qq：那一栏在别处，两处都能填 QQ 的话，
+    两个值不一样时谁也说不清取件邮件该发给哪一个。
+    """
+    raw_type = data.get('contact_type')
+    contact_type = (raw_type or '').strip().lower() if isinstance(raw_type, str) else ''
+    raw_contact = data.get('contact')
+    contact = (raw_contact or '').strip() if isinstance(raw_contact, str) else ''
+
+    if not contact_type and not contact:
+        # 整组空着：合法的「不填」。回一对 None 而不是空串 ——
+        # 空串在库里和「填了个空白」分不开，NULL 才是明确的「没填」。
+        return {'contact_type': None, 'contact': None}, None
+    if not contact_type:
+        return None, '请选择其他联系方式的类型（微信 / 邮箱），或者把它留空'
+    if contact_type not in OTHER_CONTACT_TYPES:
+        return None, '其他联系方式支持微信或邮箱；QQ 号请填在上面那一栏'
+    if not contact:
+        return None, '请填写%s，或者把其他联系方式留空' % CONTACT_LABELS[contact_type]
+    if len(contact) > 50:
+        return None, '联系方式不能超过 50 个字符'
+    if contact_type == 'wechat' and not WECHAT_RE.match(contact):
+        return None, '微信号需为 5-20 位、以字母开头（可含字母、数字、_ 和 -）'
+    if contact_type == 'email' and not EMAIL_RE.match(contact):
+        return None, '邮箱格式不正确，例：name@example.com'
+    return {'contact_type': contact_type, 'contact': contact}, None
+
+
+
+def validate_qq(data):
+    """校验 QQ 号（**必填**），返回 (QQ 号, 错误信息)。
+
+    为什么非要单独一栏、还非要必填 ——
+    取件提醒是发邮件的，而邮件地址得从别的东西推出来。QQ 号能确定性拼出
+    <QQ号>@qq.com，微信号拼不出任何东西（见 mail/recipients.py 里
+    NO_MAILBOX_WECHAT 那段：微信不从邮件系统收信，这不是没实现，是路不通）。
+    原来「联系方式三选一」的时候，填了微信的学生收不到取件提醒，
+    而库里、界面上、日志里都看不出这件事 —— 他只是永远收不到信。
+    把 QQ 提成必填、并且只此一处，是把「能不能收到提醒」变成一件
+    **注册那一刻就能确定**的事，而不是等有人投诉「我没收到取件码」才发现。
+
+    没有 allow_missing 这种「这次就先放行」的口子 —— 校验层一旦能被告知
+    「情况特殊、跳过吧」，早晚有个调用方图省事就传上了，然后库里开始出现
+    空 QQ 的新账号，而这条路径上不会报任何错。
+    老用户「还没补填」这件事不需要靠校验放水来实现：数据库里这一列本来就可空
+    （SQLite 的 ADD COLUMN 加不了 NOT NULL，见 db.py 那段），
+    登录后的补填提示也是可关闭的 —— 也就是说「允许它空着存在」
+    已经在存储层和交互层各表达了一次，这里再开一道口子纯属冗余。
+    """
+    qq = (data.get('qq') or '').strip()
+    if not qq:
+        return None, '请填写 QQ 号（用来给你发送取件邮件提醒）'
+    if not QQ_RE.match(qq):
+        return None, 'QQ 号需为 5-12 位数字，且不能以 0 开头'
+    return qq, None
+
+
+
 def validate_identity_fields(data):
-    """校验「身份资料」这一组字段：昵称 / 姓名 / 学号 / 宿舍 / 联系方式。
+    """校验「身份资料」这一组字段：昵称 / 姓名 / 学号 / 宿舍 / QQ 号 / 其他联系方式。
 
     注册和管理端改资料收的是同一批字段，规则就只该有一份 ——
     各写一套的话，改了一处忘了另一处，会出现「注册说昵称不能带减号、
     管理端改资料却放行」这种自相矛盾：同一个值，一个入口过、另一个入口不过。
-    和 validate_contact 拆出来的理由完全一样，只是往外再拆一层。
+    和 validate_other_contact 拆出来的理由完全一样，只是往外再拆一层。
 
     返回 (清洗后的字典, 错误信息)，失败时字典为 None。
     """
@@ -327,8 +416,11 @@ def validate_identity_fields(data):
         return None, '学号需为 4-20 位数字'
     if not (2 <= len(dorm) <= 50) or not all(ch.isprintable() for ch in dorm):
         return None, '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
-    # 联系方式这组字段和身份审核申请也共用同一份规则（见 validate_contact）。
-    contact_fields, error = validate_contact(data)
+    qq, error = validate_qq(data)
+    if error:
+        return None, error
+    # 「其他联系方式」和注册、管理端改资料共用同一份规则（见 validate_other_contact）。
+    contact_fields, error = validate_other_contact(data)
     if contact_fields is None:
         # 判 None 而不是判 error 真假：两者本来就同进同出，
         # 但写成判 None 才能让读代码的人和类型检查器都确定后面能安全取键。
@@ -338,6 +430,7 @@ def validate_identity_fields(data):
         'real_name': real_name,
         'student_id': student_id,
         'dorm': dorm,
+        'qq': qq,
         'contact_type': contact_fields['contact_type'],
         'contact': contact_fields['contact'],
     }, None

@@ -41,7 +41,7 @@ from config import (
 )
 from db import (db_conn, find_paper_type, find_preset, get_db, insert_order_row,
                 log_order_event)
-from mail import contact_mailbox
+from mail import user_mailbox
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import (allowed_file, content_signature_error, display_name, mask_nickname,
                    parse_copies, parse_price, positive_int)
@@ -64,23 +64,55 @@ UPLOAD_MAX_IN_WINDOW = 20
 # 运维可以拿它算容量；用户那边也有明确的解法（等接单 / 撤单 / 放弃上传），
 # 而不是只能干等一个「稍后再试」。
 #
-# 取 500MB 的量级：正常用户同时压在手里的未处理文件也就一两份材料（≤100MB），
+# 取 5GB 的量级：正常用户同时压在手里的未处理文件也就一两份材料（≤100MB），
 # 离它还远；对刷盘的人则是一堵必须先把旧的清掉才能过的墙，
 # 不像速率限制那样「停一会儿再刷」就能继续堆。
-QUOTA_MAX_BYTES = 500 * 1024 * 1024
+QUOTA_MAX_BYTES = 5 * 1024 * 1024 * 1024
+
+# 「这个账号还没传完的分片会话占了多少」由 upload_chunks 注册进来。
+#
+# 为什么不在这里自己扫一遍那个目录：会话目录的形状（meta.json 的字段、
+# p000000 的命名、<id>.lock 是文件不是目录）是 upload_chunks 的私有约定，
+# 抄一份到这里，哪天它改了布局，这边不会报错、只会静默少算一圈 ——
+# 表现为「配额明明该拦住却放行了」，两头都看不出所以然。
+# 也不能反向 import：upload_chunks 依赖本模块（复用上传频控和配额判定），
+# 反过来引用就是循环导入。
+#
+# 返回值是一个小字典 {bytes, sessions, max_sessions}，而不是「一个字节数」：
+# 设置页要把这部分拆开讲清（「有 2 份没传完的上传占了 300MB，最多能有 3 份」），
+# 而「最多几份」这个上限常量住在 upload_chunks 里。让注册方一次把它交出来，
+# 好过在别处再抄一遍数字 —— 抄的那份改了不会报错，只是界面上那句话变成了假的。
+#
+# 没注册时按「没有未完成分片」算，这样单独 import 本模块的脚本/测试也照常能用，
+# 只是看不到分片占用 —— 注册是 upload_chunks 在 import 时做的，
+# 只要应用正常起步（蓝图都挂在 routes/__init__.py 的 BLUEPRINTS 里）就一定注册上了。
+_chunk_usage_provider = None
 
 
-def pending_disk_bytes(user_id):
-    """这个账号「还没被接单的订单文件」在盘上占了多少字节。
+def register_chunk_usage_provider(func):
+    """让 upload_chunks 把自己的「未完成分片占用」算法挂进来。见上面那段说明。"""
+    global _chunk_usage_provider
+    _chunk_usage_provider = func
 
-    只算未接单的：接了单的文件马上要打出来、被取走，属于正常周转；
+
+
+def _pending_orders_bytes(user_id):
+    """未接单订单占的字节数，返回 (字节数, 单数)。
+
+    拆出来单独一个函数，是因为配额判定和「我的账户」页展示用的是同一口径：
+    两处各写一条 SQL 的话，哪天条件改了只会改一处，表现为
+    「页面上说还有 3GB 可用、上传却被 429 拦住」——
+    两边都没报警，只有用户撞上才知道对不上。
+
+    **只算未接单的**：接了单的文件马上要打出来、被取走，属于正常周转；
     会一直堆下去的只有「下了单、没人接」这一档。
     口径和撤回订单完全一致（claimed_by IS NULL 且不是已取件），因为能被撤回的单
     正是能被反复重下、反复占盘的那批；两个口径一旦不一致，就会出现
     「撤回按钮亮着、配额却认为这些单不该算」这种自相矛盾。
 
-    文件已经不在盘上的（运维清理、误删）按 0 算：它本来就不占空间，
-    不能因为库里还留着一条记录就把人挡在门外。
+    文件已经不在盘上的（运维清理、误删）按 0 字节算：它本来就不占空间，
+    不能因为库里还留着一条记录就把人挡在门外。单数照旧计进去 ——
+    那条记录确实还在占着「未接单」这个位置，撤回入口也要能看到它。
     """
     with db_conn() as conn:
         rows = conn.execute(
@@ -94,15 +126,90 @@ def pending_disk_bytes(user_id):
             total += os.path.getsize(row['file_path'])
         except OSError:
             continue
-    return total
+    return total, len(rows)
+
+
+
+def _pending_chunks_info(user_id):
+    """未完成分片会话的占用情况，返回 {'bytes': .., 'sessions': .., 'max_sessions': ..}。
+
+    分片那一份必须算进配额：分片是**唯一能够合法绕开单文件上限**的写盘路径
+    （单片直传有 MAX_CONTENT_LENGTH 顶着），只按订单算的话，
+    一个人可以先把几 GB 压在没传完的分片会话里，再从直传这条路额外占满一份额度。
+    放在这里、而不是由 upload_chunks 自己在 init 时补加，
+    是因为直传路径（POST /api/upload）同样要看见这部分 ——
+    只补在分片那条路上，绕过它的口子依然开着。
+    """
+    if _chunk_usage_provider is None:
+        return {'bytes': 0, 'sessions': 0, 'max_sessions': 0}
+    try:
+        info = _chunk_usage_provider(user_id)
+    except OSError:
+        # 扫不动分片目录就只当它不占盘，和订单那边那个 OSError 分支同一个口径：
+        # 额度是防护，不是功能本身，不能因为它把上传整体变成 500。
+        logger.warning('统计未完成分片占用失败，本次不计入配额：账号 %s', user_id)
+        return {'bytes': 0, 'sessions': 0, 'max_sessions': 0}
+    # 注册方万一回了旧形状（一个数字）也认，免得两种形状同时存在时静静崩掉。
+    if isinstance(info, dict):
+        return {'bytes': int(info.get('bytes') or 0),
+                'sessions': int(info.get('sessions') or 0),
+                'max_sessions': int(info.get('max_sessions') or 0)}
+    return {'bytes': int(info or 0), 'sessions': 0, 'max_sessions': 0}
+
+
+
+def quota_snapshot(user_id):
+    """这个账号的配额快照，给「设置」页展示用。
+
+    和配额判定（quota_rejection）**共用同一份取数**：两处各算一遍的话，
+    迟早出现「页面上说还剩 2GB、上传却被 429 拦住」——
+    两边都不报警，只有用户撞上才知道对不上。
+    返回的三个数全是字节，格式化交给前端（它那边已经有 formatBytes）。
+    """
+    orders_bytes, orders_count = _pending_orders_bytes(user_id)
+    chunks = _pending_chunks_info(user_id)
+    return {
+        'orders_bytes': orders_bytes,
+        'orders_count': orders_count,
+        'chunks_bytes': chunks['bytes'],
+        'chunks_count': chunks['sessions'],
+        'chunks_max': chunks['max_sessions'],
+        'used_bytes': orders_bytes + chunks['bytes'],
+        'quota_bytes': QUOTA_MAX_BYTES,
+    }
+
+
+
+def pending_disk_bytes(user_id):
+    """这个账号「还没处理掉的量」在盘上占了多少字节：未接单订单文件 + 未完成分片。"""
+    orders_bytes, _count = _pending_orders_bytes(user_id)
+    return orders_bytes + _pending_chunks_info(user_id)['bytes']
+
+
+
+def _human_size(num_bytes):
+    """把字节数说成「5GB / 512MB / 800KB」，只给用户看的那句话用。
+
+    配额现在是 GB 量级，直接写「每账号 5120MB」用户得自己在脑子里换算一次；
+    而这句话是要显示给学生的，越直白越好。取整到一位小数够用了 ——
+    这里的数只用来告诉人「墙在哪」，不参与任何判断。
+    """
+    for unit, step in (('GB', 1024 ** 3), ('MB', 1024 ** 2), ('KB', 1024)):
+        if num_bytes >= step:
+            value = num_bytes / step
+            return ('%d%s' % (value, unit)) if value == int(value) else ('%.1f%s' % (value, unit))
+    return '%dB' % num_bytes
 
 
 
 def quota_rejection(extra_bytes=0):
-    """在盘总量（订单文件 + extra_bytes）超过上限就返回 (响应, 429)，没超返回 None。
+    """在盘总量（订单文件 + 未完成分片 + extra_bytes）超过上限就返回 (响应, 429)，没超返回 None。
 
     extra_bytes 是「这次请求马上要追加的量」：直传是刚落盘那份文件的大小，
-    分片 init 是客户端声明的大小。拒绝时说的话、留的痕都在这里出一份 ——
+    分片 init 是客户端声明的大小。注意**已经在传的分片不要重复传进来** ——
+    它们已经算在 pending_disk_bytes 里了（见那个函数的说明）。
+
+    拒绝时说的话、留的痕都在这里出一份 ——
     两处各写一套的话，同一件事会有两种说法（一边说「文件太大」一边说「配额满了」），
     用户照着哪一种都做不对，运维查日志也要多认一套关键词。
 
@@ -125,17 +232,16 @@ def quota_rejection(extra_bytes=0):
         return None
     if used <= QUOTA_MAX_BYTES:
         return None
-    limit_mb = QUOTA_MAX_BYTES // (1024 * 1024)
     # 单独留一条安全事件：正常用户碰不到这个上限，撞上它的多半是在刷盘，
     # 而这类「缓慢但持续」的写盘不会触发任何速率告警，只能靠这条发现。
     security_event('upload_quota_exceeded',
-                   '账号 %s 在盘总量 %sMB 超过每账号 %sMB 上限（未接单订单文件 + 未完成分片）'
-                   % (g.user['nickname'], used // (1024 * 1024), limit_mb))
+                   '账号 %s 在盘总量 %s 超过每账号 %s 上限（未接单订单文件 + 未完成分片）'
+                   % (g.user['nickname'], _human_size(used), _human_size(QUOTA_MAX_BYTES)))
     return jsonify({
         'code': 429,
-        'msg': '你存在服务器上、还没处理的文件已占满配额（每账号 %sMB）。'
+        'msg': '你存在服务器上、还没处理的文件已占满配额（每账号 %s）。'
                '请等已有订单被接单，或撤回旧订单 / 放弃没传完的上传，再来上传'
-               % limit_mb,
+               % _human_size(QUOTA_MAX_BYTES),
     }), 429
 
 
@@ -189,6 +295,7 @@ _ORDER_SELECT = '''
            datetime(o.claim_time, 'localtime') AS claim_time,
            datetime(o.price_time, 'localtime') AS price_time,
            owner.nickname AS owner_nickname, owner.dorm AS owner_dorm, owner.status AS owner_status,
+           owner.qq AS owner_qq,
            owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
            claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
            pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
@@ -225,8 +332,15 @@ def decorate_orders(rows, my_id, is_super):
         # QQ_RE / EMAIL_RE 哪天改一个字，前端那份不会跟着改，
         # 界面就会标出「需人工通知」而邮件其实发得出去（或者反过来），
         # 而且两边都不报错。判定直接用发信那一路的同一函数，只有一份规则。
-        item['owner_mailbox_missing'] = contact_mailbox(
-            item['owner_contact_type'], item['owner_contact'])[0] is None
+        owner_qq = item.pop('owner_qq', None)
+        item['owner_mailbox_missing'] = user_mailbox({
+            'qq': owner_qq,
+            'contact_type': item['owner_contact_type'],
+            'contact': item['owner_contact'],
+        })[0] is None
+        if owner_qq:
+            item['owner_contact_type'] = 'qq'
+            item['owner_contact'] = owner_qq
         orders.append(item)
     return orders
 
@@ -471,7 +585,7 @@ def api_upload():
     # 先收文件和参数，缺参数返回 400 而不是 500
     file = request.files.get('file')
     if file is None or not file.filename:
-        return jsonify({'code': 1, 'msg': '请选择要上传的文件'}), 400
+        return jsonify({'code': 400, 'msg': '请选择要上传的文件'}), 400
 
     color = request.form.get('color', 'black')
     duplex = request.form.get('duplex', 'single')
@@ -496,7 +610,7 @@ def api_upload():
         # 上传可执行文件或脚本是典型的攻击试探，必须单独留痕
         security_event('upload_blocked_type', '文件「%s」不在白名单内' % original_name[:80])
         return jsonify({
-            'code': 1,
+            'code': 400,
             'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
         }), 400
 
@@ -518,7 +632,7 @@ def api_upload():
             # 0 字节的文件排出来就是一张白纸。上传成功、下单成功、到手却什么都没有——
             # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
             os.remove(save_path)
-            return jsonify({'code': 1, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
+            return jsonify({'code': 400, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
 
         # 扩展名白名单只约束了文件名，证明不了里面装的是什么 ——
         # 而这份文件接单人一定会打开，改名过来的可执行体不能靠「他没双击」来防。
@@ -527,7 +641,7 @@ def api_upload():
             os.remove(save_path)
             security_event('upload_content_mismatch',
                            '文件「%s」的内容与扩展名 %s 不符' % (original_name[:80], ext))
-            return jsonify({'code': 1, 'msg': content_error}), 400
+            return jsonify({'code': 400, 'msg': content_error}), 400
 
         # 落盘后按真实大小再核一次：请求体里这份文件多大，事前拿不到准数
         # （multipart 的 Content-Length 是整个请求的大小，不是文件的）。
@@ -552,7 +666,7 @@ def api_upload():
                 logger.warning('清理上传失败的文件失败: %s', save_path)
         logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
                          g.user['nickname'], original_name, save_path, client_ip())
-        return jsonify({'code': 1, 'msg': '上传失败，请稍后重试'}), 500
+        return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
 
     logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 纸张=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
@@ -623,7 +737,7 @@ def api_create_preset_order():
         except Exception:
             logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
                              g.user['nickname'], preset_id, client_ip())
-            return jsonify({'code': 1, 'msg': '下单失败，请稍后重试'}), 500
+            return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
     logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 取件码=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies,
@@ -680,9 +794,10 @@ def api_orders():
             " OR CAST(o.id AS TEXT) = ?"
             " OR owner.nickname LIKE ? ESCAPE '\\' OR owner.real_name LIKE ? ESCAPE '\\'"
             " OR owner.student_id = ?"
-            " OR owner.dorm LIKE ? ESCAPE '\\' OR owner.contact LIKE ? ESCAPE '\\')"
+            " OR owner.dorm LIKE ? ESCAPE '\\' OR owner.qq LIKE ? ESCAPE '\\'"
+            " OR owner.contact LIKE ? ESCAPE '\\')"
         )
-        params.extend([like, like, keyword, like, like, keyword, like, like])
+        params.extend([like, like, keyword, like, like, keyword, like, like, like])
     # 按打印服务分组筛选：分组键是 COALESCE(preset_group_id, preset_id) ——
     # 下单时选了预设的单天然就是它自己的分组，而管理员另归过类的那几单（比如
     # 没选预设、自己传了同一份表格的同学）按 preset_group_id 落进来，
@@ -1341,7 +1456,7 @@ def api_my_orders():
 
 
 
-# 普通用户看自己的下单汇总，顺带一个全站累计数当趣味
+# 普通用户看自己的下单汇总
 @bp.route('/api/my-stats')
 @login_required
 def api_my_stats():
@@ -1356,6 +1471,12 @@ def api_my_stats():
     查询也只有一条：把自己所有订单的几列拉回来，在 Python 里一趟算完。
     这里最多几百行，比发五六条 GROUP BY 更省事，也不会出现
     「几条 SQL 之间口径对不上」这种最难查的毛病。
+
+    响应里**只有我自己的数**：早先这里还附了一个全站累计单量当「趣味数字」，
+    已经收回了。它看着无害，但那是业主的经营数据 —— 一天出多少单、累计做了多少，
+    该由业主自己对外说，不该由接口悄悄发给每个登录学生。
+    注意「不发」是靠这里不查、不放，不是靠前端不画：数据一旦出库，
+    打开网络面板就看得见，前端那层「不显示」等于没挡。
     """
     uid = g.user['id']
     with db_conn() as conn:
@@ -1365,9 +1486,6 @@ def api_my_stats():
             FROM orders o
             WHERE o.user_id = ?
         ''', (uid,)).fetchall()
-        # 趣味数字：全站累计收到多少单。它回答的是「这个服务有多忙」，
-        # 不涉及谁是谁、谁打了什么 —— 属于可以公开给所有登录用户的那一类数据。
-        site_total = conn.execute('SELECT COUNT(*) AS c FROM orders').fetchone()['c']
 
     mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0, 'unpriced': 0, 'spent': 0.0}
     by_color = {'black': 0, 'color': 0}
@@ -1419,7 +1537,6 @@ def api_my_stats():
         'by_color': by_color,
         'by_duplex': by_duplex,
         'daily': daily,
-        'site': {'orders_total': site_total},
     })
 
 
@@ -1446,6 +1563,12 @@ def api_board():
       · **站点规模**（总单数 / 近 7 天 / 账号数 / 已取件数）：同样是经营数据。
         早先它是以「服务规模」的名义放在页面上的，现在收回来了 ——
         「多少人在用、一天出多少单、累计做完多少」该由业主对外说，不该由页面替他说。
+        这一轮又收掉了两处漏网的同类数据：本接口原先还发过一个**近 14 天全站单量趋势**
+        （daily）和**全站未接单数**（queue.unclaimed），它们同样是站点规模 ——
+        一条曲线不用加总也能看出「这一天出了多少单」，跟直接报总单数没有本质区别。
+        这两处在报表上是「已撤回」，所以现在是实现追上了 docstring，不是文档迁就实现。
+        顺带一提，**管理端的 /api/admin/stats 保留 daily 与 unclaimed**：
+        那是业主看的看板，同一批数字在那边是本职，不是泄漏。
 
     榜上别人的昵称一律打码（utils.mask_nickname），自己那一行原样显示：
     要挡的是「同学之间对号入座」，不是挡本人看自己。
@@ -1511,8 +1634,6 @@ def api_board():
                 'SELECT status AS k, COUNT(*) AS c FROM orders WHERE user_id = ?'
                 ' GROUP BY k', (uid,)).fetchall():
             my_status[item['k']] = item['c']
-        unclaimed = conn.execute(
-            'SELECT COUNT(*) AS c FROM orders WHERE claimed_by IS NULL').fetchone()['c']
         # 只摆排队还认的那几档（config.ORDER_STATUSES_QUEUE，不含已取件）：
         # 只认 config 里的状态。直接把 GROUP BY 的结果塞给前端的话，
         # 库里万一留着一个历史脏状态，界面就冒出一格没人认识的分类，而且不报错。
@@ -1529,12 +1650,6 @@ def api_board():
         # 而 JSON 对象的键顺序在规范里本来就不作数，所以让数组来担这个保证。
         statuses = [{'status': status, 'count': counted.get(status, 0)}
                     for status in ORDER_STATUSES_QUEUE]
-        day_rows = conn.execute('''
-            SELECT date(create_time, 'localtime') AS d, COUNT(*) AS c
-            FROM orders
-            WHERE date(create_time, 'localtime') >= date('now', 'localtime', '-13 days')
-            GROUP BY d ORDER BY d
-        ''').fetchall()
         top_recent = rank_top(RECENT)
         top_all = rank_top('')
         me_recent = my_standing(RECENT, conn.execute(
@@ -1552,16 +1667,10 @@ def api_board():
             'is_me': is_me,
         }
 
-    # 缺的日子要补零：SQL 只返回「有单的那几天」，直接画会把柱子挤在一起，
-    # 看上去像那段时间天天爆单。算法跟 /api/my-stats 一样，从今天往前数 14 天。
-    counts = {row['d']: row['c'] for row in day_rows}
-    today = datetime.now().date()
-    daily = [
-        {'date': (today - timedelta(days=offset)).isoformat(),
-         'count': counts.get((today - timedelta(days=offset)).isoformat(), 0)}
-        for offset in range(13, -1, -1)
-    ]
-
+    # 缺的日子要补零的 daily 也随「站点规模」一起撤掉了：那张「近 14 天单量」图
+    # 画的是**全站**的走势（SQL 里没有 user_id 条件），属于业主的经营数据。
+    # 要给自己看趋势的话得另开一条按 user_id 过滤的口径，而不是把全站的数
+    # 顺手塞给每个登录学生 —— 那种「反正前端不画」的理由在数据一出库就不成立了。
     return jsonify({
         'code': 0,
         # 卡片上这四个数字全是本人的。rank / ranked 复用累计榜那条 SQL 的结果，
@@ -1582,8 +1691,10 @@ def api_board():
             'rank': me_all['rank'],
             'ranked': me_all['ranked'],
         },
-        'queue': {'unclaimed': unclaimed, 'statuses': statuses},
-        'daily': daily,
+        # 排队只报「还在流程里」各档的单数。它不带全站未接单数 ——
+        # 那个数与各档相加之和其实重叠（未接单多半就停在待计费），
+        # 且本身也是站点总量，一并撤回了。学生真正要的是「哪一档堵住了」。
+        'queue': {'statuses': statuses},
         'boards': [
             {'key': 'recent', 'label': '近 30 天', 'hint': 'Recent 30 days',
              'top': [board_row(i, row) for i, row in enumerate(top_recent, 1)],

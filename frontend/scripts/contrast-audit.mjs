@@ -261,6 +261,7 @@ const CHECKS = [
   // —— 反馈色 ——
   ['err', 'err-bg', 4.5, 'must', '错误（驳回标签、失败提示）'],
   ['warn', 'background', 4.5, 'must', '警告文字'],
+  ['warn', 'muted', 4.5, 'must', '警告文字压在下沉面上'],
   ['ok', 'background', 4.5, 'must', '成功文字'],
   ['info', 'background', 4.5, 'must', '信息文字'],
 

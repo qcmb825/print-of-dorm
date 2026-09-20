@@ -58,6 +58,7 @@ from .orders import (
     UPLOAD_WINDOW_SECONDS,
     create_order_from_saved_file,
     quota_rejection,
+    register_chunk_usage_provider,
     resolve_print_options,
 )
 
@@ -317,6 +318,37 @@ def _pending_of_user(user_id):
     return result
 
 
+
+def _chunk_usage_info(user_id):
+    """这个账号所有「还没传完的会话」占了多少字节、有几份。
+
+    挂给 orders.register_chunk_usage_provider 用，让配额判定（在 orders 那边）
+    也能看见分片占的这部分盘。放在这里是因为只有本模块知道会话目录的形状
+    （见 orders.pending_disk_bytes 里那段说明：两边各抄一份迟早会漏）。
+
+    同时给出**份数**和上限：设置页要能说清「有 2 份没传完、最多 3 份」，
+    而 MAX_PENDING_PER_USER 这个上限就住在本模块里（它是本模块的规矩，
+    不该在别处再抄一遍数字 —— 抄的那份改了不会报错，只是界面上那句话变成了假的）。
+
+    按**实际字节**数而不是 meta 里声明的大小：这里要回答的是「盘已经被占掉多少」，
+    在传到一半的会话上，声明值和实际值差得很远 —— 按声明值算的话，
+    一个几乎没开始传的会话会被当成已经占满了额度。
+    """
+    pending = _pending_of_user(user_id)
+    return {
+        'bytes': sum(_session_bytes(_session_dir(uid)) for uid, _meta in pending),
+        'sessions': len(pending),
+        'max_sessions': MAX_PENDING_PER_USER,
+    }
+
+
+
+# 注册给配额判定用。放在模块级（import 时执行一次）：只要这个蓝图被挂上，
+# 配额就算得进分片占用；而没走应用启动的脚本（比如单独测 orders）拿不到它，
+# 也不会因此报错，只是少算一部分 —— 那正是 pending_disk_bytes 里那个默认值的作用。
+register_chunk_usage_provider(_chunk_usage_info)
+
+
 def _session_info(upload_id, meta, received=None):
     """会话对外的样子。绝不包含服务器上的绝对路径。"""
     if received is None:
@@ -344,7 +376,7 @@ def _load_session(upload_id):
     后者在调用点读起来完全看不出区别，是最容易踩的那种坑。
     """
     if not _UPLOAD_ID_RE.match(upload_id or ''):
-        return None, None, (jsonify({'code': 1, 'msg': '上传会话无效'}), 400)
+        return None, None, (jsonify({'code': 400, 'msg': '上传会话无效'}), 400)
     session_dir = _session_dir(upload_id)
     meta = _read_meta(session_dir)
     if meta is None:
@@ -403,7 +435,7 @@ def api_chunk_init():
         return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
     raw_name = data.get('filename') or ''
     if not isinstance(raw_name, str) or not raw_name.strip():
-        return jsonify({'code': 1, 'msg': '请选择要上传的文件'}), 400
+        return jsonify({'code': 400, 'msg': '请选择要上传的文件'}), 400
 
     # basename 是必做的：浏览器理论上不会给出带路径的文件名，
     # 但这个值会被写进 meta 并在建订单时落库，不能假设客户端老实。
@@ -411,13 +443,13 @@ def api_chunk_init():
     if not allowed_file(original_name):
         security_event('upload_blocked_type', '分片上传：文件「%s」不在白名单内' % original_name[:80])
         return jsonify({
-            'code': 1,
+            'code': 400,
             'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
         }), 400
 
     size = _int_or_none(data.get('size'))
     if size is None:
-        return jsonify({'code': 1, 'msg': '文件大小不正确'}), 400
+        return jsonify({'code': 400, 'msg': '文件大小不正确'}), 400
     if size > MAX_UPLOAD_BYTES:
         # 提前拦比传完再拦友好得多：前者一秒就告诉用户，后者让他白等几分钟
         security_event('upload_too_large',
@@ -449,16 +481,18 @@ def api_chunk_init():
         }), 429
 
     # 上面那条挡的是会话**数量**，挡不住「三份都是 50MB」—— 而分片恰恰是
-    # 这个系统里唯一能把大文件写进磁盘的路（单片直传有 MAX_CONTENT_LENGTH 顶着，
-    # 分片是合法地绕开它）。所以按字节再拦一道，和直传共用同一个上限。
-    # 已经在传的会话按实际字节算，新会话按声明大小算（它还没落盘）。
+    # 这个系统里唯一能合法绕开单文件上限的写盘路。所以按字节再拦一道，和直传共用同一个上限。
+    #
+    # extra_bytes 只传**这一份新会话**的声明大小：已经在传的那些会话按实际字节算，
+    # 而那一部分已经由 pending_disk_bytes 内部（经 register_chunk_usage_provider）
+    # 一起算进去了，这里再传一次就是重复计数 —— 两边都以为对方没算，
+    # 结果是一份从没传过的会话也能把人顶到上限。
     #
     # 分片 PUT 时不再查一遍：一次会话的总量在 init 就已经按 size 全算进来了
     # （每片的期望大小在 PUT 里逐个核对、合并时还要复核），中途涨不出这个数。
     # 放在「续传」分支之后也是有意的：续传不会新占额度，
     # 把人挡在这里只会让他完不成、额度也退不掉。
-    in_flight = sum(_session_bytes(_session_dir(uid)) for uid, _meta in pending)
-    quota_error = quota_rejection(in_flight + size)
+    quota_error = quota_rejection(size)
     if quota_error is not None:
         return quota_error
 
@@ -470,7 +504,7 @@ def api_chunk_init():
     except OSError:
         # 同名目录基本不可能（token 是随机的），真撞上就让用户重试一次
         logger.exception('创建分片上传会话目录失败: %s', session_dir)
-        return jsonify({'code': 1, 'msg': '创建上传会话失败，请重试'}), 500
+        return jsonify({'code': 500, 'msg': '创建上传会话失败，请重试'}), 500
 
     meta = {
         'user_id': g.user['id'],
@@ -485,7 +519,7 @@ def api_chunk_init():
     except OSError:
         shutil.rmtree(session_dir, ignore_errors=True)
         logger.exception('写入分片上传元数据失败: %s', session_dir)
-        return jsonify({'code': 1, 'msg': '创建上传会话失败，请重试'}), 500
+        return jsonify({'code': 500, 'msg': '创建上传会话失败，请重试'}), 500
 
     logger.info('分片上传开始 upload_id=%s 用户=%s 文件=%s 大小=%sKB 共 %s 片 ip=%s',
                 upload_id, g.user['nickname'], original_name,
@@ -539,7 +573,7 @@ def api_chunk_put(upload_id, index):
         return failure
 
     if index < 0 or index >= meta['total_chunks']:
-        return jsonify({'code': 1, 'msg': '分片序号超出范围'}), 400
+        return jsonify({'code': 400, 'msg': '分片序号超出范围'}), 400
 
     part_path = os.path.join(session_dir, _part_name(index))
     expected = _expected_part_size(meta, index)
@@ -562,7 +596,7 @@ def api_chunk_put(upload_id, index):
                        '会话 %s 第 %s 片声明 %s 字节，期望 %s 字节'
                        % (upload_id, index, declared, expected))
         return jsonify({
-            'code': 1,
+            'code': 400,
             'msg': '分片大小不正确，请刷新页面后重试'
         }), 400
 
@@ -594,7 +628,7 @@ def api_chunk_put(upload_id, index):
                 logger.warning('清理分片临时文件失败: %s', tmp_path)
         logger.warning('分片上传失败 upload_id=%s 第 %s 片：写入 %s 字节 / 期望 %s 字节 ip=%s',
                        upload_id, index, written, expected, client_ip())
-        return jsonify({'code': 1, 'msg': '分片上传失败，请重试'}), 400
+        return jsonify({'code': 400, 'msg': '分片上传失败，请重试'}), 400
     except OSError:
         if os.path.exists(tmp_path):
             try:
@@ -603,7 +637,7 @@ def api_chunk_put(upload_id, index):
                 pass
         logger.exception('分片写入失败 upload_id=%s 第 %s 片 ip=%s',
                          upload_id, index, client_ip())
-        return jsonify({'code': 1, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
+        return jsonify({'code': 500, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
     except Exception:
         if os.path.exists(tmp_path):
             try:
@@ -612,7 +646,7 @@ def api_chunk_put(upload_id, index):
                 pass
         logger.exception('分片写入失败 upload_id=%s 第 %s 片 ip=%s',
                          upload_id, index, client_ip())
-        return jsonify({'code': 1, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
+        return jsonify({'code': 500, 'msg': '服务器暂时无法接收这份分片，请稍后重试'}), 500
 
     return jsonify({
         'code': 0,
@@ -672,7 +706,7 @@ def api_chunk_complete(upload_id):
         lock_path, busy = _acquire_merge_lock(upload_id)
     except OSError as exc:
         logger.exception('创建合并锁失败 upload_id=%s：%s', upload_id, exc)
-        return jsonify({'code': 1, 'msg': '服务器暂时无法处理这份上传，请稍后重试'}), 500
+        return jsonify({'code': 500, 'msg': '服务器暂时无法处理这份上传，请稍后重试'}), 500
     if busy:
         # 重复提交是常见操作（双击、超时重试），不是攻击，记 INFO
         logger.info('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
@@ -686,7 +720,7 @@ def api_chunk_complete(upload_id):
         if missing:
             # 会话目录原地没动过，用户把那几片补上再提交就行，不用从头开始
             return jsonify({
-                'code': 1,
+                'code': 400,
                 'msg': '还有 %s 个分片没有收到，请继续上传' % len(missing),
                 'missing': missing,
             }), 400
@@ -721,7 +755,7 @@ def api_chunk_complete(upload_id):
             except OSError:
                 logger.warning('清理内容校验失败的合并文件失败: %s', final_path)
             shutil.rmtree(session_dir, ignore_errors=True)
-            return jsonify({'code': 1, 'msg': content_error}), 400
+            return jsonify({'code': 400, 'msg': content_error}), 400
 
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——取件码重摇、失败清理都只有一份实现。
@@ -739,7 +773,7 @@ def api_chunk_complete(upload_id):
         # 分片仍然清掉：失败的会话本来就已经不可用（分片可能被读坏了），
         # 让用户重传比留个再也合不上的残骸更干净。与改动前同一口径。
         shutil.rmtree(session_dir, ignore_errors=True)
-        return jsonify({'code': 1, 'msg': '文件合并失败，请重新上传'}), 500
+        return jsonify({'code': 500, 'msg': '文件合并失败，请重新上传'}), 500
     else:
         # 分片已经在合并结果里了，留着没有意义
         shutil.rmtree(session_dir, ignore_errors=True)

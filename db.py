@@ -198,7 +198,20 @@ def find_paper_type(conn, paper_type_id):
 # v12 -> v13：users 新增 session_epoch（会话吊销用）。
 #            会话里存一份登录时的 epoch，改密码/登出时 +1，对不上就让旧 Cookie 失效。
 #            全新库写进 DDL，老库走 PRAGMA + ALTER 幂等补列。
-SCHEMA_VERSION = '13'
+# v13 -> v14：users 新增 qq（**必填的 QQ 号**，取件邮件提醒的唯一收件来源）。
+#            为什么单开一列、还要改必填 ——
+#            原来「联系方式」是 (contact_type, contact) 一对，可填微信 / QQ / 邮箱。
+#            微信推不出邮箱（mail/recipients.py 的 NO_MAILBOX_WECHAT），
+#            于是填了微信的学生收不到取件提醒，而且从数据上看不出他收不到。
+#            QQ 号能确定性拼出 <QQ号>@qq.com，所以取件提醒这条链路必须挂在 QQ 上。
+#            现在语义是：qq 必填（收提醒用），contact_type/contact 收窄成
+#            「其他联系方式（选填）」——选填的东西不能当通知渠道，这一点由必填来保证。
+#            ⚠️ 这里**不回填任何人的 qq**，只有一个例外：老库里 contact_type='qq' 的行
+#            把 contact 的值搬进 qq。那不是「编一个 QQ 出来」，而是把本来就存在的
+#            QQ 号从旧字段挪到新字段 —— 不搬的话，所有老用户的提醒会当场静默断掉，
+#            他们只会发现「以前收得到，现在收不到了」，而日志里什么都没有。
+#            老库里填微信/邮箱的行 qq 留空，登录后会弹一次可关闭的补填提示（见前端）。
+SCHEMA_VERSION = '14'
 
 
 
@@ -291,7 +304,8 @@ def _migrate_release_unique_names(cursor, current_version):
             contact_type TEXT,
             contact TEXT,
             pay_qr_file TEXT,
-            session_epoch INTEGER NOT NULL DEFAULT 0
+            session_epoch INTEGER NOT NULL DEFAULT 0,
+            qq TEXT
         )
     ''')
     # id 也一起拷过去：orders.user_id / claimed_by、tickets.user_id 都是按 id 关联的，
@@ -304,10 +318,10 @@ def _migrate_release_unique_names(cursor, current_version):
         INSERT INTO users_new
             (id, nickname, real_name, student_id, dorm, password_hash, password_enc,
              role, status, create_time, last_login, contact_type, contact,
-             pay_qr_file, session_epoch)
+             pay_qr_file, session_epoch, qq)
         SELECT id, nickname, real_name, student_id, dorm, password_hash, password_enc,
                role, status, create_time, last_login, contact_type, contact,
-               pay_qr_file, session_epoch
+               pay_qr_file, session_epoch, qq
         FROM users
     ''')
     cursor.execute('DROP TABLE users')
@@ -390,7 +404,8 @@ def init_database():
                 status TEXT NOT NULL DEFAULT 'active',
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_login TIMESTAMP,
-                session_epoch INTEGER NOT NULL DEFAULT 0
+                session_epoch INTEGER NOT NULL DEFAULT 0,
+                qq TEXT
             )
         ''')
         cursor.execute('''
@@ -460,6 +475,11 @@ def init_database():
                          '请先处理这些重复数据；本次仍会继续启动，但取件码暂时不能保证唯一')
             logger.error('!!! 迁移未完成：取件码唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
 
+        # 补列之前先备份：ALTER 随时能撤，但万一中途断电/进程被杀，
+        # 老表就剩一个残缺的壳。重建表那条路已经在 _migrate_release_unique_names
+        # 里单独备份了，这里只防 ALTER 这条路。
+        backup_database_file()
+
         # 这轮新增联系方式，给已有的 users 表补两列。
         # CREATE TABLE IF NOT EXISTS 对已存在的表没有任何改动，老库只能靠 ALTER TABLE；
         # 先用 PRAGMA 查一下现有的列，保证重复执行也安全（幂等）。
@@ -479,6 +499,32 @@ def init_database():
         # 对不上就让旧 Cookie 失效。幂等补列，跟 contact_type 同一套路。
         if 'session_epoch' not in user_columns:
             cursor.execute('ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0')
+
+        # QQ 号（必填，取件邮件提醒的收件来源）。语义见文件顶部 v13 -> v14 那段。
+        # 这里**不能**写 NOT NULL：SQLite 的 ADD COLUMN 加一个 NOT NULL 列时，
+        # 必须同时给出非空 DEFAULT，否则当场报 "Cannot add a NOT NULL column with
+        # default value NULL"，老库直接起不来。就算给个 DEFAULT '' 也是错的 ——
+        # 那等于宣称全站老用户都填过 QQ（值是空串），补填提示就再也不会弹，
+        # 而取件邮件会一封都发不出去。"必填"这条约束由接口和前端负责，
+        # 库里只管「有没有值」，空串/空值一律当「还没填」。
+        qq_column_added = False
+        if 'qq' not in user_columns:
+            cursor.execute('ALTER TABLE users ADD COLUMN qq TEXT')
+            qq_column_added = True
+
+        # 只在新加这一列的那次启动里搬一次：老库里的 QQ 号原本躺在
+        # (contact_type='qq', contact) 里，不搬过去就等于把老用户的提醒悄悄关掉了。
+        # 限定 contact_type='qq'，所以这条搬的是**已有的 QQ 号**，不是我们编的 ——
+        # 填微信/邮箱的行照旧留空，让前端弹补填提示，别拿微信号去拼一个假邮箱。
+        # 再带一条 TRIM(contact) <> '' 把当年存进去的空串挡掉（空串搬过来
+        # 看着像「填了」，会把必填校验和补填提示一起骗过去）。
+        if qq_column_added:
+            moved = cursor.execute(
+                "UPDATE users SET qq = contact "
+                "WHERE contact_type = 'qq' AND contact IS NOT NULL AND TRIM(contact) <> ''"
+            ).rowcount
+            if moved:
+                logger.info('迁移：把 %s 个老账号的 QQ 号从「联系方式」搬到新的 QQ 号字段', moved)
 
         # 计费三列，同一个套路：全新库靠上面的 CREATE TABLE 就带上了，
         # 老库这里补。price 存的是「元」，最多两位小数，可空 ——

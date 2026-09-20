@@ -5,8 +5,10 @@ import secrets
 from flask import Blueprint, g, jsonify, request, session
 
 from config import (ROLE_LABELS, ROLE_SUPER, ROLE_USER, STATUS_ACTIVE, STATUS_CLOSED,
+                    ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED,
                     STUDENT_ID_RE, logger, public_role, public_role_label)
 from db import db_conn
+from auth import login_required
 from identity import (GATE_CAN_APPLY_AUDIT, GATE_ROSTER_UNAVAILABLE, check_registration,
                       fill_missing_name)
 from security import (
@@ -24,7 +26,14 @@ from security import (
     security_event,
     verify_password,
 )
+import utils as _utils
 from utils import validate_registration
+from security import audit_action
+# 在盘用量与配额判定只认 orders 里那一套算法，这里直接借过来：
+# 设置页说「还剩 1.2GB」和上传时真的拦不拦，必须是同一个口径 ——
+# 两处各算一遍，迟早出现「页面说还有余量、上传却被 429 拦住」，而且两边都不报警。
+# 方向是安全的（orders 不反过来 import 本模块），不会形成循环导入。
+from .orders import quota_snapshot
 
 bp = Blueprint('account', __name__)
 
@@ -104,7 +113,9 @@ def api_me():
     """前端启动时调，返回当前登录用户和 CSRF 令牌。"""
     token = ensure_csrf_token()
     if g.get('user') is None:
-        return jsonify({'code': 401, 'msg': '未登录', 'csrf': token, 'user': None}), 401
+        # 文案与 auth.py 的 login_required / roles_required 对齐：同一件事（没登录）
+        # 在同一个项目里不该有两句话，否则前端一看到不同的 msg 就以为遇到了新情况。
+        return jsonify({'code': 401, 'msg': '请先登录', 'csrf': token, 'user': None}), 401
     user = dict(g.user)
     # 角色出库前统一过一遍对外口径，前端只会拿到 user / admin 两种值。
     # 好处是界面按角色分支的地方能少一处是一处，两套界面要各自维护的量也跟着少。
@@ -192,12 +203,12 @@ def api_register():
             password_hash, password_enc = make_password_records(payload['password'])
             cursor = conn.execute('''
                 INSERT INTO users
-                    (nickname, real_name, student_id, dorm, contact_type, contact,
+                    (nickname, real_name, student_id, dorm, qq, contact_type, contact,
                      password_hash, password_enc, role)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 payload['nickname'], payload['real_name'], payload['student_id'], payload['dorm'],
-                payload['contact_type'], payload['contact'],
+                payload['qq'], payload['contact_type'], payload['contact'],
                 password_hash, password_enc, ROLE_USER,  # 注册一律是普通用户，管理员只能由管理端升级
             ))
             conn.commit()
@@ -226,12 +237,16 @@ def api_register():
     session['epoch'] = epoch  # 登录那一刻的登录态版本，之后靠它判断这条 Cookie 有没有被吊销
     session['csrf'] = secrets.token_urlsafe(32)
     session.permanent = True
+    # QQ 号本身不写进日志：它能直接推出一个邮箱地址（见 mail/recipients.py 的
+    # mask_address 那段，那边连地址都打码），而日志是最容易被整包拷走的东西。
+    # 这里只需要知道「填了」—— 注册时它是必填，这一行只是留个痕。
     logger.info('新用户注册 #%s 昵称=%s 姓名=%s 学号=%s 宿舍=%s 联系方式=%s ip=%s',
                 uid, payload['nickname'], payload['real_name'], payload['student_id'],
                 payload['dorm'], payload['contact'] or '(未填写)', client_ip())
     return jsonify({'code': 0, 'msg': '注册成功', 'csrf': session['csrf'], 'user': {
         'id': uid, 'nickname': payload['nickname'], 'real_name': payload['real_name'],
         'student_id': payload['student_id'], 'dorm': payload['dorm'],
+        'qq': payload['qq'],
         'contact_type': payload['contact_type'], 'contact': payload['contact'],
         'role': ROLE_USER, 'role_label': ROLE_LABELS[ROLE_USER],
         # 新注册的账号一律走普通视图。字段固定写上而不是省掉 ——
@@ -309,6 +324,7 @@ def api_login():
     return jsonify({'code': 0, 'csrf': session['csrf'], 'user': {
         'id': row['id'], 'nickname': row['nickname'], 'real_name': row['real_name'],
         'student_id': row['student_id'], 'dorm': row['dorm'],
+        'qq': row['qq'],
         'contact_type': row['contact_type'], 'contact': row['contact'],
         # 同样走对外口径：登录接口和 /api/me 返回的角色写法完全一致，
         # 前端不用管自己是从哪个入口登进来的。
@@ -344,3 +360,183 @@ def api_logout():
     token = ensure_csrf_token()
     logger.info('用户退出登录 %s ip=%s', who, client_ip())
     return jsonify({'code': 0, 'msg': '已退出登录', 'csrf': token})
+
+
+
+@bp.route('/api/me/overview')
+@login_required
+def api_me_overview():
+    """「设置」页要的那一小把数据：账号信息 + 存储用量 + 我的下单概况。
+
+    为什么不复用 /api/my-stats 和 /api/board：
+    - /api/my-stats 给的是「最近 14 天的柱状图 + 颜色/单双面分布」，那是看板要的形状，
+      塞进设置页等于把一屏图表挂在一个查资料的地方；
+    - /api/board 是公开口径（榜单、排队），里面**刻意没有金额**，
+      而设置页要显示的是「我自己花了多少」。
+    所以这里单独给一份最小集合，字段名与那两处**不重名也不冲突**，
+    免得哪天有人以为它们是同一份数据。
+
+    **只关于自己**：没有全站单数、没有排名，也没有别人的名字 ——
+    设置页是查自己的地方，多给一个数就等于多一次「这个数该不该公开」的决定。
+    """
+    uid = g.user['id']
+    with db_conn() as conn:
+        row = conn.execute('''
+            SELECT nickname, real_name, student_id, dorm, qq, contact_type, contact,
+                   datetime(create_time, 'localtime') AS create_time,
+                   datetime(last_login, 'localtime') AS last_login
+            FROM users WHERE id = ?
+        ''', (uid,)).fetchone()
+        if row is None:
+            # 会话里的 uid 在库里找不到：正常情况下 load_current_user 早该把会话清掉，
+            # 能走到这里说明这一行正好在这一瞬间被删了。回 404 而不是悄悄给一份空资料。
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        # 订单概况只取自己那几档计数，不在 Python 里拉全表：
+        # 设置页每次进来都要看这个数，而一个用了三年的账号可能有几千单。
+        counts = {r['status']: r['c'] for r in conn.execute(
+            'SELECT status, COUNT(*) AS c FROM orders WHERE user_id = ? GROUP BY status',
+            (uid,)).fetchall()}
+        # 花费只算已经定过价的单。待计费的价钱还不知道，算进去等于凭空少算一笔 ——
+        # 和 /api/my-stats 的口径一致（那边也只累加 price 非空的）。
+        spent = conn.execute(
+            'SELECT COALESCE(SUM(price), 0) AS s FROM orders WHERE user_id = ?',
+            (uid,)).fetchone()['s']
+
+    # 在盘用量与配额来自 orders 里那套唯一口径（见 orders.quota_snapshot）：
+    # 设置页说「还剩多少」和上传时真的拦不拦，必须是同一个算法。
+    usage = quota_snapshot(uid)
+
+    return jsonify({
+        'code': 0,
+        'account': {
+            'nickname': row['nickname'],
+            'real_name': row['real_name'],
+            'student_id': row['student_id'],
+            'dorm': row['dorm'],
+            'qq': row['qq'] or '',
+            'contact_type': row['contact_type'],
+            'contact': row['contact'],
+            'create_time': row['create_time'],
+            'last_login': row['last_login'],
+        },
+        'orders': {
+            'total': sum(counts.values()),
+            # 待计费也算进行中：对本人来说这单还没结束（正等管理员报价），
+            # 不算进任何一格会让刚下单的人看到「进行中 0」而以为没提交上。
+            'in_progress': sum(counts.get(s, 0) for s in (ST_UNPRICED, ST_PENDING, ST_PRINTING)),
+            'ready': counts.get(ST_READY, 0),
+            'done': counts.get(ST_DONE, 0),
+            'spent': round(spent or 0.0, 2),
+        },
+        'usage': usage,
+    })
+
+
+
+@bp.route('/api/me/profile', methods=['PUT'])
+def api_me_update_profile():
+    """自助改资料：只允许修改昵称 / 宿舍 / QQ / 其他联系方式。"""
+    if g.get('user') is None:
+        return jsonify({'code': 401, 'msg': '请先登录'}), 401
+    data = request.get_json(silent=True) or {}
+    # 为了复用 validate_identity_fields（它要求 real_name/student_id 存在），
+    # 把不可改的字段从 g.user 带进来。客户端只能改 nickname/dorm/qq/contact_type/contact。
+    payload = {
+        'nickname': data.get('nickname', g.user.get('nickname')), 
+        'real_name': g.user.get('real_name'),
+        'student_id': g.user.get('student_id'),
+        'dorm': data.get('dorm', g.user.get('dorm') or ''),
+        'qq': data.get('qq', g.user.get('qq') or ''),
+        'contact_type': data.get('contact_type', g.user.get('contact_type') or ''),
+        'contact': data.get('contact', g.user.get('contact') or ''),
+    }
+    fields, error = _utils.validate_identity_fields(payload)
+    if fields is None:
+        return jsonify({'code': 400, 'msg': error}), 400
+
+    uid = g.user['id']
+    with db_conn() as conn:
+        try:
+            target = conn.execute('SELECT * FROM users WHERE id = ?', (uid,)).fetchone()
+            if target is None:
+                return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+            if target['status'] == STATUS_CLOSED:
+                return jsonify({'code': 403, 'msg': '该账号已注销'}), 403
+            # 昵称唯一性检查（排除自己）
+            if fields['nickname'] != target['nickname']:
+                owner = conn.execute(
+                    'SELECT id, nickname FROM users WHERE nickname = ? AND status != ? AND id != ? LIMIT 1',
+                    (fields['nickname'], STATUS_CLOSED, uid)).fetchone()
+                if owner is not None:
+                    return jsonify({'code': 409, 'msg': f'昵称已被账号 {owner["nickname"]} 占用'}), 409
+
+            conn.execute('''
+                UPDATE users SET nickname = ?, dorm = ?, qq = ?, contact_type = ?, contact = ?
+                WHERE id = ?
+            ''', (fields['nickname'], fields['dorm'], fields['qq'], fields['contact_type'], fields['contact'], uid))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            logger.warning('用户改资料撞唯一索引：uid=%s ip=%s', uid, client_ip())
+            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+
+    # 记录变更审计，只列出真的改的字段
+    changes = []
+    if fields['nickname'] != target['nickname']:
+        changes.append('昵称 %s → %s' % (target['nickname'], fields['nickname']))
+    if fields['dorm'] != target['dorm']:
+        changes.append('宿舍 %s → %s' % (target['dorm'], fields['dorm']))
+    if (fields['qq'], fields['contact_type'], fields['contact']) != (target['qq'], target['contact_type'], target['contact']):
+        changes.append('联系方式 qq=%s %s:%s → qq=%s %s:%s' % (
+            (target['qq'] or '(空)'), target['contact_type'], target['contact'],
+            (fields['qq'] or '(空)'), fields['contact_type'], fields['contact']))
+    if changes:
+        audit_action('change_profile', '目标 #%s/%s %s' % (uid, target['nickname'], '；'.join(changes)))
+    logger.info('用户修改个人资料 #%s 变更=%s ip=%s', uid, '；'.join(changes) or '(无变化)', client_ip())
+    # 把改完的这一份原样带回去：前端顶栏的昵称、用户菜单里的姓名都取自本地那份 user，
+    # 不跟着更新的话，保存成功之后界面上还是旧昵称 —— 看着像没保存上，用户会再点一次。
+    # 只回这几个可改字段，不回整条记录：这里不是 /api/me，不该顺手把角色之类的
+    # 也发一遍（多一个字段就多一次「这个字段要不要同步到前端 store」的决定）。
+    return jsonify({'code': 0, 'msg': '资料已更新', 'user': {
+        'nickname': fields['nickname'],
+        'dorm': fields['dorm'],
+        'qq': fields['qq'] or '',
+        'contact_type': fields['contact_type'],
+        'contact': fields['contact'],
+    }})
+
+
+@bp.route('/api/me/password', methods=['PUT'])
+def api_me_change_password():
+    """自助改密码：需要当前密码，新密码更新后其他设备被吊销，但当前会话保持。"""
+    if g.get('user') is None:
+        return jsonify({'code': 401, 'msg': '请先登录'}), 401
+    data = request.get_json(silent=True) or {}
+    current = data.get('current_password') or ''
+    newpw = data.get('new_password') or ''
+    if not current or not newpw:
+        return jsonify({'code': 400, 'msg': '请输入当前密码和新密码'}), 400
+    # 密码强度先校验
+    err = _utils.password_error(newpw, g.user.get('nickname'), g.user.get('student_id'))
+    if err:
+        return jsonify({'code': 400, 'msg': err}), 400
+
+    uid = g.user['id']
+    with db_conn() as conn:
+        row = conn.execute('SELECT password_hash FROM users WHERE id = ?', (uid,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '账号不存在'}), 404
+        if not verify_password(row['password_hash'], current):
+            return jsonify({'code': 401, 'msg': '当前密码错误'}), 401
+        # 更新密码并把其它设备的 session_epoch +1；事务里做以防竞态
+        password_hash, password_enc = make_password_records(newpw)
+        conn.execute('UPDATE users SET password_hash = ?, password_enc = ?, session_epoch = session_epoch + 1 WHERE id = ?', (password_hash, password_enc, uid))
+        conn.commit()
+        new_epoch = conn.execute('SELECT session_epoch FROM users WHERE id = ?', (uid,)).fetchone()['session_epoch']
+
+    # 把当前会话也更新到新的 epoch，并下发新的 CSRF
+    session['epoch'] = new_epoch
+    session['csrf'] = secrets.token_urlsafe(32)
+    audit_action('change_password', '用户自助修改密码 #%s' % uid)
+    logger.info('用户修改密码 #%s ip=%s', uid, client_ip())
+    return jsonify({'code': 0, 'msg': '密码已修改，当前会话保持登录', 'csrf': session['csrf']})
