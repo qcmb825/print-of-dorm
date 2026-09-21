@@ -45,10 +45,8 @@ from .orders import (create_order_from_saved_file, create_preset_order, log_even
 
 bp = Blueprint('bot', __name__)
 
-# 机器人每次最多报多少单：/orders 是给人翻的，不是对账用的导出工具，
-# 一屏之外的部分网页端看得更清楚。
-BOT_ORDERS_LIMIT = 10
-
+# （这里原先有个 `BOT_ORDERS_LIMIT = 10`：机器人的订单条数现在是**用户偏好**
+#   `orders_page_size`（3–20，见 prefs.py），常量留着只会让人以为改它有用。已删。）
 
 # 使用说明的**唯一来源**（2026-09-20）。以前这段文案只住在 printbot 里，
 # 现在「使用说明」也要渲染成卡片，卡片是服务端画的 —— 两边各存一份必然漂移：

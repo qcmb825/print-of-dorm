@@ -227,12 +227,18 @@ def reply_help(client, qq, prefix=''):
     """发使用说明：优先发卡片，取不到卡就用服务端的结构拼文本。
 
     prefix 是「这个命令我不认识。」这类前置话术 —— 它只在文本那条路上有意义
-    （卡片本身就是一份完整的说明书，前面再加一句反而怪）。
+    （卡片本身就是一份完整的说明书，前面再加一句反而怪）。**例外**：prefix 非空时
+    一律走文本 —— 用户刚打错一个命令，该先看到「我不认识」再看说明书。
     """
-    try:
-        png = api.card('help', qq)
-    except api.ApiError:
+    #    「卡片 关」的人一律纯文本：这是呈现偏好，帮助这条也得看它。
+    #    原先只有 `_send_card_or_text` 那条路看这个偏好，帮助绕过了它（一致性审计抓到）。
+    if prefix or not _prefs_cache_get(qq).get('card_replies', True):
         png = None
+    else:
+        try:
+            png = api.card('help', qq)
+        except api.ApiError:
+            png = None
     if png:
         try:
             CARD_DIR.mkdir(parents=True, exist_ok=True)
@@ -894,7 +900,9 @@ def reply_orders(client, qq):
         lines = ['你最近的 %d 单（单号｜状态｜金额）：' % len(orders)]
         for order in orders:
             price = order.get('price')
-            price_text = '未计费' if price is None else ('%s 元' % price)
+            #    两位小数：卡片、邮件、网页端都是这个口径，文本缺了就会
+            #    「卡上 1.50 元、文字里 1.5 元」看着像两笔钱（一致性审计）
+            price_text = '未计费' if price is None else ('%.2f 元' % price)
             # 只给单号：它既是取件时报的号，也是查单/撤回时引用的号
             lines.append('%s｜%s｜%s\n　%s' % (
                 order.get('pickup_code') or '—', order.get('status'), price_text,
@@ -1066,6 +1074,27 @@ def reply_feedback(client, qq, argument):
 
 
 def reply_tickets(client, qq):
+    #    ⚠️ **卡片要先取**。服务端「看列表即已读」：`api.tickets` 与卡片接口都会把
+    #    这个账号的工单标成已读，而「未读」是在**标记之前**算的。
+    #    所以先调 `api.tickets` 的话，紧接着取的卡片里 unread 全是 0 ——
+    #    卡片上永远看不到「有新回复」，而文本兜底反而看得到（一致性审计抓到的）。
+    #    现在：卡片先取（它就是主要那条路），只有发不出卡才回退去取文本，
+    #    那时代价是文本里没有「有新回复」标记 —— 反正用户正在看这份列表。
+    if _prefs_cache_get(qq).get('card_replies', True):
+        try:
+            png = api.card('tickets', qq)
+        except api.ApiError:
+            png = None
+        if png:
+            try:
+                CARD_DIR.mkdir(parents=True, exist_ok=True)
+                path = CARD_DIR / ('tickets-%s.png' % uuid.uuid4().hex[:10])
+                with open(path, 'wb') as fh:
+                    fh.write(png)
+                client.send_private_image(qq, path)
+                return
+            except Exception:  # noqa: BLE001
+                log.exception('发工单卡片失败，改发文本')
     resp = api.tickets(qq)
     if resp.get('code') != 0:
         client.send_private_msg(qq, str(resp.get('msg', '查询失败')) + _site_hint(resp))
@@ -1089,7 +1118,7 @@ def reply_tickets(client, qq):
         rows_out.append('要接着聊：发「回复工单 单号 内容」。')
         return '\n'.join(rows_out)
 
-    _send_card_or_text(client, qq, 'tickets', text)
+    client.send_private_msg(qq, text())
 
 
 def reply_ticket_reply(client, qq, argument):

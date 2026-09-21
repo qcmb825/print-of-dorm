@@ -885,7 +885,10 @@ def _watermark_of(kind, payload, rows):
     """
     if kind == 'orders':
         value = sum(1 for o in (payload.get('orders') or []) if o.get('status') == ST_READY)
-        label = '可取件'
+        #    「本页」两个字不能省：概况卡里那个「待取件」是**全量**（服务器直接查库），
+        #    而这里数的是本页拿到的行 —— 页大小 3、实有 6 单可取时，两张卡会互相打脸
+        #    （一致性审计抓到的）。
+        label = '本页可取件'
     elif kind == 'tickets':
         value = sum(1 for x in (payload.get('tickets') or []) if x.get('unread'))
         label = '未读'
@@ -1048,5 +1051,8 @@ def render(kind, payload):
     _chassis(draw, box[3], x0, x1, payload)
 
     buf = io.BytesIO()
-    base.convert('RGB').save(buf, format='PNG', optimize=True)
+    #    ⚠️ **不要开 `optimize=True`**：实测它在一张普通卡上要 174ms，而整张卡从零渲染
+    #    才 ~300ms —— 编码一项就占了六成时间，换来的只是 5% 的体积（263KB → 277KB）。
+    #    PNG 的 optimize 会试遍所有 filter 组合，对「大片渐变 + 颗粒」这种图纯属白烧。
+    base.convert('RGB').save(buf, format='PNG', compress_level=6)
     return buf.getvalue()
