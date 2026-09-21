@@ -609,7 +609,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `POST` | `/api/upload` | 登录 | 上传文件并提交订单（落「待计费」） |
 | `POST` | `/api/order/preset` | 登录 | 预设下单：不传文件，直接套一条预设服务下单（学生端的另一条下单路径；带了文件会被 400 拒绝，频控与上传共用一个计数器） |
 | `GET`/`PUT`/`POST`/`DELETE` | `/api/upload/chunked*` | 登录 | 大文件分片：建会话 / 列未完成会话 / 查进度 / 传分片 / 合并 / 取消（路径见 `routes/upload_chunks.py`） |
-| `POST` | `/api/order/<id>/withdraw` | 登录 | 学生自助撤回**自己还没被接单**的订单 —— 唯一会真正 DELETE 订单行的接口，会在留痕里记一条指向已删订单的「本人撤回」 |
+| `POST` | `/api/order/<id>/withdraw` | 登录 | 学生自助撤回**自己还没被接单**的订单 —— **网页端**唯一会真正 DELETE 订单行的接口（机器人那条 `/api/bot/order/withdraw` 同样真删），会在留痕里记一条指向已删订单的「本人撤回」 |
 | `GET` | `/api/my-orders` | 登录 | 自己的订单列表（含金额） |
 | `GET` | `/api/my-stats` | 登录 | 自己的下单汇总（各状态笔数 / 彩色单双面分布 / 近 14 天趋势）。**只有自己的数**：原先附带的「全站累计单数」属站点规模，已撤回（后端不再查该列）。**目前没有前端消费方**，保留原因由作者决定 |
 | `GET`/`PUT` | `/api/me/prefs` | 登录 | **我的偏好**（通知开关 / 免打扰时段 / 默认打印参数 / 订单列表显示 / 机器人是否用卡片回）。与机器人「设置」命令读写的是**同一份**（`prefs.py` 是唯一事实来源），响应里带 `lines`（服务端把偏好翻成人话，网页与机器人共用同一套说法）。免打扰时段要成对给、格式 `HH:MM` |
@@ -665,7 +665,7 @@ QQ 客户端 / QQ 协议（LLBot） --正向 WS--> printbot --HTTP+BOT_TOKEN--> 
 | :--- | :--- |
 | `ONEBOT_WS` | OneBot 正向 WS 地址，默认 `ws://127.0.0.1:8085` |
 | `ONEBOT_ACCESS_TOKEN` | OneBot 侧的 access token，没有就留空 |
-| `API_BASE` | 站点地址，默认 `http://127.0.0.1:8080` |
+| `API_BASE` | 站点地址，默认 `http://127.0.0.1:8091`（本机联调端口；正式部署改成站点地址） |
 | `BOT_TOKEN` | 必须与 `.env` 里的 `BOT_TOKEN` 一致 |
 | `SITE_URL` | 文案里引导回网页的地址，默认 `https://print.qcmb.cloud` |
 
@@ -674,7 +674,7 @@ QQ 框架用 **LLOneBot**（LLBot CLI 2.1.0 / LLBot 8.2.1，包在 `LLBot-CLI-wi
 
 ```powershell
 # 首次：把授权 token 粘进这个文件（在 https://auth.luckylillia.com 领）
-#   LLBot-CLI-win-x64-v8in\llbot\datauth_token.txt
+#   LLBot-CLI-win-x64-v8/bin/llbot/data/auth_token.txt
 # 然后：启动（二维码在它自己的窗口里，扫一次即登记该 QQ；登录态会存下来）
 LLBot-CLI-win-x64-v8\llbot.exe --qq=<机器人QQ>
 ```
@@ -705,7 +705,7 @@ PNG（`botcard.py` + `GET /api/bot/card`），printbot 收到后当图片发出�
 
 ## 🗄️ 数据模型
 
-SQLite 单库，共 10 张表：
+SQLite 单库，共 11 张表：
 
 | 表 | 用途 |
 | :--- | :--- |
