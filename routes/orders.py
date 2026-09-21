@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import unicodedata
 import uuid
 from datetime import datetime, timedelta
 
@@ -375,17 +376,31 @@ def _pickup_codes(raw):
     # JSON 里这个字段可能是数字（前端传的是字符串，但不保证）——
     # 先 str() 一下，别让 .strip() 在 int 上直接 AttributeError（那就是一个 500）。
     text = str(raw if raw is not None else '').strip()
+    # 全角数字归一成半角：中文输入法下 `'１２３'.isdigit()` 也是 True，
+    # 不归一的话会拿去跟库里比对，用户只会看到「没找到这个单号」（管理端审计）。
+    text = unicodedata.normalize('NFKC', text)
     # 超过 16 个字就不是单号了，不要拿它去查库
     if not text or len(text) > 16:
         return []
     codes = [text]
     if text.isdigit():
-        # 4 位是老形态、5 位是现形态：两个都当候选，老单不用迁移
+        # 4 位是老形态、5 位是现形态：**补零与剥零两个方向都要给候选**。
+        # 补零：用户把 622 写成 0622（老单常见）。
+        # 剥零：用户照着**显示成 000622 的那一版**念（前端一度给老单补过零，
+        #       屏幕上写着、敲进去却查不到 —— 管理端审计实测到的）。
         for width in (4, PICKUP_CODE_DIGITS):
             if len(text) < width:
                 padded = text.zfill(width)
                 if padded not in codes:
                     codes.append(padded)
+        stripped = text.lstrip('0')
+        if stripped and stripped not in codes:
+            codes.append(stripped)
+            for width in (4, PICKUP_CODE_DIGITS):
+                if len(stripped) < width:
+                    padded = stripped.zfill(width)
+                    if padded not in codes:
+                        codes.append(padded)
     return codes
 
 
@@ -1295,6 +1310,13 @@ def api_lookup_pickup():
         rows = conn.execute(
             _ORDER_SELECT + ' WHERE o.pickup_code IN (%s)' % placeholders +
             ' ORDER BY (o.status = ?) ASC, o.id DESC', (*codes, ST_DONE)).fetchall()
+        #    多候选命中**不止一张还没取件的单**时不能猜：『0012』与『12』在库里
+        #    可能真是两笔不同的单，随手挑一张就会把**别人的姓名学号**亮给柜台
+        #    （POST 那条路有 rowcount>1 → 409 的兜底，GET 这条路原先静默取最新）。
+        live = [item for item in rows if item['status'] != ST_DONE]
+        if len(live) > 1:
+            return jsonify({'code': 409, 'msg': '这个号对应不止一张还没取的单，'
+                                                '请让同学报完整单号'}), 409
         order = decorate_orders(rows[:1], g.user['id'], g.user['role'] == ROLE_SUPER)[0] \
             if rows else None
         if order is not None:

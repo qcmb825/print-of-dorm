@@ -159,7 +159,7 @@ function close(): void {
       v-model:value="code"
       size="large"
       clearable
-      placeholder="单号 · 例 0012"
+      placeholder="单号 · 例 25124"
       :status="missHint ? 'error' : undefined"
       @keydown.enter="lookup"
     >

@@ -376,8 +376,11 @@ onMounted(async () => {
           </span>
           <div class="min-w-0 flex-1">
             <p class="font-heading text-base font-bold">下单成功</p>
+            <!-- 不显示内部订单 id：学生面前只有单号（下面那块就是）。
+                 这里原先写「订单 #12」，而 12 是数据库主键 —— 学生照着它
+                 跟打印员对不上任何东西。 -->
             <p class="mt-0.5 truncate text-sm text-ink-3">
-              订单 #{{ receipt.orderId }} · {{ receipt.filename }}
+              {{ receipt.filename || '已提交' }}
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
               <!-- 单号是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
