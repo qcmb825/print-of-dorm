@@ -105,7 +105,7 @@ REFRACT_DY = 4
 GLASS_MIX = 0.18              # 冷色染色混入比例（很轻：混多了就成了有色树脂板）
 FOOT_H = 96                   # 面板下方的「机架条」高度（画在背景上，不在面板里）
 
-T_TITLE = 52
+T_TITLE = 48
 T_EYEBROW = 26
 T_BODY = 30
 T_CODE = 36                   # 单号是本行的**主读数**，必须比正文（30）大一号
@@ -786,8 +786,8 @@ def _rows_help(draw, y, x0, x1, payload):
                       _truncate(draw, item.get('desc') or '', _font('cjk', T_META),
                                 x1 - (x0 + 306) - 8),
                       font=_font('cjk', T_META), fill=INK_3)
-            y += 56
-        y += 24
+            y += 60
+        y += 32
     return y
 
 
@@ -830,14 +830,16 @@ def _watermark_of(kind, payload, rows):
         label = '可取件'
     elif kind == 'tickets':
         value = sum(1 for x in (payload.get('tickets') or []) if x.get('unread'))
-        label = '未读回复'
+        label = '未读'
     elif kind == 'me':
         value = (payload.get('orders') or {}).get('ready') or 0
-        label = '待我取件'
+        label = '待取件'
     elif kind == 'presets':
-        value, label = rows, '项服务'
+        value, label = rows, '服务'
     else:
-        value, label = rows, '条命令'
+        value, label = rows, '命令'
+    #    标签一律用**名词**（可取件 / 未读 / 待取件 / 服务 / 命令），不要用量词打头
+    #    （「条命令 15」在中文里读不通）；连起来就是「名词 + 数字」的读数。
     return ('%02d' % value if value else ''), label
 
 
