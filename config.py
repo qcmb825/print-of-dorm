@@ -707,6 +707,12 @@ PICKUP_NOTIFY_MAX_AGE_HOURS = max(1, env_int('PICKUP_NOTIFY_MAX_AGE_HOURS', 24))
 # 地址会变（换宿舍楼、换桌子），写死在代码里意味着每次搬家都得改代码重新部署。
 PICKUP_ADDRESS = os.getenv('PICKUP_ADDRESS', '2号北201').strip()
 
+# 站点对外地址。邮件里要告诉学生「去哪儿看订单、在哪儿提工单」——
+# 这个地址只有部署的人知道，所以也是环境变量。
+# （printbot 自己那份 .env 里也有一个 SITE_URL：那个包要整个拷到跑 QQ 的机器上，
+#   不 import 项目模块，所以两边各写一份；正常部署两个值应当指向同一个站点。）
+SITE_URL = os.getenv('SITE_URL', 'https://print.qcmb.cloud').strip().rstrip('/')
+
 
 # ---- SMTP（发信）----
 # 不配 SMTP_HOST 就不启用未接单提醒，启动时记一条 info —— 这个功能的开关

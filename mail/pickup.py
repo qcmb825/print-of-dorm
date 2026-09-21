@@ -23,7 +23,8 @@
 """
 import html
 
-from config import CLAIM_ALERT_MAX_ITEMS, COLOR_TYPE_LABELS, DUPLEX_LABELS, PICKUP_ADDRESS
+from config import (CLAIM_ALERT_MAX_ITEMS, COLOR_TYPE_LABELS, DUPLEX_LABELS,
+                    PICKUP_ADDRESS, SITE_URL)
 
 # 和 template.py 同一套上限，理由也一样：上传接口允许的极端文件名能到几 MB，
 # 原样拼进正文能让收信人的邮件客户端直接卡死 —— 这是发信人完全看不到、
@@ -86,12 +87,19 @@ def compose_pickup_subject(order):
     所以单号没有时不能退化成一句话了事 —— 那种情况本来就该在发信前被拦掉。
     """
     code = (order['pickup_code'] or '').strip()
-    return '[打印服务] 订单 #%s 已可取件，单号 %s' % (order['id'], code or '（缺失）')
+    #    ⚠️ **不写内部订单 id**（原先主题是「订单 #12 已可取件，单号 0622」）：
+    #    2026-09-21 起对外只认单号，柜台上有人把 #12 当单号念过一次就够糟了。
+    #    内部 id 只出现在**发给管理员**的那封提醒里。
+    return '[打印服务] 单号 %s 已可取件' % (code or '（缺失）')
 
 
-def compose_pickup_body(order):
+def compose_pickup_body(order, has_qr=True):
     """纯文本正文。不支持 HTML 的客户端看到的就是这一份，
-    所以它必须**独立完整** —— 只写「请查看 HTML 版本」等于这封信没发。"""
+    所以它必须**独立完整** —— 只写「请查看 HTML 版本」等于这封信没发。
+
+    `has_qr=False` 时那句「扫描下方收款码」必须一起去掉：纯文本里根本没有图，
+    写了就是指向不存在的东西 —— HTML 那条路早就这么做了，纯文本漏了（邮件审计）。
+    """
     lines = [
         '你好%s：' % ('，' + order['owner'] if order['owner'] else ''),
         '',
@@ -101,7 +109,6 @@ def compose_pickup_body(order):
         '取件地点：%s' % PICKUP_ADDRESS,
         '应付金额：%s' % _price_text(order['price']),
         '',
-        '订单 #%s' % order['id'],
         '  内容：%s（%s）' % (_shorten(order['filename'] or '（无文件名）', _FILENAME_MAX),
                             _spec_text(order)),
     ]
@@ -112,7 +119,9 @@ def compose_pickup_body(order):
         lines.append('  纸张：%s' % order['paper_name'])
     lines += [
         '',
-        '请到取件点用微信扫描下方收款码支付，然后凭单号取件。',
+        ('请到取件点用微信扫描下方收款码支付，然后凭单号取件。' if has_qr
+         else '请到取件点向管理员付款，然后凭单号取件。'),
+        '有问题在网页端「问题反馈」里留言（管理员看得到这一单）：%s' % SITE_URL,
         '（本邮件由系统自动发出，请勿直接回复。）',
     ]
     return '\n'.join(lines)
@@ -129,13 +138,17 @@ def compose_pickup_html(order, has_qr=True):
     样式一律写成内联 style：邮件客户端对 <style> 块和 class 的支持
     各不相同（Gmail 会直接删掉 <style>），内联是唯一到处都认的写法。
     """
-    safe = [_e(order['owner']), _e(order['id']), _e(order['pickup_code'] or '（缺失，请联系管理员）'),
+    #    列表里**不放内部订单 id**（原先第二位就是 `order['id']`）：学生这封信对外
+    #    只认单号，管理员那封才有 id（邮件审计）。
+    safe = [_e(order['owner']), _e(order['pickup_code'] or '（缺失，请联系管理员）'),
             _e(PICKUP_ADDRESS), _e(_price_text(order['price'])),
             _e(_shorten(order['filename'] or '（无文件名）', _FILENAME_MAX)), _e(_spec_text(order))]
-    owner, order_id, code, address, price, filename, spec = safe
+    owner, code, address, price, filename, spec = safe
+    #    没定价（老单）时 price 那一格是「未计费」四个字，不能塞进「支付 X」的句式里
+    _price_known = order['price'] is not None
 
     rows = [
-        ('订单号', '#%s' % order_id),
+        ('单号', '%s' % code),
         ('内容', filename),
         ('规格', spec),
     ]
@@ -151,15 +164,22 @@ def compose_pickup_html(order, has_qr=True):
         for label, value in rows
     )
 
-    pay_line = ('<p style="margin:16px 0 6px">请用微信扫描下方收款码支付 <strong>%s</strong>：</p>'
-                % price) if has_qr else ''
+    #    没定价时不能写「请…支付 未计费：」—— 那是病句（老库遗留单会收到）；
+    #    改成「应付金额以取件点为准」，跟正文里「未计费」的说法一致。
+    if has_qr:
+        pay_line = ('<p style="margin:16px 0 6px">请用微信扫描下方收款码支付 <strong>%s</strong>：</p>'
+                    % price) if _price_known else (
+            '<p style="margin:16px 0 6px">这笔单还没计价，<strong>应付金额以取件点为准</strong>：</p>')
+    else:
+        pay_line = ''
     qr_block = (
         '<img src="cid:%s" alt="微信收款码" '
         'style="width:220px;height:220px;border:1px solid #e5e5e5;border-radius:6px">'
         % PAY_QR_CID
     ) if has_qr else ''
-    pay_hint = '' if has_qr else ('<p style="margin:16px 0 6px">应付金额 <strong>%s</strong>，'
-                                 '请到取件点向管理员付款。</p>' % price)
+    pay_hint = '' if has_qr else (
+        '<p style="margin:16px 0 6px">应付金额 <strong>%s</strong>，请到取件点向管理员付款。</p>'
+        % (price if _price_known else '以取件点为准'))
 
     return (
         '<div style="font-family:-apple-system,\'Segoe UI\',\'Microsoft YaHei\',sans-serif;'

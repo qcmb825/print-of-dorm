@@ -223,7 +223,11 @@ def save_prefs(user_id, fields):
 def describe(prefs):
     """把偏好翻成几句人话（机器人「设置」命令与网页端都用它，避免两处话术分叉）。"""
     lines = []
-    lines.append('通知：QQ 推送%s · 邮件%s'
+    #    「邮件」要说清是**你自己的取件提醒**：值班类提醒（有人等你接单、
+    #    有人需要人工联系）不走这个开关 —— 那句含糊的「邮件：关」会让管理员
+    #    以为自己夜里什么都不会收到了（邮件审计的结论）。
+    lines.append('取件提醒：QQ 推送%s · 邮件%s'
+                 '（只管你自己的取件提醒；值班类提醒不受影响）'
                  % ('开' if prefs['notify_qq'] else '关', '开' if prefs['notify_mail'] else '关'))
     if prefs['quiet_from'] and prefs['quiet_to']:
         lines.append('免打扰：%s - %s（这段时间的提醒会攒着，过后再发）'

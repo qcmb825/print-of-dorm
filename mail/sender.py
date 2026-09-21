@@ -93,6 +93,20 @@ def _read_inline_image(path):
     return data, subtype
 
 
+def _safe_reason(exc, recipients):
+    """把异常原因压成能进日志的样子：**收件地址一律换掉**。
+
+    smtplib 的 `SMTPRecipientsRefused` 的 `str()` 就是 `{'a@b.com': (550, b'...')}`
+    这种字典 —— 直接写日志等于把上面那层 mask_address 白做了。
+    """
+    text = str(exc or '')
+    for address in recipients or ():
+        address = (address or '').strip()
+        if address:
+            text = text.replace(address, mask_address(address))
+    return text[:200]
+
+
 def send_mail(subject, body, recipients, html=None, inline_images=None, label='邮件'):
     """发一封信，成功返回 True。
 
@@ -140,8 +154,12 @@ def send_mail(subject, body, recipients, html=None, inline_images=None, label='�
     except (smtplib.SMTPException, OSError, ssl.SSLError) as exc:
         # 地址打码、正文和主题一概不写进日志：主题里有订单号和昵称，
         # 正文里还有文件名。要排查内容就对着一封真邮件看，别让它散进日志文件。
-        logger.error('%s发送失败：smtp=%s:%s 收件人=%s 错误=%s',
-                     label, SMTP_HOST, SMTP_PORT, [mask_address(a) for a in recipients], exc)
+        #    ⚠️ 异常本身**不能直接写**：smtplib 的 SMTPRecipientsRefused 的 str 里
+        #    带着**完整收件地址**（字典形式），一写就把上面那层打码绕过去了
+        #    （邮件审计抓到的）。只留异常类型与一句脱敏后的原因。
+        logger.error('%s发送失败：smtp=%s:%s 收件人=%s 错误=%s: %s',
+                     label, SMTP_HOST, SMTP_PORT, [mask_address(a) for a in recipients],
+                     type(exc).__name__, _safe_reason(exc, recipients))
         return False
     logger.info('%s已发出：smtp=%s:%s 收件人=%s',
                 label, SMTP_HOST, SMTP_PORT, [mask_address(a) for a in recipients])

@@ -797,7 +797,11 @@ onMounted(() => {
             >
               <span>
                 <span class="block text-sm font-semibold">邮件提醒</span>
-                <span class="mt-0.5 block text-xs text-ink-3">同时发一封邮件到 &lt;QQ号&gt;@qq.com</span>
+                <!-- 说清边界：值班类提醒（有人等你接单、有人需要人工联系）不走这个开关，
+                     不然管理员会以为自己夜里什么都不会收到（邮件审计的结论） -->
+                <span class="mt-0.5 block text-xs text-ink-3">
+                  可取了发一封到 &lt;QQ号&gt;@qq.com；只管你自己的取件提醒
+                </span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
             </div>

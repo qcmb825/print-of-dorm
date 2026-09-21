@@ -14,7 +14,8 @@
 能到几 MB，原样拼进正文能让收信人的邮件客户端直接卡死 ——
 而这是发信人完全看不到、只有收信人才能发现的故障。
 """
-from config import CLAIM_ALERT_MAX_ITEMS, CLAIM_ALERT_MINUTES
+from config import (CLAIM_ALERT_MAX_ITEMS, CLAIM_ALERT_MINUTES, COLOR_TYPE_LABELS,
+                    DUPLEX_LABELS)
 
 _FILENAME_MAX = 60
 _PRESET_MAX = 40
@@ -27,7 +28,12 @@ def _describe(row):
     what = (row['filename'] or '（无文件名）').strip()
     if len(what) > _FILENAME_MAX:
         what = what[:_FILENAME_MAX] + '…'
-    parts = ['%s 份' % (row['copies'] or 1), row['color_type'] or '', row['duplex'] or '']
+    #    ⚠️ 这里必须**翻成中文标签**：库里存的是 `black` / `single` 这种枚举值，
+    #    直接拼上去，每一封催单信都会写「1 份 · black · single」（邮件审计抓到）。
+    #    份数 NULL 是「未记录」（老单），不是 1 份 —— 编一个数会误导管理员备纸。
+    parts = ['%s 份' % row['copies'] if row['copies'] else '份数未记录',
+             COLOR_TYPE_LABELS.get(row['color_type'] or '', ''),
+             DUPLEX_LABELS.get(row['duplex'] or '', '')]
     options = ' · '.join(part for part in parts if part)
     lines = ['订单 #%s%s' % (row['id'], '（单号 %s）' % row['pickup_code'] if row['pickup_code'] else '')]
     lines.append('  内容：%s（%s）' % (what, options))
@@ -38,7 +44,9 @@ def _describe(row):
         lines.append('  要求：%s' % preset)
     if row['paper_name']:
         lines.append('  纸张：%s' % row['paper_name'])
-    lines.append('  下单：%s%s' % (row['create_local'] or '(未知)',
+    #    时间裁到分钟：库里是「2026-09-21 08:00:00」，而网页与卡片都是「09-21 08:00」，
+    #    同一件事两种写法只会让人怀疑是不是两条记录（邮件审计）。
+    lines.append('  下单：%s%s' % ((row['create_local'] or '(未知)')[:16],
                                 '（%s）' % row['owner'] if row['owner'] else ''))
     return '\n'.join(lines)
 

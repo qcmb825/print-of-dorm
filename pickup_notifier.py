@@ -230,6 +230,11 @@ def _notify_claimers(conn, groups):
             row['owner_contact_label'] = CONTACT_LABELS.get(
                 (row.get('owner_contact_type') or '').strip())
             rows.append(row)
+        #    ⚠️ 这封（以及 notifier.py 的「未接单提醒」）**故意不过收件人自己的偏好开关**：
+        #    它们是**值班类**提醒 —— 「有个学生收不到邮件，需要你去联系他」。
+        #    被个人开关掐掉的代价是那个学生永远等不到人，比半夜收到一封信严重得多。
+        #    代价是文案要说清楚：设置页那个「邮件提醒」只管**你自己的取件提醒**
+        #    （见 SettingsView 的说明与 prefs.describe）。
         recipients = _claimer_recipients(conn, claimer_id, len(rows))
         if send_mail(compose_manual_subject(len(rows)), compose_manual_body(rows, len(rows)),
                      recipients, label='需人工联系提醒'):
