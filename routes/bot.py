@@ -747,7 +747,12 @@ def api_bot_card():
         return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
     #    渲染是纯 CPU 活（一张 0.15-0.9 秒）：8 个线程被并发打满时整站接口都会排队。
     #    按账号限流 —— 正常用户点「订单」远到不了这个频率，误触/脚本会被挡住。
-    if not hit_limit('bot_card:%s' % g.user['id'], 20, 60):
+    #    上限取 40/分钟：正常用户查订单远到不了（一次 0.3 秒，40 次就是 12 秒 CPU），
+    #    而误触连点与脚本会被挡住。定得太紧会误伤「反复点订单看有没有更新」的人。
+    #    ⚠️ 判据是「**超过**了」才拦：`hit_limit` 返回 True 表示这一分钟里第 N 次之外
+    #    （与 upload / register 那几处同一个写法）。写成 `if not ...` 会把**第一次**
+    #    请求就拦掉（自检时被 test_bot_card 当场抓到）。
+    if hit_limit('bot_card:%s' % g.user['id'], 40, 60):
         return jsonify({'code': 429, 'msg': '刷得太快了，缓一下再看'}), 429
     uid = g.user['id']
     with db_conn() as conn:
