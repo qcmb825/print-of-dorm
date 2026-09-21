@@ -1007,3 +1007,19 @@ export interface AuditListResponse extends ApiEnvelope {
   /** 三个状态都有键，后端已经补过 0，前端不用再写一层 `|| 0` */
   counts: Record<AuditStatus, number>
 }
+
+
+/* ---- QQ 机器人引导（悬浮窗）----
+ *
+ * 「显示还是已收起」由**服务端**说了算（user_prefs.bot_hint_clicks）：
+ * 只在前端藏起来的话，换个人、换个浏览器就又冒出来了。 */
+export interface BotHint {
+  /** 被点掉过几次 */
+  clicks: number
+  /** 点满这么多次就永久收起（服务端给的，前端不自己比数字） */
+  max_clicks: number
+  /** 是否已经永久收起（clicks >= max_clicks） */
+  closed: boolean
+  /** 管理员上传过二维码没有（没有就不画 <img>，改显示一句说明） */
+  has_qr: boolean
+}

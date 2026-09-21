@@ -3,8 +3,8 @@
 各路由模块只依赖 config / security / auth / utils / db，不反向依赖 app.py，
 所以不会出现循环导入。
 """
-from . import (account, admin, announcements, bot, history, order_options, orders, price_table,
-               tickets)
+from . import (account, admin, announcements, bot, bot_hint, history, order_options, orders,
+               price_table, tickets)
 # upload_chunks 依赖 orders 里的建订单函数，所以写在上面那行之后：
 # Python 从左到右导入，到这一行时 orders 已经进了 sys.modules。
 from . import upload_chunks
@@ -28,6 +28,9 @@ BLUEPRINTS = (
     # price_table 是价目表（一条 = 纸张 + 类型 + 单面/双面单价），只影响预估价、
     # 不影响最终金额，见 routes/price_table.py 开头那段。
     price_table.bp,
+    # bot_hint 是 QQ 机器人引导（悬浮提示的出现规则 + 全站那张二维码），
+    # 见 routes/bot_hint.py 开头那段。
+    bot_hint.bp,
     pay_qr.bp,
 )
 

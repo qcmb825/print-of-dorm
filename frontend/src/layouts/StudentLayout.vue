@@ -7,6 +7,7 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
+import BotHintCard from '@/components/BotHintCard.vue'
 import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
@@ -301,5 +302,9 @@ style="--depth: 6px"
         <span class="w-full truncate text-center text-xs font-semibold">{{ item.label }}</span>
       </RouterLink>
     </nav>
+
+    <!-- QQ 机器人引导：右下角悬浮（学生端每一页都有）。
+         放在布局里而不是每个页面各挂一次 —— 页面会漏，布局不会。 -->
+    <BotHintCard />
   </div>
 </template>

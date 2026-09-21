@@ -18,7 +18,7 @@ rem                1) 先把 QQ 客户端登录成机器人号（%QQ%），别登成自己的号 ——
 rem                   授权 token 只认登记过的那个 uin，登错号会看到
 rem                   「uin ... not in your allowed list」然后 PMHQ 自己退出；
 rem                2) 确认下面的 QQ_PATH 指向官方 QQ 的 QQ.exe。
-set "LLBOT_MODE=headless"
+set "LLBOT_MODE=pmhq"
 set "QQ_PATH=D:\APP\QQ\QQ.exe"
 set "PYTHON=%ROOT%.venv\Scripts\python.exe"
 rem 本机跑不跑 printbot（QQ 与网页服务之间的桥）。机器人单独放别的机器时改成 0。

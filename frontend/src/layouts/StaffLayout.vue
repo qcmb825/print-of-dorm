@@ -18,6 +18,7 @@ import { NDrawer, NDrawerContent, useMessage } from 'naive-ui'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
+import BotHintCard from '@/components/BotHintCard.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
@@ -386,5 +387,9 @@ style="--depth: 6px"
       />
     </main>
     </div>
+
+    <!-- QQ 机器人引导：管理端每一页都有。管理员自己多半用网页端，
+         但他也可能把这一屏投给来问的同学看 —— 顺手就能指过去扫。 -->
+    <BotHintCard />
   </div>
 </template>

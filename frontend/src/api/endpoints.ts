@@ -4,6 +4,7 @@
 import { del, download, get, post, put, putRaw, upload } from './client'
 import type {
   AdminUsersResponse,
+  BotHint,
   AnnounceFont,
   AnnouncementListResponse,
   AnnouncementResponse,
@@ -460,3 +461,25 @@ export const auditApi = {
   review: (id: number, action: 'approve' | 'reject', note = '') =>
     post<{ code: number; msg: string }>(`/api/admin/audit-requests/${id}/review`, { action, note }),
 }
+
+
+/* QQ 机器人引导（悬浮窗）—— 出现规则由服务端算，见 routes/bot_hint.py 开头那段。 */
+export const botHintApi = {
+  /** 该不该显示、点过几次、有没有二维码 */
+  get: () => get<BotHint & { code: number }>('/api/bot-hint'),
+  /** 点一次「关闭」：计数 +1（次数只能由服务端加） */
+  dismiss: () => post<BotHint & { code: number }>('/api/bot-hint/dismiss'),
+  /** 设置页的「重新显示引导」：计数归零 */
+  reset: () => post<BotHint & { code: number }>('/api/bot-hint/reset'),
+  /** 上传机器人二维码（超管）。换码之后 /api/bot-qr 立刻生效。 */
+  uploadQr: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return upload<{ code: number; msg: string }>('/api/admin/bot-qr', form)
+  },
+  removeQr: () => del<{ code: number; msg: string }>('/api/admin/bot-qr'),
+}
+
+/** 二维码原图地址。**同一个地址换码后立刻生效**（服务端 no-store），
+ *  所以不需要带时间戳参数去破缓存。 */
+export const BOT_QR_URL = '/api/bot-qr'

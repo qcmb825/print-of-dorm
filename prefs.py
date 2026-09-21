@@ -44,6 +44,11 @@ DEFAULTS = {
     'hide_done_orders': False,
     'card_replies': True,      # 机器人用卡片回「表」类查询；关掉就一律纯文本
     'orders_page_size': PREF_ORDERS_PAGE_DEFAULT,
+    #    ⚠️ 这一项**不是用户偏好**，是「机器人引导被关掉几次」的状态：
+    #    它不在 EDITABLE 里（用户不能自己把它设成 3 来跳过引导），
+    #    只能通过 routes/bot_hint.py 的接口 +1。放在这张表里是因为它天然是
+    #    「一人一行」的状态，为它单开一张表只是多一张空表。
+    'bot_hint_clicks': 0,
 }
 
 
@@ -217,6 +222,35 @@ def save_prefs(user_id, fields):
         row = conn.execute('SELECT * FROM user_prefs WHERE user_id = ?', (user_id,)).fetchone()
     logger.info('账号 #%s 更新了偏好：%s', user_id, '、'.join(sorted(values)))
     return _row_to_prefs(row)
+
+
+def bump_bot_hint(user_id):
+    """机器人引导被点掉一次，返回**新的次数**。
+
+    用 SQL 里的 `+ 1` 而不是「先读再写」：同一个账号在两个标签页里各点一次，
+    先读后写会让其中一次白点（两边读到同一个旧值、写回同一个新值）。
+    行不存在（从没设过偏好的人）时先插一行 —— 引导对所有人都会出现，
+    所以这里不能假设那一行存在。
+    """
+    with db_conn() as conn:
+        conn.execute('INSERT OR IGNORE INTO user_prefs (user_id) VALUES (?)', (user_id,))
+        conn.execute(
+            'UPDATE user_prefs SET bot_hint_clicks = bot_hint_clicks + 1, '
+            'update_time = CURRENT_TIMESTAMP WHERE user_id = ?', (user_id,))
+        conn.commit()
+        row = conn.execute('SELECT bot_hint_clicks FROM user_prefs WHERE user_id = ?',
+                           (user_id,)).fetchone()
+    return int(row['bot_hint_clicks']) if row is not None else 1
+
+
+def reset_bot_hint(user_id):
+    """把引导的关闭次数归零（设置页的「重新显示引导」）。"""
+    with db_conn() as conn:
+        conn.execute('INSERT OR IGNORE INTO user_prefs (user_id) VALUES (?)', (user_id,))
+        conn.execute('UPDATE user_prefs SET bot_hint_clicks = 0, '
+                     'update_time = CURRENT_TIMESTAMP WHERE user_id = ?', (user_id,))
+        conn.commit()
+    logger.info('账号 #%s 重新打开了 QQ 机器人引导', user_id)
 
 
 def describe(prefs):

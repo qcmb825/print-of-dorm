@@ -30,9 +30,11 @@ import {
   LogOut,
   Mail,
   MessageSquare,
+  QrCode,
   RefreshCw,
   Save,
   TriangleAlert,
+  Upload,
   UserCog,
 } from '@lucide/vue'
 import {
@@ -47,6 +49,8 @@ import {
 } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
+import { BOT_QR_URL, botHintApi } from '@/api/endpoints'
+import type { BotHint } from '@/api/types'
 import { authApi, printOptionsApi } from '@/api/endpoints'
 import { OTHER_CONTACT_LABELS } from '@/api/types'
 import type { MeOverviewResponse, OtherContactType, UserPrefs } from '@/api/types'
@@ -409,6 +413,69 @@ async function savePrefs(): Promise<void> {
 
 /** 价目表按需拉：设置页平时只调两个接口，而价目表只在**点开那一栏**时才有用。
  *  不点就不拉，省掉一次没人看的往返（价目表是管理员维护的，改得很少）。 */
+/** QQ 机器人引导的状态（出现规则在服务端，见 routes/bot_hint.py）。 */
+const botHint = ref<BotHint | null>(null)
+const botHintBusy = ref(false)
+const botQrOk = ref(true)
+const botQrInput = ref<HTMLInputElement | null>(null)
+
+async function loadBotHint(): Promise<void> {
+  try {
+    botHint.value = await botHintApi.get()
+    botQrOk.value = true
+  } catch (error) {
+    // 拉不到就不显示这一块的二维码与状态（其余设置照常用）
+    if (!(error instanceof ApiError)) throw error
+  }
+}
+
+async function reopenBotHint(): Promise<void> {
+  botHintBusy.value = true
+  try {
+    await botHintApi.reset()
+    await loadBotHint()
+    notify.success('引导已重新打开，回到任意页面就能看到')
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '操作失败')
+  } finally {
+    botHintBusy.value = false
+  }
+}
+
+function pickBotQr(): void {
+  botQrInput.value?.click()
+}
+
+async function onBotQrPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''            // 同一个文件再选一次也要能触发 change
+  if (!file) return
+  botHintBusy.value = true
+  try {
+    const res = await botHintApi.uploadQr(file)
+    notify.success(res.msg || '二维码已更新')
+    await loadBotHint()
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '上传失败')
+  } finally {
+    botHintBusy.value = false
+  }
+}
+
+async function removeBotQr(): Promise<void> {
+  botHintBusy.value = true
+  try {
+    await botHintApi.removeQr()
+    notify.success('二维码已撤下')
+    await loadBotHint()
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '撤下失败')
+  } finally {
+    botHintBusy.value = false
+  }
+}
+
 const itemOptions = ref<{ label: string; value: number }[]>([])
 const itemLoading = ref(false)
 async function loadPriceItems(): Promise<void> {
@@ -480,6 +547,7 @@ onMounted(() => {
   // 硬塞进 overview 会让两个接口以后都要改。这一页因此是**两个**请求，
   // 但仍不拉工单数 / 打印选项那些「顺手就能拿」的东西（纸张列表只在点开时按需拉）。
   void loadPrefs()
+  void loadBotHint()
 })
 </script>
 
@@ -779,7 +847,7 @@ onMounted(() => {
             >
               <span>
                 <span class="block text-sm font-semibold">QQ 推送</span>
-                <span class="mt-0.5 block text-xs text-ink-3">可取了在 QQ 里戳你一下（要先绑定 QQ 号）</span>
+                <span class="mt-0.5 block text-xs text-ink-3">可取件时在 QQ 里戳你一下（要先绑定 QQ 号）</span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_qq" size="small" aria-label="QQ 推送" />
             </div>
@@ -795,7 +863,7 @@ onMounted(() => {
                 <!-- 说清边界：值班类提醒（有人等你接单、有人需要人工联系）不走这个开关，
                      不然管理员会以为自己夜里什么都不会收到（邮件审计的结论） -->
                 <span class="mt-0.5 block text-xs text-ink-3">
-                  可取了发一封到 &lt;QQ号&gt;@qq.com；只管你自己的取件提醒
+                  可取件时发一封到 &lt;QQ号&gt;@qq.com；只管你自己的取件提醒
                 </span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
@@ -939,6 +1007,87 @@ onMounted(() => {
             </NButton>
           </div>
         </template>
+      </section>
+
+      <!-- QQ 机器人。**它是引导悬浮窗的"归宿"**：那个浮窗点满几次就收起来，
+           收起之后用户要有个地方能再找到机器人号与二维码 —— 就是这里。
+           所以这一块即使引导还开着也要一直显示，不能只在整个引导关掉后才出现。 -->
+      <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
+        <h2 class="mb-1 flex items-center gap-1.5 font-heading text-base font-bold">
+          <QrCode :size="15" />
+          QQ 机器人
+        </h2>
+        <p class="mb-3 text-xs leading-5 text-ink-3">
+          在 QQ 里把文件发给机器人，选档位与份数就下单；打好后 QQ 里直接推给你。
+          网页端与机器人下的单是<strong>同一份</strong>，在哪边查都一样。
+        </p>
+        <div class="flex flex-wrap items-start gap-4">
+          <template v-if="botHint?.has_qr && botQrOk">
+            <img
+              :src="BOT_QR_URL"
+              alt="QQ 机器人二维码"
+              class="size-32 border object-contain"
+              style="border-color: var(--border)"
+              @error="botQrOk = false"
+            />
+          </template>
+          <div
+            v-else
+            class="grid size-32 shrink-0 place-items-center border px-2 text-center text-xs"
+            style="border-color: var(--border); color: var(--text-tertiary)"
+          >
+            <span>
+              {{ botHint?.has_qr ? '二维码加载失败' : '管理员还没上传二维码' }}
+            </span>
+          </div>
+
+          <div class="flex min-w-[200px] flex-1 flex-col gap-2">
+            <p class="text-xs leading-5 text-ink-3">
+              <template v-if="botHint?.closed">
+                你已经把右下角的引导收起来了 —— 想让它再出现，点下面这颗按钮。
+              </template>
+              <template v-else>
+                右下角那条引导会显示 {{ botHint?.max_clicks ?? 3 }} 次；点满之后自动
+                收起来，之后都能在这一块找到它。
+              </template>
+            </p>
+            <div class="flex flex-wrap items-center gap-2">
+              <NButton
+                v-if="botHint?.closed"
+                size="small"
+                :loading="botHintBusy"
+                @click="reopenBotHint"
+              >
+                <template #icon><RefreshCw :size="14" /></template>
+                重新显示引导
+              </NButton>
+              <!-- 二维码是**超管**才能换的：它代表这个站点对外的一个门面 -->
+              <template v-if="auth.advancedAllowed">
+                <NButton size="small" :loading="botHintBusy" @click="pickBotQr">
+                  <template #icon><Upload :size="14" /></template>
+                  {{ botHint?.has_qr ? '换一张二维码' : '上传二维码' }}
+                </NButton>
+                <NButton
+                  v-if="botHint?.has_qr"
+                  size="small"
+                  quaternary
+                  type="error"
+                  :loading="botHintBusy"
+                  @click="removeBotQr"
+                >
+                  撤下
+                </NButton>
+                <input
+                  ref="botQrInput"
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  class="hidden"
+                  @change="onBotQrPicked"
+                />
+              </template>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- 密码 -->

@@ -18,6 +18,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import BlueprintSheet from '@/components/BlueprintSheet.vue'
 import { ApiError } from '@/api/client'
+import BotHintCard from '@/components/BotHintCard.vue'
 import { showReceipt } from '@/composables/transition-receipt'
 import { useClock } from '@/composables/clock'
 import {
@@ -621,4 +622,9 @@ onMounted(async () => {
   </div>
 
   <AuditRequestDialog v-model:show="auditOpen" :prefill="auditPrefill" />
+
+  <!-- 登录页也放一份，但 **guest**：这里没有账号可记，关掉只对本次会话有效
+       （注册页与它同在一屏）。引导的目的正是把还没用机器人下单的人拉过去，
+       对陌生人"永久关掉"没意义。 -->
+  <BotHintCard guest />
 </template>

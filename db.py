@@ -237,6 +237,14 @@ def find_paper_type(conn, paper_type_id):
 # v16 -> v17：「可取件」这个状态值改过一次字（见 _migrate_ready_status_wording）。
 # v17 -> v18：新增用户偏好表 user_prefs（通知开关 / 免打扰 / 默认打印参数 /
 #            显示偏好），一对一挂在 users 上。只加新表，没有迁移函数。
+# v20 -> v21：两件事，都是加列加表：
+#            ① user_prefs 加 bot_hint_clicks —— QQ 机器人引导悬浮窗被点掉几次。
+#               点满 BOT_HINT_MAX_CLICKS 次就永久不再出现（用户能去设置页重新打开）。
+#               为什么记在库里而不是浏览器本地：这是「每个登录用户」的状态，
+#               换台设备也该带着走，而且服务端据此决定要不要下发引导。
+#            ② 新表 site_assets（全站一张的资产，目前只有 QQ 机器人二维码一张图）。
+#               存**文件名**、目录由 config.ASSET_FOLDER 决定，与收款码同一个道理。
+#            只加新表 + 纯加列，没有重建表，所以没有迁移函数。
 # v19 -> v20：「计价规则」重做成**价目表**（price_items）：一条 = 纸张 + 类型 +
 #            单面价 + 双面价 + 备注，学生下单时直接选一条。
 #            原先的「四档单价（黑白/彩色 × 单面/双面）+ 纸张加价」是"基价 + 加价"
@@ -261,7 +269,7 @@ def find_paper_type(conn, paper_type_id):
 #               外加新表 price_rules（计价公式的各项系数，管理员可改）。
 #            同一批里还顺手订正了历史数据：备注正好等于那句占位文案的老订单，
 #            把备注清空、来源标成 bot —— 那不是学生写的话，留着就是留一条假记录。
-SCHEMA_VERSION = '20'
+SCHEMA_VERSION = '21'
 
 
 
@@ -1058,6 +1066,7 @@ def init_database():
                 default_copies INTEGER,
                 default_paper_type_id INTEGER,
                 default_price_item_id INTEGER,
+                bot_hint_clicks INTEGER NOT NULL DEFAULT 0,
                 hide_done_orders INTEGER NOT NULL DEFAULT 0,
                 card_replies INTEGER NOT NULL DEFAULT 1,
                 orders_page_size INTEGER,
@@ -1130,6 +1139,23 @@ def init_database():
                         cursor.execute('PRAGMA table_info(user_prefs)').fetchall()}
         if 'default_price_item_id' not in pref_columns:
             cursor.execute('ALTER TABLE user_prefs ADD COLUMN default_price_item_id INTEGER')
+        # v21：QQ 机器人引导被点掉几次（点满就永久收起）。
+        # ⚠️ 同样必须排在**建表之后**（这一轮 user_prefs 与 paper_types 各栽过一次）。
+        if 'bot_hint_clicks' not in pref_columns:
+            cursor.execute(
+                'ALTER TABLE user_prefs ADD COLUMN bot_hint_clicks INTEGER NOT NULL DEFAULT 0')
+
+        # ---- v21：全站资产（目前只有 QQ 机器人二维码）----
+        # 单行表（主键写死 1）：这张表表达的是「这个站点的某一张图是什么」，
+        # 没有「多条」的语义。允许插第二行只会多出一个说不清的状态 —— 到底哪一行算数？
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS site_assets (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                bot_qr_file TEXT,
+                updated_by INTEGER,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，

@@ -305,6 +305,27 @@ PAY_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
 PAY_QR_MAX_BYTES = max(64 * 1024, env_int('PAY_QR_MAX_BYTES', 2 * 1024 * 1024))
 
 
+# ---- QQ 机器人引导（悬浮窗 + 二维码）--------------------------------------
+# 引导挂在两端外壳上（登录页也有一份），点「关闭」累计到 BOT_HINT_MAX_CLICKS 次
+# 就永久不再出现，并提示用户「已收进设置页」—— 那里能重新打开。
+BOT_HINT_MAX_CLICKS = env_int('BOT_HINT_MAX_CLICKS', 3)
+
+# QQ 机器人二维码（**全站一张**，由超管上传；不是每人一张，所以没走 users 表）。
+# 与收款码同一个套路：库里存**文件名**，目录由这里决定 —— 换盘或改目录名只要改配置，
+# 存绝对路径的话改配置那一刻全站的二维码会静默失联。
+ASSET_FOLDER = resolve_path(
+    os.getenv('ASSET_FOLDER', '').strip() or os.path.join(DATA_DIR, 'assets')
+)
+
+os.makedirs(ASSET_FOLDER, exist_ok=True)
+
+# 只收这几种图片：二维码是给人扫的，转成 webp 或收 PDF 都会让部分手机扫不出来。
+BOT_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
+
+# 二维码上限（比收款码宽一点：有些截图工具直接出 2-4MB 的 PNG）
+BOT_QR_MAX_BYTES = max(64 * 1024, env_int('BOT_QR_MAX_BYTES', 4 * 1024 * 1024))
+
+
 # 兜底收款码：接单人没传自己的码、内置管理员也没传时，用这一张。
 # 留住它是为了让「还没人上传过」这件事不表现为邮件缺图 ——
 # 部署时把默认管理员那张码丢成 data/pay_qr/default.png 就能立刻跑起来。
