@@ -32,10 +32,10 @@ from flask import Blueprint, Response, g, jsonify, request
 import botcard
 import prefs
 
-from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, PICKUP_NOTIFY_MAX_AGE_HOURS,
-                    ROLE_USER, ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED,
-                    STATUS_ACTIVE, STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED,
-                    TICKET_MAX_OPEN, TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
+from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ORDER_SOURCE_BOT,
+                    PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE, ST_PENDING, ST_PRINTING,
+                    ST_READY, ST_UNPRICED, STATUS_ACTIVE, STATUS_DISABLED, TICKET_BODY_MAX,
+                    TICKET_CLOSED, TICKET_MAX_OPEN, TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
 from db import db_conn, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
 from utils import allowed_file, content_signature_error, parse_copies
@@ -169,7 +169,7 @@ def _orders_payload(uid, conn=None):
     # 少画的那些数据还是出了库，而用户以为自己关掉了。
     user_prefs = prefs.get_prefs(uid, conn)
     sql = '''
-        SELECT o.id, o.status, o.pickup_code, o.price, o.filename,
+        SELECT o.id, o.status, o.pickup_code, o.price, o.est_price, o.filename,
                o.preset_content, o.copies,
                datetime(o.create_time, 'localtime') AS create_time
         FROM orders o WHERE o.user_id = ?%s ORDER BY o.id DESC LIMIT ?
@@ -189,6 +189,10 @@ def _orders_payload(uid, conn=None):
             'status': row['status'],
             'pickup_code': row['pickup_code'],
             'price': row['price'],
+            #    预估价与最终价**两个都给**，让机器人那边的卡片/文本自己决定怎么显示
+            #    （还没定价的单显示「预估 ¥x」，定过价的显示实际金额）——
+            #    在服务端挑一个塞进 price，等于让「哪个才是要收的钱」变得看不出来。
+            'est_price': row['est_price'],
             'copies': row['copies'],
             'title': title[:60],
             'create_time': row['create_time'],
@@ -560,7 +564,10 @@ def api_bot_order_preset():
     duplex = (data.get('duplex') or 'single').strip()
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
-    remark = ((data.get('remark') or '').strip() or '通过 QQ 机器人下单')[:200]
+    # 学生没写备注就是**空**。原先这里兜一句「通过 QQ 机器人下单」——
+    # 那是系统往学生的备注里写字，订单台上就再也分不清哪句是学生说的
+    # （用户实测报上来的）。来源改由 source 列表达，见 config.ORDER_SOURCE_*。
+    remark = (data.get('remark') or '').strip()[:200]
 
     copies, error = parse_copies(data.get('copies'))
     if error:
@@ -576,7 +583,8 @@ def api_bot_order_preset():
             paper, error = resolve_print_options(conn, data)
             if error:
                 return jsonify({'code': 400, 'msg': error}), 400
-            order_id, pickup_code = create_preset_order(preset, copies, paper, color, duplex, remark)
+            order_id, pickup_code = create_preset_order(
+                preset, copies, paper, color, duplex, remark, source=ORDER_SOURCE_BOT)
         except Exception:
             logger.exception('bot 预设下单失败：下单人=%s 预设#%s ip=%s',
                              g.user['nickname'], preset_id, client_ip())
@@ -585,7 +593,9 @@ def api_bot_order_preset():
     logger.info('新订单 #%s 下单人=%s（QQ） 预设#%s 份数=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies, pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
-                    'pickup_code': pickup_code})
+                    'pickup_code': pickup_code,
+                    # 预设单恒为 null（没有文件可数页数）。键要在，理由同网页端。
+                    'est_price': None})
 
 
 @bp.post('/api/bot/order/file')
@@ -612,7 +622,7 @@ def api_bot_order_file():
     duplex = request.form.get('duplex', 'single')
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
-    remark = ((request.form.get('remark') or '').strip() or '通过 QQ 机器人下单')[:200]
+    remark = (request.form.get('remark') or '').strip()[:200]
 
     copies, error = parse_copies(request.form.get('copies'))
     if error:
@@ -658,8 +668,9 @@ def api_bot_order_file():
             os.remove(save_path)
             return quota_error
 
-        order_id, pickup_code = create_order_from_saved_file(
-            original_name, save_path, color, duplex, remark, copies, paper)
+        order_id, pickup_code, est_price = create_order_from_saved_file(
+            original_name, save_path, color, duplex, remark, copies, paper,
+            source=ORDER_SOURCE_BOT)
     except Exception:
         if os.path.exists(save_path):
             try:
@@ -674,7 +685,7 @@ def api_bot_order_file():
                 order_id, g.user['nickname'], original_name, file_size // 1024,
                 pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
-                    'pickup_code': pickup_code})
+                    'pickup_code': pickup_code, 'est_price': est_price})
 
 
 @bp.get('/api/bot/prefs')
@@ -739,12 +750,30 @@ def api_bot_card():
     渲染不出来（服务器没有中文字体）时回 **501**，机器人会自己退回纯文本 ——
     宁可难看，也不能发一张全是方块的图。
     """
-    error = _identify(request.args.get('qq'))
-    if error is not None:
-        return error
     kind = (request.args.get('kind') or '').strip()
     if kind not in ('orders', 'tickets', 'presets', 'me', 'help'):
         return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
+    #    ⚠️ **帮助卡不查身份**。它讲的是「机器人怎么用」，与账号无关 ——
+    #    服务端的 /api/bot/help 早就是「不需要 qq 参数、也不查库」的口径，
+    #    偏偏这里曾经无条件先 _identify，于是**没注册的 QQ 发「帮助」拿到的是文字**，
+    #    而注册过的那个号拿到的是同一张卡（用户实测报上来的「换个号就区别对待」）。
+    #    这条差别还特别难查：服务端两个号都返回 200（注册的那个），
+    #    机器人那边只看到一次 ApiError，日志里只有一行 warning。
+    #    其余四种卡取的都是**本人的数据**，身份照旧是硬前提。
+    if kind == 'help':
+        payload = {'help': BOT_HELP_SECTIONS}
+        nickname, uid = '', None
+        #    这个 qq 只用来在卡片页脚印一行「这张卡是谁要的」，**不做身份解析**。
+        #    仍然过一遍数字校验：它会被画到图片上，一个几百字符的串能把页脚顶穿
+        #    （不打这一道的话，卡片本身的版式就成了可被输入影响的东西）。
+        raw_qq = (request.args.get('qq') or '').strip()
+        qq_number = raw_qq if (raw_qq.isascii() and raw_qq.isdigit() and len(raw_qq) <= 12) else ''
+    else:
+        error = _identify(request.args.get('qq'))
+        if error is not None:
+            return error
+        uid = g.user['id']
+        nickname, qq_number = g.user['nickname'], g.user['qq']
     #    渲染是纯 CPU 活（一张 0.15-0.9 秒）：8 个线程被并发打满时整站接口都会排队。
     #    按账号限流 —— 正常用户点「订单」远到不了这个频率，误触/脚本会被挡住。
     #    上限取 40/分钟：正常用户查订单远到不了（一次 0.3 秒，40 次就是 12 秒 CPU），
@@ -752,9 +781,10 @@ def api_bot_card():
     #    ⚠️ 判据是「**超过**了」才拦：`hit_limit` 返回 True 表示这一分钟里第 N 次之外
     #    （与 upload / register 那几处同一个写法）。写成 `if not ...` 会把**第一次**
     #    请求就拦掉（自检时被 test_bot_card 当场抓到）。
-    if hit_limit('bot_card:%s' % g.user['id'], 40, 60):
+    #    限流的键：有身份就按账号（同一个人换个入口刷也是同一个额度），
+    #    帮助卡没有身份，退到按 QQ 号 —— 拿 IP 当键的话，同一台机器上的两个人都算一个人。
+    if hit_limit('bot_card:%s' % (uid if uid is not None else qq_number or 'anon'), 40, 60):
         return jsonify({'code': 429, 'msg': '刷得太快了，缓一下再看'}), 429
-    uid = g.user['id']
     with db_conn() as conn:
         if kind == 'orders':
             payload = _orders_payload(uid, conn)
@@ -765,9 +795,9 @@ def api_bot_card():
         elif kind == 'help':
             payload = {'help': BOT_HELP_SECTIONS}
         else:
-            payload = _me_payload(uid, g.user['nickname'], conn)
-    payload['nickname'] = g.user['nickname']
-    payload['qq'] = g.user['qq']
+            payload = _me_payload(uid, nickname, conn)
+    payload['nickname'] = nickname
+    payload['qq'] = qq_number
     payload['stamp'] = time.strftime('%H:%M:%S')
     #    渲染层的任何异常都在这里收口：机器人那边对非 200 一律「这次没图、退回文本」，
     #    所以**不要**让它变成 500 的通用 traceback —— 那样日志里分不清是字体、
@@ -775,7 +805,7 @@ def api_bot_card():
     try:
         png = botcard.render(kind, payload)
     except Exception:
-        logger.exception('QQ 卡片渲染失败：kind=%s 账号=#%s', kind, g.user['id'])
+        logger.exception('QQ 卡片渲染失败：kind=%s 账号=%s', kind, uid)
         return jsonify({'code': 501, 'msg': '卡片生成失败，先用文字看吧'}), 501
     if png is None:
         return jsonify({'code': 501, 'msg': '服务器没有可用的中文字体，卡片暂不可用'}), 501

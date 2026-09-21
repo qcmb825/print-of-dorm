@@ -8,8 +8,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ROLE_SUPER, ST_DONE, ST_READY,
-                    ST_UNPRICED, STATUS_CLOSED, logger)
+from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ORDER_SOURCE_BOT, ROLE_SUPER, ST_DONE,
+                    ST_READY, ST_UNPRICED, STATUS_CLOSED, logger)
 from security import audit_action, make_password_records
 from utils import generate_pickup_code
 
@@ -93,6 +93,7 @@ _ORDER_INSERT_COLUMNS = (
     'user_id', 'filename', 'file_path', 'color_type', 'duplex', 'remark',
     'status', 'preset_id', 'preset_content', 'copies',
     'paper_type_id', 'paper_name', 'paper_remark',
+    'source', 'est_price', 'est_pages',
 )
 
 
@@ -232,7 +233,25 @@ def find_paper_type(conn, paper_type_id):
 #            筛选就静默失效了。新记录一律写列；**老记录不倒推**（沿项目惯例：
 #            没有事实就不编），查询时用 `to_status = ? OR detail LIKE '%→「?」%'`
 #            把两种都认下来。纯加列，不重建表。
-SCHEMA_VERSION = '18'
+# v16 -> v17：「可取件」这个状态值改过一次字（见 _migrate_ready_status_wording）。
+# v17 -> v18：新增用户偏好表 user_prefs（通知开关 / 免打扰 / 默认打印参数 /
+#            显示偏好），一对一挂在 users 上。只加新表，没有迁移函数。
+# v18 -> v19：三件事，全是加列加表：
+#            ① orders 新增 source（这一单从哪条路下的：web / bot）。
+#               原先机器人下单会在学生备注里塞一句「通过 QQ 机器人下单」——
+#               那是**我们编的一条备注**，而备注是学生自己的话。后果有两层：
+#               订单台上看不出哪一栏是学生写的、哪一栏是系统写的；学生自己
+#               翻订单时也会看到一句他从来没打过的话（用户实测报上来的）。
+#               现在来源是订单自己的属性，备注只放学生的原话，空就是空。
+#            ② orders 新增 est_price / est_pages（下单时按文件页数算出来的
+#               **预估**价与它依据的页数）。只是给学生看的参考值，
+#               最终价永远由管理员接单后自己确认；所以它和 price 是两列，
+#               谁也不许拿 est_price 去填 price。
+#            ③ paper_types 新增 price_delta（这种纸每页比标准价贵/便宜多少），
+#               外加新表 price_rules（计价公式的各项系数，管理员可改）。
+#            同一批里还顺手订正了历史数据：备注正好等于那句占位文案的老订单，
+#            把备注清空、来源标成 bot —— 那不是学生写的话，留着就是留一条假记录。
+SCHEMA_VERSION = '19'
 
 
 
@@ -387,6 +406,39 @@ def _migrate_ready_status_wording(cursor, current_version):
                     orders, logs, details)
 
 
+
+# 机器人在备注里塞过的那句占位文案（v19 之前 order 建单时兜底写的）。
+# 留着它是为了让下面这段迁移能**认出**要清理哪些行 —— 不是拿来继续用的，
+# 新的建单代码里不该再出现这个字符串。
+LEGACY_BOT_REMARK = '通过 QQ 机器人下单'
+
+
+def _migrate_bot_remark_cleanup(cursor, current_version):
+    """v18 -> v19：把机器人塞进备注里的那句占位话清掉，来源改记到 source 列。
+
+    为什么值得动**库里的数据**（而不是只改代码、让老数据照旧）：
+    那句「通过 QQ 机器人下单」不是学生写的，是我们替他写的。它在订单台上
+    和真备注长得一模一样，于是两类东西被混成了一列 —— 学生自己写的备注
+    再也挑不出来（用户实测报上来的就是这个）。留着它，等于留一条假记录。
+
+    只认**完全相等**的行：学生真在备注里手打过这句话的概率极低，而即便真有，
+    来源列同时也被标成 bot，信息并没有丢。反过来用 LIKE 去模糊匹配就危险了，
+    那会误伤「备注：通过 QQ 机器人下单的两份」这种真备注。
+
+    幂等：改完再跑一次没有可改的行（备注已经是空串、source 已经是 bot）。
+    只在老库上执行一次（版本号判据）。
+    """
+    if _migration_version(current_version) >= 19:
+        return
+    fixed = cursor.execute(
+        "UPDATE orders SET source = ?, remark = '' "
+        "WHERE remark = ? AND (source IS NULL OR source <> ?)",
+        (ORDER_SOURCE_BOT, LEGACY_BOT_REMARK, ORDER_SOURCE_BOT)).rowcount
+    if fixed:
+        logger.info('迁移：把 %s 条订单的备注占位文案「%s」清掉，来源改记为「%s」',
+                    fixed, LEGACY_BOT_REMARK, ORDER_SOURCE_BOT)
+
+
 def _migrate_relax_real_name_unique(cursor, current_version):
     """v4 -> v5：姓名不再要求唯一，只留普通索引加速查询。
 
@@ -490,7 +542,10 @@ def init_database():
                 paper_name TEXT,
                 paper_remark TEXT,
                 claim_alert_time TIMESTAMP,
-                ready_notify_time TIMESTAMP
+                ready_notify_time TIMESTAMP,
+                source TEXT NOT NULL DEFAULT 'web',
+                est_price REAL,
+                est_pages INTEGER
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -642,6 +697,32 @@ def init_database():
         # 它和 preset_id 是两件事，读的时候用 COALESCE 合起来当分组键。
         if 'preset_group_id' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN preset_group_id INTEGER')
+
+        # 这一单从哪条路下的（web / bot）。默认值给 'web' 而不是留空：
+        # 这个功能上线之前的订单全是网页端和机器人在用，而留空意味着
+        # 「不知道」，读的地方就得多一个「空串算哪一边」的分支 ——
+        # 而那个分支没有正确答案，只能猜。历史里的机器人单由下面
+        # _migrate_bot_remark_cleanup 按那句占位备注认出来（能认多少认多少）。
+        if 'source' not in order_columns:
+            cursor.execute(
+                "ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'web'")
+
+        # 下单时算出来的预估价与它依据的页数。**可空**，含义是「没估过」：
+        # 预设单没有文件、页数读不出来的格式、或者那时候还没这个功能 ——
+        # 这三种都补不出一个合理数字，编一个 0 出来只会让界面显示「预估 ¥0.00」，
+        # 而学生看到 0 元比看不到价格更糟。
+        if 'est_price' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN est_price REAL')
+        if 'est_pages' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN est_pages INTEGER')
+        order_columns.update(('source', 'est_price', 'est_pages'))
+
+        # ⚠️ paper_types 的补列**不能写在这儿**：这张表是下面一百多行才
+        # CREATE TABLE IF NOT EXISTS 的，排在这一段就是「对着还不存在的表 ALTER」——
+        # 全新库当场报 no such table: paper_types、init_database 直接挂，
+        # 而老库反而没事（表早就在了）。这与 v12「索引建在补列之前」、
+        # v16「ALTER 在建表之前」是同一类坑，只是方向反过来。
+        # 它的补列见下面 paper_types 建表之后那段。
 
         # 按服务分组筛选走的是 COALESCE(preset_group_id, preset_id)，
         # 索引只能挂在其中一个列上，所以建在 preset_group_id 上 ——
@@ -858,10 +939,21 @@ def init_database():
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_by INTEGER,
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                price_delta REAL NOT NULL DEFAULT 0
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_paper_types_active ON paper_types(is_active)')
+
+        # v19：纸张类型的每页加价（A3 比 A4 贵就靠它）。
+        # **必须排在上面那句 CREATE TABLE 之后** —— 放在文件前面的补列区里，
+        # 全新库会对着还不存在的表 ALTER，init_database 当场挂掉（本轮真踩了一次）。
+        # 默认 0 = 不加价，所以老库补完这一列之后，价格与升级前完全一致。
+        paper_columns = {row[1] for row in
+                         cursor.execute('PRAGMA table_info(paper_types)').fetchall()}
+        if 'price_delta' not in paper_columns:
+            cursor.execute(
+                'ALTER TABLE paper_types ADD COLUMN price_delta REAL NOT NULL DEFAULT 0')
 
         # ---- v18：用户偏好（一对一挂在 users 上）----
         # 为什么单独一张表而不是往 users 上加列：偏好会长（通知开关、免打扰、默认参数、
@@ -885,6 +977,31 @@ def init_database():
             )
         ''')
 
+        # ---- v19：自动计价规则（全站一份，只有 id = 1 这一行）----
+        # 为什么是表而不是 .env 里的常量：这套系数是**业务参数**，业主要能自己改，
+        # 而且改完要立刻生效 —— 改 .env 意味着「上服务器改文件 + 重启」，
+        # 那不是「管理员可以调整」，那是一次部署。
+        # 只有一行（id 固定为 1，用 UPSERT 写）：这份规则是全局的，
+        # 没有「每个管理员一份」的语义，允许插第二行只会多出一个说不清的状态 ——
+        # 到底哪一行算数？所以主键写死 1，读的时候也只读 1。
+        #
+        # 存 REAL 而不是「分」的整数：和 orders.price 同一套口径（元、两位小数），
+        # 中间多一次换算就多一处可能对不上的地方。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_rules (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                base_fee REAL NOT NULL DEFAULT 0,
+                min_price REAL NOT NULL DEFAULT 0,
+                page_black_single REAL NOT NULL DEFAULT 0.1,
+                page_black_double REAL NOT NULL DEFAULT 0.08,
+                page_color_single REAL NOT NULL DEFAULT 0.5,
+                page_color_double REAL NOT NULL DEFAULT 0.4,
+                updated_by INTEGER,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，
         # 老库当场 `no such column: to_status`，**整个 init_database 挂掉**，
@@ -892,6 +1009,10 @@ def init_database():
         # 这与 v12「索引建在补列之前」、v16「ALTER 在建表之前」是同一类坑的第三种：
         # **用结构的语句，必须排在产生该结构的语句之后**。
         _migrate_ready_status_wording(cursor, current_version)
+
+        # 同一条纪律：它读写的是上面那段 v19 才补出来的 orders.source，
+        # 排在补列之前就是老库升级当场挂（见上面那段注释）。
+        _migrate_bot_remark_cleanup(cursor, current_version)
 
         if _pickup_index_ok and _qq_index_ok:
             cursor.execute(

@@ -12,7 +12,9 @@ import type {
   AuditStatusResponse,
   ChunkPendingResponse,
   ChunkSession,
+  ColorType,
   DashboardStats,
+  Duplex,
   MeOverviewResponse,
   MeResponse,
   OrderLogListResponse,
@@ -25,6 +27,9 @@ import type {
   PaperTypeListResponse,
   PickupLookupResponse,
   PrefsResponse,
+  PricePreviewResponse,
+  PriceRulesInput,
+  PriceRulesResponse,
   PresetOrderRequest,
   PrintOptionsResponse,
   PrintPresetListResponse,
@@ -348,13 +353,35 @@ export const staffPrintOptionsApi = {
   removePreset: (id: number) => del<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`),
 
   papers: () => get<PaperTypeListResponse>('/api/admin/paper-types'),
-  createPaper: (payload: { name: string; remark: string }) =>
+  /** price_delta 是「这种纸每页加价」（元/页），可以不传 —— 不传就保持原值。
+   *  **不要因为界面上没填就传 0**：PUT 是全量覆盖，把管理员设过的加价悄悄清成 0，
+   *  而列表里那一行看着还是原来的数字（后端 _parse_paper 兜了这一条）。 */
+  createPaper: (payload: { name: string; remark: string; price_delta?: string }) =>
     post<{ code: number; msg: string; id: number }>('/api/admin/paper-types', payload),
-  updatePaper: (id: number, payload: { name: string; remark: string }) =>
+  updatePaper: (id: number, payload: { name: string; remark: string; price_delta?: string }) =>
     put<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`, payload),
   setPaperActive: (id: number, active: boolean) =>
     put<{ code: number; msg: string }>(`/api/admin/paper-types/${id}/active`, { active }),
   removePaper: (id: number) => del<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`),
+}
+
+/* 自动估价的计价规则。
+ *
+ * ⚠️ 它只管**预估价**：最终金额永远由管理员在订单台自己确认（staffOrderApi.price）。
+ * 所以写接口是 ROLE_ADMIN 起步（打印员自己就该能改价目表），
+ * 而改完之后，**老订单的预估价不会跟着变** —— 那是下单那一刻算出来的快照。 */
+export const priceRulesApi = {
+  load: () => get<PriceRulesResponse>('/api/admin/price-rules'),
+  save: (payload: PriceRulesInput) => put<PriceRulesResponse>('/api/admin/price-rules', payload),
+  /** 试算。**必须走服务端**：公式只有一份（pricing.py），
+   *  前端再镜像一遍必然漂移，而漂了不报错，只是页面上的数字开始说谎。 */
+  preview: (payload: {
+    pages: number
+    copies: number
+    color: ColorType
+    duplex: Duplex
+    paper_type_id: number | null
+  }) => post<PricePreviewResponse>('/api/admin/price-rules/preview', payload),
 }
 
 /* 公告 */

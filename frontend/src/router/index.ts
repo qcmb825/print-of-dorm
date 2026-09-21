@@ -135,10 +135,20 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '打印选项', code: '06' },
       },
       {
+        // 计价规则（自动估价的公式系数）与打印选项同一类，也同样是
+        // **所有管理员**都能改：价目表正是打印员自己最清楚的东西。
+        // 与后端 routes/price_rules.py 的 roles_required(ROLE_ADMIN, ROLE_SUPER) 对齐 ——
+        // 路由放开而接口收着（或反过来）都会变成「能点，点了 403」。
+        path: 'pricing',
+        name: 'staff-pricing',
+        component: () => import('@/views/staff/PricingView.vue'),
+        meta: { title: '计价规则', code: '07' },
+      },
+      {
         path: 'tickets',
         name: 'staff-tickets',
         component: () => import('@/views/staff/TicketsView.vue'),
-        meta: { title: '工单处理', code: '07' },
+        meta: { title: '工单处理', code: '08' },
       },
     ],
   },

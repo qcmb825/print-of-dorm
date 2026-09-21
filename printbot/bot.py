@@ -232,6 +232,47 @@ def _prefs_cache_get(qq):
     return data
 
 
+# 「这个 QQ 有没有账号」的缓存时长。取 60 秒而不是 10：这是一次纯只读的
+# 身份查询，答错一秒没有任何代价（真正下单时服务端还会再判一次），
+# 而它挡在**每条带附件的消息**前面，缓存久一点更省。
+IDENTITY_CACHE_TTL = 60
+_identity_cache = {}
+
+
+def _identity_error(qq):
+    """这个 QQ 有没有对应账号：没有就回一句给用户看的话，有（或问不到）回 None。
+
+    为什么要提前问一次：没注册的号发文件，原先会**走完整个追问流程**
+    （问打印方式 → 问份数 → 问纸张），直到最后一步提交时才被服务端顶回来
+    「还没有账号关联这个 QQ 号」—— 用户白答了三轮，看起来像机器人坏了，
+    而且他完全不知道问题出在哪（用户实测报上来的「换个号就区别对待」里
+    也含着这一层：注册过的号一切正常，没注册的号处处碰壁）。
+
+    判据用 **/api/bot/orders**（「订单」那条命令）而不是更新更轻的 /api/bot/prefs：
+    它和别的 bot 接口走同一道身份闸门（routes/bot.py 的 _resolve_bot_user），
+    403/404/409 回的就是身份问题的原话；而它从第一个版本就在，
+    换过服务器版本也不会出现「接口本身 404 → 被当成『你没注册』」这种误判。
+    （这条误判会很难查：用户明明注册过，机器人却一口咬定他没注册。）
+
+    **够不着服务器时一律放行**（返回 None）：那种情况不该拦人，
+    后面提交时还会照常报错，而把「网络不通」说成「你没注册」是更坏的错。
+    """
+    key = str(qq)
+    now = time.time()
+    cached = _identity_cache.get(key)
+    if cached and now - cached[0] < IDENTITY_CACHE_TTL:
+        return cached[1]
+    problem = None
+    try:
+        resp = api.orders(qq)
+        if resp.get('code') in (403, 404, 409):
+            problem = resp.get('msg') or '这个 QQ 号还没有对应的账号'
+    except api.ApiError:
+        problem = None
+    _identity_cache[key] = (now, problem)
+    return problem
+
+
 def reply_help(client, qq, prefix=''):
     """发使用说明：优先发卡片，取不到卡就用服务端的结构拼文本。
 
@@ -650,6 +691,13 @@ def handle_file(client, qq, kind, data):
     下载和校验放在提问之前：不合格的文件当场就拒（省一轮对话），
     合格的先落进暂存目录，等用户选完参数再上传建单。
     """
+    #    身份也放在**下载之前**问一次：没注册的号不该让他答完三轮再被拒
+    #    （见 _identity_error 的说明）。放在取附件之前还顺带省下一次
+    #    下载 —— 那份文件反正也用不上。
+    problem = _identity_error(qq)
+    if problem:
+        client.send_private_msg(qq, problem)
+        return
     try:
         blob, name = _fetch_attachment(client, kind, data)
     except (OneBotError, OSError) as exc:
@@ -951,6 +999,12 @@ def _submit_pending(client, qq, entry):
             lines.append('　纸张：%s' % entry['paper_name'])
         if entry.get('remark'):
             lines.append('　备注：%s' % entry['remark'])
+        # 预估价：服务端按下单时的文件页数算的（预设单没有文件，拿到的是 null）。
+        # **「预估」两个字不能省** —— 最终金额由管理员看过文件之后核定，
+        # 学生掏钱时得知道这个数还不是账单。
+        est = resp.get('est_price')
+        if isinstance(est, (int, float)):
+            lines.append('　预估 %.2f 元（以管理员核定为准）' % est)
         # 只给单号：它是取件时报的号，也是查单/撤回时引用的号
         lines.append('单号：%s' % resp.get('pickup_code'))
         lines.append('订单进展在网页端看得更全：%s' % config.SITE_URL)

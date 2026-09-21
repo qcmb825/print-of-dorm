@@ -401,9 +401,22 @@ async function withdraw(order: Order): Promise<void> {
               >
                 ￥{{ order.price.toFixed(2) }}
               </div>
+              <!-- 未计费时：先给**预估**价（系统按提交的文件页数算的），
+                   再说明它还不是最终价。两个信息缺一不可 ——
+                   只说「待管理员确认」，学生不知道大概要花多少钱，
+                   而这恰恰是他下单时就想知道的；只写数字不说「预估」，
+                   他掏钱时会以为这就是账单。 -->
               <div v-else class="text-sm leading-[23px] text-ink-3">
-                {{ priceLabel(order.price) }}
-                <span class="text-xs">· 待管理员确认</span>
+                <template v-if="order.est_price !== null && order.est_price !== undefined">
+                  <span class="tnum text-base font-semibold text-ink-2">
+                    预估 ￥{{ order.est_price.toFixed(2) }}
+                  </span>
+                  <span class="text-xs">· 以管理员核定为准</span>
+                </template>
+                <template v-else>
+                  {{ priceLabel(order.price) }}
+                  <span class="text-xs">· 待管理员确认</span>
+                </template>
               </div>
             </div>
             <div class="bracket-lg px-2.5 py-1.5" style="--bracket-arm: 16px">

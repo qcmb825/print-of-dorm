@@ -616,6 +616,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `GET` | `/api/board` | 登录 | 学生端「服务数据」：**我的概览**（我的单数 / 进行中 / 待我取件 / 名次）+ 排队情况（**有序数组**，还在流程里的四档，已取件的单已经出队）+ 下单榜（近 30 天 / 累计两张）。**响应里既没有金额、也没有站点规模**（总单数 / 近 7 天 / 今日 / 账号数 / 已取件数 / **全站单量趋势** / **全站未接单数**，SQL 就没查那几列）；榜上别人的昵称由服务端打码（`张*三`），只有自己那一行是完整的 |
 | `GET` | `/api/orders` | 管理员 | 订单列表（含待接单池）。支持 `q=` 关键词（**一个框搜完**单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式，其中订单号与学号是**精确相等**，其余模糊匹配）、`preset=` 按打印服务分组筛（数字 = 分组 id，`none` = 未归类；分组键是 `COALESCE(preset_group_id, preset_id)`，所以下单选了预设的单和事后被归进去的单会一起出来）、`exclude_done=1` 隐藏已取件 |
 | `POST` | `/api/order/<id>/claim` | 管理员 | 接单（已取件的单会被拒绝；待计费的单**可以**接） |
+| `GET`/`PUT` | `/api/admin/price-rules` | 管理员 | **计价规则**（自动估价的公式系数）。`POST /api/admin/price-rules/preview` 是试算：给「页数 / 份数 / 颜色 / 单双面 / 纸张」按**已保存的**规则算一遍。它**只影响预估价**，最终金额仍然只由下面那条计费接口写 |
 | `POST` | `/api/order/<id>/price` | 管理员 | **计费 / 改价**。**必须先接单，且只有接单人（或超管）能调**；待计费 → 原子置为待打印，老单直接改金额；已取件的单拒绝改价 |
 | `POST` | `/api/order/<id>/release` | 接单人 / 超管 | 放弃接单，退回待接单池（金额保留） |
 | `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态（普通管理员只能改自己接的单；不接受待计费） |
@@ -705,19 +706,20 @@ PNG（`botcard.py` + `GET /api/bot/card`），printbot 收到后当图片发出�
 
 ## 🗄️ 数据模型
 
-SQLite 单库，共 11 张表：
+SQLite 单库，共 12 张表：
 
 | 表 | 用途 |
 | :--- | :--- |
 | `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段，v15 起 `qq` 上有一条部分唯一索引：`qq <> '' AND status <> 'closed'` 的行里一个 QQ 只能绑一个在用账号） |
-| `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
+| `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v19 加的 `source`（这一单从哪条路下的：`web` / `bot`，**不再往学生备注里塞占位话**）、`est_price` / `est_pages`（下单时按文件页数算出来的**预估价**与它依据的页数，只是给学生看的参考，`price` 才是要收的钱），v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
 | `user_prefs` | 用户偏好（v18 加，PRIMARY KEY = `user_id`）：通知开关、免打扰时段、默认打印参数、订单列表显示、机器人是否用卡片回。**没有行 = 全默认**，读的时候由 `prefs.py` 补齐，所以新用户不必先写一行 |
 | `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么）。v16 加 `to_status`：这一单被改成了哪个状态，历史记录页据此筛「改成可取件 / 已取件」；**不倒推历史数据**，老留痕按 detail 里的「「旧」→「新」」认 |
 | `audit_requests` | 身份审核申请（学号唯一，只允许提一次） |
 | `announcements` | 公告 |
 | `tickets` / `ticket_messages` | 工单与消息 |
 | `print_presets` | 预设打印服务（管理员维护，学生下单时可套用） |
-| `paper_types` | 纸张类型（管理员自己加，不写死在代码里） |
+| `paper_types` | 纸张类型（管理员自己加，不写死在代码里）。v19 加 `price_delta`：这种纸每页比标准价贵多少（元/页），只进预估价 |
+| `price_rules` | **自动估价的公式系数**（v19 加，全站一份、只有 `id = 1` 那一行）：是否启用、每单基础费、最低消费、四档单价（黑白/彩色 × 单面/双面）。管理员在「计价规则」页改，`pricing.py` 是唯一读它的地方 |
 | `schema_meta` | 结构版本，用于自动建表与升级 |
 
 > `orders` 里那几个选项快照列（`preset_id` / `preset_content` / `copies` / `paper_type_id` /
@@ -848,6 +850,8 @@ print-of-dorm/
 ├── auth.py                # login_required / roles_required 装饰器
 ├── identity.py            # 学生名单库（只读）：学号 → 姓名 核验，注册关口
 ├── utils.py               # 上传校验、单号、分页、注册与审核校验、金额解析
+├── pricing.py             # 自动**预估**价：页数解析（pdf/docx/doc/图片）+ 公式；只写 est_price
+├── prefs.py               # 用户偏好（通知 / 免打扰 / 默认参数），网页与机器人共用一份
 ├── notifier.py            # 未接单提醒：定时检查 + 同一笔单只提醒一次
 ├── mail/                  # 未接单提醒的邮件（发信凭证在 orders.claim_alert_time）
 │   ├── __init__.py
@@ -863,6 +867,7 @@ print-of-dorm/
 │   ├── audit.py           #   身份审核申请：提交 / 查进度 / 管理端审核
 │   ├── orders.py          #   上传下单 / 接单 / 释放 / 计费 / 改状态 / 下载 / 撤回
 │   ├── order_options.py   #   打印预设与纸张规格（学生端读、管理端维护）
+│   ├── price_rules.py     #   计价规则（自动估价的公式系数；只影响预估价）
 │   ├── upload_chunks.py   #   大文件分片上传
 │   ├── admin.py           #   账号管理 / 数据看板
 │   ├── history.py         #   历史记录：订单留痕的筛选 / 统计（只读）

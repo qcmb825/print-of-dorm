@@ -15,6 +15,7 @@ from auth import login_required, roles_required
 from config import (PAPER_NAME_MAX, PAPER_REMARK_MAX, PRESET_CONTENT_MAX, PRESET_CONTENT_MIN,
                     ROLE_ADMIN, ROLE_SUPER, logger)
 from db import db_conn, find_paper_type, find_preset
+import pricing
 from security import audit_action, client_ip
 
 bp = Blueprint('order_options', __name__)
@@ -62,7 +63,14 @@ def _parse_preset(data):
 
 
 def _parse_paper(data):
-    """校验纸张类型，返回 (字典, 错误信息)。remark 可以为空。"""
+    """校验纸张类型，返回 (字典, 错误信息)。remark 可以为空。
+
+    price_delta 是「这种纸每页比标准价贵多少」（元/页），默认 0 ——
+    A3 比 A4 贵就是填在这里。**可以为 0、不能为负**：加价的默认状态是「不加价」，
+    而负的加价会让总价往下走，那是改价目表的事，不是纸张属性的事
+    （口径与 pricing._as_coefficient 完全一致 —— 那边是公式侧的兜底，
+    这里是入口侧的提前拦截，两边说的是同一句话）。
+    """
     name, error = _clean_text(data.get('name'), '纸张名称', PAPER_NAME_MAX)
     if error:
         return None, error
@@ -71,9 +79,18 @@ def _parse_paper(data):
         return None, '备注不能超过 %s 个字' % PAPER_REMARK_MAX
     if remark and not all(ch.isprintable() for ch in remark):
         return None, '备注里不能有换行或制表符'
+    raw_delta = data.get('price_delta')
+    if raw_delta in (None, ''):
+        # 不给就保持原值：老前端（还没这个输入框的那一版）提交时不会带这个字段，
+        # 而把它当成 0 会把管理员设过的加价**悄悄清掉**（PUT 是全量覆盖）。
+        delta = None
+    else:
+        delta, error = pricing.parse_coefficient(raw_delta, '每页加价')
+        if error:
+            return None, error
     # 空备注存 NULL 而不是空串：读的地方只需要判一次 None，
     # 不用再同时防 '' —— 两种「空」是同一个坑埋两次。
-    return {'name': name, 'remark': remark or None}, None
+    return {'name': name, 'remark': remark or None, 'price_delta': delta}, None
 
 
 
@@ -235,7 +252,7 @@ def api_admin_paper_types():
     with db_conn() as conn:
         # 同预设：used_count 让「删除」这个动作在点下去之前就有分量。
         rows = conn.execute('''
-            SELECT t.id, t.name, t.remark, t.is_active,
+            SELECT t.id, t.name, t.remark, t.is_active, t.price_delta,
                    datetime(t.create_time, 'localtime') AS create_time,
                    datetime(t.update_time, 'localtime') AS update_time,
                    u.nickname AS author,
@@ -277,9 +294,10 @@ def api_admin_create_paper_type():
             # 前端据此可以把冲突说得更具体。
             return jsonify({'code': 409, 'msg': '已经有同名纸张了，换一个名字或直接改那一条'}), 409
         cursor = conn.execute('''
-            INSERT INTO paper_types (name, remark, is_active, created_by)
-            VALUES (?, ?, 1, ?)
-        ''', (payload['name'], payload['remark'], g.user['id']))
+            INSERT INTO paper_types (name, remark, is_active, created_by, price_delta)
+            VALUES (?, ?, 1, ?, ?)
+        ''', (payload['name'], payload['remark'], g.user['id'],
+              payload['price_delta'] or 0.0))
         conn.commit()
         new_id = cursor.lastrowid
     logger.info('新建纸张类型 #%s 名称=%s 操作人=%s(%s) ip=%s',
@@ -299,10 +317,18 @@ def api_admin_update_paper_type(tid):
             return jsonify({'code': 404, 'msg': '纸张类型不存在'}), 404
         if _name_taken(conn, payload['name'], exclude_id=tid):
             return jsonify({'code': 409, 'msg': '已经有同名纸张了，换一个名字'}), 409
-        conn.execute('''
-            UPDATE paper_types SET name = ?, remark = ?, update_time = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (payload['name'], payload['remark'], tid))
+        if payload['price_delta'] is None:
+            # 请求里没带这个字段就不动它（理由见 _parse_paper 里那段）。
+            conn.execute('''
+                UPDATE paper_types SET name = ?, remark = ?, update_time = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (payload['name'], payload['remark'], tid))
+        else:
+            conn.execute('''
+                UPDATE paper_types SET name = ?, remark = ?, price_delta = ?,
+                       update_time = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (payload['name'], payload['remark'], payload['price_delta'], tid))
         conn.commit()
     logger.info('修改纸张类型 #%s 名称=%s 操作人=%s(%s) ip=%s',
                 tid, payload['name'], g.user['nickname'], g.user['role'], client_ip())

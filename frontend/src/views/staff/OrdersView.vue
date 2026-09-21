@@ -35,6 +35,8 @@ import { ApiError } from '@/api/client'
 import { staffOrderApi, staffPrintOptionsApi } from '@/api/endpoints'
 import {
   ORDER_PRESET_FILTER_NONE,
+  ORDER_SOURCE_BOT,
+  ORDER_SOURCE_LABELS,
   ORDER_STATUSES,
   ORDER_STATUSES_MANUAL,
   type Order,
@@ -86,6 +88,18 @@ function needsManualNotify(order: Order): boolean {
 const NOTIFY_BADGE_STYLE =
   'color: var(--warn); background-color: var(--warn-tint); border-color: var(--warn-tint-border)'
 
+/** 这一单是不是机器人下的（认不出的值一律当网页单，与后端同一个兜底口径）。 */
+function isBotOrder(order: Order): boolean {
+  return order.source === ORDER_SOURCE_BOT
+}
+
+/** 订单台那一列里给机器人单用的**短**标签。
+ *
+ *  为什么不用 ORDER_SOURCE_LABELS 里的「QQ 机器人」全称：那一格只有 156px，
+ *  而全文在 title 里（悬停即见）。短标签只负责让人「一眼看出这不是网页单」。
+ *  文案仍然从这里出，不散落到模板里 —— 哪天加了第二个来源，改一处就够。 */
+const ORDER_SOURCE_BOT_LABEL_SHORT = 'QQ'
+
 const auth = useAuthStore()
 const message = useMessage()
 const router = useRouter()
@@ -109,16 +123,25 @@ const currentUserId = computed(() => auth.user?.id ?? 0)
 
 const AUTO_REFRESH_MS = 10_000
 
-/** 宽屏表格各列宽之和。11 列加起来比容器（max-w-[1400px]）还宽，不给 scroll-x 的话
- *  NDataTable 会把表格直接撑出容器，而外层是 overflow-hidden —— 末尾那几列会被
- *  裁掉，连横向滚动都够不着（「详情」那颗按钮就是最先消失的那个）。
- *  **改任何一列的宽度时，这个数字要跟着改。**
+/** 宽屏表格的横向契约：**从列定义直接算出来**，不再手写一个常数。
  *
- *  卡片断点从 900px 提到 1024px，与侧栏的 lg 断点、账号管理页对齐：900–1100px
- *  这一段本来仍走表格，只能靠 NDataTable 内层容器自动横滚 —— 11 列挤在不到
- *  1000px 的宽度里，连「单号 / 费用」都要左右拖才看得到，还不如卡片列表。
- *  `:scroll-x` 依旧显式声明（它就是表格这一侧的横滚契约，与账号管理页同一口径）。 */
-const ORDER_TABLE_MIN_WIDTH = 1474
+ *  为什么不手写（这里栽过）：原先写死 1474，而容器是 max-w-[1400px] ——
+ *  1474 永远比容器宽 74px，于是**不管屏幕多宽**，表格底部都挂着一条横向滚动条
+ *  （用户实测报上来的「订单台下面有左右滑动条」）。两个数字分居两处、
+ *  谁都不会提醒谁，`改列宽时记得改这个数` 只是一句注释。
+ *
+ *  现在 `scroll-x` 等于各列宽之和，改列宽自动跟随；整页的预算就是「≤ 1040」：
+ *  预算 1040px 是照 **1366 的笔记本**定的（那是最常见的小屏办公机：1366 − 236 侧栏
+ *  − 52 内边距 ≈ 1078 可用，留一点余量），再窄的屏走卡片列表（断点 1024）。
+ *  收窄**不影响大屏**：Naive 会让列按比例分掉多出来的宽度，表格始终填满容器。
+ *  **加列之前先看这个和有没有超。**
+ *
+ *  `:scroll-x` 依旧必须显式给：删掉它 Naive 会把内容最小宽退回 100%，
+ *  而 table-layout: fixed 下表格会用「列宽之和」当实际宽度，
+ *  结果是末尾几列被外层 overflow-hidden 裁掉（连滚动都够不着），比横滚更糟。 */
+const ORDER_TABLE_MIN_WIDTH = computed(() =>
+  columns.value.reduce((sum, column) => sum + (Number(column.width) || 0), 0),
+)
 
 const orders = ref<Order[]>([])
 const total = ref(0)
@@ -350,8 +373,18 @@ function openPrice(order: Order): void {
     return
   }
   priceOrder.value = order
-  // 已有金额就带出来，方便微调；没有就是空，让管理员自己填
-  priceInput.value = order.price === null || order.price === undefined ? '' : order.price.toFixed(2)
+  if (order.price === null || order.price === undefined) {
+    //    还没计过费：拿**预估价**当起点。
+    //    这就是自动估价这件事唯一的落地点 —— 管理员仍然要自己看文件、
+    //    自己按保存（改不改都行），但不用从空白框开始想「这单该收多少」。
+    //    没有预估价（页数读不出、规则没开、预设单）就还是空的，让管理员自己填。
+    priceInput.value = order.est_price === null || order.est_price === undefined
+      ? ''
+      : order.est_price.toFixed(2)
+  } else {
+    // 已有金额就带出来，方便微调（**不拿预估价覆盖它**：钱已经收过了）
+    priceInput.value = order.price.toFixed(2)
+  }
 }
 
 async function submitPrice(): Promise<void> {
@@ -463,34 +496,71 @@ function statusButton(order: Order) {
 
 const columns = computed<DataTableColumns<Order>>(() => [
   {
+    // 订单：文件名（详情入口）+ 单号 + 内部编号 + 时间，三行压成两行。
+    //
+    // 单号原本单独占一列（78px）。合并进来是因为那一列除了 5 个数字什么也没有，
+    // 而**横向预算最紧的就是这几列** —— 合并之后整表窄了 76px，
+    // 1440 的笔记本上不用再左右拖。信息一个字都没少：
+    // 单号挪到第二行行首、加粗提色（它现在是用户面前唯一的标识，仍是这一格里
+    // 最该被读到的东西），内部编号和时间跟在同一行后面。
     title: '订单',
     key: 'id',
-    width: 168,
+    width: 156,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
-        // 文件名同时是详情入口：它本来就是这一列里最大的一块可点区域，
-        // 比旁边再加一颗小按钮好按得多（手机上尤其明显）。
+        // 第一行：文件名（详情入口）+ 来源标记。
+        //
+        // 文件名本来就要 truncate（长中文文件名放进 156px 必然要截），所以让它
+        // `min-w-0 flex-1` 去占剩下的位置，来源标记 `shrink-0` 钉在右边 ——
+        // 反过来的话，文件名会把它挤出可视区，而「这单是从 QQ 来的」正是这一行
+        // 最需要一眼看到的东西。
         // 标签走 orderFileLabel：预设单的 filename 是空串，直接渲染就是一列点不动的空气。
-        h(
-          RouterLink,
-          {
-            to: `/staff/orders/${row.id}`,
-            class: 'block truncate text-sm font-semibold hover:underline',
-            title: row.preset_content
-              ? `${row.preset_content} · 点开看详情`
-              : `${row.filename} · 点开看详情`,
-          },
-          { default: () => orderFileLabel(row) },
-        ),
-        h('div', { class: 'tnum text-2xs text-ink-3' }, `#${row.id} · ${shortTime(row.create_time)}`),
+        h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
+          h(
+            RouterLink,
+            {
+              to: `/staff/orders/${row.id}`,
+              class: 'min-w-0 flex-1 truncate text-sm font-semibold hover:underline',
+              title: row.preset_content
+                ? `${row.preset_content} · 点开看详情`
+                : `${row.filename} · 点开看详情`,
+            },
+            { default: () => orderFileLabel(row) },
+          ),
+          //    来源只对**机器人下的单**标一个短标签：网页端是这个系统的默认入口，
+          //    每行都挂一个「网页端」等于给所有人加噪音 —— 这里要的是
+          //    「扫一眼发现哪几单不是学生自己在网页上下的」。
+          //    标签用「QQ」两个字而不是「QQ 机器人」：156px 的一格里，多两个字
+          //    就意味着文件名少显示两个字。
+          h(
+            'span',
+            {
+              class: 'shrink-0 border px-1 text-2xs whitespace-nowrap',
+              style: 'color: var(--secondary); border-color: var(--accent-tint-border)',
+              title: `这一单是从 ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}下的`,
+            },
+            [ORDER_SOURCE_BOT_LABEL_SHORT],
+          ) as never,
+        ]),
+        // 第二行：单号（用户面前唯一的标识）+ 内部编号与时间。
+        //    ⚠️ 单号必须 `shrink-0`：它是这一格里唯一**不能**折行的东西 ——
+        //    放在 flex 里不锁住的话，末尾那个 truncate 的兄弟会把它挤到换行，
+        //    屏幕上就成了「362 换行 7」这种被劈开的号（本机实测过一次，
+        //    而柜台照着念的正是这串数字）。宽度不够时该截断的是右边那句。
+        h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
+          h('span', { class: 'tnum shrink-0 text-xs font-bold tracking-wider text-ink-2' },
+            pickupCodeLabel(row.pickup_code)),
+          h('span', { class: 'truncate text-2xs text-ink-3' },
+            `#${row.id} · ${shortTime(row.create_time)}`),
+        ]),
       ]),
   },
   {
     title: '下单人',
     key: 'owner_nickname',
-    // 从 132 放到 150：多了一行联系方式。邮箱地址是最长的那种，
-    // 150 仍然要 truncate，但至少有 title 可以悬停看全。
-    width: 150,
+    // 从 150 收到 124：昵称 / 宿舍 / 联系方式三层本来都是 truncate + title，
+    // 少掉的宽度只影响同时能看几个字，不影响「看不看得到」——全文悬停仍有。
+    width: 110,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
         h('div', { class: 'truncate text-sm' }, row.owner_nickname ?? '（账号已注销）'),
@@ -531,7 +601,9 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 显示成「1 份」等于替它们编了一个没人记得的数字。
     title: '规格',
     key: 'spec',
-    width: 150,
+    // 从 150 收到 114：这一格里最长的组合是「1 份 + 双面」和「黑白 · 纸张名」，
+    // 114 − 16 内边距 = 98px 刚好放下 6 个汉字（纸名超了会 truncate，title 看全）。
+    width: 102,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
         h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
@@ -565,7 +637,9 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 不碰金额、不碰状态）。
     title: '打印服务',
     key: 'preset',
-    width: 200,
+    // 从 200 收到 140：正文本来就是 truncate + title（预设是一整句话，
+    // 200 也放不下），少掉的宽度只影响同时能看几个字，不影响「看不看得到」。
+    width: 112,
     render: (row) => {
       const label =
         row.preset_id !== null && row.preset_id !== undefined
@@ -614,7 +688,10 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '备注',
     key: 'remark',
-    width: 150,
+    // 从 150 收到 112。备注里有价值的是「只打第 3 页」这类短要求，
+    // 长句子本来就靠 title 看全文。**这一列只显示学生自己写的话** ——
+    // 系统曾经往里面塞过「通过 QQ 机器人下单」，那已经被搬到 source 字段了。
+    width: 100,
     // 备注是学生写的要求（「只打第 3 页」「A4 双面」）。之前这一列压根不存在，
     // 于是管理员只能挨个点开文件才发现要求写在了备注里。
     // 空备注显示一个淡淡的「—」而不是空白：空白会让人怀疑是没渲染出来。
@@ -626,40 +703,50 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '状态',
     key: 'status',
-    width: 92,
+    // 「待计费」是最长的状态名（3 个字 + 标签内边距），88 够；从 92 收 4px。
+    width: 84,
     render: (row) => h(StatusTag, { status: row.status, size: 'sm' }),
   },
   {
     title: '费用',
     key: 'price',
-    width: 92,
+    // 从 92 放到 114：多了一行**预估价**（见下面的渲染）。
+    width: 108,
     // 未计费时金额是 null 而不是 0（老库遗留订单也走这条路）——
     // 显示成「￥0.00」会让人以为这单免费。
     render: (row) => {
       const unpriced = row.price === null || row.price === undefined
       if (!unpriced) return h('span', { class: 'tnum text-sm font-bold' }, priceLabel(row.price))
       // 未计费：旁边挂一小段危险斜纹。
-      // 斜纹是「这块有约束 / 待处理」的记号，**不铺在文字下面** —— 纹理压在文字上会让
-      // 笔画与纹理混同（WCAG F83 型失败），所以只作为独立的色标。
+      // 斜纹是「这块有约束 / 待处理」的记号，**不铺在文字下面** ——
+      // 纹理压在文字上会让笔画与纹理混同（WCAG F83 型失败），所以只作为独立的色标。
       // 文字色从原来的 opacity-50（等效对比度约 2.6:1）提到三级文字色（4.86:1）：
       // 「未计费」是要读的状态，不是装饰。
-      return h('span', { class: 'flex items-center gap-1.5' }, [
-        h('span', { class: 'hazard h-3 w-2 shrink-0', 'aria-hidden': 'true' }),
-        h('span', { class: 'text-xs text-ink-3' }, priceLabel(row.price)),
-      ])
+      const lines = [
+        h('span', { class: 'flex items-center gap-1.5' }, [
+          h('span', { class: 'hazard h-3 w-2 shrink-0', 'aria-hidden': 'true' }),
+          h('span', { class: 'text-xs text-ink-3' }, priceLabel(row.price)),
+        ]),
+      ]
+      //    预估价：**只是给学生看的参考**，最终金额由接单人自己确认。
+      //    所以它挂在一个很轻的第三行上，而且必须带「预估」两个字 ——
+      //    不带的话，管理员会把一个还没被任何人看过的数字当成已经定好的价，
+      //    而这一列里两者长得一模一样（用户实测那个 bug 就是这么来的）。
+      //    「计费」那颗按钮点开时会拿它预填，这才是它的用处：给个起点。
+      if (row.est_price !== null && row.est_price !== undefined) {
+        lines.push(h('span', {
+          class: 'tnum text-2xs text-ink-3',
+          title: row.est_pages ? `按下单时的 ${row.est_pages} 页估算，仅供参考` : '下单时的估算，仅供参考',
+        }, `预估 ${priceLabel(row.est_price)}`))
+      }
+      return h('div', { class: 'min-w-0' }, lines)
     },
-  },
-  {
-    title: '单号',
-    key: 'pickup_code',
-    width: 78,
-    render: (row) =>
-      h('span', { class: 'tnum text-sm font-bold tracking-wider' }, pickupCodeLabel(row.pickup_code)),
   },
   {
     title: '接单人',
     key: 'claimer_nickname',
-    width: 96,
+    // 从 96 收到 76：昵称是 truncate + title，短名照样看得到。
+    width: 72,
     render: (row) =>
       h(
         'span',
@@ -670,7 +757,15 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 264,
+    // 从 264 收到 208，并把原来的「详情」列（34px）并了进来：
+    // 那一列只有一个图标按钮，单独占一列花的是全表的横向预算。
+    // 详情排在这排按钮的**最后**（它是「看」，前面几个是「改」）：
+    // 原先分开列的理由是「怕管理员急着点接单时点进详情」，
+    // 现在它离接单最远、又带着 title，误点风险比省下的 34px 更值得。
+    // `fixed: 'right'`：1366 这类窄屏上表格仍会内层横滚，
+    // 固定住这一列，接单/计费/改状态永远贴在右边够得着。
+    width: 196,
+    fixed: 'right',
     render: (row) =>
       h('div', { class: 'flex flex-wrap items-center gap-1' }, [
         row.claimed_by === null
@@ -726,27 +821,20 @@ const columns = computed<DataTableColumns<Order>>(() => [
               { icon: () => h(Download, { size: 13 }) },
             )
           : null,
+        // 详情入口。文件名也是入口（见「订单」那一列），这里再给一颗图标按钮，
+        // 别指望所有人都会去点标题。放在最后：它是「看」，前面几个是「改」。
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            class: '!h-7 !w-7 !p-0',
+            title: '查看详情与操作记录',
+            onClick: () => openDetail(row),
+          },
+          { icon: () => h(Info, { size: 13 }) },
+        ),
       ]),
-  },
-  {
-    // 详情入口。单独一列而不是塞进「操作」里：操作列那几个按钮是**改**这一单的，
-    // 而详情是「看」。混在一起，管理员容易在急着点「接单」时点进详情页。
-    // 文件名本身也是入口（见上面那一列），这里只是把它写明白，别指望所有人都会去点标题。
-    title: '',
-    key: 'detail',
-    width: 34,
-    render: (row) =>
-      h(
-        NButton,
-        {
-          size: 'tiny',
-          quaternary: true,
-          class: '!h-7 !w-7 !p-0',
-          title: '查看详情与操作记录',
-          onClick: () => openDetail(row),
-        },
-        { icon: () => h(Info, { size: 13 }) },
-      ),
   },
 ])
 
@@ -1031,13 +1119,21 @@ onBeforeUnmount(() => {
         </EmptyState>
       </div>
 
-      <!-- 宽屏：表格 -->
+      <!-- 宽屏：表格。
+           ⚠️ `table-layout="fixed"` **不能省**（Naive 默认是 auto）。
+           表格是 auto 布局时，列的 width 只是「建议值」：单元格里那些
+           `truncate` 的文本（white-space: nowrap）会以**整串文字的宽度**
+           参与最小宽度计算，于是「订单」列声明 168、实际被一个长文件名撑到 194，
+           「备注」列声明 112、被一句长备注撑到 147 —— 整表凭空宽出 60px，
+           底部又冒出那条横向滚动条（本机实测：1440 下 scrollWidth 1207 > 容器 1142）。
+           改成 fixed 之后列宽就是列宽，超长文本老实省略号，总宽 = 各列之和。 -->
       <NDataTable
         v-else-if="!isNarrow"
         :columns="columns"
         :data="orders"
         :bordered="false"
         :single-line="false"
+        table-layout="fixed"
         :scroll-x="ORDER_TABLE_MIN_WIDTH"
         size="small"
         :row-key="(row: Order) => row.id"
@@ -1068,8 +1164,22 @@ onBeforeUnmount(() => {
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
-              <p class="tnum mt-0.5 text-2xs text-ink-3">
-                #{{ order.id }} · {{ shortTime(order.create_time) }}
+              <!-- 单号在窄屏也从上面那行独立出来过（表格里是并进去的），
+                   口径与宽屏一致：单号在前、加粗，编号与时间退到后面 -->
+              <p class="mt-0.5 flex min-w-0 items-center gap-1.5">
+                <!-- 单号不许被挤到换行（口径同宽屏那一列）：它是柜台照着念的号 -->
+                <span class="tnum shrink-0 text-xs font-bold tracking-wider text-ink-2">
+                  {{ pickupCodeLabel(order.pickup_code) }}
+                </span>
+                <span
+                  v-if="isBotOrder(order)"
+                  class="shrink-0 border px-1 text-2xs whitespace-nowrap"
+                  style="color: var(--secondary); border-color: var(--accent-tint-border)"
+                  :title="`这一单是从 ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}下的`"
+                >{{ ORDER_SOURCE_BOT_LABEL_SHORT }}</span>
+                <span class="truncate text-2xs text-ink-3">
+                  #{{ order.id }} · {{ shortTime(order.create_time) }}
+                </span>
               </p>
             </div>
             <StatusTag :status="order.status" size="sm" />
@@ -1079,8 +1189,7 @@ onBeforeUnmount(() => {
             <span>{{ order.owner_nickname ?? '（已注销）' }} · {{ order.owner_dorm ?? '—' }}</span>
             <!-- 联系方式单独一格而不是拼到上面那句里：拼在一起，窄屏上先被挤掉的
                  恰恰是它，而这行里最要紧的就是它（找不到人时昵称和宿舍都白搭）。 -->
-            <span class="truncate">{{ contactLabel(order.owner_contact_type, order.owner_contact) }}</span>
-            <span class="tnum">单号 {{ pickupCodeLabel(order.pickup_code) }}</span>
+            <span class="min-w-0 max-w-full truncate">{{ contactLabel(order.owner_contact_type, order.owner_contact) }}</span>
             <span v-if="order.claimer_nickname">接单 {{ order.claimer_nickname }}</span>
           </div>
 
@@ -1139,6 +1248,15 @@ onBeforeUnmount(() => {
               "
             >
               费用 {{ priceLabel(order.price) }}
+            </span>
+            <!-- 预估价：只是给学生看的参考，必须带「预估」两个字（口径同宽屏那一列） -->
+            <span
+              v-if="(order.price === null || order.price === undefined)
+                && order.est_price !== null && order.est_price !== undefined"
+              class="tnum text-ink-3"
+              :title="order.est_pages ? `按下单时的 ${order.est_pages} 页估算，仅供参考` : '下单时的估算，仅供参考'"
+            >
+              预估 {{ priceLabel(order.est_price) }}
             </span>
             <span v-if="order.pricer_nickname" class="text-ink-3">
               由 {{ order.pricer_nickname }} 定价 {{ order.price_time ? shortTime(order.price_time) : '' }}
@@ -1276,6 +1394,21 @@ onBeforeUnmount(() => {
           style="background-color: var(--muted)"
         >
           {{ priceOrder.preset_content }}
+        </p>
+
+        <!-- 预估价：金额输入框已经按它预填了，这里说明它是**怎么来的**。
+             不写清楚的话，管理员会以为那个数字是上一任打印员填的，
+             或者以为学生自己报的价 —— 而它其实是按下单时的页数估的。 -->
+        <p
+          v-if="(priceOrder.price === null || priceOrder.price === undefined)
+            && priceOrder.est_price !== null && priceOrder.est_price !== undefined"
+          class="mb-3 text-xs leading-5 text-ink-3"
+        >
+          系统按下单时的
+          <template v-if="priceOrder.est_pages"> {{ priceOrder.est_pages }} 页 </template>
+          文件估算为
+          <span class="tnum font-semibold text-ink">¥{{ priceOrder.est_price.toFixed(2) }}</span>
+          （已预填，改不改由你定）。实际页数以你打开的文件为准。
         </p>
 
         <NInput

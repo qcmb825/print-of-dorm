@@ -16,7 +16,7 @@ import { ArrowLeft, Download, FileWarning, RefreshCw } from '@lucide/vue'
 import { NAlert, NButton, NSkeleton, NTimeline, NTimelineItem, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
-import type { OrderDetail, OrderLog } from '@/api/types'
+import { ORDER_SOURCE_LABELS, type OrderDetail, type OrderLog, type OrderSource } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import RoleTag from '@/components/RoleTag.vue'
@@ -84,6 +84,13 @@ interface Field {
   value: string | null
 }
 
+/** 来源的中文名。认不出的值（老数据 / 以后新增的渠道）回落到网页端 ——
+ *  这一格是给人看的，冒出一个「未知来源」只会让人停下来琢磨它什么意思，
+ *  而它没有任何可操作的后续动作（后端那一侧也是同一个口径）。 */
+function sourceLabel(source: OrderSource | null | undefined): string {
+  return ORDER_SOURCE_LABELS[(source ?? 'web') as OrderSource] ?? ORDER_SOURCE_LABELS.web
+}
+
 const specFields = computed<Field[]>(() => {
   const item = order.value
   if (!item) return []
@@ -126,7 +133,19 @@ const flowFields = computed<Field[]>(() => {
   if (!item) return []
   return [
     { label: '单号', value: pickupCodeLabel(item.pickup_code) },
+    { label: '来源', value: sourceLabel(item.source) },
     { label: '金额', value: priceLabel(item.price) },
+    //    预估价单独一行、标着「预估」两个字，**不与上面的「金额」合并**：
+    //    这一页是事后对账的地方（「这一单当初怎么定的价」），
+    //    而两者混在一格里，读的人分不清哪个数最后真的收了。
+    //    没估过的单（预设单、数不出页数的、功能上线前的老单）显示「—」。
+    {
+      label: '预估价',
+      value: item.est_price === null || item.est_price === undefined
+        ? null
+        : (item.est_pages ? `${priceLabel(item.est_price)}（按 ${item.est_pages} 页估算）`
+          : priceLabel(item.est_price)),
+    },
     { label: '接单人', value: item.claimer_nickname },
     { label: '接单时间', value: item.claim_time ? fullTime(item.claim_time) : null },
     { label: '计费人', value: item.pricer_nickname },

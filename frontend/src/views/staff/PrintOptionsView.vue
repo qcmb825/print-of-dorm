@@ -44,7 +44,9 @@ const editingPresetId = ref<number | null>(null)
 const editingPaperId = ref<number | null>(null)
 
 const presetForm = reactive({ content: '' })
-const paperForm = reactive({ name: '', remark: '' })
+/** price_delta 是字符串：原样交给后端（与金额同一个规矩，不在前端 Number()）。
+ *  空串表示「不填」—— 后端收到空值时会保留原值，不会被当成 0 清掉。 */
+const paperForm = reactive({ name: '', remark: '', price_delta: '' })
 
 const canSubmitPreset = computed(
   () => presetForm.content.trim().length > 0 && !saving.value,
@@ -60,6 +62,7 @@ function resetPaperForm(): void {
   editingPaperId.value = null
   paperForm.name = ''
   paperForm.remark = ''
+  paperForm.price_delta = ''
 }
 
 async function load(silent = false): Promise<void> {
@@ -107,7 +110,13 @@ async function submitPaper(): Promise<void> {
   saving.value = true
   // remark 允许为空，空就是空 —— 不填一个占位字符串，"没有备注"和
   // "备注写着「无」"在列表里必须能分开。
-  const payload = { name: paperForm.name.trim(), remark: paperForm.remark.trim() }
+  const payload = {
+    name: paperForm.name.trim(),
+    remark: paperForm.remark.trim(),
+    // 每页加价：空串**照样传**（后端把空值当「没填」处理、保留原值）。
+    // 传 undefined 也行，但显式一个键更好读 —— 两种都不会把 0.30 悄悄清成 0。
+    price_delta: paperForm.price_delta.trim(),
+  }
   try {
     if (editingPaperId.value === null) {
       await staffPrintOptionsApi.createPaper(payload)
@@ -134,6 +143,9 @@ function startEditPaper(item: PaperType): void {
   editingPaperId.value = item.id
   paperForm.name = item.name
   paperForm.remark = item.remark ?? ''
+  // 0 显示成空（不是 '0.00'）：加价 0 是绝大多数纸的情况，
+  // 每张纸都顶着一个 '0.00' 只会让人以为那是个要填的字段。
+  paperForm.price_delta = item.price_delta ? item.price_delta.toFixed(2) : ''
 }
 
 async function togglePresetActive(item: PrintPreset): Promise<void> {
@@ -371,9 +383,17 @@ onMounted(load)
               placeholder="例：80g，只有二楼那台机能出"
             />
           </NFormItem>
+          <NFormItem label="每页加价（元/页，可选）" :show-feedback="false">
+            <NInput
+              v-model:value="paperForm.price_delta"
+              placeholder="留空 = 不加价，例：A3 填 0.30"
+            />
+          </NFormItem>
           <p class="mb-3 text-xs text-ink-3">
             备注是给打印的人看的（哪台机器、多少克重）；学生端只在名称后面带一句。
             不选纸张也能下单。
+            加价只影响<strong>预估价</strong>（A3 比 A4 贵就填在这里，
+            可以留空、可以填 0，不能填负数）—— 系数与公式在「计价规则」页。
           </p>
 
           <div class="flex items-center gap-2">

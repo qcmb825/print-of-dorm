@@ -33,6 +33,23 @@ export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '
  *  改一处漏一处不会报错，只会让「未归类」那一项静默变成「全部订单」。 */
 export const ORDER_PRESET_FILTER_NONE = 'none'
 
+/** 订单来源。与后端 config.ORDER_SOURCE_* / ORDER_SOURCE_LABELS 对齐。
+ *
+ *  2026-09-21 之前来源是**写在学生备注里**的一句话（「通过 QQ 机器人下单」）——
+ *  备注是学生自己的字段，系统往里写字之后，订单台上就再也分不清
+ *  哪句是人写的、哪句是机器写的。现在它是独立字段，备注只放学生的原话。 */
+export type OrderSource = 'web' | 'bot'
+
+/** 与后端 config.ORDER_SOURCE_WEB / ORDER_SOURCE_BOT 一一对应。
+ *  加来源时这三处（类型 / 两个常量 / 标签表）一起加。 */
+export const ORDER_SOURCE_WEB: OrderSource = 'web'
+export const ORDER_SOURCE_BOT: OrderSource = 'bot'
+
+export const ORDER_SOURCE_LABELS: Record<OrderSource, string> = {
+  web: '网页端',
+  bot: 'QQ 机器人',
+}
+
 export type ColorType = 'black' | 'color'
 export type Duplex = 'single' | 'double'
 
@@ -257,6 +274,18 @@ export interface Order {
   price?: number | null
   priced_by?: number | null
   price_time?: string | null
+  /** 下单时按文件页数算出来的**预估**价（元），null = 没估过。
+   *
+   *  ⚠️ 它不是价格。最终金额只看 `price`（管理员接过单、看过文件之后自己确认的）。
+   *  显示时必须带「预估」两个字，也别拿它去预填任何提交给后端的字段 ——
+   *  预填只发生在一个地方：订单台的计费弹窗，那是给管理员一个起点，
+   *  他按不按保存、改成多少，仍然是他说了算。 */
+  est_price?: number | null
+  /** 预估价依据的页数（从上传的文件里数出来的）。null = 没数出来。 */
+  est_pages?: number | null
+  /** 这一单从哪条路下的。老数据/认不出的值按网页端看待
+   *  （后端 decorate 时不会替它编一个，未知就是未知，前端兜底成 web）。 */
+  source?: OrderSource | null
   owner_nickname?: string | null
   owner_dorm?: string | null
   /** 下单人的联系方式，**仅管理端列表与详情返回**。
@@ -420,6 +449,11 @@ export interface OrderDetail {
   claimed_by: number | null
   claimer_nickname: string | null
   price: number | null
+  /** 下单时的预估价与它依据的页数（含义同 Order.est_price）。 */
+  est_price: number | null
+  est_pages: number | null
+  /** 这一单从哪条路下的（含义同 Order.source）。 */
+  source: OrderSource | null
   priced_by: number | null
   pricer_nickname: string | null
   create_time: string | null
@@ -498,6 +532,10 @@ export interface PaperType {
   /** 给打印员看的一句话备注（克重、装订、放哪一格纸盒）。可以是 null ——
    *  为空时后端存的是 NULL 而不是空串，这里只要判一次。 */
   remark: string | null
+  /** 这种纸每页比标准价贵多少（元/页）。0 = 不加价，也是老数据的默认值。
+   *  只影响**预估价**：最终金额还是管理员自己填。
+   *  可以不带（老前端），后端不会因此把它清零（见 staffPrintOptionsApi.updatePaper）。 */
+  price_delta?: number
   is_active?: number
   create_time?: string | null
   update_time?: string | null
@@ -521,6 +559,59 @@ export interface PaperTypeListResponse extends ApiEnvelope {
   paper_types: PaperType[]
 }
 
+/* ---- 自动估价的计价规则（计价规则页）----
+ *
+ * 这一组数字**只决定预估价**。最终金额永远是管理员在订单台自己确认的那个
+ * （Order.price），所以：
+ *   · 界面上凡是用到它的地方都要写「预估」两个字；
+ *   · 改了这里的系数，**老订单的 est_price 不会跟着变**（那是下单时的快照）——
+ *     与预设正文、纸张名字抄进订单同一个道理，别去「顺手重算一遍」。
+ *
+ * 金额一律以「元」为单位的两位小数，与订单金额同一套口径。 */
+
+/** 保存时的输入：系数在接口上是**字符串**（原样传，不在前端 Number() ——
+ *  与下单页的备注同一个规矩，浮点一转就会出现 0.1+0.2 那种残渣）。 */
+export interface PriceRulesInput {
+  enabled: boolean
+  base_fee: string
+  min_price: string
+  page_black_single: string
+  page_black_double: string
+  page_color_single: string
+  page_color_double: string
+}
+
+/** 读回来的规则：服务端已经解析成数字了。 */
+export interface PriceRules {
+  enabled: boolean
+  base_fee: number
+  min_price: number
+  page_black_single: number
+  page_black_double: number
+  page_color_single: number
+  page_color_double: number
+}
+
+export interface PriceRulesResponse extends ApiEnvelope {
+  rules: PriceRules
+  /** 纸张清单（含加价）。纸张加价的**编辑入口在打印选项页**，这里只读着展示 ——
+   *  同一个字段有两个编辑框，迟早会出现「这边改了那边没改」的困惑。 */
+  papers: PaperType[]
+  /** 服务端翻好的几句人话（公式说明）。前端不自己拼：两边各写一套必然漂移。 */
+  lines: string[]
+  limits: { copies_min: number; copies_max: number }
+}
+
+export interface PricePreviewResponse extends ApiEnvelope {
+  /** 试算出来的金额；null = 这组参数算不出价（note 里写着原因） */
+  price: number | null
+  note: string
+  /** 这一页的单价（元/页），含纸张加价 —— 管理员核对自己填的系数时最需要它 */
+  unit_price: number
+  pages: number
+  copies: number
+}
+
 /** 用预设下单的请求体。**没有文件字段** —— 后端发现请求里带文件会直接 400
  *  （见 routes/orders.py 的 api_create_preset_order），前端把上传框藏起来
  *  只是让人看不见，规矩立在服务端。 */
@@ -536,6 +627,10 @@ export interface PresetOrderRequest {
 export interface UploadResponse extends ApiEnvelope {
   order_id: number
   pickup_code: string
+  /** 下单时算出来的预估价（元）；null = 没估出来（页数读不出、或自动估价没开）。
+   *  三个下单口（直传 / 分片 / 预设）都带这个键，只是预设单恒为 null。
+   *  下单成功那一屏要立刻把「预估 ¥x.xx」告诉学生，不该再让他去打一次列表接口。 */
+  est_price: number | null
 }
 
 /** 下单时选的打印选项，直传、分片、预设三条路共用。

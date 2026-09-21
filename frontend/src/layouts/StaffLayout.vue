@@ -2,6 +2,7 @@
 /** 管理端布局：桌面用左侧固定导航，窄屏收进抽屉（管理员也可能拿手机用）。 */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  CircleDollarSign,
   ClipboardCheck,
   History,
   LayoutDashboard,
@@ -49,6 +50,9 @@ const navItems = computed(() =>
     // 打印选项在公告管理后面、账号管理前面：它也是「内容维护」那一类，
     // 而账号管理涉及权限，习惯上放最后。这里对所有管理员可见，理由见该页顶部注释。
     { to: '/staff/print-options', label: '打印选项', icon: Printer, show: true },
+    // 计价规则紧跟打印选项：两者是同一件事的两半（纸张属性 / 价目表），
+    // 同时也都是所有管理员可改（后端 ROLE_ADMIN 起步）。
+    { to: '/staff/pricing', label: '计价规则', icon: CircleDollarSign, show: true },
     { to: '/staff/users', label: '账号管理', icon: Users, show: true },
   ].filter((item) => item.show),
 )

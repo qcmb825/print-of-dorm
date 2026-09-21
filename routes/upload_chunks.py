@@ -759,7 +759,7 @@ def api_chunk_complete(upload_id):
 
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——单号重摇、失败清理都只有一份实现。
-        order_id, pickup_code = create_order_from_saved_file(
+        order_id, pickup_code, est_price = create_order_from_saved_file(
             meta['filename'], final_path, color, duplex, remark, copies, paper)
     except Exception:
         # create_order_from_saved_file 失败时自己删了文件；这里兜住合并阶段抛出的异常
@@ -789,6 +789,9 @@ def api_chunk_complete(upload_id):
         'msg': '上传成功！订单已记录',
         'order_id': order_id,
         'pickup_code': pickup_code,
+        # 与直传那条路同一个字段（预估价可能为 null）：
+        # 大文件走分片、小文件走直传，两个下单口回给前端的东西必须一模一样。
+        'est_price': est_price,
     })
 
 

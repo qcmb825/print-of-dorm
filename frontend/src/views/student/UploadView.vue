@@ -83,8 +83,9 @@ const paperTypes = ref<PaperType[]>([])
  *  一个是「网络出问题了」。不给提示的话，学生只会以为这功能不存在。 */
 const optionsError = ref('')
 const optionsLoading = ref(true)
-/** 下单成功后的回执 */
-const receipt = ref<{ orderId: number; code: string; filename: string } | null>(null)
+/** 下单成功后的回执（类型与 announceOrder 的入参是同一个 —— 两处各写一份，
+ *  加一个字段时必然会漏掉一处，而漏掉的那处不报错，只是那一格不显示）。 */
+const receipt = ref<OrderInfo | null>(null)
 
 const selected = computed(() => fileList.value[0] ?? null)
 const selectedFile = computed(() => selected.value?.file ?? null)
@@ -242,7 +243,18 @@ async function loadPrefs(): Promise<void> {
   }
 }
 
-type OrderInfo = { orderId: number; code: string; filename: string }
+/** 下单成功的回执信息。
+ *
+ *  estPrice 是**预估价**（服务端按下单时的文件页数算的），null = 没估出来。
+ *  它只出现在两句「下次看不到」的地方：这条回执、以及成功面板 ——
+ *  学生下单后最想知道的两件事就是「单号是多少」和「大概多少钱」，
+ *  而后者在这一刻之后要翻到我的订单页才有（那边也有一份，口径相同）。 */
+type OrderInfo = {
+  orderId: number
+  code: string
+  filename: string
+  estPrice: number | null
+}
 
 /** 下单成功后的那一套：先出跨换场的回执，再跳到我的订单。
  *
@@ -254,10 +266,15 @@ type OrderInfo = { orderId: number; code: string; filename: string }
  *  面板会跟着跳转一起消失，而回执**跨过换场还在**，学生至少多一秒看清它。
  *  目标页名从路由表取，和守卫算的是同一份事实来源（与 LoginView 一致）。 */
 function announceOrder(info: OrderInfo): void {
+  // 预估价只在这一行里带一下（「预估」两个字不能省，它还不是最终价）：
+  // 回执是学生下单后唯一会认真看的一屏，而金额正是他此刻最想知道的数字之一。
+  const estimate = info.estPrice === null
+    ? ''
+    : ` · 预估 ¥${info.estPrice.toFixed(2)}`
   showReceipt({
     code: 'ORDER SUBMITTED',
     title: '下单成功',
-    detail: `单号 ${pickupCodeLabel(info.code)} · ${info.filename}`,
+    detail: `单号 ${pickupCodeLabel(info.code)} · ${info.filename}${estimate}`,
     target: (router.resolve('/my-orders').meta.title as string | undefined) ?? '我的订单',
   })
   // **不 await**：路由守卫要是抛出来，会被下面那个 catch 逮成"提交失败，请稍后重试" ——
@@ -292,6 +309,8 @@ async function submit(): Promise<void> {
         orderId: data.order_id,
         code: data.pickup_code,
         filename: preset.content,
+        // 预设单恒为 null（没有文件可数页数，见后端 create_preset_order）
+        estPrice: data.est_price,
       }
       receipt.value = info
       reset()
@@ -314,7 +333,12 @@ async function submit(): Promise<void> {
       },
     )
     activeChunkUploadId.value = null
-    const info = { orderId: data.order_id, code: data.pickup_code, filename: file.name }
+    const info = {
+      orderId: data.order_id,
+      code: data.pickup_code,
+      filename: file.name,
+      estPrice: data.est_price,
+    }
     receipt.value = info
     reset()
     announceOrder(info)
@@ -399,6 +423,16 @@ onMounted(async () => {
               </div>
               <NButton size="small" quaternary @click="receipt = null">再下一单</NButton>
             </div>
+            <!-- 预估价：跟单号并排，因为这两个数是学生下单后立刻要记住的。
+                 「预估」两个字**必须留着** —— 它按提交的文件页数算的，
+                 最终金额由管理员看过文件之后核定。 -->
+            <p
+              v-if="receipt.estPrice !== null"
+              class="tnum mt-2 text-sm text-ink-2"
+            >
+              预估 <span class="font-semibold">¥{{ receipt.estPrice.toFixed(2) }}</span>
+              <span class="text-xs text-ink-3">· 以管理员核定为准</span>
+            </p>
             <p class="mt-3 text-xs text-ink-3">
               管理员接单打印后，凭上面的单号到打印点取件。
             </p>

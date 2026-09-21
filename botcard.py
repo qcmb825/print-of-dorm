@@ -673,8 +673,18 @@ def _rows_orders(draw, y, x0, x1, payload):
                        dot=(status == ST_PRINTING))    # 机器正在做 → 带点
         #    `copies` 为 NULL 是「未记录」（本次升级前的老订单），不是 1 份 ——
         #    写 1 是替用户编数字，而且与邮件、网页端「未记录」的口径对不上。
-        bits = [('%s 份' % item['copies']) if item.get('copies') else '份数未记录',
-                '未计费' if item.get('price') is None else '%.2f 元' % item['price']]
+        #
+        #    金额这一格：定过价就是实际金额；还没定价但有**预估价**时写
+        #    「预估 x.xx 元」—— 「预估」两个字不能省，否则学生会把一个参考值
+        #    当成要收的钱（那是下单时按页数算的，管理员还没看过文件）。
+        #    两个都没有才写「未计费」。
+        if item.get('price') is not None:
+            money = '%.2f 元' % item['price']
+        elif item.get('est_price') is not None:
+            money = '预估 %.2f 元' % item['est_price']
+        else:
+            money = '未计费'
+        bits = [('%s 份' % item['copies']) if item.get('copies') else '份数未记录', money]
         draw.text((x0 + chip_w + 16, y + 52), ' · '.join(bits),
                   font=_font('cjk', T_META), fill=INK_3)
         draw.text((x1, y + 52), (item.get('create_time') or '')[5:16],

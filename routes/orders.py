@@ -25,6 +25,7 @@ from config import (
     ORDER_LOG_WITHDRAW,
     ORDER_PRESET_FILTER_NONE,
     ORDER_SEARCH_MAX,
+    ORDER_SOURCE_WEB,
     ORDER_STATUSES,
     ORDER_STATUSES_MANUAL,
     ORDER_STATUSES_QUEUE,
@@ -44,6 +45,7 @@ from config import (
 from db import (db_conn, find_paper_type, find_preset, get_db, insert_order_row,
                 log_order_event)
 from mail import user_mailbox
+import pricing
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import (allowed_file, content_signature_error, display_name, mask_nickname,
                    parse_copies, parse_price, positive_int)
@@ -291,6 +293,7 @@ _ORDER_FROM = '''
 _ORDER_SELECT = '''
     SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
            o.user_id, o.claimed_by, o.price,
+           o.source, o.est_price, o.est_pages,
            o.preset_id, o.preset_content, o.copies,
            o.paper_type_id, o.paper_name, o.paper_remark,
            COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
@@ -449,8 +452,20 @@ def _preset_label(conn, preset_id):
     return (content[:40] + '…') if len(content) > 40 else content
 
 
-def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies, paper=None):
-    """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code)。
+def _estimate_note(est_price):
+    """给留痕用的一句话：这单当时估了多少（没估过就是空串）。
+
+    只在**有预估价**时才有内容 —— 一句「预估：无」在留痕里是纯噪音，
+    而老订单（这个功能之前下的单）本来就没有预估价。
+    """
+    if est_price is None:
+        return ''
+    return '（下单时预估 %.2f 元）' % est_price
+
+
+def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies,
+                                paper=None, source=ORDER_SOURCE_WEB):
+    """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code, est_price)。
 
     单片直传（/api/upload）和分片上传合并完成之后都走这里，
     写库失败回滚、删孤儿文件的动作就只有一份。复制成两份的话，
@@ -468,10 +483,25 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
     paper 是已校验过的纸张类型字典（含 id / name / remark），学生没选就是 None。
     纸张的名字和备注**抄进订单**而不是只存 id：管理员随时能改名，
     只存 id 的话，三个月前那一单的「用什么纸」会跟着今天的改名一起变。
+
+    source 是这一单从哪条路下的（网页 / 机器人）。**由调用方声明，不从请求体里读** ——
+    让客户端自己填，等于把「这单是机器人下的」变成一句可以让别人代说的话。
+
+    **预估价在这里算**（不是在外面）：三条下单路径（直传 / 分片合并 / 机器人）
+    都走这个函数，写在这里才不会有「机器人下的单没有预估价」这种一半生效的情形。
+    页数读不出来、规则没启用、解析出错都只是「这单没有预估价」，
+    绝不因此让下单失败（见 pricing 模块注释）。
     """
     conn = None
     try:
         conn = get_db()
+        est_pages, est_note = pricing.count_pages(save_path, original_name)
+        est_price, est_reason = pricing.estimate_for_order(
+            conn, est_pages, copies, color, duplex, paper)
+        if est_price is None:
+            # 记一句为什么没估出来就够，别把 note 写进库：
+            # 它是给人看的一句话，不是订单的属性，界面上的「预估」两个字已经说明了一切。
+            logger.info('订单预估价为空（%s / %s）：文件=%s', est_note, est_reason, original_name)
         order_id, pickup_code = insert_order_row(conn, {
             'user_id': g.user['id'],
             'filename': original_name,
@@ -484,6 +514,12 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
             'paper_type_id': paper['id'] if paper else None,
             'paper_name': paper['name'] if paper else None,
             'paper_remark': paper['remark'] if paper else None,
+            'source': source,
+            'est_price': est_price,
+            #    页数只在**真的估出价**时才存：存一个「读了 12 页、但算出来是 0」
+            #    的孤零零数字，界面上会显示「按 12 页估」却又没有价格，读的人
+            #    只会以为价格丢了。
+            'est_pages': est_pages if est_price is not None else None,
         })
         # 留痕和订单在同一个事务里。订单落了库却没有「谁什么时候传的」这一条，
         # 详情页的操作记录就得从半路开始讲 —— 而第一条恰恰是最该有的那条。
@@ -491,7 +527,7 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
                   '上传文件「%s」并提交打印%s' % (original_name, describe_print_options(copies, paper)),
                   conn=conn)
         conn.commit()
-        return order_id, pickup_code
+        return order_id, pickup_code, est_price
     except Exception:
         if conn is not None:
             conn.rollback()
@@ -522,7 +558,8 @@ def describe_print_options(copies, paper):
 
 
 
-def create_preset_order(preset, copies, paper, color, duplex, remark):
+def create_preset_order(preset, copies, paper, color, duplex, remark,
+                        source=ORDER_SOURCE_WEB):
     """用预设打印服务下单 —— 这一单**没有文件**，返回 (order_id, pickup_code)。
 
     filename / file_path 存空字符串，不是编一个假路径：
@@ -536,6 +573,11 @@ def create_preset_order(preset, copies, paper, color, duplex, remark):
     只存 id 的话，三个月前那一单的打印要求会跟着今天的管理操作一起变。
     打印员拿着被改过的要求去核对一份早就打完的活，谁也说不清当时要的是什么。
     preset_id 一并留着，是为了能回答「这一单当初用的是哪条预设」。
+
+    **预设单没有预估价**：预估要按页数算，而这类单没有文件 —— 它要打的东西
+    就写在预设正文里（「学位论文胶装」这种）。按 1 页去估会给出一个荒唐的低价，
+    按「预设正文长度」折算更是凭空发明一个数字。所以一律留空，
+    由管理员看过实物（或者本来就按服务定价）再填。
     """
     conn = None
     try:
@@ -554,6 +596,9 @@ def create_preset_order(preset, copies, paper, color, duplex, remark):
             'paper_type_id': paper['id'] if paper else None,
             'paper_name': paper['name'] if paper else None,
             'paper_remark': paper['remark'] if paper else None,
+            'source': source,
+            'est_price': None,
+            'est_pages': None,
         })
         log_event(order_id, ORDER_LOG_CREATE,
                   '使用预设打印服务下单：%s%s'
@@ -597,7 +642,10 @@ def resolve_print_options(conn, data):
         # 学生打开页面之后管理员刚好把它停用了。这里只提醒刷新，
         # 不悄悄替他换一个 —— 换掉的那张纸可能正好是打不了的。
         return None, '这个纸张类型已经停用了，刷新页面重新选择'
-    return {'id': row['id'], 'name': row['name'], 'remark': row['remark']}, None
+    # price_delta 也带上：下单时的预估价要用它（A3 比 A4 贵就靠这一项）。
+    # 它**不进 orders**（订单里不存价格系数，只存名字），所以不属于快照字段。
+    return {'id': row['id'], 'name': row['name'], 'remark': row['remark'],
+            'price_delta': row['price_delta']}, None
 
 
 @bp.route('/api/upload', methods=['POST'])
@@ -679,7 +727,7 @@ def api_upload():
             os.remove(save_path)
             return quota_error
 
-        order_id, pickup_code = create_order_from_saved_file(
+        order_id, pickup_code, est_price = create_order_from_saved_file(
             original_name, save_path, color, duplex, remark, copies, paper)
     except Exception:
         # 落盘之后任何一步失败都不能把文件留在盘上：这些文件没有任何订单引用，
@@ -700,12 +748,15 @@ def api_upload():
                 order_id, g.user['nickname'], original_name, file_size // 1024,
                 color, duplex, copies, paper['name'] if paper else '未指定',
                 pickup_code, client_ip())
-    # 只返回订单号和单号，不暴露服务器绝对路径
+    # 只返回订单号和单号，不暴露服务器绝对路径。
+    # est_price 一并回给前端：下单成功那一屏要马上告诉学生「预估多少钱」，
+    # 让他再打一次列表接口去取一个刚算出来的数没有道理。
     return jsonify({
         'code': 0,
         'msg': '上传成功！订单已记录',
         'order_id': order_id,
-        'pickup_code': pickup_code
+        'pickup_code': pickup_code,
+        'est_price': est_price,
     })
 
 
@@ -774,7 +825,11 @@ def api_create_preset_order():
         'code': 0,
         'msg': '下单成功！用的是预设服务，不需要上传文件',
         'order_id': order_id,
-        'pickup_code': pickup_code
+        'pickup_code': pickup_code,
+        # 恒为 null（预设单没有文件可数页数），但**键要在**：
+        # 前端两个下单口共用一套类型，少一个键在 TS 里是「可选」、
+        # 在运行时是 undefined，界面上就会从「预估：—」变成一整行不显示。
+        'est_price': None,
     })
 
 
@@ -871,6 +926,7 @@ def api_order_detail(order_id):
         row = conn.execute('''
             SELECT o.id, o.filename, o.file_path, o.color_type, o.duplex, o.remark,
                    o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
+                   o.source, o.est_price, o.est_pages,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
                    COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
@@ -978,7 +1034,8 @@ def api_price_order(order_id):
 
     with db_conn() as conn:
         row = conn.execute(
-            'SELECT status, price, claimed_by FROM orders WHERE id = ?', (order_id,)).fetchone()
+            'SELECT status, price, claimed_by, est_price FROM orders WHERE id = ?',
+            (order_id,)).fetchone()
         if row is None:
             return jsonify({'code': 404, 'msg': '订单不存在'}), 404
         if row['status'] == ST_DONE:
@@ -1024,7 +1081,11 @@ def api_price_order(order_id):
                 (amount, g.user['id'], ST_PENDING, order_id, ST_UNPRICED) + owner_args)
             action, reply = 'price_order', f'已计费 {amount:.2f} 元，可以开始打印了'
             log_action = ORDER_LOG_PRICE
-            log_detail = f'核定金额 {amount:.2f} 元，订单进入「{ST_PENDING}」'
+            # 把预估价一起写进留痕：这是**这单唯一能事后回答「当时估了多少、核的是多少」**
+            # 的地方。自动估价上线之后，账单上出现的分歧几乎都会是「预估价和实际不符」，
+            # 而只有最终金额的话，那种分歧根本看不出来。
+            log_detail = f'核定金额 {amount:.2f} 元，订单进入「{ST_PENDING}」' \
+                         + _estimate_note(row['est_price'])
         else:
             # 改价要多对上两个值才认：
             #   状态 —— 否则可能改到一张在这中间被推成「已取件」的单上，
@@ -1077,10 +1138,11 @@ def api_price_order(order_id):
     audit_action(action,
                  '订单 #%s 金额 %s -> %.2f 元，状态=%s'
                  % (order_id, row['price'] if row['price'] is not None else '未计费',
-                    amount, row['status']))
+                    amount, row['status'])
+                 + _estimate_note(row['est_price']))
     logger.info('订单 #%s 计费 %.2f 元（原 %s）操作人=%s(%s) ip=%s',
                 order_id, amount, row['price'], g.user['nickname'], g.user['role'], client_ip())
-    return jsonify({'code': 0, 'msg': reply, 'price': amount})
+    return jsonify({'code': 0, 'msg': reply, 'price': amount, 'est_price': row['est_price']})
 
 
 
@@ -1471,7 +1533,7 @@ def api_my_orders():
     with db_conn() as conn:
         rows = conn.execute('''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
-                   o.claimed_by, o.price,
+                   o.claimed_by, o.price, o.est_price, o.est_pages,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
                    datetime(o.create_time, 'localtime') AS create_time,
