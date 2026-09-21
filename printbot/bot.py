@@ -1034,7 +1034,7 @@ def reply_withdraw(client, qq, argument):
     代替 —— 顺手也把订单号再核对一次。
     """
     if not argument or not argument.isdigit():
-        client.send_private_msg(qq, '用法：「撤回 单号」，比如「撤回 1458」。\n'
+        client.send_private_msg(qq, '用法：「撤回 25124」（把例子换成你的单号）。\n'
                                     '只有还没被接单的单能撤回；撤回后订单记录和文件都会删除、'
                                     '不能恢复。发「订单」可以看到自己的单号。')
         return
