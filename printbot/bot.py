@@ -291,7 +291,7 @@ _ZH_EXACT = {
     '取消': 'cancel',
 }
 _ZH_PREFIX = {
-    # 2026-09-21：用户面前只保留一个标识 —— **单号**（4 位数字，下单时生成）。
+    # 2026-09-21：用户面前只保留一个标识 —— **单号**（5 位数字、首位非 0，下单时生成）。
     # 命令词跟着显示名走（两套词会冒出「撤回单号 1234」这种混搭），
     # 但「单号」留作兼容别名：老消息、老习惯里这么写的还认。
     '单号': 'code', '取件号': 'code', '单号': 'code', '查件': 'code',
@@ -950,7 +950,7 @@ def reply_orders(client, qq):
             lines.append('%s｜%s｜%s\n　%s' % (
                 order.get('pickup_code') or '—', order.get('status'), price_text,
                 order.get('title') or '（无标题）'))
-        lines.append('查某一单：发「单号 1234」；撤回还没接单的单：发「撤回 1234」。')
+        lines.append('查某一单：发「单号 25124」；撤回还没接单的单：发「撤回 25124」。')
         return '\n'.join(lines)
 
     _send_card_or_text(client, qq, 'orders', text)
@@ -959,8 +959,10 @@ def reply_orders(client, qq):
 def reply_code(client, qq, argument):
     """查一张单：**单号即句柄**（2026-09-21 起不再有内部编号）。"""
     if not argument or not argument.isdigit():
-        client.send_private_msg(qq, '用法：单号 1234（4 位数字，下单时给你的那个；'
-                                    '发「订单」看列表）')
+        #    别写死位数（升过一次位：4 → 5）：写成例子就够了，
+        #    写「4 位」会让拿着 5 位单号的人以为自己的号不对。
+        client.send_private_msg(qq, '用法：「单号 25124」（下单时给你的那串数字；'
+                                    '忘了就发「订单」看列表）')
         return
     resp = api.order(qq, argument)
     if resp.get('code') != 0:

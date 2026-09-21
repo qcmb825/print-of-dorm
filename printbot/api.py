@@ -132,7 +132,7 @@ def orders(qq):
 def order(qq, handle):
     """按**单号**查一张单（状态 + 单号）。
 
-    2026-09-21 起用户面前只有一个标识：单号（4 位数字）。
+    2026-09-21 起用户面前只有一个标识：单号（5 位数字，首位非 0；老单可能还是 4 位）。
     内部自增 ID 不再出库，查询与撤回都拿它来。
     """
     return _request('GET', '/api/bot/order?%s' % urllib.parse.urlencode(
