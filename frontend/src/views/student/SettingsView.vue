@@ -202,10 +202,15 @@ const needsQq = computed(() => !!account.value && !account.value.qq)
 
 async function load(resetForm = true): Promise<void> {
   loading.value = true
+  overviewError.value = false
   try {
-    overview.value = await authApi.overview()
-    if (resetForm) fillForm()
+    const data = await authApi.overview()
+    overview.value = data
+    //    「不回填」要在**响应到达这一刻**再判一次：调用方传进来的 resetForm 是
+    //    发请求之前算的，用户在这几百毫秒里改过的字段照样会被冲掉（前端审计）。
+    if (resetForm && !profileDirty.value) fillForm()
   } catch (error) {
+    overviewError.value = true
     notify.error(error instanceof ApiError ? error.message : '加载设置失败 · 稍后重试')
   } finally {
     loading.value = false
@@ -305,6 +310,8 @@ const prefsForm = reactive({
 const savedPrefs = ref<UserPrefs | null>(null)
 const prefsLines = ref<string[]>([])
 const savingPrefs = ref(false)
+/** 资料/用量没拉到。原先只有一条 toast，页面本身空白 —— 用户不知道能重试。 */
+const overviewError = ref(false)
 /** 偏好没拉到（网络/接口错）。区分「正在载入」与「没拉到」——
  *  两者在界面上长得一样的话，用户只能干等一个永远不会来的响应。 */
 const prefsError = ref(false)
@@ -496,6 +503,16 @@ onMounted(() => {
 
     <div v-if="loading && !overview" class="flex flex-col gap-3">
       <NSkeleton v-for="index in 4" :key="index" height="120px" :sharp="false" />
+    </div>
+
+    <!-- 资料/用量没拉到：给一个明确的「再试一次」。
+         只弹一条 toast 的话，页面是空白的，用户只能刷新整页。 -->
+    <div v-else-if="overviewError && !overview" class="grid place-items-center py-8">
+      <div class="bracket-lg w-full max-w-md px-6 py-8 text-center" style="--bracket-arm: 22px">
+        <p class="m-0 text-sm font-semibold">资料没拉到</p>
+        <p class="mt-1 mb-3 text-xs text-ink-3">可能是网络或服务器临时的问题，再试一次通常就好。</p>
+        <NButton size="small" :loading="loading" @click="refresh()">再试一次</NButton>
+      </div>
     </div>
 
     <template v-else-if="overview">
