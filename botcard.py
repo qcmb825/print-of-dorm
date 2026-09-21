@@ -68,7 +68,7 @@ STATUS_INK = {
     '待打印': (150, 154, 150),
     '打印中': (0, 255, 162),
     '可取件': (255, 250, 0),
-    '已取件': (120, 126, 120),
+    '已取件': (150, 156, 150),
 }
 
 # ---- 版面（1080px 宽；字号按调研的「标题:副标:正文:注释」阶梯放大）----------
@@ -652,8 +652,13 @@ def _rows_tickets(draw, y, x0, x1, payload):
                   fill=INK_4)
         draw.text((x0 + 190, y + 1),
                   _truncate(draw, (item.get('subject') or '').replace('\n', ' '),
-                            _font('cjk', T_BODY), x1 - x0 - 190 - 240),
+                            _font('cjk', T_BODY), x1 - x0 - 190 - 260),
                   font=_font('cjk', T_BODY), fill=INK)
+        #    时间戳放在**第一行**的右端：原先它和第二行的摘要挤在同一行，
+        #    摘要只剩 270px（约 9 个汉字），被截成「管理员：已经重新…」——
+        #    省略号既像截断又像分隔符，用户一个字都读不到（终审的意见）。
+        draw.text((x1, y + 6), (item.get('update_time') or '')[5:16],
+                  font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
         #    「进行中」不再用黄：黄在这套语言里只给「你现在能行动的事」（可取件），
         #    工单开着不需要用户做任何事，用中性白就行。
         _chip(draw, x0 + 190, y + 50, '进行中' if opened else '已关闭',
@@ -665,15 +670,11 @@ def _rows_tickets(draw, y, x0, x1, payload):
             _chip(draw, chip_x, y + 50, '有新回复', MAGENTA, min_width=104)
         last = (item.get('last_body') or '').replace('\n', ' ')
         if last:
-            # 摘要放**固定列**：跟着状态牌宽度浮动的话，两行的摘要起点会差十几像素，
-            # 一列字看着就散了（复评指出的）。
-            #    摘要列右移：品红胶囊的右缘在 x0+92+96+16+104+4≈x0+312，
-            #    原先摘要从 x0+340 起，两者只隔 28px —— 缩到手机上就是撞在一起。
-            draw.text((x0 + 440, y + 56),
-                      _truncate(draw, last, _font('cjk', T_META), max(120, x1 - x0 - 440 - 170)),
+            #    摘要从**固定列**起（跟着胶囊宽度浮动的话，两行的摘要起点会差十几像素），
+            #    而且整行都归它 —— 时间戳已经在第一行了（见上）。
+            draw.text((x0 + 440, y + 58),
+                      _truncate(draw, last, _font('cjk', T_META), max(160, x1 - x0 - 440 - 8)),
                       font=_font('cjk', T_META), fill=INK_3)
-        draw.text((x1, y + 56), (item.get('update_time') or '')[5:16],
-                  font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
         #    分隔线画在本行之内（同上：先画线、再推进）
         draw.rectangle([x0, y + DIVIDER_DY, x1, y + DIVIDER_DY + 3], fill=_over(INK, 34))
         y += ROW_H
@@ -826,13 +827,18 @@ def _watermark_of(kind, payload, rows):
     """
     if kind == 'orders':
         value = sum(1 for o in (payload.get('orders') or []) if o.get('status') == ST_READY)
+        label = '可取件'
     elif kind == 'tickets':
         value = sum(1 for x in (payload.get('tickets') or []) if x.get('unread'))
+        label = '未读回复'
     elif kind == 'me':
         value = (payload.get('orders') or {}).get('ready') or 0
+        label = '待我取件'
+    elif kind == 'presets':
+        value, label = rows, '项服务'
     else:
-        value = rows
-    return '%02d' % value if value else ''
+        value, label = rows, '条命令'
+    return ('%02d' % value if value else ''), label
 
 
 def _count_of(kind, payload):
@@ -958,16 +964,25 @@ def render(kind, payload):
     # 右上角的中空巨型读数：**画在玻璃之上**。
     # 它是「印在面板上的主读数」，不是背景纹理 —— 画进背景层会被模糊和染色压到看不见
     # （实测：改成背景元素之后整枚水印直接消失）。官方那套里它也是压在内容上层的水印。
-    mark = _watermark_of(kind, payload, rows)
+    mark, mark_label = _watermark_of(kind, payload, rows)
     if mark:
         #    落位在**元信息行的右端**（那半行本来空着），与上方的 eyebrow 组成
-        #    官方那对「宽字距小标签 + 中空巨型读数」。基线对齐元信息行，
-        #    否则它会压到下面那张表的表头上（实测压得完全读不出来）。
-        #    描边提到 96（≈#6a6a6a，对面板约 2.8:1）：先前 52 在 400px 下糊成一团灰雾，
-        #    而它是全卡最响的一层，不该是「最看不清的那一层」（复评实测）。
-        draw.text((x1, box[1] + PANEL_PAD + 136), mark, font=_font('display', 104, 700),
-                  fill=(0, 0, 0, 0), stroke_width=3,
-                  stroke_fill=_over(INK, 96, PANEL_SOLID), anchor='rs')
+        #    官方那对「宽字距小标签 + 中空巨型读数」。
+        #    ⚠️ 三条实测结论：
+        #    ① 基线压到元信息行那一行（再高就撞 eyebrow、再低就压到表格的表头）；
+        #    ② 描边给 96（≈#6a6a6a）：52 那版在 400px 下糊成一团灰雾，
+        #       而它是全卡最响的一层，不该是最看不清的一层；
+        #    ③ **下面必须有一行小字写明它数的是什么** —— 光一个「02」，
+        #       读者会以为「4 行的卡为什么写 2」，或者以为有东西没显示出来。
+        mark_font = _font('display', 104, 700)
+        mark_y = box[1] + PANEL_PAD + 136
+        draw.text((x1, mark_y), mark, font=mark_font, fill=(0, 0, 0, 0),
+                  stroke_width=3, stroke_fill=_over(INK, 96, PANEL_SOLID), anchor='rs')
+        #    标签放在数字**左侧**、与它同基线。
+        #    ⚠️ 放在数字下方会撞到表格表头（两者都右对齐在同一条轴上），
+        #    放在上方会撞 eyebrow —— 只有左侧这一块是空的。
+        draw.text((x1 - draw.textlength(mark, font=mark_font) - 18, mark_y), mark_label,
+                  font=_font('cjk', T_META), fill=INK_4, anchor='rs')
 
     # 底部机架条：在**面板之外**（见 _chassis 的说明）
     _chassis(draw, box[3], x0, x1, payload)
