@@ -50,6 +50,7 @@ const visibleOrders = computed(() =>
  *  是这类「显示偏好」最难受的一种坏法（下次打开就变回去，像抽风）。 */
 async function toggleHideDone(value: boolean): Promise<void> {
   if (savingHideDone.value) return
+  hideDoneTouched = true
   const previous = hideDone.value
   hideDone.value = value
   savingHideDone.value = true
@@ -64,11 +65,16 @@ async function toggleHideDone(value: boolean): Promise<void> {
 }
 
 /** 一进页面就把偏好读出来（含设置页改过的那份）。读不到就保持默认（不隐藏）——
- *  这一条读失败不该拦住订单列表本身。 */
+ *  这一条读失败不该拦住订单列表本身。
+ *
+ *  ⚠️ 用户在首屏请求还没回来时点了开关的话，**不要**再拿服务端那份把它翻回去：
+ *  那一瞬间他刚点亮、界面上是亮的，被慢响应覆盖就成了「开关自己弹回去」。
+ *  用一个 touched 标记挡住这种竞态。 */
+let hideDoneTouched = false
 async function loadPrefs(): Promise<void> {
   try {
     const response = await authApi.prefs()
-    hideDone.value = response.prefs.hide_done_orders
+    if (!hideDoneTouched) hideDone.value = response.prefs.hide_done_orders
   } catch {
     // 静默：订单列表照常显示，隐藏与否只是个显示偏好
   }
@@ -205,15 +211,20 @@ async function withdraw(order: Order): Promise<void> {
       <template #actions>
         <!-- 「隐藏已取件」是个**偏好**（存在服务端），所以这里是个开关而不是页内筛选：
              点完就落库，下次进来还是这个状态，机器人「订单」也跟着变。 -->
-        <label class="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-3">
+        <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里点文字没反应 -->
+        <div
+          class="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-3"
+          @click="toggleHideDone(!hideDone)"
+        >
           <NSwitch
             :value="hideDone"
             size="small"
             :loading="savingHideDone"
+            aria-label="隐藏已取件"
             @update:value="toggleHideDone"
           />
           隐藏已取件
-        </label>
+        </div>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
           刷新

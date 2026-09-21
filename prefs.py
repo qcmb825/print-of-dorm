@@ -16,6 +16,8 @@ import sqlite3
 from datetime import datetime
 
 from config import (
+    COPIES_MAX,
+    COPIES_MIN,
     PREF_ORDERS_PAGE_DEFAULT,
     PREF_ORDERS_PAGE_MAX,
     PREF_ORDERS_PAGE_MIN,
@@ -109,6 +111,18 @@ def parse_clock(text):
     return hour * 60 + minute
 
 
+def valid_quiet_pair(start, end):
+    """这一对免打扰时间能不能用。
+
+    `22:00-22:00` 这种 start == end 是**没意义**的：`in_quiet_hours` 会把它当成
+    「没设」（判据就是 start == end），可它又会被存进库、`describe` 还会说
+    「已设为 22:00 - 22:00，会攒着」—— 用户以为自己设上了（审计抓到的）。
+    网页端拦了这一条，机器人那条命令没有，所以判定收口到这里，两边都问它。
+    """
+    a, b = parse_clock(start), parse_clock(end)
+    return a is not None and b is not None and a != b
+
+
 def in_quiet_hours(prefs, when=None):
     """此刻是否落在免打扰时段。跨零点（22:00-08:00）也要判对。"""
     start = parse_clock(prefs.get('quiet_from'))
@@ -156,10 +170,15 @@ def save_prefs(user_id, fields):
             value = 1 if value else 0
         elif key == 'orders_page_size':
             value = _clamp_page_size(value)
-        elif key in ('default_copies', 'default_paper_type_id'):
-            #    ⚠️ 不能直接 `int(value)`：`'abc'` / `[1]` / `'3.5'` 会抛 ValueError，
-            #    而两个路由（/api/me/prefs、/api/bot/prefs）都没包 try —— 用户
-            #    随便填一个非数字就是 500（本该 400）。这里收口成「认不出就当没设」。
+        elif key == 'default_copies':
+            #    ⚠️ 两件事：① 不能直接 `int(value)`（`'abc'` / `'3.5'` / True 都会出问题）；
+            #    ② **必须夹到 COPIES_MIN..COPIES_MAX** —— 设置页和机器人原先允许存到 99，
+            #    而下单接口只收 1-50，于是「设了默认 60 份」的人每次下单都被 400 顶回来，
+            #    而且他看到的预填值就是那个非法值（用户端最要命的那种坏法）。
+            value = _as_int(value)
+            if value is not None:
+                value = max(COPIES_MIN, min(COPIES_MAX, value))
+        elif key == 'default_paper_type_id':
             value = _as_int(value)
         elif isinstance(value, str):
             value = value.strip()
@@ -199,7 +218,9 @@ def describe(prefs):
     if prefs['default_paper_type_id']:
         parts.append('纸张 #%s' % prefs['default_paper_type_id'])
     lines.append('默认打印参数：%s' % ('、'.join(parts) if parts else '未设置（每次都会问你）'))
-    lines.append('订单列表：%s已取件的单 · %s条/次'
+    #    「隐藏已取件」两端都生效；「每页」只管**机器人**一次列几条（网页是自己的
+    #    滚动列表，没有分页）—— 不写清楚用户会以为网页端也按它分页。
+    lines.append('订单列表：%s已取件的单 · 机器人每次 %s 条'
                  % ('隐藏' if prefs['hide_done_orders'] else '包含', prefs['orders_page_size']))
     lines.append('机器人回复：%s' % ('表格用卡片' if prefs['card_replies'] else '一律纯文本'))
     return lines

@@ -204,14 +204,19 @@ const defaultsApplied = computed(() => {
   return !!(d.color || d.duplex || d.paperTypeId || d.copies !== COPIES_DEFAULT)
 })
 
+/** 表单里有没有被用户动过。预填**只填空着的字段** ——
+ *  偏好和纸张清单是两个请求，慢的那几百毫秒里用户完全可能已经点好了颜色，
+ *  这时再套一次默认值就是「我选的怎么自己变了」（前端审计抓到）。 */
+const formTouched = ref(false)
+
 function applyDefaults(): void {
   const d = formDefaults.value
-  if (d.color) color.value = d.color
-  else color.value = 'black'
-  if (d.duplex) duplex.value = d.duplex
-  else duplex.value = 'single'
-  copies.value = d.copies
-  paperTypeId.value = d.paperTypeId
+  if (!formTouched.value) {
+    color.value = d.color ?? 'black'
+    duplex.value = d.duplex ?? 'single'
+    copies.value = d.copies
+    paperTypeId.value = d.paperTypeId
+  }
 }
 
 async function loadPrefs(): Promise<void> {
@@ -333,8 +338,12 @@ onMounted(async () => {
   await Promise.all([refreshPending(), loadOptions(), loadPrefs()])
   // 偏好里的默认纸张可能已经被管理员停用或删掉了 —— 那种情况下下拉框里
   // 找不到它的名字，会显示成一个裸 id（看着像乱码）。对一次账，不在清单里就当没设。
-  if (paperTypeId.value !== null && !paperTypes.value.some((item) => item.id === paperTypeId.value)) {
+  // ⚠️ 只在清单**真的拉到了**时对账：拉失败时 paperTypes 是空的，
+  //    照对不误会把一个好好的默认纸当成「已删除」丢掉（而且用户看不到任何提示）。
+  if (!optionsError.value && paperTypeId.value !== null
+      && !paperTypes.value.some((item) => item.id === paperTypeId.value)) {
     paperTypeId.value = null
+    formDefaults.value.paperTypeId = null
   }
 })
 </script>
@@ -560,13 +569,13 @@ onMounted(async () => {
 
       <div class="grid gap-4 sm:grid-cols-2">
         <NFormItem label="打印颜色" :show-feedback="false" class="!mb-0">
-          <NRadioGroup v-model:value="color" :disabled="submitting">
+          <NRadioGroup v-model:value="color" :disabled="submitting" @update:value="formTouched = true">
             <NRadioButton value="black">黑白</NRadioButton>
             <NRadioButton value="color">彩色</NRadioButton>
           </NRadioGroup>
         </NFormItem>
         <NFormItem label="单双面" :show-feedback="false" class="!mb-0">
-          <NRadioGroup v-model:value="duplex" :disabled="submitting">
+          <NRadioGroup v-model:value="duplex" :disabled="submitting" @update:value="formTouched = true">
             <NRadioButton value="single">单面</NRadioButton>
             <NRadioButton value="double">双面</NRadioButton>
           </NRadioGroup>
@@ -581,6 +590,7 @@ onMounted(async () => {
             :disabled="submitting"
             class="w-full"
             placeholder="份数"
+            @update:value="formTouched = true"
           />
         </NFormItem>
         <NFormItem label="纸张（可选）" :show-feedback="false" class="!mb-0">
@@ -592,6 +602,7 @@ onMounted(async () => {
             clearable
             placeholder="不指定"
             class="w-full"
+            @update:value="formTouched = true"
           />
         </NFormItem>
       </div>

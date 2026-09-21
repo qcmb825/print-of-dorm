@@ -54,6 +54,8 @@ import { confirmAction, notify } from '@/composables/feedback'
 import { useAuthStore } from '@/stores/auth'
 import { formatBytes, priceLabel, shortTime } from '@/utils/format'
 import {
+  COPIES_MAX,
+  COPIES_MIN,
   NICKNAME_RE,
   OTHER_CONTACT_PLACEHOLDER,
   OTHER_CONTACT_TYPES,
@@ -303,6 +305,9 @@ const prefsForm = reactive({
 const savedPrefs = ref<UserPrefs | null>(null)
 const prefsLines = ref<string[]>([])
 const savingPrefs = ref(false)
+/** 偏好没拉到（网络/接口错）。区分「正在载入」与「没拉到」——
+ *  两者在界面上长得一样的话，用户只能干等一个永远不会来的响应。 */
+const prefsError = ref(false)
 
 function fillPrefs(next: UserPrefs): void {
   savedPrefs.value = next
@@ -323,11 +328,13 @@ function fillPrefs(next: UserPrefs): void {
 }
 
 async function loadPrefs(): Promise<void> {
+  prefsError.value = false
   try {
     const response = await authApi.prefs()
     fillPrefs(response.prefs)
     prefsLines.value = response.lines
   } catch (error) {
+    prefsError.value = true
     notify.error(error instanceof ApiError ? error.message : '加载偏好失败 · 稍后重试')
   }
 }
@@ -744,57 +751,74 @@ onMounted(() => {
           QQ 机器人里的「设置」命令改的是<strong>同一份</strong>（改一边另一边跟着变）。
         </p>
 
-        <div v-if="!savedPrefs" class="text-xs text-ink-3">正在载入偏好…</div>
+        <div v-if="!savedPrefs && prefsError" class="flex flex-wrap items-center gap-2 text-xs">
+          <span style="color: var(--warn)">偏好没拉到 —— 可能是网络或服务器临时的问题。</span>
+          <NButton size="tiny" @click="loadPrefs">重试</NButton>
+        </div>
+        <div v-else-if="!savedPrefs" class="text-xs text-ink-3">正在载入偏好…</div>
 
         <template v-else>
           <!-- ① 通知渠道 -->
           <div class="grid gap-2 sm:grid-cols-2">
-            <label
+            <div
               class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
+              @click="prefsForm.notify_qq = !prefsForm.notify_qq"
             >
               <span>
                 <span class="block text-sm font-semibold">QQ 推送</span>
                 <span class="mt-0.5 block text-xs text-ink-3">可取了在 QQ 里戳你一下（要先绑定 QQ 号）</span>
               </span>
-              <NSwitch v-model:value="prefsForm.notify_qq" size="small" />
-            </label>
-            <label
+              <NSwitch v-model:value="prefsForm.notify_qq" size="small" aria-label="QQ 推送" />
+            </div>
+            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
+                 点文字是没反应的（光标却显示可点） -->
+            <div
               class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
+              @click="prefsForm.notify_mail = !prefsForm.notify_mail"
             >
               <span>
                 <span class="block text-sm font-semibold">邮件提醒</span>
                 <span class="mt-0.5 block text-xs text-ink-3">同时发一封邮件到 &lt;QQ号&gt;@qq.com</span>
               </span>
-              <NSwitch v-model:value="prefsForm.notify_mail" size="small" />
-            </label>
-            <label
+              <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
+            </div>
+            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
+                 点文字是没反应的（光标却显示可点） -->
+            <div
               class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
+              @click="prefsForm.hide_done_orders = !prefsForm.hide_done_orders"
             >
               <span>
                 <span class="block text-sm font-semibold">隐藏已取件的单</span>
                 <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」都不再列它们</span>
               </span>
-              <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" />
-            </label>
-            <label
+              <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" aria-label="隐藏已取件的单" />
+            </div>
+            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
+                 点文字是没反应的（光标却显示可点） -->
+            <div
               class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
+              @click="prefsForm.card_replies = !prefsForm.card_replies"
             >
               <span>
                 <span class="block text-sm font-semibold">机器人用卡片回</span>
                 <span class="mt-0.5 block text-xs text-ink-3">关掉后订单/工单这类查询改用纯文字，省流量</span>
               </span>
-              <NSwitch v-model:value="prefsForm.card_replies" size="small" />
-            </label>
+              <NSwitch v-model:value="prefsForm.card_replies" size="small" aria-label="机器人用卡片回" />
+            </div>
           </div>
 
           <!-- ② 免打扰。跨零点（22:00-08:00）是常态，所以两个时间点不设约束：
                谁前谁后由服务端判定（见 prefs.in_quiet_hours）。 -->
           <div class="mt-3 px-2.5 py-2.5" style="background-color: var(--muted)">
-            <label class="flex cursor-pointer items-center justify-between gap-3">
+            <div
+              class="flex cursor-pointer items-center justify-between gap-3"
+              @click="prefsForm.quietOn = !prefsForm.quietOn"
+            >
               <span>
                 <span class="block text-sm font-semibold">免打扰时段</span>
                 <span class="mt-0.5 block text-xs text-ink-3">
@@ -802,8 +826,8 @@ onMounted(() => {
                   单号有时效，夜里静音不等于不要了
                 </span>
               </span>
-              <NSwitch v-model:value="prefsForm.quietOn" size="small" />
-            </label>
+              <NSwitch v-model:value="prefsForm.quietOn" size="small" aria-label="免打扰时段" />
+            </div>
             <div v-if="prefsForm.quietOn" class="mt-2.5 flex flex-wrap items-center gap-2">
               <NTimePicker
                 v-model:formatted-value="prefsForm.quiet_from"
@@ -840,11 +864,13 @@ onMounted(() => {
               <span class="tech-label text-ink-3 tech-label--cn">默认份数</span>
               <!-- 清空 = 「没设过」= 每次下单都问。不写 1 当兜底：
                    1 是个**决定**，代替用户决定「就打一份」是最不该做的默认值。 -->
+              <!-- 上下限与下单接口同一套常量：这里放宽到 99 的话，
+                   存进去的默认值会把下单页预填成一个「提交必被 400」的数 -->
               <NInputNumber
                 v-model:value="prefsForm.default_copies"
                 size="small"
-                :min="1"
-                :max="99"
+                :min="COPIES_MIN"
+                :max="COPIES_MAX"
                 clearable
                 placeholder="每次问我"
               />

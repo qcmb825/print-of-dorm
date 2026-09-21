@@ -697,6 +697,12 @@ def api_bot_prefs_save():
             return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
     if ('quiet_from' in fields) != ('quiet_to' in fields):
         return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
+    #    两个时间点一样 = 等于没设（`in_quiet_hours` 就是这么判的），
+    #    存下去只会让用户以为自己设上了。判定在 prefs.valid_quiet_pair 里收口，
+    #    网页与机器人问的是同一个函数。
+    if fields.get('quiet_from') or fields.get('quiet_to'):
+        if not prefs.valid_quiet_pair(fields.get('quiet_from'), fields.get('quiet_to')):
+            return jsonify({'code': 400, 'msg': '开始与结束时间不能一样'}), 400
     saved = prefs.save_prefs(g.user['id'], fields)
     return jsonify({'code': 0, 'msg': 'ok', 'prefs': saved, 'lines': prefs.describe(saved)})
 
@@ -780,7 +786,7 @@ def api_bot_events():
         cursor = cursor_row['m']
         rows = conn.execute('''
             SELECT l.order_id, o.user_id, o.pickup_code, o.price, o.copies,
-                   o.filename, o.preset_content, u.qq
+                   o.filename, o.preset_content, u.qq, MIN(l.id) AS first_log_id
             FROM order_logs l
             JOIN orders o ON o.id = l.order_id
             JOIN users u ON u.id = o.user_id
@@ -793,13 +799,20 @@ def api_bot_events():
                          for uid in {r['user_id'] for r in rows}}
 
     events = []
+    blocked_from = None
     for row in rows:
         # **推送开关与免打扰在服务端生效**（不是在机器人那边少说一句）：
         # 关掉 QQ 推送的人、正在免打扰时段的人，这里就不给出事件 ——
         # 藏按钮挡不住这条链路，而用户以为自己关掉了。
-        # 注意这是「延后」不是「丢弃」：事件仍在库里，下一轮轮询还会带上，
-        # 出了免打扰时段自然发出去（游标由机器人推进，它没见过就不会越过）。
         if not prefs.should_notify(prefs_by_user.get(row['user_id']) or prefs.DEFAULTS, 'qq'):
+            # ⚠️ 被挡下的这一条必须**把游标按住**：游标是 order_logs.id，
+            # 机器人每轮把服务端给的 cursor 存下来、下轮从那里接着看 —— 要是这里
+            # 照旧回 `MAX(id)`，机器人就会「越过」这条被挡下的事件，**永远不会再收到它**，
+            # 而设置页和 prefs.describe 都写着「这段时间的提醒会攒着、过后再发」。
+            # 现在游标退到「第一条被挡下的留痕」之前，等出免打扰/重新打开推送，
+            # 下一轮自然把它带上（重复项由机器人那边的 notified 集合去重）。
+            if blocked_from is None or row['first_log_id'] < blocked_from:
+                blocked_from = row['first_log_id']
             continue
         title = (row['preset_content'] or row['filename'] or '').replace('\n', ' ')
         events.append({
@@ -808,4 +821,6 @@ def api_bot_events():
             'pickup_code': row['pickup_code'],
             'title': title[:60],
         })
+    if blocked_from is not None:
+        cursor = min(cursor, blocked_from - 1)
     return jsonify({'code': 0, 'msg': 'ok', 'events': events, 'cursor': cursor})

@@ -196,20 +196,28 @@ def reply_pref_default(client, qq, argument):
     _prefs_cache_clear(qq)
     lines = ['默认打印参数已记下：']
     lines += ['　· ' + line for line in (resp.get('lines') or []) if '默认' in line]
-    lines.append('下次下单时我会把这几项当默认值（仍然可以现改）。')
+    lines.append('以后下单（在这里发文件、或在网页端）都会按这几项预填，'
+                 '下单时仍然可以现改；菜单里也会标出「你的默认」。')
     client.send_private_msg(qq, chr(10).join(lines))
 
 
+# 偏好缓存的时长（秒）。取 10 而不是 60：用户在**网页设置页**改了「卡片关」
+# 之后，机器人这边最多 10 秒就跟上（原先 60 秒，用户会以为没生效）。
+# 这是一次很轻的 GET，代价可以忽略。
+PREF_CACHE_TTL = 10
+
+
 def _prefs_cache_get(qq):
-    """偏好（带 60 秒缓存）。
+    """偏好（带 PREF_CACHE_TTL 秒缓存）。
 
     「要不要发卡片」是**呈现方式**，得由机器人自己决定，所以这里要读一次偏好；
     其余偏好（通知开关、免打扰、隐藏已取件、条数）都在服务端生效，机器人不用管。
+    另外「默认打印参数」也走这里：菜单里标「你的默认」、回「默认」时套用它。
     """
     key = str(qq)
     now = time.time()
     cached = _prefs_cache.get(key)
-    if cached and now - cached[0] < 60:
+    if cached and now - cached[0] < PREF_CACHE_TTL:
         return cached[1]
     data = {}
     try:
@@ -373,15 +381,24 @@ _COPIES_ASK = '打几份？（回复数字，比如 1；发「取消」可以放
 _SKIP_WORDS = ('跳过', '默认', '不指定', '不用', '跳', '0')
 
 
-def _mode_menu(name, intro=None):
+def _mode_menu(name, intro=None, defaults=None):
     """打印方式菜单。intro 让预设单和文件单共用这一屏（预设没有文件，
-    改成「下单：打印服务「…」」更准确）；不传就是文件单的默认说法。"""
+    改成「下单：打印服务「…」」更准确）；不传就是文件单的默认说法。
+
+    `defaults` 是用户的偏好（「默认 黑白双面 2份」设过的那份）。设过就在对应那档
+    后面标一句「你的默认」、并允许直接回「默认」—— 否则那条命令只写不读，
+    而回执里却说「下次下单时当默认值」，等于骗人（偏好审计抓到的）。
+    """
     intro = intro or '收到「%s」。'
-    return ('%s\n打印方式？（回复数字）\n'
-            ' 1. 黑白单面（默认）\n'
-            ' 2. 黑白双面\n'
-            ' 3. 彩色单面\n'
-            ' 4. 彩色双面' % (intro % name))
+    pair = None
+    if defaults and defaults.get('default_color') and defaults.get('default_duplex'):
+        pair = (defaults['default_color'], defaults['default_duplex'])
+    rows = []
+    for key in sorted(_MODE_MAP):
+        mark = '（你的默认）' if pair == _MODE_MAP[key] else ''
+        rows.append(' %s. %s%s' % (key, _mode_text(*_MODE_MAP[key]), mark))
+    return '%s\n打印方式？（回复数字%s）\n%s' % (
+        intro % name, '，或回「默认」' if pair else '', '\n'.join(rows))
 
 
 def _mode_text(color, duplex):
@@ -662,7 +679,7 @@ def handle_file(client, qq, kind, data):
                     'step': 'mode', 'color': None, 'duplex': None, 'copies': None,
                     'paper_type_id': None, 'paper_name': None, 'papers': None,
                     'remark': None, 'ts': time.time()}
-    client.send_private_msg(qq, _mode_menu(name))
+    client.send_private_msg(qq, _mode_menu(name, defaults=_prefs_cache_get(qq)))
 
 
 # ---- 参数追问的状态机 --------------------------------------------------------
@@ -742,7 +759,8 @@ def _site_hint(resp):
 def _ask_current(client, qq, entry):
     """按当前步骤把问题再发一遍（答案不合法、或用户中途设了备注时用）。"""
     if entry['step'] == 'mode':
-        client.send_private_msg(qq, _mode_menu(entry['name'], entry.get('intro')))
+        client.send_private_msg(qq, _mode_menu(entry['name'], entry.get('intro'),
+                                               defaults=_prefs_cache_get(qq)))
     elif entry['step'] == 'copies':
         client.send_private_msg(qq, _COPIES_ASK)
     elif entry['step'] == 'paper':
@@ -794,6 +812,31 @@ def _consume_pending_answer(client, qq, text):
         return True
 
     if entry['step'] == 'mode':
+        if answer in ('默认', '默认值'):
+            #    「默认 黑白双面 2份」设过就要真的用上：那条命令原先只写不读，
+            #    回执里却说「下次下单时当默认值」（偏好审计抓到的）。
+            now = _prefs_cache_get(qq)
+            pair = (now.get('default_color'), now.get('default_duplex'))
+            if not (pair[0] and pair[1]):
+                client.send_private_msg(
+                    qq, '你还没设过默认打印参数。发「默认 黑白双面 2份」可以设一个。')
+                return True
+            entry['color'], entry['duplex'] = pair
+            entry['ts'] = time.time()
+            if now.get('default_copies'):
+                #    份数也设过就一路套到底，直接进纸张那一步（或直接下单）
+                entry['copies'] = int(now['default_copies'])
+                papers = _fetch_papers()
+                if papers:
+                    entry['papers'] = papers
+                    entry['step'] = 'paper'
+                    client.send_private_msg(qq, _papers_menu(papers))
+                else:
+                    _submit_pending(client, qq, entry)
+            else:
+                entry['step'] = 'copies'
+                client.send_private_msg(qq, _COPIES_ASK)
+            return True
         if answer in _MODE_MAP:
             entry['color'], entry['duplex'] = _MODE_MAP[answer]
             entry['step'] = 'copies'
@@ -977,7 +1020,8 @@ def reply_preset(client, qq, argument):
                     'step': 'mode', 'color': None, 'duplex': None, 'copies': None,
                     'paper_type_id': None, 'paper_name': None, 'papers': None,
                     'remark': None, 'ts': time.time()}
-    client.send_private_msg(qq, _mode_menu(label, '下单：打印服务「%s」。'))
+    client.send_private_msg(qq, _mode_menu(label, '下单：打印服务「%s」。',
+                                           defaults=_prefs_cache_get(qq)))
 
 
 def reply_withdraw(client, qq, argument):

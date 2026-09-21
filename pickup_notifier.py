@@ -269,7 +269,11 @@ def scan_once():
             if _claim(conn, row['id']):
                 claimed.append(dict(row))
         if deferred:
-            logger.info('取件提醒：%d 单因通知偏好/免打扰暂缓，稍后重试', deferred)
+            #    措辞要分清两种：**免打扰**是「过一会儿会发」，而**关掉邮件提醒**
+            #    是「用户不要」，那条永远不会有下一轮 —— 都写成「稍后重试」的话，
+            #    日志里的 error 计数看着像系统有问题（审计意见）。
+            logger.info('取件提醒：%d 单本轮不发（关掉邮件提醒的不会重试，'
+                        '免打扰的出了时段自然补发）', deferred)
         conn.commit()
         if not claimed:
             return 0, 0

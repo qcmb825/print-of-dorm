@@ -468,6 +468,12 @@ def api_me_prefs_save():
             return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
     if ('quiet_from' in fields) != ('quiet_to' in fields):
         return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
+    #    两个时间点一样 = 等于没设（`in_quiet_hours` 就是这么判的），
+    #    存下去只会让用户以为自己设上了。判定在 prefs.valid_quiet_pair 里收口，
+    #    网页与机器人问的是同一个函数。
+    if fields.get('quiet_from') or fields.get('quiet_to'):
+        if not prefs.valid_quiet_pair(fields.get('quiet_from'), fields.get('quiet_to')):
+            return jsonify({'code': 400, 'msg': '开始与结束时间不能一样'}), 400
     saved = prefs.save_prefs(g.user['id'], fields)
     return jsonify({'code': 0, 'msg': '偏好已保存', 'prefs': saved,
                     'lines': prefs.describe(saved)})
