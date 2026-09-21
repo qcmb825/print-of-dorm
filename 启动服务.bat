@@ -10,6 +10,16 @@ set "LLBOT_EXE=%LLBOT_DIR%\llbot.exe"
 set "LLBOT_DATA=%LLBOT_DIR%\bin\llbot\data"
 set "WEB_PORT=8080"
 set "ONEBOT_WS_PORT=8085"
+rem QQ 侧运行模式（2026-09-21 加）：
+rem   headless = LLBot 自己实现 QQ 协议，不需要 QQ 客户端（现在用的，但容易被下线）
+rem   pmhq     = 有头模式：PMHQ 驱动官方 QQ 客户端（QQNT），掉线率明显低
+rem              切过去之前必须做两件事，少一件都起不来：
+rem                1) 先把 QQ 客户端登录成机器人号（%QQ%），别登成自己的号 ——
+rem                   授权 token 只认登记过的那个 uin，登错号会看到
+rem                   「uin ... not in your allowed list」然后 PMHQ 自己退出；
+rem                2) 确认下面的 QQ_PATH 指向官方 QQ 的 QQ.exe。
+set "LLBOT_MODE=headless"
+set "QQ_PATH=D:\APP\QQ\QQ.exe"
 set "PYTHON=%ROOT%.venv\Scripts\python.exe"
 rem 本机跑不跑 printbot（QQ 与网页服务之间的桥）。机器人单独放别的机器时改成 0。
 set "START_PRINTBOT=1"
@@ -72,8 +82,22 @@ if not exist "%LLBOT_DATA%\auth_token.txt" (
     pause
     exit /b 1
 )
-echo       启动中 —— 首次登录要在它自己的窗口里用手机 QQ 扫码...
-start "LLBot" /D "%LLBOT_DIR%" "%LLBOT_EXE%" --qq=%QQ%
+rem 两种模式的启动参数不一样：headless 直连只要 --qq；PMHQ 模式要额外给出
+rem QQ.exe 的路径（它自己去把客户端拉起来再挂上去）。
+if /i "%LLBOT_MODE%"=="pmhq" (
+    echo       模式：PMHQ（有头）—— 会拉起官方 QQ 客户端
+    if not exist "%QQ_PATH%" (
+        echo       !! 找不到 QQ 客户端："%QQ_PATH%"
+        echo          装好官方 QQ 之后，把脚本顶部的 QQ_PATH 指到它的 QQ.exe。
+        pause
+        exit /b 1
+    )
+    start "LLBot" /D "%LLBOT_DIR%" "%LLBOT_EXE%" --pmhq --qq=%QQ% --qq-path="%QQ_PATH%"
+) else (
+    echo       模式：headless（直连，不需要 QQ 客户端）
+    echo       首次登录要在它自己的窗口里用手机 QQ 扫码...
+    start "LLBot" /D "%LLBOT_DIR%" "%LLBOT_EXE%" --qq=%QQ%
+)
 echo       等 OneBot 服务起来（最多 90 秒）...
 set /a tries=0
 :wait_ws
@@ -122,6 +146,8 @@ echo.
 echo [4/4] 完成。要点：
 echo   · 网页端   http://127.0.0.1:%WEB_PORT%
 echo   · QQ 机器人：在 QQ 里给机器人号 %QQ% 发消息
+echo   · QQ 侧模式：%LLBOT_MODE%（换有头模式就改脚本顶部的 LLBOT_MODE=pmhq，
+echo     并先把 QQ 客户端登录成机器人号 %QQ%）
 echo   · 三个窗口（打印服务 / LLBot / printbot）都别关；QQ 掉线后 LLBot 会等重连
 echo   · 停止：关掉对应窗口即可
 echo   · LLBot 管理页 http://127.0.0.1:3080 ／ printbot 日志 printbot\logs\printbot.log

@@ -652,13 +652,12 @@ onMounted(async () => {
           </div>
         </NFormItem>
         <NFormItem label="单双面" :show-feedback="false" class="!mb-0">
-          <NRadioGroup
-            v-model:value="duplex"
-            :disabled="submitting || !duplexAllowed"
-            @update:value="formTouched = true"
-          >
+          <!-- ⚠️ **只禁「双面」那一个按钮**，不要用 :disabled 把整个 NRadioGroup 关掉 ——
+               那样「单面」也会变灰，而它恰恰是这一档唯一能选的（实测截图里两个都灰着，
+               看起来像「这一档不能下单」）。 -->
+          <NRadioGroup v-model:value="duplex" :disabled="submitting" @update:value="formTouched = true">
             <NRadioButton value="single">单面</NRadioButton>
-            <NRadioButton value="double">双面</NRadioButton>
+            <NRadioButton value="double" :disabled="!duplexAllowed">双面</NRadioButton>
           </NRadioGroup>
         </NFormItem>
         <NFormItem label="份数" :show-feedback="false" class="!mb-0">

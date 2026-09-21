@@ -175,7 +175,21 @@ async function load(): Promise<void> {
   }
 }
 
+/** 管理员有没有**自己动过**颜色字段。没动过时才允许从「类型」里自动推断 ——
+ *  否则会把他特意选的覆盖掉（选了黑色、又去改类型里的字，颜色被悄悄换回彩色）。
+ *  新建 / 开始编辑 / 取消时都复位。 */
+const colorTouched = ref(false)
+
+function onKindInput(): void {
+  if (colorTouched.value) return
+  //    只认最明确的两种说法：中文里「彩色」「黑白」就是这两个意思，
+  //    而「照片」「全覆盖」这些无法判断（得由管理员自己选）。
+  if (form.kind.includes('彩色')) form.color = 'color'
+  else if (form.kind.includes('黑白')) form.color = 'black'
+}
+
 function resetForm(): void {
+  colorTouched.value = false
   editingId.value = null
   form.paper = ''
   form.kind = ''
@@ -187,10 +201,13 @@ function resetForm(): void {
 }
 
 function startEdit(item: PriceItem): void {
+  colorTouched.value = false
   editingId.value = item.id
   form.paper = item.paper
   form.kind = item.kind
   form.color = item.color
+  // 编辑已有条目时颜色**算「已定」**：那是当初存下来的事实，不该被类型名推断覆盖
+  colorTouched.value = true
   form.price_single = item.price_single.toFixed(2)
   form.price_double = item.price_double === null ? '' : item.price_double.toFixed(2)
   form.note = item.note ?? ''
@@ -369,10 +386,15 @@ onMounted(load)
               v-model:value="form.kind"
               :maxlength="limits.kind_max"
               placeholder="例：黑白 / 彩色（普通）/ 彩色（全覆盖）"
+              @update:value="onKindInput"
             />
           </NFormItem>
-          <NFormItem label="颜色（落库与统计用）" :show-feedback="false" class="!mb-0">
-            <NSelect v-model:value="form.color" :options="COLOR_OPTIONS" />
+          <NFormItem label="颜色（落库与统计用，会跟着「类型」自动认）" :show-feedback="false" class="!mb-0">
+            <NSelect
+              :value="form.color"
+              :options="COLOR_OPTIONS"
+              @update:value="(v: ColorType) => { form.color = v; colorTouched = true }"
+            />
           </NFormItem>
           <NFormItem label="排序（小的在前）" :show-feedback="false" class="!mb-0">
             <NInputNumber v-model:value="form.sort_order" :min="0" :precision="0" class="w-full" />
