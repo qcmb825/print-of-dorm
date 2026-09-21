@@ -173,8 +173,13 @@ def identify_bot_request():
 
     authorization = request.headers.get('Authorization', '')
     scheme, separator, token = authorization.partition(' ')
-    if (not separator or scheme.lower() != 'bearer' or
-            not token or not secrets.compare_digest(BOT_TOKEN, token.strip())):
+    token = token.strip()
+    #    ⚠️ `compare_digest` 的两个参数都必须是 ASCII 字符串（或 bytes）：
+    #    HTTP 头是按 latin-1 解码的，客户端塞一个 ≥0x80 的字节进来就会让它抛
+    #    TypeError —— 未认证就能打出一个 500，而且**这条路径不记 bot_auth_failed**
+    #    （真实探测不留痕）。所以先自己判 ASCII，非 ASCII 直接当鉴权失败。
+    token_ok = bool(token) and token.isascii() and secrets.compare_digest(BOT_TOKEN, token)
+    if (not separator or scheme.lower() != 'bearer' or not token_ok):
         security_event('bot_auth_failed', 'path=%s' % request.path)
         return jsonify({'code': 401, 'msg': 'Bot 鉴权失败'}), 401
 

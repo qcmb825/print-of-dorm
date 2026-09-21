@@ -32,10 +32,10 @@ from flask import Blueprint, Response, g, jsonify, request
 import botcard
 import prefs
 
-from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ROLE_USER, ST_DONE,
-                    ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED, STATUS_ACTIVE,
-                    STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED, TICKET_MAX_OPEN,
-                    TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
+from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, PICKUP_NOTIFY_MAX_AGE_HOURS,
+                    ROLE_USER, ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED,
+                    STATUS_ACTIVE, STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED,
+                    TICKET_MAX_OPEN, TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
 from db import db_conn, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
 from utils import allowed_file, content_signature_error, parse_copies
@@ -44,6 +44,10 @@ from .orders import (create_order_from_saved_file, create_preset_order, log_even
                      UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
 
 bp = Blueprint('bot', __name__)
+
+# /api/bot/events 一次最多回多少条。这个接口跨用户取数（推送是一对多，没法按人收口），
+# 加个上限，别让一次调用变成一次全量导出。
+BOT_EVENTS_LIMIT = 200
 
 # （这里原先有个 `BOT_ORDERS_LIMIT = 10`：机器人的订单条数现在是**用户偏好**
 #   `orders_page_size`（3–20，见 prefs.py），常量留着只会让人以为改它有用。已删。）
@@ -128,7 +132,10 @@ def _identify(requested_qq):
     返回 None 表示已应答错误响应，调用方直接 return 那个响应。
     """
     qq = str(requested_qq or '').strip()
-    if not qq.isdigit() or not (5 <= len(qq) <= 12) or qq.startswith('0'):
+    #    isascii 也要判：`'１２３'.isdigit()` 是 True —— 全角数字能一路走到查库，
+    #    结果是把「这个 QQ 注册过没有」变成一个 200/404 的探测接口。
+    if (not qq.isdigit() or not qq.isascii()
+            or not (5 <= len(qq) <= 12) or qq.startswith('0')):
         return jsonify({'code': 400, 'msg': 'qq 缺失或格式不合法'}), 400
     with db_conn() as conn:
         user, error = _resolve_bot_user(conn, qq)
@@ -395,9 +402,10 @@ def api_bot_order_withdraw():
             os.remove(row['file_path'])
         except OSError:
             logger.warning('bot 撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                           order_id, row['file_path'])
+                           order_id, os.path.basename(row['file_path'] or ''))
     logger.info('订单 #%s 被 %s 通过 QQ 撤回，文件=%s ip=%s',
-                order_id, g.user['nickname'], row['filename'] or '（无文件）', client_ip())
+                order_id, g.user['nickname'],
+                os.path.basename(row['filename'] or '') or '（无文件）', client_ip())
     return jsonify({'code': 0, 'msg': '订单已撤回'})
 
 
@@ -682,7 +690,12 @@ def api_bot_prefs():
 @bp.put('/api/bot/prefs')
 def api_bot_prefs_save():
     """改偏好（机器人命令走这里）。字段白名单在 prefs.EDITABLE，不认的直接忽略。"""
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    #    `"abc"` / `[1]` 是合法 JSON 但不是对象：`.get()` 会抛 AttributeError
+    #    （未捕获的 500，本该 400）。入口统一挡一道。
+    if data is not None and not isinstance(data, dict):
+        return jsonify({'code': 400, 'msg': '请求格式不对'}), 400
+    data = data or {}
     error = _identify(data.get('qq'))
     if error is not None:
         return error
@@ -732,6 +745,10 @@ def api_bot_card():
     kind = (request.args.get('kind') or '').strip()
     if kind not in ('orders', 'tickets', 'presets', 'me', 'help'):
         return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
+    #    渲染是纯 CPU 活（一张 0.15-0.9 秒）：8 个线程被并发打满时整站接口都会排队。
+    #    按账号限流 —— 正常用户点「订单」远到不了这个频率，误触/脚本会被挡住。
+    if not hit_limit('bot_card:%s' % g.user['id'], 20, 60):
+        return jsonify({'code': 429, 'msg': '刷得太快了，缓一下再看'}), 429
     uid = g.user['id']
     with db_conn() as conn:
         if kind == 'orders':
@@ -784,6 +801,12 @@ def api_bot_events():
     with db_conn() as conn:
         cursor_row = conn.execute('SELECT COALESCE(MAX(id), 0) AS m FROM order_logs').fetchone()
         cursor = cursor_row['m']
+        #    ⚠️ **必须带时间窗与条数上限**。这个接口是按「令牌」放行的、不带 qq 参数，
+        #    一次调用会把**所有**用户的单号与 QQ 一起吐出来 —— 它是全组唯一跨用户取数
+        #    的接口（推送本来就是一对多，没法按人收口）。`since=0` 再叠上没有时间窗，
+        #    等于「一条命令拉走全站取件码」：令牌一旦泄露就能长期轮询做实时监控，
+        #    而取件码就是取件的唯一凭证（安全审计抓到的最高危一条）。
+        #    窗口取与邮件提醒同一个常数（24 小时）：更早的单本来也不该再推。
         rows = conn.execute('''
             SELECT l.order_id, o.user_id, o.pickup_code, o.price, o.copies,
                    o.filename, o.preset_content, u.qq, MIN(l.id) AS first_log_id
@@ -791,9 +814,12 @@ def api_bot_events():
             JOIN orders o ON o.id = l.order_id
             JOIN users u ON u.id = o.user_id
             WHERE l.id > ? AND o.status = ? AND u.qq <> ''
+              AND l.create_time >= datetime('now', ?)
             GROUP BY l.order_id
             ORDER BY MIN(l.id)
-        ''', (since, ST_READY)).fetchall()
+            LIMIT ?
+        ''', (since, ST_READY, '-%d hours' % PICKUP_NOTIFY_MAX_AGE_HOURS,
+              BOT_EVENTS_LIMIT)).fetchall()
         # 顺手把每个下单人的偏好取出来（同一连接，别为每一行再开一次库）
         prefs_by_user = {uid: prefs.get_prefs(uid, conn)
                          for uid in {r['user_id'] for r in rows}}

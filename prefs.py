@@ -167,6 +167,17 @@ def save_prefs(user_id, fields):
             continue
         value = fields[key]
         if key in ('notify_qq', 'notify_mail', 'hide_done_orders', 'card_replies'):
+            #    ⚠️ 只认真正的布尔与 0/1。用 `1 if value else 0` 的话，
+            #    字符串 "false" / "0" 都是 truthy —— 想关推送的人会被**静默留在开启态**
+            #    （这正是本项目最忌讳的「不报错、只是行为不对」，安全审计抓到的）。
+            if isinstance(value, str):
+                text = value.strip().lower()
+                if text in ('1', 'true', 'on', 'yes', '开'):
+                    value = 1
+                elif text in ('0', 'false', 'off', 'no', '关'):
+                    value = 0
+            if value not in (True, False, 0, 1):
+                continue                      # 认不出就整项忽略，别猜
             value = 1 if value else 0
         elif key == 'orders_page_size':
             value = _clamp_page_size(value)
@@ -180,8 +191,17 @@ def save_prefs(user_id, fields):
                 value = max(COPIES_MIN, min(COPIES_MAX, value))
         elif key == 'default_paper_type_id':
             value = _as_int(value)
+        elif key == 'default_color':
+            #    枚举收口：界面只给「黑白/彩色/每次问我」，但接口是公开的 ——
+            #    不认的值一律当「没设」，免得把一个随便的字符串一路带到下单表单。
+            value = value if value in ('black', 'color', '') else ''
+        elif key == 'default_duplex':
+            value = value if value in ('single', 'double', '') else ''
         elif isinstance(value, str):
-            value = value.strip()
+            #    其它字符串字段统一截断：原先只有 `.strip()`，于是
+            #    `{"default_color": "A"*5e7}` 这种请求能把库撑大、每次读还整串回吐
+            #    （安全审计：PUT 没有限流，MAX_CONTENT_LENGTH 又是 50MB）。
+            value = value.strip()[:120]
         values[key] = value
     if not values:
         return get_prefs(user_id)
