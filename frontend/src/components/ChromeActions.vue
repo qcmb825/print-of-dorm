@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 外壳上的两颗小动作：亮暗切换，以及（管理端才有的）去学生端的入口。
+/** 外壳上的小动作：（管理端才有的）去学生端的入口。
  *
  *  为什么做成一个组件、而不是各写各的：它在三个地方出现 —— 学生端顶栏、管理端侧栏底部、
  *  管理端窄屏顶栏 —— 而"外壳在两端应当是同一个"是这套界面的既定规矩（见两个布局里状态带
@@ -10,16 +10,17 @@
  *  但样式从没落地，浏览器默认的那层灰斜面一直都在，直到被截图报出来）。
  *  不写圆角也不写阴影 —— 这套界面里所有圆形与投影都已经清掉了（见 DESIGN_RULES）。
  *
- *  主题那一个**两个端都出**：它原本在两端都有一份，阶段 2 连同圆形按钮一起被拆掉，
- *  之后主题只跟系统偏好走。现在补回来的是入口，不是机制 —— stores/theme.ts 的
- *  toggle() 一直在那儿等着，这次只是终于有了调用方。
+ *  ⚠️ **亮暗切换那颗按钮已经拆掉**（2026-09-21，业主的要求：网页一律亮色）。
+ *  组件名与文件名保留（它还有"去学生端"这一半，三个布局都在引它）——
+ *  别因为名字里带着 Actions 就以为还能往里加东西。
+ *  要放开暗色时：把 stores/theme.ts 的三处改回来，再把那颗按钮连同 Sun/Moon
+ *  图标一起加回来（git 历史里有原样）。
  *
  *  去学生端那一个只给管理端：学生端通往管理端的入口早就有了（导航里那一项
  *  「管理控制台」，只对 isStaff 出现），反方向却只能手敲 URL。
  */
-import { GraduationCap, Moon, Sun } from '@lucide/vue'
+import { GraduationCap } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
-import { useThemeStore } from '@/stores/theme'
 
 withDefaults(
   defineProps<{
@@ -28,27 +29,10 @@ withDefaults(
   }>(),
   { studentSwitch: false },
 )
-
-const theme = useThemeStore()
 </script>
 
 <template>
   <div class="flex items-center">
-    <!-- 主题只有两个状态，所以用一颗按钮来回切（保留原 ThemeToggle 的做法）。
-         图标与提示都跟着**当前状态**说"点了会变成什么"，不是"现在是什么" ——
-         月亮图标配"切换到深色主题"，这是按钮的读法。 -->
-    <button
-      type="button"
-      class="tap-area icon-btn grid size-9 place-items-center"
-      style="color: var(--text-secondary)"
-      :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
-      :aria-label="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
-      @click="theme.toggle()"
-    >
-      <Sun v-if="theme.isDark" :size="17" aria-hidden="true" />
-      <Moon v-else :size="17" aria-hidden="true" />
-    </button>
-
     <!-- 去学生端。落点就是学生端的首页（/upload，路由表里 '' 重定向到它），
          不猜"他上次待在哪一页"——那个状态没有存过，猜出来的多半是错的。 -->
     <RouterLink

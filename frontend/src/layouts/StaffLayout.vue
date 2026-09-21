@@ -50,9 +50,9 @@ const navItems = computed(() =>
     // 打印选项在公告管理后面、账号管理前面：它也是「内容维护」那一类，
     // 而账号管理涉及权限，习惯上放最后。这里对所有管理员可见，理由见该页顶部注释。
     { to: '/staff/print-options', label: '打印选项', icon: Printer, show: true },
-    // 计价规则紧跟打印选项：两者是同一件事的两半（纸张属性 / 价目表），
-    // 同时也都是所有管理员可改（后端 ROLE_ADMIN 起步）。
-    { to: '/staff/pricing', label: '计价规则', icon: CircleDollarSign, show: true },
+    // 价目表紧跟打印选项：两者都是「管理员维护的定价相关配置」，
+    // 也同样是所有管理员可改（后端 ROLE_ADMIN 起步）。
+    { to: '/staff/pricing', label: '价目表', icon: CircleDollarSign, show: true },
     { to: '/staff/users', label: '账号管理', icon: Users, show: true },
   ].filter((item) => item.show),
 )
@@ -333,10 +333,14 @@ style="--depth: 20px"
       </span>
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
              窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
-        <!-- 页面内容本体也是一层：它比纸边刻度更近、比水印更远。
-             这一层只加 transform，不动布局；站内没有任何 fixed/sticky 在 views/ 与
-             components/ 里（已核对），所以给内容加包含块是安全的。 -->
-        <div data-parallax style="--depth: 5px">
+        <!-- ⚠️ **页面内容本体不参与视差**（`data-parallax` 已经从这一层摘掉）。
+             它原先带着 `--depth: 5px`，于是整张页面（订单台那张 11 列 × 20 行的表格）
+             跟着鼠标每帧 translate3d 平移 —— 密集文字被反复重栅格化，鼠标掠过行边界时
+             hover 目标还会随着位移翻转，读起来就是「页面在抽搐」（业主实测报上来的）。
+             视差只留给**空壳装饰件**（括角 / 竖刻度 / 读数沟 / 水印 / 网格层）：
+             它们没有后代、没有文字，位移的代价只有一次 GPU 变换。
+             要在这一层上加回视差之前，先问一句「这里面有没有会重排或重绘的东西」。 -->
+        <div>
           <RouterView v-slot="{ Component }">
             <RouteTransition :transition-key="currentPath" profile="inline">
               <component :is="Component" />
@@ -345,14 +349,15 @@ style="--depth: 20px"
         </div>
             <!-- 底部状态带：与用户端同一块状态栏 —— 活的灯 + 当前栏位 + 导航序号。
            两侧共用同一件东西是有意的：它是这套界面的"外壳"，而外壳在两端应当是同一个。 -->
-            <!-- 状态带留在文档流里（随页面滚动），但**参与视差** ——
-           它与上面的内容同属"这一页的纸"，所以取同一个深度（内容层也是 5）。
-           曾经把它做成 sticky 浮在视口底部，那会压住滚动中的内容（要实底），
-           而且窄屏还要躲开固定标签栏 —— 代价大于收益，退回文档流。 -->
+            <!-- 状态带留在文档流里（随页面滚动）。**它也不参与视差了** ——
+           原先它跟着内容层一起动（"同属这一页的纸"），但状态带里全是**文字**
+           （灯 + 读数 + 导航序号），逐帧位移同样会把它糊掉；而内容层已经摘掉视差，
+           留它一个单独动，看着反倒像这一页在晃。要动一起动、要不一起不动，
+           所以两边一起摘。曾经把它做成 sticky 浮在视口底部，那会压住滚动中的内容
+           （要实底），而且窄屏还要躲开固定标签栏 —— 代价大于收益，退回文档流。 -->
       <div
         class="mt-8 flex items-center gap-3 border-t pt-1.5"
-        style="border-color: var(--border); --depth: 5px"
-        data-parallax
+        style="border-color: var(--border)"
       >
         <!-- 灯与它的标签整块 aria-hidden：这是一块**状态栏装饰**，
              不是一条要读的信息（"已登录"从页面本身就看得出）——

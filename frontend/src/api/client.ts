@@ -25,6 +25,47 @@ export function setUnauthorizedHandler(fn: () => void): void {
   unauthorizedHandler = fn
 }
 
+/* ── 进行中的请求数 ────────────────────────────────────────────────────────
+ *  换场覆盖层靠它回答一个问题：「新页面该显示的数据到了没有？」到了就把面板扫开，
+ *  没到就再等一会儿（有上限，见 composables/route-veil.ts）。
+ *
+ *  为什么放在这里、而不是让每个页面自己举手：这是全应用**唯一的请求出口**，
+ *  计数在这里天然完整。让页面各自声明「我要等数据」的话，漏一个页面不会报错 ——
+ *  只是那一页的换场不等数据，而「不报错、只是行为不对」正是这个项目最忌讳的一类问题。
+ */
+let inFlight = 0
+const idleWaiters = new Set<() => void>()
+
+function trackEnd(): void {
+  inFlight = Math.max(0, inFlight - 1)
+  if (inFlight === 0) {
+    // 只在归零那一刻通知一次；等着的人自己决定还等不等
+    for (const fn of [...idleWaiters]) fn()
+  }
+}
+
+/** 等到「此刻没有进行中的请求」，最多等 maxMs 毫秒。 */
+export async function whenRequestsIdle(maxMs: number): Promise<void> {
+  // 先让出一个宏任务再数：新页面的请求是在 onMounted 里发的，
+  // 而 axios 的拦截器链要过几道 Promise 才会真正把请求发出去（也就才会被计数）。
+  // 少了这一让，open() 那一刻计数还是 0，于是「等数据」永远等于「不等」——
+  // 功能看着装上了，实际一次都没生效。
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  if (inFlight === 0) return
+  await new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      idleWaiters.delete(finish)
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, maxMs)
+    idleWaiters.add(finish)
+  })
+}
+
 const WRITE_METHODS = new Set(['post', 'put', 'patch', 'delete'])
 
 /** 后端约定的失败信息都走这里，业务层 catch 到的永远是它。 */
@@ -95,6 +136,7 @@ function refreshCsrf(): Promise<void> {
 }
 
 http.interceptors.request.use((config) => {
+  inFlight += 1
   const method = (config.method ?? 'get').toLowerCase()
   if (WRITE_METHODS.has(method) && csrfToken) {
     if (config.headers instanceof AxiosHeaders) {
@@ -108,11 +150,17 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response) => {
+    trackEnd()
     const data = response.data as ApiEnvelope | undefined
     if (data && typeof data === 'object') setCsrf(data.csrf)
     return response
   },
   async (error: AxiosError<ApiEnvelope>) => {
+    //    ⚠️ 减计数必须**只做一次**：下面那条 403 自愈会重发原请求，
+    //    重发走的是 `http.request(config)` —— 那会再进一次 request 拦截器（+1），
+    //    所以这里先把自己这次减掉，重发的那次由它自己的响应负责减。
+    //    漏了这一句，计数只增不减，「等数据」就变成「永远等到超时」。
+    trackEnd()
     const status = error.response?.status ?? 0
     const data = error.response?.data
     setCsrf(data?.csrf)

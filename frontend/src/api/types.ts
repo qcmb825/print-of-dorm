@@ -235,12 +235,12 @@ export interface UserPrefs {
   /** 'HH:MM'；两头都空 = 不启用免打扰。只给一头会被后端 400（只给一头等于没设） */
   quiet_from: string
   quiet_to: string
-  /** 'black' | 'color' | ''（'' = 每次下单都问） */
-  default_color: string
-  /** 'single' | 'double' | '' */
+  /** 'single' | 'double' | ''（'' = 每次下单都问） */
   default_duplex: string
   default_copies: number | null
-  default_paper_type_id: number | null
+  /** 默认价目项。**没有 default_color**：颜色由价目项本身决定
+   *  （「A4 70g · 黑白」这一档就是黑白），再留一个默认颜色就会与它打架。 */
+  default_price_item_id: number | null
   /** 「我的订单」里不显示已取件的单；机器人「订单」同样按它收口 */
   hide_done_orders: boolean
   /** 机器人用卡片回「表格型」查询；关掉就一律纯文本 */
@@ -286,6 +286,13 @@ export interface Order {
   /** 这一单从哪条路下的。老数据/认不出的值按网页端看待
    *  （后端 decorate 时不会替它编一个，未知就是未知，前端兜底成 web）。 */
   source?: OrderSource | null
+  /** 选的哪一条价目项（v20 起），以及它当时的名字快照（「A4 70g · 黑白」）。
+   *
+   *  ⚠️ 展示上**不需要**改：纸张名、颜色、单双面仍然落在老的 paper_name /
+   *  color_type / duplex 三列上（后端抄的），订单台与卡片读的还是那三列。
+   *  这两个字段是给「这一单当初按哪一档打的」这个问题用的（详情页）。 */
+  price_item_id?: number | null
+  price_item_name?: string | null
   owner_nickname?: string | null
   owner_dorm?: string | null
   /** 下单人的联系方式，**仅管理端列表与详情返回**。
@@ -322,8 +329,11 @@ export interface Order {
    *  分不清「当时真的要 1 份」和「我们猜的 1 份」，猜错会写进对账。
    *  所以渲染时要区分 null（「未记录」）和具体的数字，不要 `?? 1`。 */
   copies?: number | null
+  /** ⚠️ 遗留列：v20 起纸张并进了价目表，新订单这里恒为 null。
+   *  展示上仍然读它（老订单有值），但**不要**再往上面写新东西。 */
   paper_type_id?: number | null
-  /** 下单那一刻的纸张名。管理员随时能改名，所以订单显示的是这个快照，不是纸张表的现值。 */
+  /** 下单那一刻的纸张名（现在抄的是价目项的纸张）。管理员随时能改价目表，
+   *  所以订单显示的是这个快照，不是价目表的现值。 */
   paper_name?: string | null
   paper_remark?: string | null
 
@@ -452,6 +462,9 @@ export interface OrderDetail {
   /** 下单时的预估价与它依据的页数（含义同 Order.est_price）。 */
   est_price: number | null
   est_pages: number | null
+  /** 选的哪一条价目项与它的名字快照（含义同 Order.price_item_name）。 */
+  price_item_id: number | null
+  price_item_name: string | null
   /** 这一单从哪条路下的（含义同 Order.source）。 */
   source: OrderSource | null
   priced_by: number | null
@@ -547,7 +560,11 @@ export interface PrintOptionsResponse extends ApiEnvelope {
   /** 只回**启用的**预设与纸张。停用的那些留在管理端，
    *  学生端拿不到 —— 「没拿过」比「不画出来」可靠。 */
   presets: PrintPreset[]
+  /** ⚠️ 遗留：v20 起下单表单不再用纸张（并进价目表了）。
+   *  留着它只为「默认纸张」那类老偏好与回归脚本；新代码一律用 price_items。 */
   paper_types: PaperType[]
+  /** 价目表（启用中的）—— 下单时选的就是它 */
+  price_items: PriceItem[]
 }
 
 /** 管理端列表：比学生端多停用项，以及各自的用量。 */
@@ -557,6 +574,72 @@ export interface PrintPresetListResponse extends ApiEnvelope {
 
 export interface PaperTypeListResponse extends ApiEnvelope {
   paper_types: PaperType[]
+}
+
+/* ---- 价目表（v20 起下单时选的就是它）----
+ *
+ * 一条 = 纸张 + 类型 + 单面价 + 双面价 + 备注。**不要再往 PaperType 上挂新东西** ——
+ * 纸张那个概念已经并进价目表了（paper_types 表与它的管理接口留着只为读老订单）。 */
+export interface PriceItem {
+  id: number
+  /** 纸张名（「A4 70g」「6寸 230g 高级高光相纸」） */
+  paper: string
+  /** 类型名（「黑白」「彩色（普通）」「彩色（全覆盖）」） */
+  kind: string
+  /** 颜色（黑白 / 彩色）。它决定订单落库的 color_type —— 学生不再单独选颜色。 */
+  color: ColorType
+  /** 单面价（元/张） */
+  price_single: number
+  /** 双面价（元/张）；**null = 这一档不支持双面**（相纸那一档就是这样），
+   *  下单时双面选项会消失 —— 不是"选了才发现不行"。 */
+  price_double: number | null
+  /** 备注（「塑封 +2.61 · 量大价优」这类）。打印员要看到，学生也看得到。 */
+  note: string | null
+  /** 展示名（服务端拼好的「A4 70g · 黑白」）。前端不要自己拼 ——
+   *  两处各拼一次，纸张或类型为空时的兜底就会不一致。 */
+  label?: string
+  is_active?: number
+  sort_order?: number
+  create_time?: string | null
+  update_time?: string | null
+  /** 仅管理端列表：这条被多少订单用过（给「删不删」这道判断用） */
+  used_count?: number
+}
+
+export interface PriceTableResponse extends ApiEnvelope {
+  /** 只回**启用中的**条目（学生端与机器人看的就是这一份） */
+  items: PriceItem[]
+  /** 自动估价是否开着。关掉也照样给价目表：价格本身是公开信息，
+   *  只是不再有「预估 ¥x.xx」那一句。 */
+  enabled: boolean
+  /** 价目表说明（给学生看的那几条「注」，管理员在管理页维护） */
+  notes: string
+}
+
+export interface PriceItemListResponse extends ApiEnvelope {
+  items: PriceItem[]
+  rules: PriceRules
+  lines: string[]
+  limits: {
+    copies_min: number
+    copies_max: number
+    paper_max: number
+    kind_max: number
+    note_max: number
+    notes_max: number
+  }
+}
+
+/** 新建 / 修改一条价目项。金额一律**字符串**（原样传，不在前端 Number()）——
+ *  与订单金额同一个规矩。price_double 传空串 = 这一档不支持双面。 */
+export interface PriceItemInput {
+  paper: string
+  kind: string
+  color: ColorType
+  price_single: string
+  price_double: string
+  note: string
+  sort_order: number | string
 }
 
 /* ---- 自动估价的计价规则（计价规则页）----
@@ -575,41 +658,36 @@ export interface PriceRulesInput {
   enabled: boolean
   base_fee: string
   min_price: string
-  page_black_single: string
-  page_black_double: string
-  page_color_single: string
-  page_color_double: string
+  /** 价目表说明（几条「注」，一段多行文本） */
+  notes: string
 }
 
-/** 读回来的规则：服务端已经解析成数字了。 */
+/** 读回来的全局系数：服务端已经解析成数字了。**单价不在这里** ——
+ *  它在价目表的每一条上（PriceItem）。 */
 export interface PriceRules {
   enabled: boolean
   base_fee: number
   min_price: number
-  page_black_single: number
-  page_black_double: number
-  page_color_single: number
-  page_color_double: number
+  notes: string
 }
 
 export interface PriceRulesResponse extends ApiEnvelope {
   rules: PriceRules
-  /** 纸张清单（含加价）。纸张加价的**编辑入口在打印选项页**，这里只读着展示 ——
-   *  同一个字段有两个编辑框，迟早会出现「这边改了那边没改」的困惑。 */
-  papers: PaperType[]
   /** 服务端翻好的几句人话（公式说明）。前端不自己拼：两边各写一套必然漂移。 */
   lines: string[]
-  limits: { copies_min: number; copies_max: number }
 }
 
 export interface PricePreviewResponse extends ApiEnvelope {
   /** 试算出来的金额；null = 这组参数算不出价（note 里写着原因） */
   price: number | null
   note: string
-  /** 这一页的单价（元/页），含纸张加价 —— 管理员核对自己填的系数时最需要它 */
+  /** 这一页的单价（元/张）—— 管理员核对自己填的数时最需要它 */
   unit_price: number
   pages: number
   copies: number
+  duplex: Duplex
+  /** 试算用的那一档的名字（「A4 70g · 黑白」） */
+  label: string
 }
 
 /** 用预设下单的请求体。**没有文件字段** —— 后端发现请求里带文件会直接 400
@@ -618,8 +696,8 @@ export interface PricePreviewResponse extends ApiEnvelope {
 export interface PresetOrderRequest {
   preset_id: number
   copies: number
-  paper_type_id: number | null
-  color: ColorType
+  /** 选的价目项；null = 不选（管理员还没配价目表时走这条路，金额由管理员核定） */
+  price_item_id: number | null
   duplex: Duplex
   remark: string
 }
@@ -640,13 +718,12 @@ export interface UploadResponse extends ApiEnvelope {
  *  份数是个位数到两位数的整数，没有精度问题；
  *  真正有精度问题的是金额，那个一律原样传字符串。 */
 export interface UploadOptions {
-  color: string
   duplex: string
   remark: string
   /** 份数。不传或传空由后端兜成 COPIES_DEFAULT（老客户端兼容）。 */
   copies?: number
-  /** 选中的纸张类型 id；null / 不传表示不指定。 */
-  paper_type_id?: number | null
+  /** 选中的**价目项** id；null / 不传表示不选（颜色也随之不由客户端决定）。 */
+  price_item_id?: number | null
 }
 
 /** 分片上传会话 —— 服务端只回必要信息，不含磁盘路径。 */

@@ -775,6 +775,48 @@ def _rows_presets(draw, y, x0, x1, payload):
     return y - (ROW_H + 28 - DIVIDER_DY - 19)
 
 
+def _money(value):
+    """金额一律两位小数。与站内 priceLabel 同一口径（¥12.00 / ¥0.09）。"""
+    return '¥%.2f' % float(value or 0)
+
+
+def _rows_price(draw, y, x0, x1, payload):
+    """价目表卡的一行：纸张 · 类型 + 备注，右侧两行单价（单面 / 双面）。
+
+    为什么单价要单独占右侧一列、而且字号比正文大：**这张卡的全部意义就是那几个数**
+    （用户问「多少钱」，要的是能一眼扫到的价格，不是一段排版漂亮的名字）。
+    双面价为空 = 这一档不支持双面，明写「不支持双面」而不是画一个 0 或空白 ——
+    空白会被读成"漏了"，0 会被读成"双面免费"。
+    """
+    for item in payload.get('items') or []:
+        # 编号牌：与打印服务卡同一个形状（用户按这个号下单 / 在网页端对着选）
+        draw.rectangle([x0, y + 18, x0 + 52, y + 68], fill=_over(INK, 26),
+                       outline=_over(INK, 150), width=2)
+        draw.text((x0 + 26, y + 43), str(item.get('price_item_id')),
+                  font=_font('mono', 30, 600), fill=INK, anchor='mm')
+        draw.text((x0 + 80, y + 14),
+                  _truncate(draw, (item.get('label') or '').replace('\n', ' '),
+                            _font('cjk', 32), 620),
+                  font=_font('cjk', 32), fill=INK)
+        note = (item.get('note') or '').replace('\n', ' ').strip()
+        draw.text((x0 + 80, y + 62),
+                  _truncate(draw, note or '按这一档计价', _font('cjk', T_META), 620),
+                  font=_font('cjk', T_META), fill=INK_4)
+        #    右侧价格：单面一行、双面一行，右对齐到内容右缘。
+        #    单面用正文色 + 半粗（它是基准价），双面压一档 —— 两张同级的数字
+        #    并排会让人分不清哪个是"主价"。
+        draw.text((x1, y + 12), '单面 ' + _money(item.get('price_single')),
+                  font=_text_font('单面 0.00', 34, 600), fill=INK, anchor='ra')
+        double = item.get('price_double')
+        draw.text((x1, y + 62),
+                  '双面 ' + _money(double) if double is not None else '不支持双面',
+                  font=_text_font('双面 0.00', T_META, 400), fill=INK_3, anchor='ra')
+        draw.rectangle([x0, y + DIVIDER_DY + 16, x1, y + DIVIDER_DY + 19],
+                       fill=_over(INK, 34))
+        y += ROW_H + 28
+    return y - (ROW_H + 28 - DIVIDER_DY - 19)
+
+
 def _rows_me(draw, y, x0, x1, payload):
     orders = payload.get('orders') or {}
     usage = payload.get('usage') or {}
@@ -867,17 +909,18 @@ def _human(n):
 
 
 _TITLES = {'orders': '我的订单', 'tickets': '问题反馈', 'presets': '打印服务',
-           'me': '我的概况', 'help': '使用说明'}
+           'me': '我的概况', 'help': '使用说明', 'price': '价目表'}
 # 英文小标签走官方那套「名词 // 读数」的写法
 _EYEBROW = {'orders': 'ORDERS', 'tickets': 'TICKETS', 'presets': 'PRESETS',
-            'me': 'PROFILE', 'help': 'MANUAL'}
+            'me': 'PROFILE', 'help': 'MANUAL', 'price': 'PRICE'}
 _EMPTY = {'orders': '还没有订单 —— 把要打印的文件直接发给我就行。',
           'tickets': '还没有提过工单。发「反馈 你的问题」就能提。',
           'presets': '管理员还没配置打印服务。',
           'me': '还没有数据。',
-          'help': '帮助内容暂时取不到。'}
+          'help': '帮助内容暂时取不到。',
+          'price': '管理员还没配置价目表 —— 下单时仍然可以选类型，价格由管理员核定。'}
 _ROW_FN = {'orders': _rows_orders, 'tickets': _rows_tickets, 'presets': _rows_presets,
-           'me': _rows_me, 'help': _rows_help}
+           'me': _rows_me, 'help': _rows_help, 'price': _rows_price}
 
 
 def _watermark_of(kind, payload, rows):
@@ -890,7 +933,7 @@ def _watermark_of(kind, payload, rows):
       orders  → 可取件的件数（去取件）
       tickets → 有新回复的条数（去看）
       me      → 待我取件的件数（同上）
-      presets / help → 项目数（这两个没有「待办」维度，退回总量）
+      presets / help / price → 项目数（这三个没有「待办」维度，退回总量）
     数字是 0（或没有）就**不画** —— 一枚大号的 0 只会让人以为出了问题。
     """
     if kind == 'orders':
@@ -907,6 +950,8 @@ def _watermark_of(kind, payload, rows):
         label = '待取件'
     elif kind == 'presets':
         value, label = rows, '可下单'
+    elif kind == 'price':
+        value, label = rows, '档位'
     else:
         value, label = rows, '命令'
     #    标签一律用**名词**（可取件 / 未读 / 待取件 / 服务 / 命令），不要用量词打头
@@ -925,6 +970,8 @@ def _count_of(kind, payload):
         return len(payload.get('tickets') or [])
     if kind == 'presets':
         return len(payload.get('presets') or [])
+    if kind == 'price':
+        return len(payload.get('items') or [])
     if kind == 'help':
         return sum(len(s.get('items') or []) for s in payload.get('help') or [])
     return 1

@@ -149,6 +149,11 @@ def print_options():
     return _request('GET', '/api/bot/print-options')
 
 
+def price_table():
+    """当前价目表 + 说明文字（「价目表」命令用）。与网页端同一个接口。"""
+    return _request('GET', '/api/bot/price-table')
+
+
 def announcement():
     """当前生效的公告（可能是 null）。"""
     return _request('GET', '/api/bot/announcement')
@@ -197,17 +202,17 @@ def withdraw_order(qq, handle):
                     {'qq': qq, 'handle': handle}, retries=0)
 
 
-def order_preset(qq, preset_id, color='black', duplex='single', copies=1,
-                 paper_type_id=None, remark=None):
+def order_preset(qq, preset_id, duplex='single', copies=1,
+                 price_item_id=None, remark=None):
     """用预设下单。不重试（见模块注释）。
 
-    打印参数与文件下单同一套：网页端用预设下单时也能选颜色/单双面/份数/纸张，
+    打印参数与文件下单同一套：网页端用预设下单时也能选单双面/份数/价目项，
     bot 这边的追问流程问的就是这几个，所以一并带上（空值不传，同 order_file）。
     """
     payload = {'qq': qq, 'preset_id': preset_id,
-               'color': color, 'duplex': duplex, 'copies': copies}
-    if paper_type_id:
-        payload['paper_type_id'] = paper_type_id
+               'duplex': duplex, 'copies': copies}
+    if price_item_id:
+        payload['price_item_id'] = price_item_id
     if remark:
         payload['remark'] = remark
     return _request('POST', '/api/bot/order/preset', payload, retries=0)
@@ -230,17 +235,18 @@ def ticket_reply(qq, ticket_id, body):
                     {'qq': qq, 'ticket_id': ticket_id, 'body': body}, retries=0)
 
 
-def order_file(qq, file_name, file_bytes, color='black', duplex='single',
-               copies=1, paper_type_id=None, remark=None):
+def order_file(qq, file_name, file_bytes, duplex='single',
+               copies=1, price_item_id=None, remark=None):
     """把 QQ 里收到的文件传给服务器建单。不重试（见模块注释）。
 
     打印参数随表单一起传（服务端 /api/bot/order/file 与网页上传同一套校验）：
-    color / duplex / copies 必带，纸张与学生备注选填 —— 空值的字段**不 append**，
+    duplex / copies 必带，价目项与学生备注选填 —— 空值的字段**不 append**，
     让「没填」和「填了个空串」在服务端是同一种输入形状（与网页端 orderApi.upload 同规矩）。
+    ⚠️ v20 起**没有 color 了**：颜色由价目项本身决定（「A4 70g · 黑白」这一条就是黑白）。
     """
-    fields = {'qq': qq, 'color': color, 'duplex': duplex, 'copies': str(copies)}
-    if paper_type_id:
-        fields['paper_type_id'] = str(paper_type_id)
+    fields = {'qq': qq, 'duplex': duplex, 'copies': str(copies)}
+    if price_item_id:
+        fields['price_item_id'] = str(price_item_id)
     if remark:
         fields['remark'] = remark
     return _request_multipart('/api/bot/order/file',

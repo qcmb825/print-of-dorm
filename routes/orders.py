@@ -42,8 +42,7 @@ from config import (
     public_role,
     public_role_label,
 )
-from db import (db_conn, find_paper_type, find_preset, get_db, insert_order_row,
-                log_order_event)
+from db import (db_conn, find_preset, get_db, insert_order_row, log_order_event)
 from mail import user_mailbox
 import pricing
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
@@ -294,6 +293,7 @@ _ORDER_SELECT = '''
     SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
            o.user_id, o.claimed_by, o.price,
            o.source, o.est_price, o.est_pages,
+           o.price_item_id, o.price_item_name,
            o.preset_id, o.preset_content, o.copies,
            o.paper_type_id, o.paper_name, o.paper_remark,
            COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
@@ -464,7 +464,7 @@ def _estimate_note(est_price):
 
 
 def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies,
-                                paper=None, source=ORDER_SOURCE_WEB):
+                                item=None, source=ORDER_SOURCE_WEB):
     """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code, est_price)。
 
     单片直传（/api/upload）和分片上传合并完成之后都走这里，
@@ -480,9 +480,13 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
     才回到待打印池。直传和分片两条路都走这个函数，所以状态只在这里定一次，
     不会出现「分片传的单能直接接、直传的单卡住」这种一半对一半错的情形。
 
-    paper 是已校验过的纸张类型字典（含 id / name / remark），学生没选就是 None。
-    纸张的名字和备注**抄进订单**而不是只存 id：管理员随时能改名，
-    只存 id 的话，三个月前那一单的「用什么纸」会跟着今天的改名一起变。
+    item 是已校验过的价目项（price_items 的一行），没选就是 None。
+    它的纸张名与备注**抄进订单**而不是只存 id：管理员随时能改价目表，
+    只存 id 的话，三个月前那一单的「用什么纸」会跟着今天的改动一起变。
+    ⚠️ 快照仍然写进**老的 paper_name / paper_remark / color_type 三列**（而不是新开三列）：
+    订单台、详情页、邮件、数据卡、看板都在读它们 —— 沿用老列，那五处展示一行都不用改，
+    而新老订单看起来也完全一致。新加的只有「选的是哪一行」这两个
+    （price_item_id / price_item_name）。
 
     source 是这一单从哪条路下的（网页 / 机器人）。**由调用方声明，不从请求体里读** ——
     让客户端自己填，等于把「这单是机器人下的」变成一句可以让别人代说的话。
@@ -497,7 +501,7 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
         conn = get_db()
         est_pages, est_note = pricing.count_pages(save_path, original_name)
         est_price, est_reason = pricing.estimate_for_order(
-            conn, est_pages, copies, color, duplex, paper)
+            conn, est_pages, copies, duplex, item)
         if est_price is None:
             # 记一句为什么没估出来就够，别把 note 写进库：
             # 它是给人看的一句话，不是订单的属性，界面上的「预估」两个字已经说明了一切。
@@ -506,14 +510,19 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
             'user_id': g.user['id'],
             'filename': original_name,
             'file_path': save_path,
-            'color_type': color,
+            'color_type': pricing.item_color(item) if item else color,
             'duplex': duplex,
             'remark': remark,
             'status': ST_UNPRICED,
             'copies': copies,
-            'paper_type_id': paper['id'] if paper else None,
-            'paper_name': paper['name'] if paper else None,
-            'paper_remark': paper['remark'] if paper else None,
+            # 纸张三列现在来自价目项（老的 paper_type_id 不再写：纸张已经并进价目表了，
+            # 留着它会指向一张与新单无关的表）。备注抄的是价目项的 note ——
+            # 那是"这一单的附加要求"（塑封 +2.61 这类），打印员要看到。
+            'paper_type_id': None,
+            'paper_name': item['paper'] if item else None,
+            'paper_remark': item['note'] if item else None,
+            'price_item_id': item['id'] if item else None,
+            'price_item_name': pricing.format_item_label(item) if item else None,
             'source': source,
             'est_price': est_price,
             #    页数只在**真的估出价**时才存：存一个「读了 12 页、但算出来是 0」
@@ -524,7 +533,7 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
         # 留痕和订单在同一个事务里。订单落了库却没有「谁什么时候传的」这一条，
         # 详情页的操作记录就得从半路开始讲 —— 而第一条恰恰是最该有的那条。
         log_event(order_id, ORDER_LOG_CREATE,
-                  '上传文件「%s」并提交打印%s' % (original_name, describe_print_options(copies, paper)),
+                  '上传文件「%s」并提交打印%s' % (original_name, describe_print_options(copies, item)),
                   conn=conn)
         conn.commit()
         return order_id, pickup_code, est_price
@@ -543,22 +552,22 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
 
 
 
-def describe_print_options(copies, paper):
+def describe_print_options(copies, item):
     """把打印选项拼成一句给人看的补充说明，给操作留痕用。
 
-    留痕是**事后复查的凭证**，所以它必须自洽：当时是几份、用什么纸，
-    读这句话就能知道，不需要再去 JOIN 已经可能被改过的纸张表。
+    留痕是**事后复查的凭证**，所以它必须自洽：当时是几份、按哪一档价目打的，
+    读这句话就能知道，不需要再去 JOIN 一张可能已经被改过的价目表。
     """
     parts = []
     if copies is not None:
         parts.append('%s 份' % copies)
-    if paper:
-        parts.append('纸张 %s' % paper['name'])
+    if item:
+        parts.append('价目项「%s」' % pricing.format_item_label(item))
     return ('，' + '，'.join(parts)) if parts else ''
 
 
 
-def create_preset_order(preset, copies, paper, color, duplex, remark,
+def create_preset_order(preset, copies, item, duplex, remark,
                         source=ORDER_SOURCE_WEB):
     """用预设打印服务下单 —— 这一单**没有文件**，返回 (order_id, pickup_code)。
 
@@ -586,23 +595,25 @@ def create_preset_order(preset, copies, paper, color, duplex, remark,
             'user_id': g.user['id'],
             'filename': '',
             'file_path': '',
-            'color_type': color,
+            'color_type': pricing.item_color(item) if item else 'black',
             'duplex': duplex,
             'remark': remark,
             'status': ST_UNPRICED,
             'preset_id': preset['id'],
             'preset_content': preset['content'],
             'copies': copies,
-            'paper_type_id': paper['id'] if paper else None,
-            'paper_name': paper['name'] if paper else None,
-            'paper_remark': paper['remark'] if paper else None,
+            'paper_type_id': None,
+            'paper_name': item['paper'] if item else None,
+            'paper_remark': item['note'] if item else None,
+            'price_item_id': item['id'] if item else None,
+            'price_item_name': pricing.format_item_label(item) if item else None,
             'source': source,
             'est_price': None,
             'est_pages': None,
         })
         log_event(order_id, ORDER_LOG_CREATE,
                   '使用预设打印服务下单：%s%s'
-                  % (preset['content'], describe_print_options(copies, paper)),
+                  % (preset['content'], describe_print_options(copies, item)),
                   conn=conn)
         conn.commit()
         return order_id, pickup_code
@@ -616,36 +627,39 @@ def create_preset_order(preset, copies, paper, color, duplex, remark,
 
 
 
-def resolve_print_options(conn, data):
-    """校验下单时选的纸张类型，返回 (纸张字典, 错误信息)。
+def resolve_price_item(conn, data):
+    """校验下单时选的**价目项**，返回 (价目项, 生效的单双面, 错误信息)。
 
-    只有一处判定 —— 直传下单和预设下单都走它。分开写的话，
-    很快就会出现「传文件下的单能选 A3、用预设下的单选不了」这种没人能解释的差异。
+    只有一处判定 —— 直传 / 分片 / 预设 / 机器人四条下单路都走它。分开写的话，
+    很快就会出现「传文件下的单能选相纸、用预设下的单选不了」这种没人能解释的差异。
 
-    纸张可以为空（学生没选）。空的时候落库是 NULL，
-    不去猜一个「默认 A4」：我们并不知道楼里默认是哪种纸，
-    替学生选一个，出了问题还查不出是谁选的。
+    三件事都在这里收口：
+      · 条目必须存在且启用（学生打开页面之后管理员刚好把它停用了，只提醒刷新，
+        不悄悄替他换一条 —— 换掉的那条可能正好是打不了的）；
+      · **双面**：这一档不支持双面时，把 duplex 强制成 single。客户端传 double
+        不能让它变成另一档价格 —— 订单落库的 duplex 必须与计价用的那一档一致，
+        否则账单上写着「双面」、钱按单面收，事后谁也说不清该收多少。
+      · 价目项可以为空（老客户端 / 预设单不带这一项）—— 那就没有预估价，
+        订单照下、金额照样由管理员填（见 pricing 模块注释第①条）。
     """
-    raw_id = data.get('paper_type_id')
+    duplex = pricing.normalize_duplex(data.get('duplex'))
+    raw_id = data.get('price_item_id')
     if raw_id in (None, '', 0, '0'):
-        return None, None
+        return None, duplex, None
     if isinstance(raw_id, bool):
-        return None, '纸张类型不合法，刷新页面重新选择'
+        return None, duplex, '价目项不合法，刷新页面重新选择'
     try:
-        paper_type_id = int(raw_id)
+        item_id = int(raw_id)
     except (TypeError, ValueError):
-        return None, '纸张类型不合法，刷新页面重新选择'
-    row = find_paper_type(conn, paper_type_id)
+        return None, duplex, '价目项不合法，刷新页面重新选择'
+    row = pricing.find_item(conn, item_id)
     if row is None:
-        return None, '这个纸张类型不存在了，刷新页面重新选择'
+        return None, duplex, '这一档价目项不存在了，刷新页面重新选择'
     if row['is_active'] != 1:
-        # 学生打开页面之后管理员刚好把它停用了。这里只提醒刷新，
-        # 不悄悄替他换一个 —— 换掉的那张纸可能正好是打不了的。
-        return None, '这个纸张类型已经停用了，刷新页面重新选择'
-    # price_delta 也带上：下单时的预估价要用它（A3 比 A4 贵就靠这一项）。
-    # 它**不进 orders**（订单里不存价格系数，只存名字），所以不属于快照字段。
-    return {'id': row['id'], 'name': row['name'], 'remark': row['remark'],
-            'price_delta': row['price_delta']}, None
+        return None, duplex, '这一档价目项已经停用了，刷新页面重新选择'
+    if duplex == 'double' and not pricing.supports_duplex(row):
+        duplex = 'single'
+    return row, duplex, None
 
 
 @bp.route('/api/upload', methods=['POST'])
@@ -674,9 +688,10 @@ def api_upload():
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    # 纸张要查库，所以放后面一起做，别为了早而早把校验顺序搞得七零八落
+    # 价目项要查库，所以放后面一起做，别为了早而早把校验顺序搞得七零八落。
+    # duplex 由它带出来：这一档不支持双面时会被强制成单面（见 resolve_price_item）。
     with db_conn() as conn:
-        paper, error = resolve_print_options(conn, request.form)
+        item, duplex, error = resolve_price_item(conn, request.form)
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
@@ -728,7 +743,7 @@ def api_upload():
             return quota_error
 
         order_id, pickup_code, est_price = create_order_from_saved_file(
-            original_name, save_path, color, duplex, remark, copies, paper)
+            original_name, save_path, color, duplex, remark, copies, item)
     except Exception:
         # 落盘之后任何一步失败都不能把文件留在盘上：这些文件没有任何订单引用，
         # 也没有哪个清理任务会碰到它们（清理只认订单），只会一直堆着；
@@ -744,9 +759,10 @@ def api_upload():
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 纸张=%s 单号=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 价目项=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], original_name, file_size // 1024,
-                color, duplex, copies, paper['name'] if paper else '未指定',
+                color, duplex, copies,
+                pricing.format_item_label(item) if item else '未选',
                 pickup_code, client_ip())
     # 只返回订单号和单号，不暴露服务器绝对路径。
     # est_price 一并回给前端：下单成功那一屏要马上告诉学生「预估多少钱」，
@@ -809,18 +825,19 @@ def api_create_preset_order():
             if preset['is_active'] != 1:
                 # 页面打开着、管理员刚好把它停用了。明确说清楚，别让学生以为是系统坏了。
                 return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，刷新页面重新选择'}), 400
-            paper, error = resolve_print_options(conn, data)
+            item, duplex, error = resolve_price_item(conn, data)
             if error:
                 return jsonify({'code': 400, 'msg': error}), 400
-            order_id, pickup_code = create_preset_order(preset, copies, paper, color, duplex, remark)
+            order_id, pickup_code = create_preset_order(
+                preset, copies, item, duplex, remark)
         except Exception:
             logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
                              g.user['nickname'], preset_id, client_ip())
             return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
-    logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 纸张=%s 单号=%s ip=%s',
+    logger.info('新订单 #%s 下单人=%s 预设#%s 份数=%s 价目项=%s 单号=%s ip=%s',
                 order_id, g.user['nickname'], preset_id, copies,
-                paper['name'] if paper else '未指定', pickup_code, client_ip())
+                pricing.format_item_label(item) if item else '未选', pickup_code, client_ip())
     return jsonify({
         'code': 0,
         'msg': '下单成功！用的是预设服务，不需要上传文件',
@@ -927,6 +944,7 @@ def api_order_detail(order_id):
             SELECT o.id, o.filename, o.file_path, o.color_type, o.duplex, o.remark,
                    o.status, o.pickup_code, o.user_id, o.claimed_by, o.price, o.priced_by,
                    o.source, o.est_price, o.est_pages,
+                   o.price_item_id, o.price_item_name,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
                    COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
@@ -1534,6 +1552,7 @@ def api_my_orders():
         rows = conn.execute('''
             SELECT o.id, o.filename, o.color_type, o.duplex, o.remark, o.status, o.pickup_code,
                    o.claimed_by, o.price, o.est_price, o.est_pages,
+                   o.price_item_id, o.price_item_name,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
                    datetime(o.create_time, 'localtime') AS create_time,

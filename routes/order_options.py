@@ -113,6 +113,15 @@ def api_print_options():
             WHERE is_active = 1
             ORDER BY id DESC
         ''').fetchall()
+        # 价目表（v20 起下单时选的就是它，而不是纸张）——
+        # 与 /api/price-table 同一个取数函数，**不是各查一遍**：下单页要的是同一份东西，
+        # 两处各写一条 SQL，迟早出现「价目表页显示 8 条、下单页只有 7 条」。
+        items = pricing.list_items(conn, only_active=True)
+        #    纸张那一段是**遗留**：v20 起纸张已经并进价目表，下单表单不再用它。
+        #    留着它有两个实在的理由：① 老订单要读得出当时的纸（存的是快照，但
+        #    SettingsView 的「默认纸张」偏好还引用着纸张 id）；② 回归脚本（smoke）
+        #    还在验这张表的增删改查。**新加的下单相关字段一律走 price_items**，
+        #    不要再往 paper_types 上挂东西 —— 那是一个正在退场的概念。
         papers = conn.execute('''
             SELECT id, name, remark, datetime(update_time, 'localtime') AS update_time
             FROM paper_types
@@ -123,6 +132,7 @@ def api_print_options():
         'code': 0,
         'presets': [dict(row) for row in presets],
         'paper_types': [dict(row) for row in papers],
+        'price_items': items,
     })
 
 

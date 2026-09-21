@@ -59,7 +59,7 @@ from .orders import (
     create_order_from_saved_file,
     quota_rejection,
     register_chunk_usage_provider,
-    resolve_print_options,
+    resolve_price_item,
 )
 
 bp = Blueprint('upload_chunks', __name__)
@@ -682,13 +682,13 @@ def api_chunk_complete(upload_id):
     color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
 
-    # 份数和纸张与单片直传同一套校验（parse_copies / resolve_print_options）。
+    # 份数和价目项与单片直传同一套校验（parse_copies / resolve_price_item）。
     # 两边各写一套的下场是「大文件小文件能填的份数不一样」，没人能解释。
     copies, error = parse_copies(data.get('copies'))
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
     with db_conn() as options_conn:
-        paper, error = resolve_print_options(options_conn, data)
+        item, duplex, error = resolve_price_item(options_conn, data)
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
@@ -760,7 +760,7 @@ def api_chunk_complete(upload_id):
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——单号重摇、失败清理都只有一份实现。
         order_id, pickup_code, est_price = create_order_from_saved_file(
-            meta['filename'], final_path, color, duplex, remark, copies, paper)
+            meta['filename'], final_path, color, duplex, remark, copies, item)
     except Exception:
         # create_order_from_saved_file 失败时自己删了文件；这里兜住合并阶段抛出的异常
         if os.path.exists(final_path):

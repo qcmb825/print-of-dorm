@@ -3,19 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="color-scheme" content="light dark" />
+    <!-- 界面锁定亮色（业主的要求，2026-09-21）：声明成 light，浏览器自带的控件
+         （滚动条、表单、日期选择器）才跟着亮，否则系统是暗色时它们会自己变暗，
+         在一片浅色里格外突兀。 -->
+    <meta name="color-scheme" content="light" />
+    <!-- 地址栏/状态栏的颜色跟着**开屏层**走（那一层是刻意的恒暗设计），
+         不是跟主题走 —— 开屏结束时它已经被浏览器取过一次了。 -->
     <meta name="theme-color" content="#050505" />
     <!-- 有图标之后浏览器就不会再去请求 /favicon.ico 了。
          少了这一行，每次整页加载都会留下一条 404（被打成 WARNING 记进访问日志）。 -->
     <link rel="icon" type="image/svg+xml" href="/static/app/favicon.svg" />
     <title>猫娘打印服务</title>
     <script>
-      // 在首屏绘制前定好主题，避免刷新时闪一下白底（FOUC）。
+      // 界面**锁定亮色**（2026-09-21，业主的要求：网页一律亮色，不跟系统走）。
+      // 这一段必须在 CSS 之前跑：它的活儿是防 FOUC —— 以前读的是
+      // 「localStorage 的 pod-theme，没有就跟随系统」，现在两边都不读了，
+      // 只做一件事：把可能残留在 HTML 上的 dark 类摘掉、把 color-scheme 钉成 light。
+      // 摘 class 而不是什么都不做：老用户浏览器里可能还留着上个版本写下的
+      // `html.dark`（那是当时 toggle 落下的），不摘就是一块黑底配浅色令牌。
       try {
-        var saved = localStorage.getItem('pod-theme')
-        var dark = saved === 'dark' || (saved !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
-        document.documentElement.classList.toggle('dark', dark)
-        document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        document.documentElement.classList.remove('dark')
+        document.documentElement.style.colorScheme = 'light'
       } catch (e) {}
     </script>
 
@@ -41,13 +49,13 @@
          · 减少动效下不做横扫（与换场同一个判断，理由见 base.css）。
     ═══════════════════════════════════════════════════════════════════════ -->
     <style>.boot{z-index:200;touch-action:none;-webkit-font-smoothing:antialiased;width:100%;height:100dvh;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace;position:fixed;top:0;left:0;overflow:hidden}.boot__mat,.boot__under{width:124%;position:absolute;top:0;bottom:0;left:-12%}.boot__mat{background-color:#050505}.boot__under{background-color:#fffa00}.boot__hud{color:#fff;font-family:system-ui,-apple-system,Segoe UI,Microsoft YaHei,sans-serif;position:absolute;inset:0}.boot__frame{border:1px solid #ffffff1a;position:absolute;inset:14px}.boot__top,.boot__band{letter-spacing:.16em;text-transform:uppercase;color:#fff6;flex-wrap:wrap;align-items:baseline;gap:4px 14px;font-size:11px;display:flex;position:absolute;left:26px;right:26px}.boot__top{top:26px}.boot__band{bottom:22px}.boot__cn{letter-spacing:.06em;color:#ffffffc7;font-size:13px}.boot__right{margin-left:auto}.boot__foot{position:absolute;bottom:54px;left:26px}.boot__tri{gap:5px;margin-bottom:12px;display:flex}.boot__tri>i{clip-path:polygon(0 100%,0 0,100% 100%);background-color:#fffa00;width:9px;height:9px}.boot__tri>.is-blank{background-color:#0000}.boot__num{letter-spacing:-.02em;color:#fffa00;font-variant-numeric:tabular-nums;align-items:baseline;font-size:clamp(44px,7vw,76px);font-weight:700;line-height:.9;display:flex}.boot__num>span{text-align:right;min-width:3ch;display:inline-block}.boot__num>b{letter-spacing:.06em;font-size:.34em;font-weight:700}.boot__cap{margin-top:10px;display:block}.boot__fill{width:6px;height:100%;transform:scaleY(var(--boot-p,0));transform-origin:top;background-color:#fffa00;position:absolute;top:0;left:0}.boot__log{letter-spacing:.16em;text-transform:uppercase;flex-direction:column;gap:7px;margin:0;padding:0;font-size:11px;list-style:none;display:flex;position:absolute;bottom:54px;right:26px}.boot__row{color:#ffffff5c;align-items:center;gap:8px;display:flex}.boot__row>i{border:1px solid #ffffff52;width:5px;height:5px}.boot__row>b{font-weight:600}.boot__row>span{margin-left:auto}.boot__row[data-state=ok]{color:#ffffffa8}.boot__row[data-state=ok]>i{background-color:#fffa00;border-color:#fffa00}.boot__row[data-state=ok]>span{color:#fffa00}@keyframes boot-in{0%{opacity:0;transform:translateY(8px)}}.boot__in{animation:.24s cubic-bezier(.23,1,.32,1) both boot-in;animation-delay:var(--d,0s)}.boot__sr{clip:rect(0 0 0 0);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}@media (prefers-reduced-motion:reduce){.boot__in{animation:none}}</style>
-    <script type="module" crossorigin src="/static/app/assets/index-ChakMpLN.js"></script>
-    <link rel="modulepreload" crossorigin href="/static/app/assets/endpoints-MMH2_YQj.js">
-    <link rel="modulepreload" crossorigin href="/static/app/assets/createLucideIcon-Dgil5eM1.js">
-    <link rel="modulepreload" crossorigin href="/static/app/assets/pinia-CgDjoe_w.js">
-    <link rel="modulepreload" crossorigin href="/static/app/assets/light-DFiniuvs.js">
-    <link rel="modulepreload" crossorigin href="/static/app/assets/Scrollbar-cO_MZVQX.js">
-    <link rel="stylesheet" crossorigin href="/static/app/assets/index-CLCZm2E7.css">
+    <script type="module" crossorigin src="/static/app/assets/index-6bqWpmDa.js"></script>
+    <link rel="modulepreload" crossorigin href="/static/app/assets/endpoints-BhTSb8lj.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/createLucideIcon-Byg0Q1WZ.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/pinia-CqoI543M.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/light-BAjMBreW.js">
+    <link rel="modulepreload" crossorigin href="/static/app/assets/Scrollbar-Cxvob6a1.js">
+    <link rel="stylesheet" crossorigin href="/static/app/assets/index-B27PmPKZ.css">
   </head>
   <body>
     <div id="boot" class="boot" role="status">
@@ -110,11 +118,12 @@
         var root = document.documentElement
 
         var START = 6
-        // 放行的最早时刻。这个数不是"等一会儿"，而是与入场排期绑在一起的：
-        // index.html 里那六块读数最晚的在 200ms 起步、240ms 落位，400ms 正好是
-        // "整块版面刚刚到位"。低于它，本机这种秒开的加载会看见"数字还半透明，
-        // 面板就开始扫"—— 那不是设计，是没排好。
-        var MIN_MS = 400
+        // 开屏层的**最短播放时长**。业主的要求：加载快（本机常常几百毫秒就起来了）
+        // 也要把这段动画播完，否则那一眼只是"闪了一下黑"；加载真的慢时不受它影响，
+        // 按真实进度走（下面 frame 里那条 timeCurve 只负责"托底"，不负责"催"）。
+        // 取 1500ms：六块读数 240ms 落位之后，还剩一秒多由进度柱和读数在走 ——
+        // 那段不是空转，--boot-p 一直在动，看着就是"在读盘"。
+        var MIN_MS = 1500
         var WATCHDOG_MS = 8000 // 产物 404 / 脚本挂了时，用户不能被锁在开屏层里
         var EXIT_FALLBACK_MS = 1200 // 出场动画的兜底时长（那份样式没到时也要能摘掉这一层）
 
@@ -210,16 +219,31 @@
           shown += (target - shown) * (1 - Math.pow(0.001, dt / 420))
           if (target - shown < 0.4) shown = target
 
-          var value = Math.floor(shown)
+          // 「最短播放时长」就靠这一条实现：另画一条**按时间走**的曲线
+          // （START → 100，线性，正好在 MIN_MS 那一刻到顶），显示值取它与真实进度的
+          // **较小者**。
+          //   · 加载快（target 早早到 100）：时间曲线压着走 → 整整 1.5 秒播满；
+          //   · 加载慢（target 卡在 60）：min 取的是真实进度 → 跟着加载走，不虚报。
+          // 注意是 min 不是 max —— 写成 max 就成了"最慢也要 1.5 秒"，
+          // 而慢加载会被硬拉到 100，那是编数，不是读盘。
+          var timeCurve = START + (100 - START) * Math.min(1, elapsed / MIN_MS)
+          // 加载已经完成（target 到 100）且时间也走满了：直接落到 100。
+          // 不这一下的话，指数逼近还差最后几个点（1500ms 时约 97），
+          // 于是"最短 1.5 秒"实际会拖成 1.7 秒 —— 而那一秒里数字是不动的，
+          // 读起来像卡住了，不像读完。
+          if (target >= 100 && elapsed >= MIN_MS) shown = 100
+          var display = Math.min(shown, timeCurve)
+
+          var value = Math.floor(display)
           if (value !== lastInt) {
             lastInt = value
             num.textContent = String(value)
           }
-          boot.style.setProperty('--boot-p', String(shown / 100))
+          boot.style.setProperty('--boot-p', String(display / 100))
 
           // 出场等读数真的落在 100 上（而不是等目标值）：否则面板会在数字还停在 93 的
           // 时候就扫开 —— 那一眼就是整屏唯一的破绽。
-          if (shown >= 100 && elapsed >= MIN_MS) {
+          if (display >= 100 && elapsed >= MIN_MS) {
             exit()
             return
           }

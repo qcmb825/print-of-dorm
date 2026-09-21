@@ -15,6 +15,7 @@
  *  兜底不会把状态机压坏 —— 时长被压短只是让钩子更早回来，状态流转照旧。
  */
 import { readonly, ref, watch } from 'vue'
+import { whenRequestsIdle } from '@/api/client'
 
 export type VeilPhase = 'idle' | 'out' | 'in'
 
@@ -48,6 +49,18 @@ let watchdog: ReturnType<typeof setTimeout> | null = null
  *  那种情况下用户必然已经点了下一次导航 —— 新的一次 begin() 会重新计时并自行收尾，
  *  所以这个计时器存在的意义只是「万一」，给得比任何一档总时长都宽。 */
 const WATCHDOG_MS = 3000
+
+/** 面板盖着屏、等新页面把首屏数据拿回来的上限（毫秒）。
+ *
+ *  为什么要有它、而不是「一直等到数据到」：接口慢起来是没底的（弱网、大列表），
+ *  让用户对着一块盖着屏幕的面板等三秒，比「先揭开、让页面自己转圈」更糟 ——
+ *  后者至少能看见页面骨架、知道自己在哪一页。
+ *  取 800ms：本机与校园网的首屏请求都在 100ms 上下，这个数基本只在真的慢时才用满。
+ *
+ *  整段换场的时长因此是「原有的一拍（0.8s）+ 等数据的 0~0.8s」——
+ *  业主要求的「最短 0.7 秒」由前者保证（子页档本来就是 0.32+0.16+0.32=0.8s），
+ *  而「加载慢就跟着走」由这一段保证。 */
+const DATA_WAIT_MAX_MS = 800
 
 function disarmWatchdog(): void {
   if (watchdog !== null) {
@@ -89,8 +102,17 @@ export function useRouteVeil() {
 
   /** @after-leave 调用 —— 源码里 remove() 先跑、钩子后调，所以这一刻
    *  新树的 DOM 已经插进页面了，而它带的是 enter-from（透明）。
-   *  面板此时已经盖到位，换手就发生在它后面。 */
-  function open(id: number): void {
+   *  面板此时已经盖到位，换手就发生在它后面。
+   *
+   *  **这里要等一下新页面的首屏数据**：面板盖着的时候，新页面的 onMounted 已经把
+   *  请求发出去了（它们由 api/client.ts 统一计数），等这批请求落地再开幕，
+   *  用户看到的就是「换场结束 = 内容已经在」；不等的话，面板扫开之后还要空一下、
+   *  再自己填上，那一眼就是「这页有点卡」。
+   *  等多久由 DATA_WAIT_MAX_MS 封顶，且**没有请求在飞时立刻放行**（绝大多数页面）。 */
+  async function open(id: number): Promise<void> {
+    if (id !== runSeq || phase.value !== 'out') return
+    await whenRequestsIdle(DATA_WAIT_MAX_MS)
+    // 等待期间可能又导航了一次、或者看门狗已经复位：那就别再推进了
     if (id !== runSeq || phase.value !== 'out') return
     phase.value = 'in'
   }

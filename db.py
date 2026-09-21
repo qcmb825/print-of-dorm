@@ -94,6 +94,7 @@ _ORDER_INSERT_COLUMNS = (
     'status', 'preset_id', 'preset_content', 'copies',
     'paper_type_id', 'paper_name', 'paper_remark',
     'source', 'est_price', 'est_pages',
+    'price_item_id', 'price_item_name',
 )
 
 
@@ -236,6 +237,15 @@ def find_paper_type(conn, paper_type_id):
 # v16 -> v17：「可取件」这个状态值改过一次字（见 _migrate_ready_status_wording）。
 # v17 -> v18：新增用户偏好表 user_prefs（通知开关 / 免打扰 / 默认打印参数 /
 #            显示偏好），一对一挂在 users 上。只加新表，没有迁移函数。
+# v19 -> v20：「计价规则」重做成**价目表**（price_items）：一条 = 纸张 + 类型 +
+#            单面价 + 双面价 + 备注，学生下单时直接选一条。
+#            原先的「四档单价（黑白/彩色 × 单面/双面）+ 纸张加价」是"基价 + 加价"
+#            的形状，而真实价目表里同一种纸配不同工艺是各自定价的（双面价甚至不是
+#            单面价的固定比例，还有整档「不支持双面」）—— 用加价去逼近只会得到一个
+#            谁也说不清的近似值。老库的四档单价**换算成两条价目项**（不是编造，
+#            是同一份信息摊平），price_rules 同时重建为「只留全局系数 + 说明文字」，
+#            单价列删掉 —— 留着它们就是下一个读代码的人以为单价还从那儿来。
+#            另给 orders 加 price_item_id / price_item_name（选的是哪一行 + 文本快照）。
 # v18 -> v19：三件事，全是加列加表：
 #            ① orders 新增 source（这一单从哪条路下的：web / bot）。
 #               原先机器人下单会在学生备注里塞一句「通过 QQ 机器人下单」——
@@ -251,7 +261,7 @@ def find_paper_type(conn, paper_type_id):
 #               外加新表 price_rules（计价公式的各项系数，管理员可改）。
 #            同一批里还顺手订正了历史数据：备注正好等于那句占位文案的老订单，
 #            把备注清空、来源标成 bot —— 那不是学生写的话，留着就是留一条假记录。
-SCHEMA_VERSION = '19'
+SCHEMA_VERSION = '20'
 
 
 
@@ -404,6 +414,73 @@ def _migrate_ready_status_wording(cursor, current_version):
     if orders or logs or details:
         logger.info('迁移：状态「可取了」改名为「可取件」（订单 %d 条 / 留痕 %d 条 / 详情 %d 条）',
                     orders, logs, details)
+
+
+
+def _migrate_price_table(cursor, current_version):
+    """v19 -> v20：把「四档单价」换成一张**价目表**（price_items）。
+
+    两件事，都在老库上做一次：
+      ① 旧 price_rules 里的四档单价（黑白/彩色 × 单面/双面）**换算成两条价目项**。
+         这不是"编一个默认值"：那四个数当时就是真实生效的价目，只是被压成了
+         「基价 + 两个维度」的形状；摊平成两行之后信息一个字没少，
+         而且管理员一进价目表页就看到两条现成的、可以照着改成自己那张表的条目 ——
+         比面对一张空表更容易看懂这个功能怎么用。
+      ② 重建 price_rules：四档单价列**删掉**。留着它们最省事，但那是这个项目最忌讳的
+         「不报错、只是行为不对」——下一个读代码的人会以为单价还从那儿来。
+         重建前会备份整库（backup_database_file 在本函数之前已经跑过）。
+
+    只在**老库**上做：全新库的 price_rules 建出来就没有那几列（见 PRAGMA 判断），
+    而 price_items 保持空 —— 空表是有意义的状态（价目表页会给出引导），
+    不该拿两条"示例数据"去冒充业主的价目。
+    """
+    if _migration_version(current_version) >= 20:
+        return
+    columns = {row[1] for row in cursor.execute('PRAGMA table_info(price_rules)').fetchall()}
+    if 'page_black_single' not in columns:
+        # 全新库 / 已经迁过的库：结构里没有旧列，什么都不用做
+        return
+    row = cursor.execute('SELECT * FROM price_rules WHERE id = 1').fetchone()
+    enabled = int(row['enabled']) if row is not None else 1
+    base_fee = float(row['base_fee'] or 0) if row is not None else 0.0
+    min_price = float(row['min_price'] or 0) if row is not None else 0.0
+    pairs = []
+    if row is not None:
+        for color, kind, single_key, double_key in (
+                ('black', '黑白', 'page_black_single', 'page_black_double'),
+                ('color', '彩色', 'page_color_single', 'page_color_double')):
+            single = row[single_key]
+            double = row[double_key]
+            if single is None and double is None:
+                continue
+            pairs.append((color, kind, float(single or 0), float(double or 0)))
+
+    # 先改名再建新表：中途出错时旧表还在（比 DROP 在前安全一步）
+    cursor.execute('ALTER TABLE price_rules RENAME TO price_rules_v19')
+    cursor.execute('''
+        CREATE TABLE price_rules (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            enabled INTEGER NOT NULL DEFAULT 1,
+            base_fee REAL NOT NULL DEFAULT 0,
+            min_price REAL NOT NULL DEFAULT 0,
+            notes TEXT,
+            updated_by INTEGER,
+            update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    cursor.execute(
+        'INSERT INTO price_rules (id, enabled, base_fee, min_price) VALUES (1, ?, ?, ?)',
+        (enabled, base_fee, min_price))
+    if not cursor.execute('SELECT COUNT(*) AS c FROM price_items').fetchone()['c']:
+        for index, (color, kind, single, double) in enumerate(pairs):
+            cursor.execute('''
+                INSERT INTO price_items (paper, kind, color, price_single, price_double,
+                                         note, is_active, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            ''', ('通用纸张（未指定）', kind, color, single, double,
+                  '由旧的四档单价换算而来 —— 请按实际价目表改成具体纸张', index))
+    cursor.execute('DROP TABLE price_rules_v19')
+    logger.info('迁移：计价规则换成价目表（四档单价换算成 %d 条价目项）', len(pairs))
 
 
 
@@ -715,7 +792,17 @@ def init_database():
             cursor.execute('ALTER TABLE orders ADD COLUMN est_price REAL')
         if 'est_pages' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN est_pages INTEGER')
-        order_columns.update(('source', 'est_price', 'est_pages'))
+
+        # v20：这一单选的是价目表上的哪一行（+ 那一刻的文本快照）。
+        # 快照抄的是「纸张 · 类型」整句，与 preset_content / paper_name 同一个道理：
+        # 管理员随时能改价目表、停用、删除，只存 id 的话，三个月前那一单
+        # 「当时按什么价打的」就跟着今天的改动一起变了。
+        if 'price_item_id' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN price_item_id INTEGER')
+        if 'price_item_name' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN price_item_name TEXT')
+        order_columns.update(('source', 'est_price', 'est_pages',
+                              'price_item_id', 'price_item_name'))
 
         # ⚠️ paper_types 的补列**不能写在这儿**：这张表是下面一百多行才
         # CREATE TABLE IF NOT EXISTS 的，排在这一段就是「对着还不存在的表 ALTER」——
@@ -970,6 +1057,7 @@ def init_database():
                 default_duplex TEXT,
                 default_copies INTEGER,
                 default_paper_type_id INTEGER,
+                default_price_item_id INTEGER,
                 hide_done_orders INTEGER NOT NULL DEFAULT 0,
                 card_replies INTEGER NOT NULL DEFAULT 1,
                 orders_page_size INTEGER,
@@ -993,14 +1081,55 @@ def init_database():
                 enabled INTEGER NOT NULL DEFAULT 1,
                 base_fee REAL NOT NULL DEFAULT 0,
                 min_price REAL NOT NULL DEFAULT 0,
-                page_black_single REAL NOT NULL DEFAULT 0.1,
-                page_black_double REAL NOT NULL DEFAULT 0.08,
-                page_color_single REAL NOT NULL DEFAULT 0.5,
-                page_color_double REAL NOT NULL DEFAULT 0.4,
+                notes TEXT,
                 updated_by INTEGER,
                 update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # ---- v20：价目表（一条 = 价目表上的一行）----
+        # 「纸张 + 类型 + 单面价 + 双面价 + 备注」捆成**一条**，学生下单时直接选它。
+        # 为什么不像 v19 那样分开成「纸张表 + 四档单价 + 纸张加价」：
+        # 那是"先选纸、再选颜色单双面"的算法，而真实价目表根本不是那样算的 ——
+        # A4 70g 的黑白 0.09、6寸相纸的彩色 1.0，**同一种纸配不同工艺是各自定价的**，
+        # 用「基价 + 加价」去逼近只会得到一个谁也说不清的近似值
+        # （业主给的那张价目表里，双面价甚至不是单面价的固定比例，还有整档「不支持双面」）。
+        #
+        # color 单独留一列（black / color）而不是从 kind 文本里猜：orders.color_type
+        # 是既有列，订单台、邮件、数据卡、看板都在用它；让价目项直接给出这个枚举，
+        # 那些展示链路就一行都不用改。
+        # price_double 可空 = **不支持双面**（相纸那一档就是这样）——下单时双面选项
+        # 会消失，而不是"选了才发现不行"。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS price_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                paper TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                color TEXT NOT NULL DEFAULT 'black',
+                price_single REAL NOT NULL,
+                price_double REAL,
+                note TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_price_items_active ON price_items(is_active)')
+
+        # v20：用户偏好里的「默认纸张」换成「默认价目项」（纸张并进了价目表）。
+        # 老列 default_paper_type_id **保留不动**：它存的是纸张 id，而价目项是另一张表，
+        # 拿旧值去当价目项 id 会指到一条完全不相干的条目上（比清空更糟）。
+        # 读的地方一律只读新列，老列就此退役。
+        # ⚠️ 这一段**必须排在上面那句 CREATE TABLE user_prefs 之后** ——
+        # 放在前面的通用补列区里，全新库会对着还不存在的表 ALTER，
+        # init_database 当场挂（本轮又踩了一次：paper_types 那次是同一个坑）。
+        pref_columns = {row[1] for row in
+                        cursor.execute('PRAGMA table_info(user_prefs)').fetchall()}
+        if 'default_price_item_id' not in pref_columns:
+            cursor.execute('ALTER TABLE user_prefs ADD COLUMN default_price_item_id INTEGER')
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，
@@ -1009,6 +1138,10 @@ def init_database():
         # 这与 v12「索引建在补列之前」、v16「ALTER 在建表之前」是同一类坑的第三种：
         # **用结构的语句，必须排在产生该结构的语句之后**。
         _migrate_ready_status_wording(cursor, current_version)
+
+        # v20 的价目表迁移。**必须排在 price_items / price_rules 建表之后**，
+        # 而且它会重建 price_rules（理由见函数自己的注释）。
+        _migrate_price_table(cursor, current_version)
 
         # 同一条纪律：它读写的是上面那段 v19 才补出来的 orders.source，
         # 排在补列之前就是老库升级当场挂（见上面那段注释）。

@@ -1,1 +1,0 @@
-import{Ct as e,V as t}from"./endpoints-MMH2_YQj.js";function n(n,r){return e(n,e=>{e!==void 0&&(r.value=e)}),t(()=>n.value===void 0?r.value:n.value)}export{n as t};

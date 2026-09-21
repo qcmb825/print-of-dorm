@@ -300,10 +300,9 @@ const prefsForm = reactive({
   hide_done_orders: false,
   card_replies: true,
   orders_page_size: 5,
-  default_color: '',
   default_duplex: '',
   default_copies: null as number | null,
-  default_paper_type_id: null as number | null,
+  default_price_item_id: null as number | null,
 })
 
 /** 服务端当前那份（已归一化）。脏值判定与回填都以它为准。 */
@@ -328,10 +327,9 @@ function fillPrefs(next: UserPrefs): void {
   prefsForm.hide_done_orders = next.hide_done_orders
   prefsForm.card_replies = next.card_replies
   prefsForm.orders_page_size = next.orders_page_size
-  prefsForm.default_color = next.default_color
   prefsForm.default_duplex = next.default_duplex
   prefsForm.default_copies = next.default_copies
-  prefsForm.default_paper_type_id = next.default_paper_type_id
+  prefsForm.default_price_item_id = next.default_price_item_id
 }
 
 async function loadPrefs(): Promise<void> {
@@ -357,10 +355,9 @@ function prefsPayload(): Partial<UserPrefs> {
     hide_done_orders: prefsForm.hide_done_orders,
     card_replies: prefsForm.card_replies,
     orders_page_size: prefsForm.orders_page_size,
-    default_color: prefsForm.default_color,
     default_duplex: prefsForm.default_duplex,
     default_copies: prefsForm.default_copies,
-    default_paper_type_id: prefsForm.default_paper_type_id,
+    default_price_item_id: prefsForm.default_price_item_id,
   }
 }
 
@@ -410,36 +407,34 @@ async function savePrefs(): Promise<void> {
   }
 }
 
-/** 纸张列表按需拉：设置页平时只调两个接口，而纸张列表只在**点开那一栏**时
- *  才有用。不点就不拉，省掉一次没人看的往返（纸张是管理员维护的，改得很少）。 */
-const paperOptions = ref<{ label: string; value: number }[]>([])
-const paperLoading = ref(false)
-async function loadPapers(): Promise<void> {
-  if (paperOptions.value.length || paperLoading.value) {
+/** 价目表按需拉：设置页平时只调两个接口，而价目表只在**点开那一栏**时才有用。
+ *  不点就不拉，省掉一次没人看的往返（价目表是管理员维护的，改得很少）。 */
+const itemOptions = ref<{ label: string; value: number }[]>([])
+const itemLoading = ref(false)
+async function loadPriceItems(): Promise<void> {
+  if (itemOptions.value.length || itemLoading.value) {
     return
   }
-  paperLoading.value = true
+  itemLoading.value = true
   try {
     const response = await printOptionsApi.load()
-    paperOptions.value = response.paper_types.map((item) => ({
-      label: item.remark ? `${item.name}（${item.remark}）` : item.name,
+    itemOptions.value = response.price_items.map((item) => ({
+      //    单价写进标签：设默认值的时候正是要挑"常打的那一档"，
+      //    而挑的时候一定要看价格（价目表本身是另一处，来回跳很烦）。
+      label: `${item.paper} · ${item.kind}（单面 ¥${item.price_single.toFixed(2)}）`,
       value: item.id,
     }))
   } catch {
-    // 拉不到就当这一栏没有可选项：默认纸张本来就是个可选项，
+    // 拉不到就当这一栏没有可选项：默认价目项本来就是个可选项，
     // 为它弹一个错误反而像是下单失败了。
-    paperOptions.value = []
+    itemOptions.value = []
   } finally {
-    paperLoading.value = false
+    itemLoading.value = false
   }
 }
 
-/** 「每次问我」与「没设过」是同一个状态：空串 / null。 */
-const colorOptions = [
-  { label: '每次问我', value: '' },
-  { label: '黑白', value: 'black' },
-  { label: '彩色', value: 'color' },
-]
+/** 「每次问我」与「没设过」是同一个状态：空串 / null。
+ *  **没有「默认颜色」**（v20 起）：颜色由价目项决定，再留一个默认颜色会与它打架。 */
 const duplexOptions = [
   { label: '每次问我', value: '' },
   { label: '单面', value: 'single' },
@@ -873,9 +868,20 @@ onMounted(() => {
 
           <!-- ③ 默认打印参数与订单每页条数 -->
           <div class="mt-3 grid gap-2.5 sm:grid-cols-2">
+            <!-- 默认价目项：**取代了从前的「默认打印方式」与「默认纸张」两项** ——
+                 纸张、颜色、单价现在都在价目项这一条里（v20），再留那两个下拉，
+                 就会出现「默认颜色=彩色、默认价目项=黑白」这种自相矛盾的组合。 -->
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">默认打印方式</span>
-              <NSelect v-model:value="prefsForm.default_color" :options="colorOptions" size="small" />
+              <span class="tech-label text-ink-3 tech-label--cn">默认价目项</span>
+              <NSelect
+                v-model:value="prefsForm.default_price_item_id"
+                :options="itemOptions"
+                :loading="itemLoading"
+                size="small"
+                clearable
+                placeholder="每次问我"
+                @update:show="(shown: boolean) => shown && loadPriceItems()"
+              />
             </label>
             <label class="flex flex-col gap-1">
               <span class="tech-label text-ink-3 tech-label--cn">默认单双面</span>
@@ -894,18 +900,6 @@ onMounted(() => {
                 :max="COPIES_MAX"
                 clearable
                 placeholder="每次问我"
-              />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">默认纸张</span>
-              <NSelect
-                v-model:value="prefsForm.default_paper_type_id"
-                :options="paperOptions"
-                :loading="paperLoading"
-                size="small"
-                clearable
-                placeholder="每次问我"
-                @update:show="(shown: boolean) => shown && loadPapers()"
               />
             </label>
             <label class="flex flex-col gap-1">

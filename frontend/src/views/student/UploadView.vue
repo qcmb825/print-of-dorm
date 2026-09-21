@@ -19,11 +19,13 @@ import {
   History,
   Layers,
   Printer,
+  ReceiptText,
   Rocket,
   Upload,
   X,
 } from '@lucide/vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PriceTableDialog from '@/components/PriceTableDialog.vue'
 import StageHead from '@/components/StageHead.vue'
 import {
   NButton,
@@ -43,7 +45,7 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showReceipt } from '@/composables/transition-receipt'
 import { chunkApi, orderApi, printOptionsApi, authApi } from '@/api/endpoints'
-import type { ChunkSession, PaperType, PrintPreset } from '@/api/types'
+import type { ChunkSession, PriceItem, PrintPreset } from '@/api/types'
 import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
 import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
@@ -59,11 +61,12 @@ type OrderMode = 'file' | 'preset'
 const mode = ref<OrderMode>('file')
 
 const fileList = ref<UploadFileInfo[]>([])
-const color = ref<'black' | 'color'>('black')
 const duplex = ref<'single' | 'double'>('single')
 const remark = ref('')
 const copies = ref<number>(COPIES_DEFAULT)
-const paperTypeId = ref<number | null>(null)
+/** 选的**价目项**（v20 起取代"颜色 + 纸张"两个下拉）：
+ *  纸张、类型、单价都在这一条里，颜色由它决定（服务端从价目项取 color_type）。 */
+const priceItemId = ref<number | null>(null)
 /** 选中的预设 id。null = 还没选，这时不允许提交（不能替学生挑一条）。 */
 const presetId = ref<number | null>(null)
 const router = useRouter()
@@ -77,7 +80,7 @@ const pending = ref<ChunkSession[]>([])
 const activeChunkUploadId = ref<string | null>(null)
 /** 服务端给的启用中预设与纸张 */
 const presets = ref<PrintPreset[]>([])
-const paperTypes = ref<PaperType[]>([])
+const priceItems = ref<PriceItem[]>([])
 /** 预设/纸张清单没拉到时的提示语。清单为空**不等于**没有可选项 ——
  *  这两种情况在下拉框里长得一模一样（都是空的），但一个是「还没配置」、
  *  一个是「网络出问题了」。不给提示的话，学生只会以为这功能不存在。 */
@@ -98,14 +101,26 @@ const selectedPreset = computed(
 const presetOptions = computed(() =>
   presets.value.map((item) => ({ label: item.content, value: item.id })),
 )
-/** 纸张可以不选（后端落 NULL）。「不指定」是一个真实选项，
- *  不是「还没选」—— 所以我们不去猜一个默认纸张。 */
-const paperOptions = computed(() =>
-  paperTypes.value.map((item) => ({
-    label: item.remark ? `${item.name} · ${item.remark}` : item.name,
-    value: item.id,
-  })),
+/** 价目项下拉。标签里带上**单价**：这一屏是学生下单前唯一一次看到价格的地方
+ *  （价目表弹窗是「想细看才点」的补充，不是必经之路）。
+ *  双面价为空 = 这一档不支持双面，标签里明写，选完之后双面单选也会禁用。 */
+const priceItemOptions = computed(() =>
+  priceItems.value.map((item) => {
+    const price = item.price_double === null
+      ? `单面 ¥${item.price_single.toFixed(2)} · 不支持双面`
+      : `单面 ¥${item.price_single.toFixed(2)} / 双面 ¥${item.price_double.toFixed(2)}`
+    const note = item.note ? ` · ${item.note}` : ''
+    return { label: `${item.paper} · ${item.kind}（${price}${note}）`, value: item.id }
+  }),
 )
+
+/** 选中的那一档。决定「双面能不能选」，也决定提交时要不要带 price_item_id。 */
+const selectedItem = computed(
+  () => priceItems.value.find((item) => item.id === priceItemId.value) ?? null,
+)
+/** 这一档支不支持双面。不支持时把双面单选禁掉 —— 而不是让学生选了再被服务端改回单面
+ *  （那样他看到的选项和最终计价就不是一回事）。 */
+const duplexAllowed = computed(() => selectedItem.value?.price_double !== null)
 
 /** 只有大文件才会走分片，提前告诉用户「会分几片」，免得他以为卡住了。 */
 const chunkCount = computed(() => {
@@ -137,7 +152,7 @@ async function loadOptions(): Promise<void> {
   try {
     const data = await printOptionsApi.load()
     presets.value = data.presets ?? []
-    paperTypes.value = data.paper_types ?? []
+    priceItems.value = data.price_items ?? []
   } catch (error) {
     optionsError.value = error instanceof ApiError ? error.message : '打印选项加载失败'
   } finally {
@@ -192,17 +207,16 @@ function reset(): void {
  *  默认值本身不动（要改默认值得去设置页 / 机器人「默认 …」命令）。
  */
 const formDefaults = ref<{
-  color: 'black' | 'color' | null
   duplex: 'single' | 'double' | null
   copies: number
-  paperTypeId: number | null
-}>({ color: null, duplex: null, copies: COPIES_DEFAULT, paperTypeId: null })
+  priceItemId: number | null
+}>({ duplex: null, copies: COPIES_DEFAULT, priceItemId: null })
 
 /** 有没有真的用过默认值。用来决定要不要显示那句「已按你的默认参数预填」——
  *  没设过默认值的人也看到这句话，会去找一个自己从没设过的东西。 */
 const defaultsApplied = computed(() => {
   const d = formDefaults.value
-  return !!(d.color || d.duplex || d.paperTypeId || d.copies !== COPIES_DEFAULT)
+  return !!(d.duplex || d.priceItemId || d.copies !== COPIES_DEFAULT)
 })
 
 /** 表单里有没有被用户动过。预填**只填空着的字段** ——
@@ -213,10 +227,9 @@ const formTouched = ref(false)
 function applyDefaults(): void {
   const d = formDefaults.value
   if (!formTouched.value) {
-    color.value = d.color ?? 'black'
     duplex.value = d.duplex ?? 'single'
     copies.value = d.copies
-    paperTypeId.value = d.paperTypeId
+    priceItemId.value = d.priceItemId
   }
 }
 
@@ -227,14 +240,11 @@ async function loadPrefs(): Promise<void> {
     formDefaults.value = {
       // 只认这两个值：库里存了别的东西（手改过库、旧版本留下的）时当作「没设」，
       // 塞进 NRadioGroup 会变成一个选不中的状态，看着像坏了。
-      color: saved.default_color === 'color' || saved.default_color === 'black'
-        ? saved.default_color
-        : null,
       duplex: saved.default_duplex === 'single' || saved.default_duplex === 'double'
         ? saved.default_duplex
         : null,
       copies: typeof saved.default_copies === 'number' ? saved.default_copies : COPIES_DEFAULT,
-      paperTypeId: saved.default_paper_type_id ?? null,
+      priceItemId: saved.default_price_item_id ?? null,
     }
     applyDefaults()
   } catch {
@@ -242,6 +252,17 @@ async function loadPrefs(): Promise<void> {
     // 为它弹一个错误反而像是下单页坏了。
   }
 }
+
+/** 选了价目项：把「用户动过表单」标上，并在这一档不支持双面时把 duplex 拨回单面 ——
+ *  否则会留下一个「选项是双面、这一档却打不了双面」的状态，提交时被服务端改回单面，
+ *  而屏幕上还写着双面（价钱却按单面算）。 */
+function onItemChange(): void {
+  formTouched.value = true
+  if (!duplexAllowed.value) duplex.value = 'single'
+}
+
+/** 价目表弹窗 */
+const priceTableOpen = ref(false)
 
 /** 下单成功的回执信息。
  *
@@ -294,11 +315,10 @@ async function submit(): Promise<void> {
     // 份数已经是 number（NInputNumber），这里原样传 —— 不做字符串拼装、不做算术。
     // 顺着后端的口径走：份数只认整数，范围由服务端最终裁定。
     const common = {
-      color: color.value,
       duplex: duplex.value,
       remark: remark.value.trim(),
       copies: copies.value ?? COPIES_DEFAULT,
-      paper_type_id: paperTypeId.value,
+      price_item_id: priceItemId.value,
     }
 
     if (usingPreset.value) {
@@ -360,14 +380,14 @@ async function submit(): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([refreshPending(), loadOptions(), loadPrefs()])
-  // 偏好里的默认纸张可能已经被管理员停用或删掉了 —— 那种情况下下拉框里
+  // 偏好里的默认价目项可能已经被管理员停用或删掉了 —— 那种情况下下拉框里
   // 找不到它的名字，会显示成一个裸 id（看着像乱码）。对一次账，不在清单里就当没设。
-  // ⚠️ 只在清单**真的拉到了**时对账：拉失败时 paperTypes 是空的，
-  //    照对不误会把一个好好的默认纸当成「已删除」丢掉（而且用户看不到任何提示）。
-  if (!optionsError.value && paperTypeId.value !== null
-      && !paperTypes.value.some((item) => item.id === paperTypeId.value)) {
-    paperTypeId.value = null
-    formDefaults.value.paperTypeId = null
+  // ⚠️ 只在清单**真的拉到了**时对账：拉失败时 priceItems 是空的，
+  //    照对不误会把一个好好的默认项当成「已删除」丢掉（而且用户看不到任何提示）。
+  if (!optionsError.value && priceItemId.value !== null
+      && !priceItems.value.some((item) => item.id === priceItemId.value)) {
+    priceItemId.value = null
+    formDefaults.value.priceItemId = null
   }
 })
 </script>
@@ -605,14 +625,38 @@ onMounted(async () => {
       <StageHead code="02" title="打印参数" step="STEP 2/3" class="mt-6 mb-3" />
 
       <div class="grid gap-4 sm:grid-cols-2">
-        <NFormItem label="打印颜色" :show-feedback="false" class="!mb-0">
-          <NRadioGroup v-model:value="color" :disabled="submitting" @update:value="formTouched = true">
-            <NRadioButton value="black">黑白</NRadioButton>
-            <NRadioButton value="color">彩色</NRadioButton>
-          </NRadioGroup>
+        <!-- 价目项：纸张 + 类型 + 单价都在这一条里（v20 起取代了"颜色 + 纸张"两个下拉）。
+             颜色由它决定，所以这一屏不再有「打印颜色」那一项 —— 让学生再选一次颜色，
+             就会出现「选了彩色、价目项却是黑白」这种自相矛盾的组合。 -->
+        <NFormItem label="类型 / 纸张" :show-feedback="false" class="!mb-0 sm:col-span-2">
+          <div class="flex w-full min-w-0 items-center gap-2">
+            <NSelect
+              v-model:value="priceItemId"
+              :options="priceItemOptions"
+              :loading="optionsLoading"
+              :disabled="submitting || optionsLoading"
+              class="min-w-0 flex-1"
+              placeholder="选一档（纸张与单价都在里面）"
+              @update:value="onItemChange"
+            />
+            <NButton
+              size="small"
+              quaternary
+              :disabled="submitting"
+              title="看完整价目表与注意事项"
+              @click="priceTableOpen = true"
+            >
+              <template #icon><ReceiptText :size="15" /></template>
+              价目表
+            </NButton>
+          </div>
         </NFormItem>
         <NFormItem label="单双面" :show-feedback="false" class="!mb-0">
-          <NRadioGroup v-model:value="duplex" :disabled="submitting" @update:value="formTouched = true">
+          <NRadioGroup
+            v-model:value="duplex"
+            :disabled="submitting || !duplexAllowed"
+            @update:value="formTouched = true"
+          >
             <NRadioButton value="single">单面</NRadioButton>
             <NRadioButton value="double">双面</NRadioButton>
           </NRadioGroup>
@@ -630,26 +674,22 @@ onMounted(async () => {
             @update:value="formTouched = true"
           />
         </NFormItem>
-        <NFormItem label="纸张（可选）" :show-feedback="false" class="!mb-0">
-          <NSelect
-            v-model:value="paperTypeId"
-            :options="paperOptions"
-            :loading="optionsLoading"
-            :disabled="submitting || optionsLoading"
-            clearable
-            placeholder="不指定"
-            class="w-full"
-            @update:value="formTouched = true"
-          />
-        </NFormItem>
       </div>
       <p class="mt-2 text-xs text-ink-3">
-        份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。纸张由管理员维护，
-        不确定就用「不指定」，会按常规纸走。
+        份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。
+        <template v-if="selectedItem && !duplexAllowed">
+          这一档<strong>不支持双面</strong>，按单面计。
+        </template>
+        <template v-if="!priceItemOptions.length && !optionsLoading">
+          管理员还没配置价目表 —— 照样能下单，金额由管理员核定。
+        </template>
         <template v-if="defaultsApplied">
           已按你在「设置」里的<strong>默认参数</strong>预填，随时可以改。
         </template>
       </p>
+
+      <!-- 价目表弹窗：想细看才点（价目项下拉里已经带了单价，这里给的是完整那张表 + 注） -->
+      <PriceTableDialog v-model:show="priceTableOpen" />
 
       <NFormItem label="备注（可选）" :show-feedback="false" class="mt-4">
         <NInput

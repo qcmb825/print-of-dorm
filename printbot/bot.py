@@ -161,34 +161,51 @@ def reply_pref_size(client, qq, argument):
 
 
 def reply_pref_default(client, qq, argument):
-    """「默认 黑白双面 2份」：把常用打印参数记下来，下次下单时当默认值。
+    """「默认 3 双面 2份」：把常用下单参数记下来，下次下单时当默认值。
 
-    只认关键词，不认顺序：「黑白」「彩色」「单面」「双面」「N 份」随便怎么排。
+    只认关键词，不认顺序：**价目项编号**（下单菜单里那个号）、「单面」「双面」、
+    「N 份」随便怎么排。
+
+    ⚠️ 这里**不再认「黑白/彩色」**（v20 起）：颜色由价目项本身决定
+    （「A4 70g · 黑白」这一条就是黑白）。再留一个"默认颜色"就会与价目项打架，
+    而打架时谁赢都说不清 —— 所以那条关键词不认了，并且明说为什么，
+    而不是静默忽略（用户会以为设上了）。
     """
     text = (argument or '').strip()
     if not text:
-        client.send_private_msg(qq, '用法：「默认 黑白双面 2份」；发「默认 清空」去掉。')
+        client.send_private_msg(
+            qq, '用法：「默认 3 双面 2份」（3 是下单菜单里那一档的编号）；发「默认 清空」去掉。')
         return
     if text in ('清空', '取消', '无'):
-        _save_pref(client, qq, {'default_color': '', 'default_duplex': '',
-                                'default_copies': None, 'default_paper_type_id': None},
-                   '默认打印参数已清空，以后每次都会问你。')
+        _save_pref(client, qq, {'default_duplex': '', 'default_copies': None,
+                                'default_price_item_id': None},
+                   '默认下单参数已清空，以后每次都会问你。')
         return
     fields = {}
-    if '彩色' in text:
-        fields['default_color'] = 'color'
-    elif '黑白' in text:
-        fields['default_color'] = 'black'
     if '双面' in text:
         fields['default_duplex'] = 'double'
     elif '单面' in text:
         fields['default_duplex'] = 'single'
+    if '黑白' in text or '彩色' in text:
+        client.send_private_msg(
+            qq, '黑白还是彩色现在由**价目项**决定（比如「A4 70g · 黑白」这一档），'
+                '所以不用单独设默认颜色 —— 把常打的那一档设成默认就行：'
+                '发「默认 3 2份」，把 3 换成你那一档的编号。')
+        return
     digits = ''.join(ch if ch.isdigit() else ' ' for ch in text).split()
     if digits:
-        fields['default_copies'] = int(digits[0])
+        #    两个数字时的约定：**第一个是价目项编号、最后一个是份数** ——
+        #    与「默认 3 双面 2份」的读法一致（编号在前、份数在后）。
+        #    只给一个数字时按份数算：「默认 2份」是更常见的用法，
+        #    而回执里会把认成什么原样念一遍，认错了用户当场看得见。
+        if len(digits) >= 2:
+            fields['default_price_item_id'] = int(digits[0])
+            fields['default_copies'] = int(digits[-1])
+        else:
+            fields['default_copies'] = int(digits[0])
     if not fields:
-        client.send_private_msg(qq, '没认出要设什么。用法：「默认 黑白双面 2份」'
-                                    '（黑白/彩色、单面/双面、几份，随便怎么排）')
+        client.send_private_msg(qq, '没认出要设什么。用法：「默认 3 双面 2份」'
+                                    '（价目项编号、单面/双面、几份，随便怎么排）')
         return
     resp = api.save_prefs(qq, fields)
     if resp.get('code') != 0:
@@ -334,6 +351,8 @@ _ZH_EXACT = {
     # 现在：光发「通知」走前缀表、回一句用法；「通知 关」正常改开关。
     '设置': 'settings', '偏好': 'settings',
     '订单': 'orders', '我的订单': 'orders', '查订单': 'orders',
+    # 「价目表」：整词命令（「价目表多少钱」不会被误吞，首段不等于它）
+    '价目表': 'price', '价目': 'price',
     '我的': 'me', '概况': 'me',
     '公告': 'announce',
     '工单': 'tickets',
@@ -385,8 +404,9 @@ _pending = {}
 PENDING_TTL_SECONDS = 600  # 10 分钟没选完就作废（文件白占磁盘没意义）
 PENDING_DIR = Path(__file__).resolve().parent / 'data' / 'pending'
 
-_MODE_MAP = {'1': ('black', 'single'), '2': ('black', 'double'),
-             '3': ('color', 'single'), '4': ('color', 'double')}
+# 单双面：**不再是"打印方式"菜单**（那一步把颜色和单双面捆在一起，
+# 而 v20 起颜色由价目项决定）。现在它是一道独立的小选择题，只在该档支持双面时才问。
+_DUPLEX_MAP = {'1': 'single', '2': 'double'}
 
 # 份数上限。⚠️ 必须与服务端 `config.COPIES_MAX` 一致 —— printbot 是自包含包
 # （不 import 项目模块），所以这里只能各写一份，改的时候两边一起改。
@@ -436,40 +456,42 @@ _COPIES_ASK = '打几份？（回复数字，最多 %d 份；发「取消」可�
 _SKIP_WORDS = ('跳过', '默认', '不指定', '不用', '跳', '0')
 
 
-def _mode_menu(name, intro=None, defaults=None):
-    """打印方式菜单。intro 让预设单和文件单共用这一屏（预设没有文件，
-    改成「下单：打印服务「…」」更准确）；不传就是文件单的默认说法。
+def _items_menu(items, name=None, intro=None, defaults=None):
+    """价目项菜单：**下单要选的就是这一条**（纸张 + 类型，自带单价）。
 
-    `defaults` 是用户的偏好（「默认 黑白双面 2份」设过的那份）。设过就在对应那档
-    后面标一句「你的默认」、并允许直接回「默认」—— 否则那条命令只写不读，
+    intro 让预设单和文件单共用这一屏（预设没有文件，改成「下单：打印服务「…」」
+    更准确）；不传就是文件单的默认说法。
+
+    `defaults` 是用户的偏好（「默认 3 2份」设过的那份）。设过就在对应那条后面
+    标一句「你的默认」、并允许直接回「默认」—— 否则那条命令只写不读，
     而回执里却说「下次下单时当默认值」，等于骗人（偏好审计抓到的）。
+
+    每行把**单价**写出来：这一屏是学生下单时唯一一次看到价格的地方，
+    不写的话他只能盲选（价目表本身是另一条命令，不是每个人都会去发）。
     """
     intro = intro or '收到「%s」。'
-    pair = None
-    if defaults and defaults.get('default_color') and defaults.get('default_duplex'):
-        pair = (defaults['default_color'], defaults['default_duplex'])
+    default_id = (defaults or {}).get('default_price_item_id')
     rows = []
-    for key in sorted(_MODE_MAP):
-        mark = '（你的默认）' if pair == _MODE_MAP[key] else ''
-        rows.append(' %s. %s%s' % (key, _mode_text(*_MODE_MAP[key]), mark))
-    return '%s\n打印方式？（回复数字%s；发「取消」可以放弃）\n%s' % (
-        intro % name, '，或回「默认」' if pair else '', '\n'.join(rows))
+    for item in items:
+        mark = '（你的默认）' if default_id and item['price_item_id'] == default_id else ''
+        price = '单面 %.2f' % item['price_single']
+        if item.get('price_double') is not None:
+            price += ' / 双面 %.2f' % item['price_double']
+        rows.append(' %s. %s（%s）%s'
+                    % (item['price_item_id'], item['label'], price, mark))
+    head = intro % name if name else ''
+    tail = '选哪一档？（回复编号%s；发「价目表」看完整价目与说明，发「取消」可以放弃）' % (
+        '，或回「默认」' if default_id else '')
+    return '\n'.join([head, tail] + rows).strip()
 
 
-def _mode_text(color, duplex):
-    return '%s%s' % ('黑白' if color == 'black' else '彩色',
-                    '单面' if duplex == 'single' else '双面')
+def _duplex_menu():
+    """单双面。**只在那一档支持双面时才问**（相纸那一档没有双面）。"""
+    return '要单面还是双面？（回复 1 单面 / 2 双面；发「取消」可以放弃）'
 
 
-def _papers_menu(papers):
-    """纸张选择菜单。编号就是纸张的 id（可能不连续，菜单照实显示）。"""
-    lines = ['要指定纸张吗？（回复编号；发「跳过」用默认的，发「取消」放弃这一单）']
-    for paper in papers:
-        label = paper['name']
-        if paper.get('remark'):
-            label += '（%s）' % paper['remark']
-        lines.append(' %s. %s' % (paper['paper_type_id'], label))
-    return '\n'.join(lines)
+def _duplex_text(duplex):
+    return '双面' if duplex == 'double' else '单面'
 
 
 def _human_bytes(num):
@@ -741,10 +763,24 @@ def handle_file(client, qq, kind, data):
         client.send_private_msg(qq, '文件没能存下来，请重新发一次')
         return
     _pending[qq] = {'kind': 'file', 'path': path, 'name': name, 'intro': None,
-                    'step': 'mode', 'color': None, 'duplex': None, 'copies': None,
-                    'paper_type_id': None, 'paper_name': None, 'papers': None,
+                    'step': 'item', 'price_item_id': None, 'item_label': None,
+                    'item_supports_duplex': False, 'duplex': None, 'copies': None,
                     'remark': None, 'ts': time.time()}
-    client.send_private_msg(qq, _mode_menu(name, defaults=_prefs_cache_get(qq)))
+    items = _fetch_price_items()
+    entry = _pending[qq]
+    entry['items'] = items
+    if items:
+        client.send_private_msg(qq, _items_menu(items, name, defaults=_prefs_cache_get(qq)))
+    else:
+        #    管理员还没配价目表：不能装作没这回事（学生选了档却算不出价）。
+        #    明说一句，然后**照常下单** —— 金额本来就由管理员核定。
+        #    duplex 也要在这里定成单面：留 None 的话回执与状态里会是个空值，
+        #    而服务端照样兜成单面 —— 两边说的不是同一件事。
+        entry['duplex'] = 'single'
+        entry['step'] = 'copies'
+        client.send_private_msg(
+            qq, '收到「%s」。\n管理员还没配置价目表，这一单先按老规矩提交、'
+                '金额由管理员核定。\n%s' % (name, _COPIES_ASK))
 
 
 # ---- 参数追问的状态机 --------------------------------------------------------
@@ -838,27 +874,33 @@ def _site_hint(resp):
 
 def _ask_current(client, qq, entry):
     """按当前步骤把问题再发一遍（答案不合法、或用户中途设了备注时用）。"""
-    if entry['step'] == 'mode':
-        client.send_private_msg(qq, _mode_menu(entry['name'], entry.get('intro'),
-                                               defaults=_prefs_cache_get(qq)))
+    if entry['step'] == 'item':
+        client.send_private_msg(qq, _items_menu(entry.get('items') or [],
+                                                entry.get('name'), entry.get('intro'),
+                                                defaults=_prefs_cache_get(qq)))
+    elif entry['step'] == 'duplex':
+        client.send_private_msg(qq, _duplex_menu())
     elif entry['step'] == 'copies':
         client.send_private_msg(qq, _COPIES_ASK)
-    elif entry['step'] == 'paper':
-        client.send_private_msg(qq, _papers_menu(entry['papers']))
 
 
-def _fetch_papers():
-    """拉纸张清单；失败就当作「没有纸张可选」——追问流程不该因为
-    一个可选项的接口抖动而卡住，日志里留个痕即可。"""
+def _fetch_price_items():
+    """拉价目表；失败就当作「没有价目项」——追问流程不该因为一个接口抖动而卡住，
+    日志里留个痕即可。
+
+    ⚠️ 一条都没有时**不能悄悄放行**：那意味着学生选了档却算不出价
+    （服务端会回「这一单没选价目项」）。所以调用方要明确说一句
+    「管理员还没配价目表，这一单按老规矩由管理员核定金额」，而不是装作没这回事。
+    """
     try:
         resp = api.print_options()
     except api.ApiError as exc:
-        log.warning('拉纸张清单失败，本次跳过纸张选择：%s', exc)
+        log.warning('拉价目表失败，本次不带价目项下单：%s', exc)
         return []
     if resp.get('code') != 0:
-        log.warning('拉纸张清单被拒：%s', resp.get('msg'))
+        log.warning('拉价目表被拒：%s', resp.get('msg'))
         return []
-    return resp.get('paper_types') or []
+    return resp.get('price_items') or []
 
 
 def _consume_pending_answer(client, qq, text):
@@ -893,40 +935,45 @@ def _consume_pending_answer(client, qq, text):
         _ask_current(client, qq, entry)
         return True
 
-    if entry['step'] == 'mode':
+    if entry['step'] == 'item':
+        #    「默认 3 2份」设过就要真的用上：那条命令原先只写不读，
+        #    回执里却说「下次下单时当默认值」（偏好审计抓到的）。
         if answer in ('默认', '默认值'):
-            #    「默认 黑白双面 2份」设过就要真的用上：那条命令原先只写不读，
-            #    回执里却说「下次下单时当默认值」（偏好审计抓到的）。
             now = _prefs_cache_get(qq)
-            pair = (now.get('default_color'), now.get('default_duplex'))
-            if not (pair[0] and pair[1]):
+            default_id = now.get('default_price_item_id')
+            chosen = next((p for p in entry.get('items') or []
+                           if p['price_item_id'] == default_id), None)
+            if chosen is None:
                 client.send_private_msg(
-                    qq, '你还没设过默认打印参数。发「默认 黑白双面 2份」可以设一个。')
+                    qq, '你还没设过默认价目项（或者它已经被管理员停用了）。'
+                        '发「默认 3 2份」可以设一个 —— 3 是上面菜单里的编号。')
                 return True
-            entry['color'], entry['duplex'] = pair
-            entry['ts'] = time.time()
-            if now.get('default_copies'):
-                #    份数也设过就一路套到底，直接进纸张那一步（或直接下单）
+            if _apply_item(client, qq, entry, chosen) and now.get('default_copies'):
+                #    份数也设过就一路套到底，直接下单（不再问单双面：默认单双面
+                #    在 _apply_item 里已经套上了）
                 entry['copies'] = int(now['default_copies'])
-                papers = _fetch_papers()
-                if papers:
-                    entry['papers'] = papers
-                    entry['step'] = 'paper'
-                    client.send_private_msg(qq, _papers_menu(papers))
-                else:
-                    _submit_pending(client, qq, entry)
-            else:
-                entry['step'] = 'copies'
-                client.send_private_msg(qq, _COPIES_ASK)
+                _submit_pending(client, qq, entry)
             return True
-        if answer in _MODE_MAP:
-            entry['color'], entry['duplex'] = _MODE_MAP[answer]
-            entry['step'] = 'copies'
+        if answer.isdigit():
+            chosen = next((p for p in entry.get('items') or []
+                           if str(p['price_item_id']) == answer), None)
+            if chosen is not None:
+                _apply_item(client, qq, entry, chosen)
+                return True
+        client.send_private_msg(
+            qq, '没看懂「%s」—— 回复上面菜单里的编号选一档，'
+                '或发「价目表」看完整价目，发「取消」放弃。' % (answer or '')[:20])
+        _ask_current(client, qq, entry)
+        return True
+
+    if entry['step'] == 'duplex':
+        if answer in _DUPLEX_MAP:
+            entry['duplex'] = _DUPLEX_MAP[answer]
             entry['ts'] = time.time()
+            entry['step'] = 'copies'
             client.send_private_msg(qq, _COPIES_ASK)
         else:
-            client.send_private_msg(qq, '没看懂「%s」—— 回复 1-4 选打印方式，'
-                                        '或发「取消」放弃。' % (answer or '')[:20])
+            client.send_private_msg(qq, '回复 1（单面）或 2（双面），或发「取消」放弃。')
             _ask_current(client, qq, entry)
         return True
 
@@ -937,32 +984,46 @@ def _consume_pending_answer(client, qq, text):
         if answer.isdigit() and 1 <= int(answer) <= COPY_MAX:
             entry['copies'] = int(answer)
             entry['ts'] = time.time()
-            papers = _fetch_papers()
-            if papers:
-                entry['papers'] = papers
-                entry['step'] = 'paper'
-                client.send_private_msg(qq, _papers_menu(papers))
-            else:
-                _submit_pending(client, qq, entry)
+            _submit_pending(client, qq, entry)
         else:
             client.send_private_msg(qq, '回复份数（数字，比如 1），或发「取消」放弃。')
         return True
 
-    if entry['step'] == 'paper':
-        if answer in _SKIP_WORDS:
-            entry['paper_type_id'], entry['paper_name'] = None, None
-            _submit_pending(client, qq, entry)
-            return True
-        if answer.isdigit():
-            chosen = next((p for p in entry.get('papers') or []
-                           if str(p['paper_type_id']) == answer), None)
-            if chosen is not None:
-                entry['paper_type_id'] = chosen['paper_type_id']
-                entry['paper_name'] = chosen['name']
-                _submit_pending(client, qq, entry)
-                return True
-        client.send_private_msg(qq, '回复菜单里的编号选纸张，或发「跳过」用默认的。')
         return True
+    return False
+
+
+def _apply_item(client, qq, entry, chosen):
+    """把选中的价目项装进待办，并推进到下一步（单双面 或 份数）。返回是否已提交。
+
+    两条分支合在一处，是因为**同一档的后续问法必须一致**：
+    支持双面 → 问单双面；不支持（相纸那一档）→ 直接问份数，
+    并把 duplex 定成 single。分开写的话，迟早出现「走默认那条路时不问单双面、
+    手选编号时又问」这种一半对一半的行为差异。
+    """
+    entry['price_item_id'] = chosen['price_item_id']
+    entry['item_label'] = chosen['label']
+    entry['item_supports_duplex'] = bool(chosen.get('supports_duplex'))
+    entry['ts'] = time.time()
+    if not entry['item_supports_duplex']:
+        #    不支持双面的档（相纸）：不问那一句，也不留一个能传出 double 的状态 ——
+        #    服务端也会兜（resolve_price_item 会强制成 single），两处一致。
+        entry['duplex'] = 'single'
+        entry['step'] = 'copies'
+        client.send_private_msg(
+            qq, '「%s」不支持双面，按单面算。\n%s' % (chosen['label'], _COPIES_ASK))
+        return False
+    #    默认单双面设过就直接套上、跳过这一问（与「默认」命令的承诺一致）
+    default_duplex = _prefs_cache_get(qq).get('default_duplex')
+    if default_duplex in ('single', 'double'):
+        entry['duplex'] = default_duplex
+        entry['step'] = 'copies'
+        client.send_private_msg(
+            qq, '「%s」· 你的默认%s。\n%s'
+                % (chosen['label'], _duplex_text(default_duplex), _COPIES_ASK))
+        return False
+    entry['step'] = 'duplex'
+    client.send_private_msg(qq, '「%s」\n%s' % (chosen['label'], _duplex_menu()))
     return False
 
 
@@ -982,15 +1043,15 @@ def _submit_pending(client, qq, entry):
     try:
         if is_preset:
             resp = api.order_preset(qq, entry['preset_id'],
-                                    color=entry['color'], duplex=entry['duplex'],
+                                    duplex=entry['duplex'],
                                     copies=entry.get('copies') or 1,
-                                    paper_type_id=entry.get('paper_type_id'),
+                                    price_item_id=entry.get('price_item_id'),
                                     remark=entry.get('remark'))
         else:
             resp = api.order_file(qq, entry['name'], blob,
-                                  color=entry['color'], duplex=entry['duplex'],
+                                  duplex=entry['duplex'],
                                   copies=entry.get('copies') or 1,
-                                  paper_type_id=entry.get('paper_type_id'),
+                                  price_item_id=entry.get('price_item_id'),
                                   remark=entry.get('remark'))
     except api.ApiError as exc:
         client.send_private_msg(qq, str(exc))
@@ -1000,10 +1061,10 @@ def _submit_pending(client, qq, entry):
             _remove_quiet(entry['path'])
     if resp.get('code') == 0:
         lines = ['下单成功：%s' % entry['name'],
-                 '　%s，%s 份' % (_mode_text(entry['color'], entry['duplex']),
+                 '　%s，%s 份' % (_duplex_text(entry['duplex']),
                                  entry.get('copies') or 1)]
-        if entry.get('paper_name'):
-            lines.append('　纸张：%s' % entry['paper_name'])
+        if entry.get('item_label'):
+            lines.append('　价目项：%s' % entry['item_label'])
         if entry.get('remark'):
             lines.append('　备注：%s' % entry['remark'])
         # 预估价：服务端按下单时的文件页数算的（预设单没有文件，拿到的是 null）。
@@ -1070,6 +1131,49 @@ def reply_code(client, qq, argument):
         '，可以来取了' if resp.get('status') == config.ST_READY else ''))
 
 
+def reply_price(client, qq):
+    """「价目表」：把当前价目与说明发出去（优先一张卡，卡发不出去就发文本）。
+
+    卡片只画**价目**（那几行数才是要一眼扫到的），说明文字（「注」）随后单独发一条
+    纯文本 —— 它是几句能读、能复制的话，塞进图里反而没法选中。
+    两者都取不到时（服务器够不着）给一句兜底，绝不发一张空白图。
+    """
+    try:
+        resp = api.price_table()
+    except api.ApiError as exc:
+        client.send_private_msg(qq, '价目表暂时取不到（%s）。%s'
+                                    % (exc, _site_hint({})))
+        return
+    if resp.get('code') != 0:
+        client.send_private_msg(qq, str(resp.get('msg', '查询失败')) + _site_hint(resp))
+        return
+    items = resp.get('items') or []
+    notes = (resp.get('notes') or '').strip()
+    if not items:
+        client.send_private_msg(
+            qq, '管理员还没配置价目表。\n下单时直接发文件就行，金额由管理员核定。\n'
+                '（网页端：%s）' % config.SITE_URL)
+        return
+
+    def text():
+        lines = ['价目表（回复下单菜单里的编号选一档）：']
+        for item in items:
+            price = '单面 %.2f' % item['price_single']
+            if item.get('price_double') is not None:
+                price += ' / 双面 %.2f' % item['price_double']
+            else:
+                price += ' / 不支持双面'
+            lines.append('　%s. %s（%s）' % (item['price_item_id'], item['label'], price))
+            if item.get('note'):
+                lines.append('　　　%s' % item['note'])
+        return '\n'.join(lines)
+
+    _send_card_or_text(client, qq, 'price', text)
+    if notes:
+        # 说明单独一条：它可能有好几条，跟在图后面读起来才顺
+        client.send_private_msg(qq, '说明：\n' + notes)
+
+
 def reply_preset(client, qq, argument):
     if not argument:
         resp = api.presets()
@@ -1112,11 +1216,20 @@ def reply_preset(client, qq, argument):
         client.send_private_msg(qq, '（上一份待办已作废）')
     _pending[qq] = {'kind': 'preset', 'preset_id': preset_id, 'path': None,
                     'name': label, 'intro': '下单：打印服务「%s」。',
-                    'step': 'mode', 'color': None, 'duplex': None, 'copies': None,
-                    'paper_type_id': None, 'paper_name': None, 'papers': None,
+                    'step': 'item', 'price_item_id': None, 'item_label': None,
+                    'item_supports_duplex': False, 'duplex': None, 'copies': None,
                     'remark': None, 'ts': time.time()}
-    client.send_private_msg(qq, _mode_menu(label, '下单：打印服务「%s」。',
-                                           defaults=_prefs_cache_get(qq)))
+    items = _fetch_price_items()
+    entry = _pending[qq]
+    entry['items'] = items
+    if items:
+        client.send_private_msg(qq, _items_menu(items, label, '下单：打印服务「%s」。',
+                                                defaults=_prefs_cache_get(qq)))
+    else:
+        entry['step'] = 'copies'
+        client.send_private_msg(
+            qq, '下单：打印服务「%s」。\n管理员还没配置价目表，这一单先按老规矩提交、'
+                '金额由管理员核定。\n%s' % (label, _COPIES_ASK))
 
 
 def reply_withdraw(client, qq, argument):
@@ -1350,6 +1463,8 @@ def handle_event(client, event):
             reply_help(client, qq)
         elif command == 'orders':
             reply_orders(client, qq)
+        elif command == 'price':
+            reply_price(client, qq)
         elif command == 'code':
             reply_code(client, qq, argument)
         elif command == 'preset':

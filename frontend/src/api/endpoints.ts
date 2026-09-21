@@ -12,7 +12,6 @@ import type {
   AuditStatusResponse,
   ChunkPendingResponse,
   ChunkSession,
-  ColorType,
   DashboardStats,
   Duplex,
   MeOverviewResponse,
@@ -26,10 +25,13 @@ import type {
   OtherContactType,
   PaperTypeListResponse,
   PickupLookupResponse,
+  PriceItemInput,
+  PriceItemListResponse,
+  PriceRules,
+  PriceTableResponse,
   PrefsResponse,
   PricePreviewResponse,
   PriceRulesInput,
-  PriceRulesResponse,
   PresetOrderRequest,
   PrintOptionsResponse,
   PrintPresetListResponse,
@@ -129,14 +131,16 @@ export const orderApi = {
   ) => {
     const form = new FormData()
     form.append('file', file)
-    form.append('color', options.color)
     form.append('duplex', options.duplex)
     form.append('remark', options.remark)
-    // 份数和纸张走同一个 FormData。空值**必须不 append**，不要 append('')：
+    // 份数和价目项走同一个 FormData。空值**必须不 append**，不要 append('')：
     // 后端把空串当作「没填」处理，但「字段根本不存在」和「字段是空串」这两条路
     // 在 Flask 里就是两种输入形状，能少一种就少一种。
     if (options.copies != null) form.append('copies', String(options.copies))
-    if (options.paper_type_id != null) form.append('paper_type_id', String(options.paper_type_id))
+    // （v20 起没有 color 字段：颜色由价目项决定，服务端从它取。）
+    if (options.price_item_id != null) {
+      form.append('price_item_id', String(options.price_item_id))
+    }
     return upload<UploadResponse>('/api/upload', form, onProgress)
   },
   /** 用预设打印服务下单 —— 这一单**没有文件**。
@@ -336,10 +340,13 @@ export interface AdminProfilePayload {
  * 「楼里现在有哪种纸」正是打印员自己最清楚的事，收进超管只会让这张表没人维护。
  * 界面上因此对所有管理员都开入口，见 views/staff/PrintOptionsView.vue 顶部那段说明。 */
 export const printOptionsApi = {
-  /** 学生下单页用：一次拿回**启用中的**预设和纸张。
+  /** 学生下单页用：一次拿回**启用中的**预设 + 价目表（+ 遗留的纸张清单）。
    *  拆两个请求的话，下单页要处理「一个到了一个没到」的中间态，
    *  而那个中间态下无论画什么都是错的。 */
   load: () => get<PrintOptionsResponse>('/api/print-options'),
+  /** 价目表本身（含说明文字）。下单页的「看价目表」弹窗用 ——
+   *  与 load() 同一份数据，但那个接口不带说明。 */
+  priceTable: () => get<PriceTableResponse>('/api/price-table'),
 }
 
 export const staffPrintOptionsApi = {
@@ -365,22 +372,32 @@ export const staffPrintOptionsApi = {
   removePaper: (id: number) => del<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`),
 }
 
-/* 自动估价的计价规则。
+/* 价目表（管理端）。
  *
  * ⚠️ 它只管**预估价**：最终金额永远由管理员在订单台自己确认（staffOrderApi.price）。
  * 所以写接口是 ROLE_ADMIN 起步（打印员自己就该能改价目表），
  * 而改完之后，**老订单的预估价不会跟着变** —— 那是下单那一刻算出来的快照。 */
-export const priceRulesApi = {
-  load: () => get<PriceRulesResponse>('/api/admin/price-rules'),
-  save: (payload: PriceRulesInput) => put<PriceRulesResponse>('/api/admin/price-rules', payload),
+export const priceTableApi = {
+  /** 条目 + 全局系数 + 说明 + 各字段的长度上限（一屏要的东西一次给全） */
+  load: () => get<PriceItemListResponse>('/api/admin/price-items'),
+  createItem: (payload: PriceItemInput) =>
+    post<{ code: number; msg: string; id: number }>('/api/admin/price-items', payload),
+  updateItem: (id: number, payload: PriceItemInput) =>
+    put<{ code: number; msg: string }>(`/api/admin/price-items/${id}`, payload),
+  setItemActive: (id: number, active: boolean) =>
+    put<{ code: number; msg: string }>(`/api/admin/price-items/${id}/active`, { active }),
+  removeItem: (id: number) => del<{ code: number; msg: string }>(`/api/admin/price-items/${id}`),
+  /** 全局系数（基础费 / 最低消费 / 自动估价开关）与价目表说明 */
+  saveRules: (payload: PriceRulesInput) =>
+    put<{ code: number; msg: string; rules: PriceRules; lines: string[] }>(
+      '/api/admin/price-rules', payload),
   /** 试算。**必须走服务端**：公式只有一份（pricing.py），
    *  前端再镜像一遍必然漂移，而漂了不报错，只是页面上的数字开始说谎。 */
   preview: (payload: {
     pages: number
     copies: number
-    color: ColorType
     duplex: Duplex
-    paper_type_id: number | null
+    price_item_id: number
   }) => post<PricePreviewResponse>('/api/admin/price-rules/preview', payload),
 }
 

@@ -20,9 +20,12 @@
      文件超过 config.EST_SCAN_MAX_BYTES 就直接不读（不估），
      单文件上限是 50MB，每次都扫一遍会白占一个 waitress 线程。
 
-  ② **系数只有一份真相，就在 price_rules 表里**（管理员在「计价规则」页改）。
-     默认值写在这里的 DEFAULTS，只在库里没有那一行时生效。
-     网页端、机器人、试算接口都走 get_rules()，不许各读各的。
+  ② **单价只有一份真相，就在 price_items 表里**（一张价目表，管理员在「价目表」页改）。
+     一条 = 纸张 + 类型 + 单面价 + 双面价 + 备注，学生下单时直接选一条 ——
+     不是"先选纸、再选颜色单双面、再用加价拼出来"。理由见 db.py 里 v20 那段：
+     真实价目表里同一种纸配不同工艺是各自定价的，用基价 + 加价去逼近只能得到近似值。
+     全局只剩两个系数（每单基础费、最低消费），住在 price_rules 表里。
+     网页端、机器人、试算接口都走这里，不许各读各的。
 
   ③ **金额一律两位小数**，和 orders.price 同一套口径（元）。
      系数填错（负数、天文数字）在 save_rules 里收口，
@@ -45,22 +48,27 @@ from config import (COPIES_MAX, COPIES_MIN, EST_PAGES_MAX, EST_SCAN_MAX_BYTES,
                     PRICE_COEF_MAX, PRICE_MAX_YUAN, PRICE_RE, logger)
 from db import db_conn
 
-# 计价公式的四档单价（元/页）。键名与 orders.color_type / duplex 的取值一一对应，
-# 拼法见 unit_price()：`page_<black|color>_<single|double>`。
-COEF_KEYS = ('base_fee', 'min_price', 'page_black_single', 'page_black_double',
-             'page_color_single', 'page_color_double')
+# 全局系数：单价之外只剩下的两项（键名与 price_rules 的列一一对应）。
+COEF_KEYS = ('base_fee', 'min_price')
 
 # 一整套默认系数。默认**启用**：这是业主点名要的功能，装了却不显示等于没装。
-# 数字给的是校园打印里常见的一档，业主在「计价规则」页按自己的价目表改。
+# **这里没有任何单价** —— 单价全部来自价目表，管理员自己维护（业主的要求：
+# 不写死任何数值）。基础费与最低消费默认 0 = 不影响价格。
 DEFAULTS = {
     'enabled': True,
     'base_fee': 0.0,             # 每单基础费（元/单）
     'min_price': 0.0,            # 最低消费（元/单）
-    'page_black_single': 0.10,
-    'page_black_double': 0.08,
-    'page_color_single': 0.50,
-    'page_color_double': 0.40,
+    'notes': '',                 # 价目表说明（给学生看的那几条「注」，管理员可改）
 }
+
+# 一条价目项允许出现的字段（接口层白名单）。改这里要连 save_item 一起看。
+ITEM_FIELDS = ('paper', 'kind', 'color', 'price_single', 'price_double', 'note', 'sort_order')
+
+# 价目项里三个文本字段的长度上限。它们会被画进下单页的下拉、订单台的单元格、
+# 机器人卡片 —— 不封顶的话，一句 200 字的「类型名」会把三处版面同时撑坏。
+PAPER_MAX = 40
+KIND_MAX = 40
+NOTE_MAX = 120
 
 # 一次最多认多少页。**这个数是防着上传文件的**：页数读出来就直接进公式，
 # 没有上限的话，一个伪造的「999999 页」PDF 能算出一个天文数字的预估价挂在下单页上。
@@ -117,6 +125,8 @@ def get_rules(conn=None):
             except (KeyError, TypeError, ValueError):
                 logger.warning('计价规则里的 %s 读不出来，按默认值 %s 处理', key, DEFAULTS[key])
         rules['enabled'] = bool(row['enabled']) if 'enabled' in row.keys() else True
+        if 'notes' in row.keys() and row['notes']:
+            rules['notes'] = str(row['notes'])
     return rules
 
 
@@ -135,6 +145,17 @@ def save_rules(fields, user_id=None):
         if error:
             return None, error
         rules[key] = amount
+    # 说明文字（给学生看的那几条「注」）：整段自由文本，只做长度与「不能有控制字符」的
+    # 收口。它会被渲染到网页与机器人卡片上，夹一个换行/制表符进去就是一处版式崩坏。
+    notes = fields.get('notes')
+    if notes is None:
+        notes = ''
+    if not isinstance(notes, str):
+        return None, '价目表说明要填文字'
+    notes = notes.strip()[:NOTES_MAX]
+    if notes and not all(ch.isprintable() or ch == '\n' for ch in notes):
+        return None, '价目表说明里不能有制表符之类的控制字符'
+    rules['notes'] = notes
     enabled = fields.get('enabled')
     if isinstance(enabled, str):
         text = enabled.strip().lower()
@@ -160,29 +181,179 @@ def save_rules(fields, user_id=None):
     return rules, None
 
 
+# 价目表说明的长度上限（给管理员填「注」用）
+NOTES_MAX = 2000
+
 _COEF_LABELS = {
     'base_fee': '每单基础费',
     'min_price': '最低消费',
-    'page_black_single': '黑白单面单价',
-    'page_black_double': '黑白双面单价',
-    'page_color_single': '彩色单面单价',
-    'page_color_double': '彩色双面单价',
 }
 
 
 def describe(rules):
-    """把规则翻成人话（管理页与机器人共用，避免两处话术分叉）。"""
+    """把全局系数翻成人话（管理页与机器人共用，避免两处话术分叉）。"""
     if not rules.get('enabled'):
         return ['自动估价：已关闭（订单不再显示预估价，只由管理员计费）']
-    lines = [
-        '单价（元/页）：黑白单面 %s · 黑白双面 %s · 彩色单面 %s · 彩色双面 %s'
-        % tuple(_money(rules[key]) for key in ('page_black_single', 'page_black_double',
-                                               'page_color_single', 'page_color_double')),
-        '每单基础费 %s 元，最低消费 %s 元；纸张可以另设每页加价' % (
-            _money(rules['base_fee']), _money(rules['min_price'])),
-        '公式：总价 = 基础费 + 页数 × 份数 × (单价 + 纸张加价)，再取「最低消费」与它的较大值',
+    return [
+        '公式：总价 = 基础费 + 页数 × 份数 × 该档单价，再取「最低消费」与它的较大值',
+        '每单基础费 %s 元，最低消费 %s 元；单价在下面那张价目表里，逐条维护'
+        % (_money(rules['base_fee']), _money(rules['min_price'])),
     ]
-    return lines
+
+
+# ---- 价目项 -----------------------------------------------------------------
+
+def normalize_duplex(value):
+    """单双面只认 'double'，其余一律当单面。"""
+    return 'double' if value == 'double' else 'single'
+
+
+def format_item_label(item):
+    """价目项的显示名：「A4 70g · 黑白」。下单页的下拉、订单台的快照都用它。
+
+    纸张或类型缺失时退化成另一个（而不是拼出「 · 黑白」这种以分隔符开头的怪东西）。
+    """
+    if not item:
+        return ''
+    paper = str(item['paper'] or '').strip()
+    kind = str(item['kind'] or '').strip()
+    if paper and kind:
+        return '%s · %s' % (paper, kind)
+    return paper or kind
+
+
+def supports_duplex(item):
+    """这一项支不支持双面。**空的双面价 = 不支持**（相纸那一档就是这样）。
+
+    它决定下单页要不要给「双面」这个选项、机器人要不要多问一句 ——
+    而不是"让学生选了再被拒"，那种交互比没有这个选项更糟。
+    """
+    if not item:
+        return False
+    try:
+        return item['price_double'] is not None
+    except (KeyError, TypeError):
+        return False
+
+
+def item_unit_price(item, duplex):
+    """这一项、这一种单双面下的**每页单价**（元）。
+
+    不支持双面却传了 double：**按单面算**，并在调用方（estimate）里把 duplex
+    改写成 single —— 服务端不因为一个客户端参数就把价格算成另一档，
+    而订单落库的 duplex 也必须与计价的那一档一致（否则账单上写着"双面"、钱按单面收）。
+    """
+    if not item:
+        return 0.0
+    if normalize_duplex(duplex) == 'double' and supports_duplex(item):
+        return max(0.0, float(item['price_double'] or 0.0))
+    return max(0.0, float(item['price_single'] or 0.0))
+
+
+def item_color(item):
+    """这一项的颜色（'black' / 'color'）—— 落 orders.color_type 用。"""
+    if not item:
+        return 'black'
+    try:
+        value = item['color']
+    except (KeyError, TypeError):
+        return 'black'
+    return value if value in ('black', 'color') else 'black'
+
+
+def list_items(conn=None, only_active=False):
+    """取价目表。默认给全部（管理页要能看见停用的），only_active 给学生端。
+
+    排序是 `sort_order, id`：管理员用 sort_order 把常打的那几档顶到前面，
+    而 id 只是"先来后到"的兜底 —— 只按 id 排的话，新建一条想往上提就只能删了重建。
+    """
+    sql = 'SELECT * FROM price_items'
+    if only_active:
+        sql += ' WHERE is_active = 1'
+    sql += ' ORDER BY sort_order ASC, id ASC'
+    try:
+        if conn is None:
+            with db_conn() as own:
+                return [dict(row) for row in own.execute(sql).fetchall()]
+        return [dict(row) for row in conn.execute(sql).fetchall()]
+    except Exception:
+        # 表还没建出来（老库第一次启动、迁移中途挂了）：当作"没有价目表"。
+        # 下单接口那边会因此不带预估价，但**订单照下** —— 见模块注释第①条。
+        logger.exception('读取价目表失败，本次按「没有价目项」处理')
+        return []
+
+
+def find_item(conn, item_id):
+    """按 id 取一条价目项，没有就 None。"""
+    try:
+        return conn.execute('SELECT * FROM price_items WHERE id = ?', (item_id,)).fetchone()
+    except Exception:
+        logger.exception('读取价目项 #%s 失败', item_id)
+        return None
+
+
+def parse_price_item(fields, item_id=None):
+    """校验一条价目项（新建与修改共用），返回 (字典, 错误信息)。
+
+    这是**入口侧的收口**：界面上的输入框挡不住直接打接口的手，
+    而价目表是算钱的东西 —— 一个负数单价或一个空纸张名会让整张表失去意义。
+    """
+    paper, error = _clean_text(fields.get('paper'), '纸张', PAPER_MAX)
+    if error:
+        return None, error
+    kind, error = _clean_text(fields.get('kind'), '类型', KIND_MAX)
+    if error:
+        return None, error
+    color = fields.get('color')
+    if color not in ('black', 'color'):
+        return None, '颜色只能是黑白或彩色'
+    single, error = parse_coefficient(fields.get('price_single'), '单面价')
+    if error:
+        return None, error
+    raw_double = fields.get('price_double')
+    if raw_double in (None, ''):
+        # 空 = **不支持双面**（相纸那一档）。这不是"没填"，是一个明确的产品状态，
+        # 所以它存 NULL 而不是 0 —— 0 元双面会被当成"双面免费"。
+        double = None
+    else:
+        double, error = parse_coefficient(raw_double, '双面价')
+        if error:
+            return None, error
+    note = fields.get('note')
+    if note is None:
+        note = ''
+    if not isinstance(note, str):
+        return None, '备注要填文字'
+    note = note.strip()[:NOTE_MAX]
+    if note and not all(ch.isprintable() for ch in note):
+        return None, '备注里不能有换行或制表符'
+    order = fields.get('sort_order')
+    if order in (None, ''):
+        order = 0
+    else:
+        try:
+            order = int(str(order).strip())
+        except (TypeError, ValueError):
+            return None, '排序要填整数'
+    return {'paper': paper, 'kind': kind, 'color': color, 'price_single': single,
+            'price_double': double, 'note': note or None, 'sort_order': order}, None
+
+
+def _clean_text(value, label, max_length):
+    """清洗一个人工填写的单行文本，返回 (文本, 错误信息)。
+
+    与 routes/order_options._clean_text 同一套规矩（那边管预设与纸张的旧接口）：
+    换行和制表符一律拒掉 —— 它们会被画进下拉、单元格和卡片，
+    混进去一个就是把后面那块版面挤到看不见的地方，而且不报错。
+    """
+    text = (value or '').strip() if isinstance(value, str) else ''
+    if not text:
+        return None, '请填写%s' % label
+    if len(text) > max_length:
+        return None, '%s不能超过 %s 个字' % (label, max_length)
+    if not all(ch.isprintable() for ch in text):
+        return None, '%s里不能有换行或制表符' % label
+    return text, None
 
 
 # ---- 算价 -------------------------------------------------------------------
@@ -192,37 +363,21 @@ def _money(value):
     return '%.2f' % value
 
 
-def normalize_color(value):
-    """颜色只认 'color'，其余（含 None / 脏值）一律当黑白。"""
-    return 'color' if value == 'color' else 'black'
-
-
-def normalize_duplex(value):
-    """单双面只认 'double'，其余一律当单面。"""
-    return 'double' if value == 'double' else 'single'
-
-
-def unit_price(rules, color, duplex, paper_delta=0.0):
-    """一页的单价（元）：四档基础单价 + 这种纸的加价。
-
-    加价**不允许把单价压成负数**：管理员把某一种纸的加价填得比单价还大时，
-    夹到 0 —— 总价不会因此变成负数，也不会出现「打得多、反而倒贴」的算式。
-    """
-    key = 'page_%s_%s' % (normalize_color(color), normalize_duplex(duplex))
-    return max(0.0, float(rules.get(key, 0.0)) + float(paper_delta or 0.0))
-
-
-def estimate(rules, pages, copies, color, duplex, paper_delta=0.0):
+def estimate(rules, item, pages, copies, duplex):
     """算预估价，返回 (金额, 说明)。算不出来时金额为 None，说明里写原因。
 
     说明是给日志和接口调用方看的一句话，**不是**给学生看的文案 ——
     界面上的那句话由前端拼（「预估 ¥x.xx，以管理员核定为准」）。
 
-    算不出来的三种情形，都是「如实说不知道」而不是「猜一个 0」：
+    算不出来的四种情形，都是「如实说不知道」而不是「猜一个 0」：
+      · 没选价目项（老订单/老客户端没带这一项）—— 单价无从谈起；
       · 规则没启用；
       · 页数读不出来（没有文件、格式不认识、文件太大没扫）；
-      · 算出来是 0 或超出金额上限（前者说明系数全填了 0，后者已经不是一笔正常的账）。
+      · 算出来是 0 或超出金额上限（前者说明这一项的单价填了 0，
+        后者已经不是一笔正常的账）。
     """
+    if not item:
+        return None, '这一单没选价目项'
     if not rules.get('enabled'):
         return None, '自动估价未启用'
     if not pages or pages < 1:
@@ -238,53 +393,28 @@ def estimate(rules, pages, copies, color, duplex, paper_delta=0.0):
         copies = 1
     copies = max(COPIES_MIN, min(COPIES_MAX, copies))
     total = float(rules.get('base_fee', 0.0)) \
-        + pages * copies * unit_price(rules, color, duplex, paper_delta)
+        + pages * copies * item_unit_price(item, duplex)
     total = max(total, float(rules.get('min_price', 0.0)))
     total = round(total, 2)
     if total <= 0:
-        return None, '按当前规则算出来的价格是 0（检查单价是不是都填了 0）'
+        return None, '按这一项的单价算出来是 0 元（检查价目表里的单价）'
     #    超出计费上限的预估**不给**：那个数连管理员都填不进最终价（parse_price 会拒），
     #    摆一个填不进去的数字在屏幕上，只会让人以为系统坏了一只手。
     if total > PRICE_MAX_YUAN:
-        return None, '按当前规则算出来的价格超出金额上限'
-    return total, ('%s 页 × %s 份，%s' % (pages, copies, note or '规则价'))
+        return None, '按当前价目表算出来的价格超出金额上限'
+    return total, ('%s 页 × %s 份，%s' % (pages, copies, note or '价目表'))
 
 
-def paper_delta_of(paper):
-    """从纸张字典/行里取「每页加价」，取不到就是 0。
-
-    为什么写得这么小心：这个值会从三条路径传进来（网页上传 / 分片合并 / 机器人），
-    而它们拿到的 paper 形状并不统一 —— 有一条路给的是 `resolve_print_options`
-    裁过的快照字典（只有 id/name/remark），另一条给的是 `SELECT *` 的整行。
-    直接 `paper['price_delta']` 会在前者上抛 KeyError，而它被下面那句
-    `except Exception` 吞掉之后，症状是**这一单没有预估价**，
-    页数明明读到了、价格却不见 —— 本轮实测就是这么栽的（A3 加价那一条断言）。
-    """
-    if not paper:
-        return 0.0
-    try:
-        keys = paper.keys()
-    except AttributeError:
-        return 0.0
-    if 'price_delta' not in keys:
-        return 0.0
-    try:
-        return float(paper['price_delta'] or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def estimate_for_order(conn, pages, copies, color, duplex, paper):
-    """下单路径用的入口：自己取规则、自己取纸张加价，返回 (金额, 说明)。
+def estimate_for_order(conn, pages, copies, duplex, item):
+    """下单路径用的入口：自己取全局系数，返回 (金额, 说明)。
 
     两个便利之处，都是为了「下单接口里只写一行」：
-      · 规则与纸张加价都在这里读，调用方不用先查库再拼；
+      · 系数在这里读，调用方不用先查库再拼；
       · **任何异常都吞掉并返回 None** —— 预估算不出来是小事，
         让它把一次正常的下单搞成 500 是大事（见模块注释第①条）。
     """
     try:
-        rules = get_rules(conn)
-        return estimate(rules, pages, copies, color, duplex, paper_delta_of(paper))
+        return estimate(get_rules(conn), item, pages, copies, duplex)
     except Exception:
         logger.exception('估算价格时出错了，这一单不带预估价')
         return None, '估算时出错'

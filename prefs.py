@@ -34,10 +34,13 @@ DEFAULTS = {
     'notify_mail': True,
     'quiet_from': '',          # 'HH:MM'，空 = 不启用免打扰
     'quiet_to': '',
-    'default_color': '',       # '' = 没设过偏好
+    #    ⚠️ 这里**没有 default_color**（v20 起）：颜色由价目项本身决定
+    #    （「A4 70g · 黑白」这一条就是黑白），再留一个"默认颜色"就多出一个
+    #    会与价目项打架的字段 —— 而打架时谁赢都说不清。
+    #    default_duplex 留着：单/双面仍然是学生要选的一个维度（价格也不同）。
     'default_duplex': '',
     'default_copies': None,
-    'default_paper_type_id': None,
+    'default_price_item_id': None,
     'hide_done_orders': False,
     'card_replies': True,      # 机器人用卡片回「表」类查询；关掉就一律纯文本
     'orders_page_size': PREF_ORDERS_PAGE_DEFAULT,
@@ -151,8 +154,8 @@ def should_notify(prefs, channel, when=None):
 
 
 # 允许被保存的字段（白名单：接口层别直接把请求体塞进 SQL）
-EDITABLE = ('notify_qq', 'notify_mail', 'quiet_from', 'quiet_to', 'default_color',
-            'default_duplex', 'default_copies', 'default_paper_type_id',
+EDITABLE = ('notify_qq', 'notify_mail', 'quiet_from', 'quiet_to',
+            'default_duplex', 'default_copies', 'default_price_item_id',
             'hide_done_orders', 'card_replies', 'orders_page_size')
 
 
@@ -189,12 +192,8 @@ def save_prefs(user_id, fields):
             value = _as_int(value)
             if value is not None:
                 value = max(COPIES_MIN, min(COPIES_MAX, value))
-        elif key == 'default_paper_type_id':
+        elif key == 'default_price_item_id':
             value = _as_int(value)
-        elif key == 'default_color':
-            #    枚举收口：界面只给「黑白/彩色/每次问我」，但接口是公开的 ——
-            #    不认的值一律当「没设」，免得把一个随便的字符串一路带到下单表单。
-            value = value if value in ('black', 'color', '') else ''
         elif key == 'default_duplex':
             value = value if value in ('single', 'double', '') else ''
         elif isinstance(value, str):
@@ -234,13 +233,14 @@ def describe(prefs):
                      % (prefs['quiet_from'], prefs['quiet_to']))
     else:
         lines.append('免打扰：未设置')
-    color = {'black': '黑白', 'color': '彩色'}.get(prefs['default_color'], '')
     duplex = {'single': '单面', 'double': '双面'}.get(prefs['default_duplex'], '')
-    parts = [p for p in (color, duplex) if p]
+    parts = [p for p in (duplex,) if p]
     if prefs['default_copies']:
         parts.append('%s 份' % prefs['default_copies'])
-    if prefs['default_paper_type_id']:
-        parts.append('纸张 #%s' % prefs['default_paper_type_id'])
+    if prefs['default_price_item_id']:
+        #    只写 id：这里（prefs.py）拿不到价目表的名字，为了一个展示去 JOIN
+        #    两张表不值得；网页端与机器人都会把 id 换成名字再显示。
+        parts.append('价目项 #%s' % prefs['default_price_item_id'])
     lines.append('默认打印参数：%s' % ('、'.join(parts) if parts else '未设置（每次都会问你）'))
     #    「隐藏已取件」两端都生效；「每页」只管**机器人**一次列几条（网页是自己的
     #    滚动列表，没有分页）—— 不写清楚用户会以为网页端也按它分页。

@@ -31,6 +31,7 @@ from flask import Blueprint, Response, g, jsonify, request
 
 import botcard
 import prefs
+import pricing
 
 from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ORDER_SOURCE_BOT,
                     PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE, ST_PENDING, ST_PRINTING,
@@ -40,7 +41,7 @@ from db import db_conn, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
 from utils import allowed_file, content_signature_error, parse_copies
 from .orders import (create_order_from_saved_file, create_preset_order, log_event,
-                     quota_rejection, quota_snapshot, resolve_print_options,
+                     quota_rejection, quota_snapshot, resolve_price_item,
                      UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
 
 bp = Blueprint('bot', __name__)
@@ -67,6 +68,7 @@ BOT_HELP_SECTIONS = [
         {'cmd': '打印服务', 'desc': '看有哪些现成服务；带编号下单'},
     ]},
     {'title': '查询', 'items': [
+        {'cmd': '价目表', 'desc': '各档纸张与单价、注意事项（卡片）'},
         {'cmd': '订单', 'desc': '最近的订单与状态（卡片）'},
         {'cmd': '单号 25124', 'desc': '查某一单；单号就是取件报的那串'},
         {'cmd': '我的', 'desc': '下单概况与存储用量（卡片）'},
@@ -78,7 +80,7 @@ BOT_HELP_SECTIONS = [
         {'cmd': '免打扰 22:00-08:00', 'desc': '这段时间先不推、白天补推'},
         {'cmd': '隐藏已取件 开/关', 'desc': '「订单」里不显示已取件的单'},
         {'cmd': '卡片 开/关', 'desc': '关掉后表格类查询改用纯文字'},
-        {'cmd': '默认 黑白双面 2份', 'desc': '下单默认参数（「每页 8」改条数）'},
+        {'cmd': '默认 3 双面 2份', 'desc': '下单默认参数（3 是价目表里的编号）'},
     ]},
     {'title': '其它', 'items': [
         {'cmd': '反馈 你的问题', 'desc': '提交工单；「工单」看进展'},
@@ -267,32 +269,61 @@ def _active_presets(conn):
     ).fetchall()
 
 
-def _active_paper_types(conn):
-    """启用中的纸张类型（与网页端 /api/print-options 同一口径：只给启用的）。"""
-    return conn.execute(
-        'SELECT id, name, remark FROM paper_types WHERE is_active = 1 ORDER BY id ASC LIMIT 20'
-    ).fetchall()
+def _price_items_payload(conn=None):
+    """启用中的价目表（机器人追问流程与价目表卡共用这一份取数）。
+
+    与网页端 `pricing.list_items(only_active=True)` **同一个函数** ——
+    机器人那边的菜单编号必须与网页端下拉里的条目一一对应，
+    各查各的迟早出现「机器人的 3 号是相纸、网页的 3 号是 A4」。
+    """
+    return [{
+        'price_item_id': item['id'],
+        'label': pricing.format_item_label(item),
+        'paper': item['paper'],
+        'kind': item['kind'],
+        'color': item['color'],
+        'price_single': item['price_single'],
+        'price_double': item['price_double'],
+        #    双面价为空 = **不支持双面**。机器人据此决定要不要问那一句 ——
+        #    让它先问、用户答了再说"不行"，比不问更糟。
+        'supports_duplex': pricing.supports_duplex(item),
+        'note': item['note'] or '',
+    } for item in pricing.list_items(conn, only_active=True)]
 
 
 @bp.get('/api/bot/print-options')
 def api_bot_print_options():
-    """下单要用的两份清单：预设服务 + 纸张类型（对应网页端 /api/print-options）。
+    """下单要用的两份清单：预设服务 + **价目表**（对应网页端 /api/print-options）。
 
     一次全给，和网页端一样的理由：这两份清单是下单流程的两步，
     拆成两个请求只会多一次往返、多一种「一个到了一个没到」的中间态。
     """
     with db_conn() as conn:
         presets = _active_presets(conn)
-        papers = _active_paper_types(conn)
+        items = _price_items_payload(conn)
     return jsonify({
         'code': 0,
         'msg': 'ok',
         'presets': [{'preset_id': r['id'],
                      'content': (r['content'] or '').replace('\n', ' ')} for r in presets],
-        'paper_types': [{'paper_type_id': r['id'],
-                         'name': r['name'],
-                         'remark': r['remark'] or ''} for r in papers],
+        'price_items': items,
     })
+
+
+@bp.get('/api/bot/price-table')
+def api_bot_price_table():
+    """机器人的「价目表」命令：价目项 + 说明文字。
+
+    与网页端 /api/price-table 同源（同一个取数函数），**不查身份** ——
+    价目表本来就是贴在柜台上给人看的那张纸，没注册的 QQ 问一句「多少钱」
+    也该得到答案，而不是先被要求去注册（与帮助卡同一个取舍）。
+    """
+    with db_conn() as conn:
+        items = _price_items_payload(conn)
+        rules = pricing.get_rules(conn)
+    return jsonify({'code': 0, 'msg': 'ok', 'items': items,
+                    'notes': rules.get('notes') or '',
+                    'enabled': bool(rules.get('enabled'))})
 
 
 @bp.get('/api/bot/announcement')
@@ -560,9 +591,9 @@ def api_bot_order_preset():
     if isinstance(preset_id, bool) or not isinstance(preset_id, int) or preset_id < 1:
         return jsonify({'code': 400, 'msg': '请先发 /preset 看看有哪些服务，再发 /preset 编号 下单'}), 400
 
-    color = (data.get('color') or 'black').strip()
+    #    v20 起没有 color 参数：颜色由价目项本身决定（resolve_price_item 会取
+    #    pricing.item_color）。这里只收单双面。
     duplex = (data.get('duplex') or 'single').strip()
-    color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
     # 学生没写备注就是**空**。原先这里兜一句「通过 QQ 机器人下单」——
     # 那是系统往学生的备注里写字，订单台上就再也分不清哪句是学生说的
@@ -580,11 +611,11 @@ def api_bot_order_preset():
                 return jsonify({'code': 400, 'msg': '这个预设服务不存在了，重新发 /preset 看一下清单'}), 400
             if preset['is_active'] != 1:
                 return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，重新发 /preset 看一下清单'}), 400
-            paper, error = resolve_print_options(conn, data)
+            item, duplex, error = resolve_price_item(conn, data)
             if error:
                 return jsonify({'code': 400, 'msg': error}), 400
             order_id, pickup_code = create_preset_order(
-                preset, copies, paper, color, duplex, remark, source=ORDER_SOURCE_BOT)
+                preset, copies, item, duplex, remark, source=ORDER_SOURCE_BOT)
         except Exception:
             logger.exception('bot 预设下单失败：下单人=%s 预设#%s ip=%s',
                              g.user['nickname'], preset_id, client_ip())
@@ -618,9 +649,7 @@ def api_bot_order_file():
     if file is None or not file.filename:
         return jsonify({'code': 400, 'msg': '没有收到文件，直接把文件发给我（不要压缩包）'}), 400
 
-    color = request.form.get('color', 'black')
     duplex = request.form.get('duplex', 'single')
-    color = color if color in ('black', 'color') else 'black'
     duplex = duplex if duplex in ('single', 'double') else 'single'
     remark = (request.form.get('remark') or '').strip()[:200]
 
@@ -628,7 +657,7 @@ def api_bot_order_file():
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
     with db_conn() as conn:
-        paper, error = resolve_print_options(conn, request.form)
+        item, duplex, error = resolve_price_item(conn, request.form)
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
@@ -668,8 +697,11 @@ def api_bot_order_file():
             os.remove(save_path)
             return quota_error
 
+        #    color 传 'black' 只是个占位：有价目项时 create_order_from_saved_file
+        #    会用 pricing.item_color(item) 覆盖它（颜色由价目项决定）；
+        #    没有价目项（管理员还没配）时它才生效，而那正是"没得选"的老规矩。
         order_id, pickup_code, est_price = create_order_from_saved_file(
-            original_name, save_path, color, duplex, remark, copies, paper,
+            original_name, save_path, 'black', duplex, remark, copies, item,
             source=ORDER_SOURCE_BOT)
     except Exception:
         if os.path.exists(save_path):
@@ -751,7 +783,7 @@ def api_bot_card():
     宁可难看，也不能发一张全是方块的图。
     """
     kind = (request.args.get('kind') or '').strip()
-    if kind not in ('orders', 'tickets', 'presets', 'me', 'help'):
+    if kind not in ('orders', 'tickets', 'presets', 'me', 'help', 'price'):
         return jsonify({'code': 400, 'msg': '卡片类型不对'}), 400
     #    ⚠️ **帮助卡不查身份**。它讲的是「机器人怎么用」，与账号无关 ——
     #    服务端的 /api/bot/help 早就是「不需要 qq 参数、也不查库」的口径，
@@ -760,8 +792,11 @@ def api_bot_card():
     #    这条差别还特别难查：服务端两个号都返回 200（注册的那个），
     #    机器人那边只看到一次 ApiError，日志里只有一行 warning。
     #    其余四种卡取的都是**本人的数据**，身份照旧是硬前提。
-    if kind == 'help':
-        payload = {'help': BOT_HELP_SECTIONS}
+    #    **价目表卡与帮助卡一样不查身份**：它是贴在柜台上给人看的那张纸，
+    #    与账号无关。其余四种卡取的都是本人数据，身份照旧是硬前提。
+    if kind in ('help', 'price'):
+        payload = ({'help': BOT_HELP_SECTIONS} if kind == 'help'
+                   else {'items': _price_items_payload()})
         nickname, uid = '', None
         #    这个 qq 只用来在卡片页脚印一行「这张卡是谁要的」，**不做身份解析**。
         #    仍然过一遍数字校验：它会被画到图片上，一个几百字符的串能把页脚顶穿
@@ -792,6 +827,8 @@ def api_bot_card():
             payload = _tickets_payload(uid)
         elif kind == 'presets':
             payload = _presets_payload(conn)
+        elif kind == 'price':
+            payload = {'items': _price_items_payload(conn)}
         elif kind == 'help':
             payload = {'help': BOT_HELP_SECTIONS}
         else:
