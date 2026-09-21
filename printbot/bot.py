@@ -232,9 +232,12 @@ def _prefs_cache_get(qq):
     return data
 
 
-# 「这个 QQ 有没有账号」的缓存时长。取 60 秒而不是 10：这是一次纯只读的
-# 身份查询，答错一秒没有任何代价（真正下单时服务端还会再判一次），
-# 而它挡在**每条带附件的消息**前面，缓存久一点更省。
+# 「这个 QQ 有没有账号」**只有肯定答案**会被缓存，时长 60 秒。
+# 它挡在每条带附件的消息前面，缓存是为了省掉那次纯只读的查询。
+# ⚠️ **否定答案不缓存**（下面 if problem is None 那半句就是这个意思）：
+# 一个学生刚在网页端注册完、回头就发文件，缓存里那句「还没注册」会把他顶回来 ——
+# 而他刚刚才被告知「注册好了就能用」，这一句自相矛盾的话没人查得出来。
+# 否定的情形（陌生人发文件）本来也不该继续往下走，每次多一次查询换正确性，值。
 IDENTITY_CACHE_TTL = 60
 _identity_cache = {}
 
@@ -269,7 +272,11 @@ def _identity_error(qq):
             problem = resp.get('msg') or '这个 QQ 号还没有对应的账号'
     except api.ApiError:
         problem = None
-    _identity_cache[key] = (now, problem)
+    if problem is None:
+        # 只有「确实有账号」才记缓存（理由见上面 IDENTITY_CACHE_TTL 那段）
+        _identity_cache[key] = (now, None)
+    else:
+        _identity_cache.pop(key, None)
     return problem
 
 
