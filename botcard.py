@@ -673,7 +673,7 @@ def _rows_tickets(draw, y, x0, x1, payload):
             #    摘要从**固定列**起（跟着胶囊宽度浮动的话，两行的摘要起点会差十几像素），
             #    而且整行都归它 —— 时间戳已经在第一行了（见上）。
             draw.text((x0 + 440, y + 58),
-                      _truncate(draw, last, _font('cjk', T_META), max(160, x1 - x0 - 440 - 8)),
+                      _truncate(draw, last, _font('cjk', T_META), max(160, x1 - x0 - 440 - 24)),
                       font=_font('cjk', T_META), fill=INK_3)
         #    分隔线画在本行之内（同上：先画线、再推进）
         draw.rectangle([x0, y + DIVIDER_DY, x1, y + DIVIDER_DY + 3], fill=_over(INK, 34))
@@ -699,24 +699,28 @@ def _rows_presets(draw, y, x0, x1, payload):
                   '发「打印服务 %s」按这条下单' % item.get('preset_id'),
                   font=_font('cjk', T_META), fill=INK_4)
         # 「可用」跟**两行整体**垂直居中（原先跟着第一行，重心偏上）
-        draw.text((x1, y + 42), '可用', font=_font('cjk', T_META), fill=INK_4, anchor='ra')
+        #    「可用」比正文弱、但比注释亮一档：它是这一行的状态（评审：原先和注释同级）
+        draw.text((x1, y + 42), '可用', font=_font('cjk', T_META), fill=INK_2, anchor='ra')
         #    分隔线画在**本行内容之后**（内容画到 y+96 为止，线落在 y+106）。
         #    ⚠️ 早先写成了「先推进 y、再画线」，线于是跑到**下一行内容的下方** ——
         #    两行之间没有线，线却多出一条挂在末尾（自检量出来的：两行卡的墨迹
         #    在 285–356 / 413–484，而唯一的线在 498）。
-        draw.rectangle([x0, y + DIVIDER_DY + 8, x1, y + DIVIDER_DY + 11],
+        #    分隔线离上一行的提示行远一点：贴着画的话，两条目会读成一个整体
+        draw.rectangle([x0, y + DIVIDER_DY + 16, x1, y + DIVIDER_DY + 19],
                        fill=_over(INK, 34))
-        y += ROW_H + 16
-    #    同样收回末行没用完的那截（这里行高是 ROW_H + 16）
-    return y - (ROW_H + 16 - DIVIDER_DY - 11)
+        y += ROW_H + 28
+    #    同样收回末行没用完的那截（这里行高是 ROW_H + 28）
+    return y - (ROW_H + 28 - DIVIDER_DY - 19)
 
 
 def _rows_me(draw, y, x0, x1, payload):
     orders = payload.get('orders') or {}
     usage = payload.get('usage') or {}
+    #    「待我取件」不再用黄：右上那枚中空读数已经在说同一件事（而且它才是主读数），
+    #    同一个数在两张地方各强调一次，读者会以为它们不是一回事（评审意见）。
     cells = [('我的单数', str(orders.get('total', 0)), INK),
              ('进行中', str(orders.get('in_progress', 0)), INK),
-             ('待我取件', str(orders.get('ready', 0)), YELLOW),
+             ('待我取件', str(orders.get('ready', 0)), INK),
              ('已取件', str(orders.get('done', 0)), INK_2)]
     #    四列右对齐到各自格子的右缘（第一列除外，它左对齐到内容左缘）——
     #    左对齐的话数字都短，最后一列右端会空出 140px，整行像没排满。
@@ -740,12 +744,14 @@ def _rows_me(draw, y, x0, x1, payload):
     # 金额是**次要**信息：数字用正文色，只有单位带强调色。
     # （原先数字用亮青大字，成了第二视觉中心、盖过上面四个读数。）
     spent_text = '%.2f' % spent
-    draw.text((x0 + 150, y), spent_text, font=_font('mono', 46, 600), fill=INK)
+    #    金额用**比例字体**（Space Grotesk）而不是等宽：等宽里连小数点都占一整格，
+    #    「23.50」会被读成「23. 50」（评审实测）。它不是表格列，不需要对齐。
+    draw.text((x0 + 150, y), spent_text, font=_font('display', 46, 600), fill=INK)
     #    「元」与数字**同基线**：`anchor='ls'` 是左-基线，避免中文往下掉（字号小一档时
     #    最容易看出来，评审实测差 7px）。
     #    单位用中性灰而不是青色：卡上只留三种有含义的颜色（黄=要你做 / 青=机器在做 /
     #    品红=要你看），「元」是单位，不该占一个语义色（复评）。
-    draw.text((x0 + 160 + draw.textlength(spent_text, font=_font('mono', 46, 600)), y + 38),
+    draw.text((x0 + 160 + draw.textlength(spent_text, font=_font('display', 46, 600)), y + 38),
               '元', font=_font('cjk', T_META), fill=INK_3, anchor='ls')
     used, quota = usage.get('used_bytes') or 0, usage.get('quota_bytes') or 0
     if quota:
@@ -835,7 +841,7 @@ def _watermark_of(kind, payload, rows):
         value = (payload.get('orders') or {}).get('ready') or 0
         label = '待取件'
     elif kind == 'presets':
-        value, label = rows, '服务'
+        value, label = rows, '可下单'
     else:
         value, label = rows, '命令'
     #    标签一律用**名词**（可取件 / 未读 / 待取件 / 服务 / 命令），不要用量词打头
