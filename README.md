@@ -100,6 +100,16 @@
 - 工程：回归脚本 13 套（约 1000 项断言，含专门验证**老库升级**的那一套）、
   数据卡像素自检、前端 `vue-tsc` 与 `npm run build` 都在改动清单里。
 
+> **v3 重置版**（同一天）—— 功能没动，动的是**仓库本身的收纳**：
+> 根目录原来堆着十几个跟代码无关的条目（退役的 NapCat 与旧版 LLBot 共约 300MB、
+> 三个框架安装包、一份带明文口令的学号导出、一份生产 `.env`、一个启动脚本、一堆运行日志），
+> 现在分别归进 `vendor/`（含 `_retired/`）、`secrets/`、`scripts/`；
+> QQ 框架的发行包（printbot 跑起来必需）收进 `vendor/llonebot/` 随仓库走，**不含任何凭据**；
+> `memoryandtest/` 按用途拆成 `tests/` `tools/` `probes/` `docs/` `artifacts/` `runtime/` `memory/`。
+> 搬动之后所有脚本的「项目根」改成**向上找 `app.py`** 而不是「上一级目录」，
+> 测试沙箱统一收在 `memoryandtest/runtime/` —— 原来这两件事都靠脚本相对位置硬算，
+> 挪一个目录就会静默失效（症状是 `ImportError` 或「服务起在 A、断言读 B」，都不报错）。
+
 > 更早的两个里程碑：**v1** 是「网页端下单 / 接单 / 计费」的主流程；
 > **v2** 是接入 QQ 机器人 + 订单历史记录 + 协作者做的那套「仪表 / 蓝图」界面重设计
 > （含两套前端可切换、用词统一、一键启动脚本）。两套前端的切换现在被开关铉死成新版，
@@ -695,23 +705,29 @@ QQ 客户端 / QQ 协议（LLBot） --正向 WS--> printbot --HTTP+BOT_TOKEN--> 
 | `BOT_TOKEN` | 必须与 `.env` 里的 `BOT_TOKEN` 一致 |
 | `SITE_URL` | 文案里引导回网页的地址，默认 `https://print.qcmb.cloud` |
 
-QQ 框架用 **LLOneBot**（LLBot CLI 2.1.0 / LLBot 8.2.1，包在 `LLBot-CLI-win-x64-v8/`，
-跑 headless 直连、本机不需要挂 QQ 客户端）：
+QQ 框架用 **LLOneBot**（LLBot CLI 2.1.0 / LLBot 8.2.1，跑 headless 直连、本机不需要挂 QQ 客户端）：
 
 ```powershell
-# 首次：把授权 token 粘进这个文件（在 https://auth.luckylillia.com 领）
-#   LLBot-CLI-win-x64-v8/bin/llbot/data/auth_token.txt
-# 然后：启动（二维码在它自己的窗口里，扫一次即登记该 QQ；登录态会存下来）
-LLBot-CLI-win-x64-v8\llbot.exe --qq=<机器人QQ>
+# 1) 拿到发行包：仓库里的 vendor/llonebot/llbot-v8.2.1-win-x64.zip 解到任意目录
+#    （那一份是上游原样、**不含任何凭据**；正在跑的那份装在本机 LLBot-CLI-win-x64-v8/ 下）
+# 2) 首次：把授权 token 粘进这个文件（在 https://auth.luckylillia.com 领）
+#      <解出来的目录>/bin/llbot/data/auth_token.txt
+# 3) 启起来（二维码在它自己的窗口里，扫一次即登记该 QQ；登录态会存下来）
+<解出来的目录>\llbot.exe --qq=<机器人QQ>
 ```
+
+> `bin/llbot/data/` 是**运行期目录，不进仓库**：授权 token、WebUI 口令、
+> 每个 QQ 的 `config_<QQ>.json`、登录态数据库都在那儿。
+> 换机器就是把 zip 解出来、把 token 填进去，其余由它自己生成。
 
 > token 与 QQ 号是绑定的：**新 QQ 第一次扫码登录一次就会自动登记**
 > （管理站「绑定的 QQ 号」那栏会从 0/3 变成 1/3）。没登记时签名服务回 403
 > `uin ... not in your allowed list`、Bot 打印完就退出。token 是凭据，只落在上面那个文件里。
 > OneBot 正向 WS 在 `127.0.0.1:8085`，access token 与 `printbot/.env` 的 `ONEBOT_ACCESS_TOKEN` 必须一致。
 > 它的管理页在 `http://127.0.0.1:3080`。
-项目根的 `启动服务.bat` 是**一条命令起全套**：网页服务（:8080）→ LLBot（:8085）→ printbot，
+`scripts/启动服务.bat` 是**一条命令起全套**：网页服务（:8080）→ LLBot（:8085）→ printbot，
 每一步都先探测再启动（已在跑的不会重复拉起），并会等端口就绪。QQ 掉线这类现场它也会给提示。
+它住在 `scripts/` 里，项目根由脚本来算（`%~dp0..`），换机器只改脚本顶部的配置区。
 脚本是 **GBK 编码 + CRLF**（cmd 按控制台代码页解析中文），改它时别存成 UTF-8、也别改成 LF ——
 `.gitattributes` 里 `*.bat -text` 就是为了保证这两点原样进原样出。
 
@@ -928,12 +944,26 @@ print-of-dorm/
 │   ├── scripts/           #   两个本地工具：中文子集化（fonts:build）、对比度断言（audit:contrast）
 │   ├── tsconfig.json
 │   └── package.json
+├── vendor/
+│   ├── llonebot/          # OneBot 实现（QQ 框架）的发行包，printbot 要用它：
+│   │                      #   llbot-v8.2.1-win-x64.zip —— 上游原样，**不含任何凭据**
+│   └── _retired/          # 退役的框架与安装包（NapCat、旧版 LLBot、几个 zip），不进仓库
+├── scripts/
+│   └── 启动服务.bat        # 本机一键起全套：网页服务 → LLBot → printbot（GBK + CRLF，别改编码）
+├── secrets/               # **整块不进仓库**：真实 .env、几万人的学号姓名导出源
+├── assets/fonts/          # 数据卡用的字体（随仓库走，部署机不必装字体）
 ├── requirements.txt       # 依赖清单
 ├── .env.example           # 配置项模板（复制成 .env 再改）
 ├── .gitignore
 ├── .gitattributes
 └── README.md
 ```
+
+> 根目录**只剩那一批核心 `.py` 加几个配置/说明文件** —— 工具、文档、退役产物都归了目录。
+> 那些 `.py`（`app` / `config` / `db` / `auth` / `security` / `identity` / `utils` / `pricing` /
+> `prefs` / `botcard` / `notifier` / `pickup_notifier`）**必须留在根上**：项目是扁平布局、
+> 全仓按裸名导入（`from config import ...`），搬进子包就得改几十处 import 还要给 `sys.path`
+> 打补丁 —— 「目录整齐」和「能跑」的边界就在这一行。
 
 本地跑起来之后还会多出这些（**都已在 `.gitignore` 里，不会提交**）：
 
@@ -944,7 +974,11 @@ print-of-dorm/
 ├── data/                  # 运行期数据（已 gitignore）：SQLite 库、迁移备份、默认的上传目录
 ├── print_files/           # 上传的原件（含学生提交的内容）
 ├── frontend/node_modules/ # 前端依赖（只有改前端时才存在）
-├── memoryandtest/         # 本地工作目录：文档、笔记与测试脚本
+├── secrets/               # 生产 .env、学号姓名导出源（含明文口令，绝不提交）
+├── vendor/_retired/       # 退役的 QQ 框架与安装包，留着只是为了查历史，可以整个删掉
+├── LLBot-CLI-win-x64-v8/  # **本机正在跑的** LLOneBot 安装（带 auth_token.txt 等凭据，
+│                          #   所以整块不进仓库；仓库里那份在 vendor/llonebot/ 里）
+├── memoryandtest/         # 本地工作目录，按用途分了子目录（见该目录下的 README.md）
 └── *.md（除 README 外）    # 本地文档
 ```
 
@@ -1000,7 +1034,7 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 - [ ] **钱只记了金额，没记支付状态**。现在只能“订单一笔款已收/未收”全靠人工对账，订单表里没有 `paid` 之类的字段，也没有任何对账单据导出。
 - [ ] **没有自动化测试**。主要流程靠手工验证；前端有 `vue-tsc` 类型检查兜底，后端没有。（#6）
 - [ ] **限流只在单进程内有效**。所有限流都落在 `security.py` 的两个**模块级字典**里：登录失败计数 `_login_failures`（键是「IP + 学号」，默认 5 次 / 锁 300 秒；只服务登录）和通用计数器 `_hits`（按窗口内的次数挡手抖与刷量）。两者都不落盘、不共享。`_hits` 里目前有 7 组键：注册 `register:`（1 小时 20 次提交；只数「提交」这一件事，字段格式没过的请求不计入 —— 昵称或学号填重了再改一次，不该把自己那栋楼的出口 IP 封掉）、上传与预设下单 `upload:`（60 秒 20 次）、分片建会话 `chunkinit:`（60 秒 30 次）、分片上传 `chunkpart:`（60 秒 240 次）、工单轮询 `ticketpoll:`（60 秒 240 次），以及**两个未登录也能调的接口** —— 提交身份审核申请 `audit:`（1 小时 3 次）和查审核进度 `auditquery:`（1 小时 20 次）。所以单进程的 `waitress` 是对的；一旦换成多进程（如 `gunicorn -w 4`），每个进程各算各的，阈值会被成倍放宽且毫无提示。真要多进程，得先把这些计数器挪到 Redis。（#33）
-- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据。`v14 → v15` 给 `users.qq` 加部分唯一索引（`qq <> '' AND status <> 'closed'`，于是「一个 QQ 至多绑一个在用账号」由数据库保证；建失败只记 error 不推进版本号）。`v15 → v16` 给 `order_logs` 加 `to_status` 列与 `idx_order_logs_time` 索引 —— **加列的那句 `ALTER TABLE` 必须排在 `order_logs` 建表之后**：老库的 `CREATE TABLE IF NOT EXISTS` 是空操作，顺序颠倒会让服务直接起不来，而所有回归脚本跑的都是全新库、发现不了（`memoryandtest/check_old_db_upgrade.py` 就是为此存在的）。`v16 → v17` 是**数据迁移**（不是结构）：状态值「可取了」改名为「可取件」，`orders.status`、
+- [ ] **跨大版本升级会动表结构或索引**。`v3 → v4` 重建了 `users` 表，把列级 `UNIQUE` 换成部分唯一索引，好让注销的账号释放昵称 —— 迁移是「建新表 → 拷数据 → 删旧表 → 改名」四步走，中途失败会留下半成品。`v4 → v5` 只把姓名的唯一索引降级成普通索引（重名不再被拒绝注册），不碰表数据。`v5 → v6` 新建 `audit_requests` 表（身份审核），存量库不动。`v6 → v7` 给 `orders` 加三个计费列，走的是幂等的 `PRAGMA table_info` + `ALTER TABLE`，**老订单的金额为空，不会被强制改成「待计费」**。`v7 → v8` 新建 `order_logs` 留痕表、`v8 → v9` 新建 `print_presets` / `paper_types` 并给 `orders` 加六个选项快照列、`v9 → v10` 再加 `claim_alert_time`（「未接单邮件提醒」的发信凭证列），这三步都是只加新表或纯加列，靠幂等的 `CREATE TABLE IF NOT EXISTS` + `PRAGMA table_info` + `ALTER TABLE` 补上，没有重建表 —— `v10 → v11`：users 加 `pay_qr_file`（收款码**文件名**，目录由 `PAY_QR_FOLDER` 决定）、orders 加 `ready_notify_time`（「可取件邮件提醒」的发信凭证列）；`v11 → v12`：orders 加 `preset_group_id`（管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键）；`v12 → v13`：users 加 `session_epoch`（会话里存一份登录那一刻的值，改密码 / 登出 / 超管重置密码时把库里的值 +1，于是旧 Cookie 立刻失效）；`v13 → v14`：users 加独立 `qq` 字段，旧数据里 `contact_type='qq'` 的号码会迁入该字段，微信和邮箱仍留在其他联系方式中。都是纯加列，没有重建表；除已有 QQ 的定向搬迁外不编造、不回填数据。`v14 → v15` 给 `users.qq` 加部分唯一索引（`qq <> '' AND status <> 'closed'`，于是「一个 QQ 至多绑一个在用账号」由数据库保证；建失败只记 error 不推进版本号）。`v15 → v16` 给 `order_logs` 加 `to_status` 列与 `idx_order_logs_time` 索引 —— **加列的那句 `ALTER TABLE` 必须排在 `order_logs` 建表之后**：老库的 `CREATE TABLE IF NOT EXISTS` 是空操作，顺序颠倒会让服务直接起不来，而所有回归脚本跑的都是全新库、发现不了（`memoryandtest/tests/check_old_db_upgrade.py` 就是为此存在的）。`v16 → v17` 是**数据迁移**（不是结构）：状态值「可取了」改名为「可取件」，`orders.status`、
 `order_logs.to_status`、`order_logs.detail` 三处一起改（留痕的 detail 是给人看的句子，不改的话
 历史记录页按结果状态筛那一档会对不上）。**这段迁移必须排在所有建表补列之后** ——
 它要读 `order_logs.to_status`，放在建表之前老库会直接 `no such column`（踩过一次）。
