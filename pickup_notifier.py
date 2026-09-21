@@ -239,7 +239,11 @@ def _notify_claimers(conn, groups):
 
 
 def scan_once():
-    """跑一轮检查，返回这一轮成功发给学生的通知数。
+    """跑一轮检查，返回 `(发出去的封数, 失败的笔数)`。
+
+    ⚠️ 之所以要把「失败数」也返回：上一版只回成功数，而调用方拿它当「本轮成功了吗」——
+    于是只要有一封发成功，刚设好的退避就被清掉，日志里那句「N 秒后重试」当场变成假话，
+    SMTP 坏掉时按最短间隔硬撞（代码评审抓到的）。
 
     单独抽成函数是为了能被测试直接调用 —— 定时循环本身没什么好测的，
     真正需要钉住的是「什么情况该发、什么情况该转人工」。
@@ -252,7 +256,7 @@ def scan_once():
     with db_conn() as conn:
         rows = _pending_orders(conn)
         if not rows:
-            return 0
+            return 0, 0
         claimed = []
         deferred = 0
         for row in rows:
@@ -268,30 +272,39 @@ def scan_once():
             logger.info('取件提醒：%d 单因通知偏好/免打扰暂缓，稍后重试', deferred)
         conn.commit()
         if not claimed:
-            return 0
+            return 0, 0
 
         manual = {}
         for order in claimed:
-            # user_mailbox 认的是 users 表的列名（qq / contact_type / contact），
-            # 而上面那条 SQL 为免和 orders 的列撞名，把它们整成了 owner_* 别名。
-            # 这里手工翻回去：两边对不上**不会报错**，只会静默落进
-            # 「推不出邮箱 -> 转人工」那条路 —— 学生明明填了 QQ 却收不到信，
-            # 而日志里只有一句「推不出邮箱」。
-            mailbox, reason = user_mailbox({
-                'qq': order.get('owner_qq'),
-                'contact_type': order.get('owner_contact_type'),
-                'contact': order.get('owner_contact'),
-            })
-            if not mailbox:
-                # 微信 / 没填 / 填错 —— 三种都发不出去，但原因要写进日志：
-                # 「没填」该催用户补，「填了微信」是根本没法发，处理方式不一样。
-                logger.info('取件提醒：订单 #%s 的下单人联系方式推不出邮箱（%s），转人工联系',
-                            order['id'], reason)
-                manual.setdefault(order['claimed_by'], []).append(order)
-                continue
-            if _send_student(order, mailbox, _pay_qr_path(conn, order['claimed_by'])):
-                sent += 1
-            else:
+            # ⚠️ 整段包在 try 里：这段里任何**未预期**的异常（模板字段缺失、路径解析失败、
+            # SMTP 库抛了我们没兜住的类型）都会冒泡出 scan_once，而那时 `conn.commit()`
+            # **已经执行过** —— 「已通知」凭证被占着、这批单再也不会被选中，
+            # 学生**永久收不到提醒**（AGENTS.md 点名禁止的那一类丢失，不可逆）。
+            # 异常时把这单记进 failed，交给下面的 _release 撤销标记。
+            try:
+                # user_mailbox 认的是 users 表的列名（qq / contact_type / contact），
+                # 而上面那条 SQL 为免和 orders 的列撞名，把它们整成了 owner_* 别名。
+                # 这里手工翻回去：两边对不上**不会报错**，只会静默落进
+                # 「推不出邮箱 -> 转人工」那条路 —— 学生明明填了 QQ 却收不到信，
+                # 而日志里只有一句「推不出邮箱」。
+                mailbox, reason = user_mailbox({
+                    'qq': order.get('owner_qq'),
+                    'contact_type': order.get('owner_contact_type'),
+                    'contact': order.get('owner_contact'),
+                })
+                if not mailbox:
+                    # 微信 / 没填 / 填错 —— 三种都发不出去，但原因要写进日志：
+                    # 「没填」该催用户补，「填了微信」是根本没法发，处理方式不一样。
+                    logger.info('取件提醒：订单 #%s 的下单人联系方式推不出邮箱（%s），转人工联系',
+                                order['id'], reason)
+                    manual.setdefault(order['claimed_by'], []).append(order)
+                    continue
+                if _send_student(order, mailbox, _pay_qr_path(conn, order['claimed_by'])):
+                    sent += 1
+                else:
+                    failed.append(order['id'])
+            except Exception:
+                logger.exception('取件提醒：订单 #%s 发信时出错，撤回标记下一轮重试', order['id'])
                 failed.append(order['id'])
 
         if manual:
@@ -302,7 +315,7 @@ def scan_once():
         _next_retry_at = time.time() + PICKUP_NOTIFY_RETRY_BACKOFF
         logger.error('取件提醒：本轮 %d 笔未能发出，已撤回提醒标记，%d 秒后重试',
                      len(failed), PICKUP_NOTIFY_RETRY_BACKOFF)
-    return sent
+    return sent, len(failed)
 
 
 def _watch_loop():
@@ -316,7 +329,10 @@ def _watch_loop():
     while True:
         try:
             if _next_retry_at is None or time.time() >= _next_retry_at:
-                if scan_once():
+                # 只有「这一轮没有任何一笔失败」才清退避：有一封发成功就清的话，
+                # SMTP 半坏的情况下会按最短间隔硬撞（see scan_once 的说明）。
+                _sent, _failed = scan_once()
+                if not _failed:
                     _next_retry_at = None
         except Exception:
             # 出错不调退避：那是给「SMTP 发不出去」准备的，

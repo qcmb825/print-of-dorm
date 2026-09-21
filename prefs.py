@@ -68,6 +68,22 @@ def get_prefs(user_id, conn=None):
     return _row_to_prefs(row)
 
 
+def _as_int(value):
+    """把输入转成整数；认不出（非数字、浮点串、True 这种）一律回 None。
+
+    白名单只保证「键是允许的」，不保证「值是这个类型」——
+    路由层不做类型校验，所以类型收口必须在这里。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not (text.isascii() and text.isdigit()):
+        return None
+    return int(text)
+
+
 def _clamp_page_size(value):
     try:
         size = int(value)
@@ -82,7 +98,10 @@ def parse_clock(text):
     if len(text) != 5 or text[2] != ':':
         return None
     hh, mm = text[:2], text[3:]
-    if not (hh.isdigit() and mm.isdigit()):
+    #    ⚠️ `str.isdigit()` 与 `int()` **不等价**：'²'.isdigit() 是 True 而 int('²') 抛
+    #    ValueError（上标数字、部分全角数字都这样）。这个函数会被提醒线程每轮调用，
+    #    一个坏值就能把整轮扫描抛掉、所有学生那一轮都不发信。所以先要求 ASCII 数字。
+    if not (hh.isascii() and hh.isdigit() and mm.isascii() and mm.isdigit()):
         return None
     hour, minute = int(hh), int(mm)
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
@@ -138,7 +157,10 @@ def save_prefs(user_id, fields):
         elif key == 'orders_page_size':
             value = _clamp_page_size(value)
         elif key in ('default_copies', 'default_paper_type_id'):
-            value = None if value in (None, '') else int(value)
+            #    ⚠️ 不能直接 `int(value)`：`'abc'` / `[1]` / `'3.5'` 会抛 ValueError，
+            #    而两个路由（/api/me/prefs、/api/bot/prefs）都没包 try —— 用户
+            #    随便填一个非数字就是 500（本该 400）。这里收口成「认不出就当没设」。
+            value = _as_int(value)
         elif isinstance(value, str):
             value = value.strip()
         values[key] = value

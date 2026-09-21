@@ -38,7 +38,7 @@ import time
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
-from config import ST_READY, logger
+from config import ST_PRINTING, ST_READY, logger
 
 # ---- 原始色（镜像 tokens.css 深色一套 + 官方站实测值）----------------------
 VOID = (16, 17, 16)          # #101110 底（带绿倾向，不是死黑）
@@ -138,14 +138,24 @@ def _pick(env_key, filename):
 
 
 def _probe():
+    """探测可用字体，只做一次。
+
+    ⚠️ 先算完、再整体替换、最后才置 `_probed`：反过来写（先置标记再填字典）时，
+    并发的另一个请求可能看到「已经探过了、但字典还是空的」，于是 `available()` 返 False、
+    `render()` 返 None、接口回 501 **静默退回纯文本** —— 偶发、无日志，
+    正是「不报错、只是行为不对」那一类（代码评审抓到的）。
+    """
     global _probed
     if _probed:
         return
+    found = {
+        'cjk': _pick('CARD_FONT_PATH', 'SourceHanSans-SC-Regular.ttf'),
+        'display': _pick('CARD_DISPLAY_FONT_PATH', 'SpaceGrotesk-Variable.ttf'),
+        'mono': _pick('CARD_MONO_FONT_PATH', 'JetBrainsMono-Variable.ttf'),
+    }
+    found['cjk_bold'] = _pick('CARD_FONT_BOLD_PATH', 'SourceHanSans-SC-Bold.ttf') or found['cjk']
+    _font_paths.update(found)
     _probed = True
-    _font_paths['cjk'] = _pick('CARD_FONT_PATH', 'SourceHanSans-SC-Regular.ttf')
-    _font_paths['cjk_bold'] = _pick('CARD_FONT_BOLD_PATH', 'SourceHanSans-SC-Bold.ttf') or _font_paths['cjk']
-    _font_paths['display'] = _pick('CARD_DISPLAY_FONT_PATH', 'SpaceGrotesk-Variable.ttf')
-    _font_paths['mono'] = _pick('CARD_MONO_FONT_PATH', 'JetBrainsMono-Variable.ttf')
     if _font_paths['cjk']:
         logger.info('QQ 卡片字体：%s（拉丁 %s / 等宽 %s）', os.path.basename(_font_paths['cjk']),
                     os.path.basename(str(_font_paths['display'])),
@@ -514,24 +524,44 @@ CHIP_MIN_W = 132
 CHIP_H = 44
 
 
-def _chip(draw, x, y, text, ink, min_width=CHIP_MIN_W):
-    """状态胶囊：方角 + 12% 同色底 + 1px 同色描边 + 同色字（与站内 StatusTag 同形状）。
+def _chip(draw, x, y, text, ink, min_width=CHIP_MIN_W, filled=False, dot=False):
+    """状态胶囊：方角 + 12% 同色底 + 2px 同色描边 + 同色字（与站内 StatusTag 同形状）。
 
     两个取舍（都是视觉评审提出来之后改的）：
       · **不在胶囊上用斜纹**。警示斜纹是这套语言的宝贝，但官方拿它铺整块导航底
         （522×72 那种量级）；缩进 112px 宽的胶囊里，条纹会和笔画互相干扰，
         在手机 QQ 的显示宽度下三个字糊成一团。斜纹统一留给页脚那条带。
       · **给最小宽度**：宽度随字数变的话，后面那列（份数 / 金额）的起点会逐行跳动。
+
+    ⚠️ **状态不能只靠颜色**（无障碍专项评审）：约 8% 的男性有色觉障碍，
+    而「可取件」和「已取件」在灰度下只差一点亮度。所以再加两层形状线索：
+      · `filled=True`（要用户动手的状态，如可取件）→ 整块填实、字用深色 —— 最响；
+      · `dot=True`（机器正在做，如打印中）→ 文字前点一个实心圆点。
+    这样黄/青/灰三档即使全变成灰，也能靠「实心块 / 带点 / 空框」分开。
     """
     font = _font('cjk', T_CHIP)
     x, y = int(x), int(y)
     w = max(int(draw.textlength(text, font=font)) + 30, min_width)
     h = CHIP_H
+    if filled:
+        draw.rectangle([x, y, x + w, y + h], fill=ink)
+        draw.text((x + w / 2, y + h / 2 + 1), text, font=_text_font(text, T_CHIP),
+                  fill=PANEL_SOLID, anchor='mm')
+        return w
     draw.rectangle([x, y, x + w, y + h], fill=_over(ink, 30))
     #    描边 2px：1px 在 400px 下只剩 0.37px，会被抗锯齿随机分配 ——
     #    同一个胶囊上边亮、下边暗，像缺了一条边（实测）。
     draw.rectangle([x, y, x + w, y + h], outline=_over(ink, 190), width=2)
-    draw.text((x + w / 2, y + h / 2 + 1), text, font=_text_font(text, T_CHIP),
+    tx = x + w / 2
+    if dot:
+        #    圆点 + 文字整体居中：先按「点 + 间隙 + 文字」的总宽算起点
+        dot_r = 7
+        gap = 12
+        total = dot_r * 2 + gap + draw.textlength(text, font=font)
+        cx = x + w / 2 - total / 2
+        draw.ellipse([cx, y + h / 2 - dot_r, cx + dot_r * 2, y + h / 2 + dot_r], fill=ink)
+        tx = cx + dot_r * 2 + gap + draw.textlength(text, font=font) / 2
+    draw.text((tx, y + h / 2 + 1), text, font=_text_font(text, T_CHIP),
               fill=ink, anchor='mm')
     return w
 
@@ -596,12 +626,25 @@ def _progress(draw, x, y, width, ratio, height=10):
 
 
 def _truncate(draw, text, font, limit):
-    """超宽就截断加省略号（换行会让行高乱掉，宁可截）。"""
+    """超宽就截断加省略号（换行会让行高乱掉，宁可截）。
+
+    ⚠️ 用**二分**找截断点，不要「逐字回退」：逐字版每次都要重新量一遍整串，
+    是 O(n²) —— 实测 1000 字要 0.7 秒，而卡片还会被 `_measure_body` 整体跑第二遍，
+    一张工单卡就能把 waitress 的线程占住好几秒（八个并发直接把接口排满）。
+    二分只要 10 次左右的测量，且每次量的是越来越短的串。
+    """
     if draw.textlength(text, font=font) <= limit:
         return text
-    while text and draw.textlength(text + '…', font=font) > limit:
-        text = text[:-1]
-    return text + '…'
+    ell = '…'
+    room = limit - draw.textlength(ell, font=font)
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if draw.textlength(text[:mid], font=font) <= room:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + ell
 
 
 # ---- 各类型的行 ---------------------------------------------------------------
@@ -625,10 +668,14 @@ def _rows_orders(draw, y, x0, x1, payload):
                   _truncate(draw, (item.get('title') or '（无标题）').replace('\n', ' '),
                             _font('cjk', T_BODY), x1 - x0 - code_w - 120),
                   font=_font('cjk', T_BODY), fill=INK)
-        _chip(draw, x0, y + 44, status, ink)
-        bits = ['%s 份' % (item.get('copies') or 1),
+        chip_w = _chip(draw, x0, y + 44, status, ink,
+                       filled=(status == ST_READY),    # 要用户动手的 → 实心块
+                       dot=(status == ST_PRINTING))    # 机器正在做 → 带点
+        #    `copies` 为 NULL 是「未记录」（本次升级前的老订单），不是 1 份 ——
+        #    写 1 是替用户编数字，而且与邮件、网页端「未记录」的口径对不上。
+        bits = [('%s 份' % item['copies']) if item.get('copies') else '份数未记录',
                 '未计费' if item.get('price') is None else '%.2f 元' % item['price']]
-        draw.text((_chip_next_x(x0), y + 52), ' · '.join(bits),
+        draw.text((x0 + chip_w + 16, y + 52), ' · '.join(bits),
                   font=_font('cjk', T_META), fill=INK_3)
         draw.text((x1, y + 52), (item.get('create_time') or '')[5:16],
                   font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
@@ -661,9 +708,14 @@ def _rows_tickets(draw, y, x0, x1, payload):
                   font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')
         #    「进行中」不再用黄：黄在这套语言里只给「你现在能行动的事」（可取件），
         #    工单开着不需要用户做任何事，用中性白就行。
-        _chip(draw, x0 + 190, y + 50, '进行中' if opened else '已关闭',
-              INK_2 if opened else INK_4, min_width=96)
-        chip_x = x0 + 190 + 96 + 16
+        chip_w_x = x0 + 190 + _chip(draw, x0 + 190, y + 50,
+                                   '进行中' if opened else '已关闭',
+                                   INK_2 if opened else INK_4, min_width=96,
+                                   dot=opened)
+        #    ⚠️ 用 `_chip` 的**返回值**累加，不要写死 96：胶囊宽度是
+        #    `max(文字宽 + 30, min_width)`，「进行中」实测 120px，
+        #    写死 96 会让后面那枚品红胶囊压掉它的右边框（全尺寸下肉眼可见）。
+        chip_x = chip_w_x + 16
         if item.get('unread'):
             # 「有新回复」是这一行最该跳出来的信息，得给足分量：做成和状态牌同形状的
             # 品红胶囊（原先只有一个 8px 小方块 + 彩字，最该显眼的反倒最弱）。

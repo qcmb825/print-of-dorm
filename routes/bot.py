@@ -743,7 +743,14 @@ def api_bot_card():
     payload['nickname'] = g.user['nickname']
     payload['qq'] = g.user['qq']
     payload['stamp'] = time.strftime('%H:%M:%S')
-    png = botcard.render(kind, payload)
+    #    渲染层的任何异常都在这里收口：机器人那边对非 200 一律「这次没图、退回文本」，
+    #    所以**不要**让它变成 500 的通用 traceback —— 那样日志里分不清是字体、
+    #    是内存还是数据形状的问题，而用户那边只是「怎么又没图」。
+    try:
+        png = botcard.render(kind, payload)
+    except Exception:
+        logger.exception('QQ 卡片渲染失败：kind=%s 账号=#%s', kind, g.user['id'])
+        return jsonify({'code': 501, 'msg': '卡片生成失败，先用文字看吧'}), 501
     if png is None:
         return jsonify({'code': 501, 'msg': '服务器没有可用的中文字体，卡片暂不可用'}), 501
     resp = Response(png, mimetype='image/png')
