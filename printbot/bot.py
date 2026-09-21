@@ -139,10 +139,11 @@ def reply_pref_quiet(client, qq, argument):
         client.send_private_msg(qq, '要写成「免打扰 22:00-08:00」这样。')
         return
     start, end = start.strip(), end.strip()
-    ok = _save_pref(client, qq, {'quiet_from': start, 'quiet_to': end},
-                    '免打扰已设为 %s - %s：这段时间的提醒会攒着，过后再发。' % (start, end))
-    if not ok:
-        client.send_private_msg(qq, '时间要写成 22:00 这种（24 小时制）。')
+    #    ⚠️ 保存失败时**别**再补一句「时间要写成 22:00」：失败可能只是网络不通、
+    #    也可能是「两头一样」，跟格式无关 —— 那句瞎猜的话会和真正的错误信息打架
+    #    （对话审计抓到的）。格式问题在发请求之前就该拦（见上）。
+    _save_pref(client, qq, {'quiet_from': start, 'quiet_to': end},
+               '免打扰已设为 %s - %s：这段时间的提醒会攒着，过后再发。' % (start, end))
 
 
 def reply_pref_size(client, qq, argument):
@@ -294,7 +295,9 @@ _ZH_PREFIX = {
     # 2026-09-21：用户面前只保留一个标识 —— **单号**（5 位数字、首位非 0，下单时生成）。
     # 命令词跟着显示名走（两套词会冒出「撤回单号 1234」这种混搭），
     # 但「单号」留作兼容别名：老消息、老习惯里这么写的还认。
-    '单号': 'code', '取件号': 'code', '单号': 'code', '查件': 'code',
+    #    「取件码」是从前的叫法（改名前的文档、老师傅的口头习惯里都还有）：
+    #    留着当别名，免得老用户一开口就撞「不认识」。
+    '单号': 'code', '取件码': 'code', '取件号': 'code', '查件': 'code',
     '打印服务': 'preset', '服务': 'preset',
     # 「撤回」是删除类操作，做成两道口令：撤回 13（给提示）→ 确认撤回 13（执行）。
     # 两句都走同一条前缀规则，数字紧贴也认（「撤回13」）。
@@ -337,6 +340,10 @@ PENDING_DIR = Path(__file__).resolve().parent / 'data' / 'pending'
 _MODE_MAP = {'1': ('black', 'single'), '2': ('black', 'double'),
              '3': ('color', 'single'), '4': ('color', 'double')}
 
+# 份数上限。⚠️ 必须与服务端 `config.COPIES_MAX` 一致 —— printbot 是自包含包
+# （不 import 项目模块），所以这里只能各写一份，改的时候两边一起改。
+COPY_MAX = 50
+
 # 渲染好的数据卡落这儿（启动时统一清一次）。**别发完就删**：框架那边是拿到文件、
 # 发完才回执的，抢在中间删会发出一张白图 —— 一张几十 KB，留着更稳。
 CARD_DIR = Path(__file__).resolve().parent / 'data' / 'cards'
@@ -375,7 +382,7 @@ def _send_card_or_text(client, qq, kind, fallback):
             log.exception('发卡片失败（%s），这条改发文本', kind)
     client.send_private_msg(qq, fallback())
 
-_COPIES_ASK = '打几份？（回复数字，比如 1；发「取消」可以放弃）'
+_COPIES_ASK = '打几份？（回复数字，最多 %d 份；发「取消」可以放弃）' % COPY_MAX
 # 纸张是可选项：管理员没配纸张类型时这一步整个跳过（见 _consume_pending_answer），
 # 配了才问 —— 没人用得到的选择题不该占一轮对话。
 _SKIP_WORDS = ('跳过', '默认', '不指定', '不用', '跳', '0')
@@ -397,7 +404,7 @@ def _mode_menu(name, intro=None, defaults=None):
     for key in sorted(_MODE_MAP):
         mark = '（你的默认）' if pair == _MODE_MAP[key] else ''
         rows.append(' %s. %s%s' % (key, _mode_text(*_MODE_MAP[key]), mark))
-    return '%s\n打印方式？（回复数字%s）\n%s' % (
+    return '%s\n打印方式？（回复数字%s；发「取消」可以放弃）\n%s' % (
         intro % name, '，或回「默认」' if pair else '', '\n'.join(rows))
 
 
@@ -408,7 +415,7 @@ def _mode_text(color, duplex):
 
 def _papers_menu(papers):
     """纸张选择菜单。编号就是纸张的 id（可能不连续，菜单照实显示）。"""
-    lines = ['要指定纸张吗？（回复编号；发「跳过」就用默认的）']
+    lines = ['要指定纸张吗？（回复编号；发「跳过」用默认的，发「取消」放弃这一单）']
     for paper in papers:
         label = paper['name']
         if paper.get('remark'):
@@ -630,7 +637,10 @@ def _local_prelaunch_check(file_name, size):
     if size == 0:
         return '这个文件是空的，换一个再发'
     if size > config.MAX_UPLOAD_MB * 1024 * 1024:
-        return '文件超过 %dMB 了，太大传不动；请压缩后分几次发，或到网页端上传' % config.MAX_UPLOAD_MB
+        #    提了网页端就把链接给上：同一份文件里其它提到网页端的地方都带 SITE_URL，
+        #    只有这里光说「到网页端上传」，用户还得自己找地址（对话审计）。
+        return ('文件超过 %dMB 了，太大传不动；请压缩后分几次发，'
+                '或到网页端上传：%s' % (config.MAX_UPLOAD_MB, config.SITE_URL))
     return None
 
 
@@ -731,6 +741,22 @@ def _purge_pending_dir():
     return removed
 
 
+def _timeout_text(entry):
+    """超时取消的话术。**要看卡在哪一步、以及是不是预设单**：
+
+    · 卡在份数/纸张的人早就选过打印方式了，跟他说「还没选打印方式」是错的；
+    · 预设单没有文件，「刚才那份文件」也就不成立（它要重新发的是「打印服务 N」）。
+    """
+    preset = entry.get('kind') == 'preset'
+    step_text = {'mode': '还没选打印方式', 'copies': '还没回份数',
+                 'paper': '还没选纸张'}.get(entry.get('step'), '还没选完参数')
+    if preset:
+        return ('刚才那单「%s」%s，已超时取消。\n要打请重新发「打印服务 %s」。'
+                % (entry.get('name'), step_text, entry.get('preset_id') or '编号'))
+    return ('刚才发的「%s」%s，已超时取消。\n要打印请重新发一次文件。'
+            % (entry.get('name'), step_text))
+
+
 def _sweep_expired_pending(client):
     """超时未选参数的待办：删文件并告知本人（在推送循环里定期跑）。"""
     if not _pending:
@@ -742,8 +768,7 @@ def _sweep_expired_pending(client):
             continue
         _clear_pending(qq)
         try:
-            client.send_private_msg(qq, '刚才发的「%s」还没选打印方式，已超时取消。\n'
-                                        '要打印请重新发一次文件。' % entry['name'])
+            client.send_private_msg(qq, _timeout_text(entry))
         except OneBotError:
             log.warning('超时提醒发送失败 qq=%s（连接不可用）', qq)
 
@@ -801,7 +826,9 @@ def _consume_pending_answer(client, qq, text):
     answer = (text or '').strip()
 
     if answer.startswith('备注'):
-        remark = answer[len('备注'):].strip()[:200]   # 与网页端同一长度上限
+        #    剥掉分隔符：用户很自然写成「备注：靠窗」，不剥的话备注值会带着那个冒号
+        #    （管理员在订单台上看到「：靠窗」只会莫名其妙）。
+        remark = answer[len('备注'):].lstrip('：: \t').strip()[:200]   # 与网页端同一长度上限
         if not remark:
             client.send_private_msg(qq, '备注要写成「备注 你的内容」，比如「备注 靠窗那台打印」。')
             return True
@@ -843,11 +870,16 @@ def _consume_pending_answer(client, qq, text):
             entry['ts'] = time.time()
             client.send_private_msg(qq, _COPIES_ASK)
         else:
+            client.send_private_msg(qq, '没看懂「%s」—— 回复 1-4 选打印方式，'
+                                        '或发「取消」放弃。' % (answer or '')[:20])
             _ask_current(client, qq, entry)
         return True
 
     if entry['step'] == 'copies':
-        if answer.isdigit() and 1 <= int(answer) <= 999:
+        #    ⚠️ 上限必须与服务端 config.COPIES_MAX 一致（这里收 999 的话，
+        #    用户在最后一步才会被 400 顶回来 —— 而那时暂存文件已经删了，
+        #    他得把整份文件重发一遍）。
+        if answer.isdigit() and 1 <= int(answer) <= COPY_MAX:
             entry['copies'] = int(answer)
             entry['ts'] = time.time()
             papers = _fetch_papers()
@@ -1181,6 +1213,26 @@ def reply_ticket_reply(client, qq, argument):
                                 % (resp.get('msg', '未知原因'), _site_hint(resp)))
 
 
+# 像「在回答追问」的短消息：数字、跳过、取消、默认一类。用来把「我这边没有待办」
+# 从「普通聊天」里分出来，好回一句有用的话，而不是甩一整篇帮助。
+_ANSWER_LIKE = ('跳过', '取消', '取消吧', '算了', '默认', '默认值')
+
+
+def _looks_like_answer(text):
+    text = (text or '').strip()
+    return text.isdigit() or text in _ANSWER_LIKE
+
+
+def _pending_mode_step(qq):
+    """这个 QQ 是不是正卡在「选打印方式」那一步。"""
+    entry = _pending.get(str(qq))
+    if not entry:
+        return False
+    if time.time() - (entry.get('ts') or 0) > PENDING_TTL_SECONDS:
+        return False
+    return entry.get('step') == 'mode'
+
+
 def handle_event(client, event):
     """事件分发：只理私聊。任何异常都在 _route_frame 外层兜底。"""
     if event.get('post_type') != 'message' or event.get('message_type') != 'private':
@@ -1199,6 +1251,14 @@ def handle_event(client, event):
         return
 
     text = extract_text(event.get('message'))
+    #    ⚠️ 待办状态里回「默认」要先于命令解析：菜单上写着「或回「默认」」，
+    #    而 `parse_command('默认')` 会把它当成设置默认参数那条命令（命令优先于追问），
+    #    于是用户按提示回「默认」会收到一条用法说明 —— 菜单在教一个走不通的写法
+    #    （对话审计抓到的）。这里只拦**待办处在选打印方式那一步 + 整词是「默认」**，
+    #    其余情况一律照旧走命令。
+    if text.strip() in ('默认', '默认值') and _pending_mode_step(qq):
+        if _consume_pending_answer(client, qq, text.strip()):
+            return
     command, argument = parse_command(text)
     # 留痕：谁、什么时候、用了哪个命令。**不记消息正文**（正文可能有闲聊和隐私），
     # 非命令消息只留一句「非命令」——运维需要的是「这个 QQ 在用机器人」这件事。
@@ -1212,6 +1272,14 @@ def handle_event(client, event):
         # 不带斜杠的就是普通聊天，只回帮助（让他知道发文件就能下单）。
         if text.strip()[:1] in ('/', '／'):
             reply_help(client, qq, '这个命令我不认识。' + chr(10))
+        elif _looks_like_answer(text):
+            #    「看着像在回答追问、其实我这边没有待办」——最典型的场景是机器人
+            #    **刚重启**（待办存在内存里，重启就没了）。这时甩一整篇帮助等于装傻，
+            #    用户只会以为机器人坏了（对话审计抓到的）。
+            client.send_private_msg(
+                qq, '我这边没有正在进行的下单了 —— 多半是刚才那份文件过期了'
+                    '（或者我重启过，待办不保留）。\n麻烦把文件重新发一次，'
+                    '我马上再问一遍打印方式和份数。')
         else:
             reply_help(client, qq)
         return
