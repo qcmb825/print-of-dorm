@@ -29,6 +29,7 @@ import {
 } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import {
+  CONTACT_HINT,
   NICKNAME_RE,
   OTHER_CONTACT_HINT,
   OTHER_CONTACT_PLACEHOLDER,
@@ -79,8 +80,8 @@ const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
  *  不是页面 —— 与导航栏那几项没有一一对应关系，混用会让以后改导航的人莫名背锅。 */
 const flowRows = [
   { code: '01', label: '在线提交' },
-  { code: '02', label: '进度可查' },
-  { code: '03', label: '凭码取件' },
+  { code: '02', label: '进度查询' },
+  { code: '03', label: '凭单号取件' },
 ]
 
 /** 认证告示上的三行范围读数。三行都对应系统里真实存在的东西：
@@ -100,29 +101,29 @@ const clock = useClock()
 const loginRules: FormRules = {
   // 登录只用学号（后端也拿 STUDENT_ID_RE 卡一道）。这里不再提「昵称」：
   // 提示文案里写着昵称、后端又不收，用户会先把昵称输一遍才被告知不行。
-  identifier: [{ required: true, message: '填写学号', trigger: ['blur', 'input'] }],
-  password: [{ required: true, message: '填写密码', trigger: ['blur', 'input'] }],
+  identifier: [{ required: true, message: '学号为必填', trigger: ['blur', 'input'] }],
+  password: [{ required: true, message: '密码为必填', trigger: ['blur', 'input'] }],
 }
 
 const registerRules = computed<FormRules>(() => ({
   nickname: [
-    { required: true, message: '填写昵称', trigger: ['blur', 'input'] },
+    { required: true, message: '昵称为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => NICKNAME_RE.test(value),
-      message: '昵称 2-20 位：中文、字母、数字或下划线',
+      message: '昵称 2-20 位 · 可含中文、字母、数字、下划线',
       trigger: ['blur', 'input'],
     },
   ],
   real_name: [
-    { required: true, message: '填写姓名', trigger: ['blur', 'input'] },
+    { required: true, message: '姓名为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => REALNAME_RE.test(value),
-      message: '姓名 2-20 位中文或字母',
+      message: '姓名 2-20 位 · 中文或字母',
       trigger: ['blur', 'input'],
     },
   ],
   student_id: [
-    { required: true, message: '填写学号', trigger: ['blur', 'input'] },
+    { required: true, message: '学号为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => STUDENT_ID_RE.test(value),
       message: '学号 4-20 位数字',
@@ -130,20 +131,20 @@ const registerRules = computed<FormRules>(() => ({
     },
   ],
   dorm: [
-    { required: true, message: '填写宿舍', trigger: ['blur', 'input'] },
+    { required: true, message: '宿舍为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => value.trim().length >= 2 && value.trim().length <= 50,
-      message: '宿舍 2-50 字符，写到门牌号',
+      message: '宿舍 2-50 字符 · 写到门牌号',
       trigger: ['blur', 'input'],
     },
   ],
   qq: [
-    { required: true, message: '填写 QQ 号', trigger: ['blur', 'input'] },
+    { required: true, message: 'QQ 号为必填 · 用于取件提醒', trigger: ['blur', 'input'] },
     {
-      // 文案直接取 qqIssue() 的返回值，别在这里另抄一句：
+      // 文案直接取 CONTACT_HINT 的那一句，别在这里另抄一遍：
       // 提示语抄两份时，改一处就会出现「框里说 5-12 位、红字说别的」。
       validator: (_rule, value: string) => qqIssue(value) === null,
-      message: '请填写 QQ 号（用来给你发送取件邮件提醒）',
+      message: CONTACT_HINT.qq,
       trigger: ['blur', 'input'],
     },
   ],
@@ -153,15 +154,15 @@ const registerRules = computed<FormRules>(() => ({
       // 但填了一半要拦住 —— 只选类型不填号码，库里会留下一个说不清是什么的东西。
       validator: (_rule, value: string) =>
         otherContactIssue(registerForm.contact_type, value ?? '') === null,
-      message: '其他联系方式格式不对，或者整组留空',
+      message: '其他联系方式格式无效 · 或整组留空',
       trigger: ['blur', 'input'],
     },
   ],
   password: [
-    { required: true, message: '填写密码', trigger: ['blur', 'input'] },
+    { required: true, message: '密码为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => passwordIssue(value) === null,
-      message: '密码 8-64 位，含字母与数字',
+      message: '8-64 位 · 需同时含字母与数字',
       trigger: ['blur', 'input'],
     },
     {
@@ -172,7 +173,7 @@ const registerRules = computed<FormRules>(() => ({
     },
   ],
   confirm_password: [
-    { required: true, message: '再输一次密码', trigger: ['blur', 'input'] },
+    { required: true, message: '确认密码为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => value === registerForm.password,
       message: '两次密码不一致',
@@ -214,7 +215,7 @@ async function submitLogin(): Promise<void> {
     })
     await router.replace(target)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '登录失败 · 稍后重试')
+    message.error(error instanceof ApiError ? error.message : '登录未完成 · 稍后重试')
   } finally {
     submitting.value = false
   }
@@ -241,7 +242,7 @@ async function submitRegister(): Promise<void> {
       password: registerForm.password,
       confirm_password: registerForm.confirm_password,
     })
-    message.success('注册成功')
+    message.success('账号已创建 · 已登录')
     await router.replace('/upload')
   } catch (error) {
     // 学号不在名单上时后端回 409 + need_audit，意思是「这次不行，但有正经出路」。
@@ -252,7 +253,7 @@ async function submitRegister(): Promise<void> {
       message.warning(error.message)
       auditOpen.value = true
     } else {
-      message.error(error instanceof ApiError ? error.message : '注册失败 · 稍后重试')
+      message.error(error instanceof ApiError ? error.message : '注册未完成 · 稍后重试')
     }
   } finally {
     submitting.value = false
@@ -321,11 +322,11 @@ onMounted(async () => {
 
         <div class="mt-7">
           <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
-            从文件到取件，<br />
-            <span style="color: var(--accent-text)">只隔一张单</span>。
+            把字交给纸<br />
+            <span style="color: var(--accent-text)">把纸交到你手上</span>
           </p>
           <p class="mt-4 max-w-sm text-base leading-7 text-ink-3">
-            上传文件 → 接单打印 → 凭码取件。
+            上传文件 → 接单打印 → 凭单号取件
           </p>
         </div>
 
@@ -411,7 +412,7 @@ onMounted(async () => {
               :size="12"
               :class="online === null && 'animate-spin'"
             />
-            {{ online === null ? '正在连接' : online ? '服务在线' : '服务不可达' }}
+            {{ online === null ? '正在连接' : online ? '服务在线' : '服务不可用' }}
           </span>
         </div>
 
@@ -423,18 +424,18 @@ onMounted(async () => {
           style="border-color: var(--border)"
         >
           <span class="readout">AUTHORIZATION REQUIRED</span>
-          <span class="readout ml-auto hidden sm:inline">凭据核验后方可进入</span>
+          <span class="readout ml-auto hidden sm:inline">核验通过后进入</span>
         </div>
 
         <div class="p-5 sm:p-6">
         <h1 class="font-heading text-2xl leading-tight font-bold">
-          {{ tab === 'login' ? '登录你的账号' : '注册新账号' }}
+          {{ tab === 'login' ? '登录账号' : '注册账号' }}
         </h1>
         <p class="mt-1.5 mb-5 text-sm text-ink-3">
           {{
             tab === 'login'
-              ? '用学号登录。提交文件后凭单号取件。'
-              : '注册后即可下单。学号与名单不一致时，会引导你提交审核申请。'
+              ? '用学号登录 · 提交文件后凭单号取件。'
+              : '注册后即可下单 · 名单外学号可提交审核申请。'
           }}
         </p>
 
@@ -491,7 +492,7 @@ onMounted(async () => {
             >
               <div class="grid gap-x-3 sm:grid-cols-2">
                 <NFormItem label="昵称" path="nickname">
-                  <NInput v-model:value="registerForm.nickname" placeholder="登录名，2-20 位" />
+                  <NInput v-model:value="registerForm.nickname" placeholder="显示名 · 2-20 位" />
                 </NFormItem>
                 <NFormItem label="姓名" path="real_name">
                   <NInput v-model:value="registerForm.real_name" placeholder="真实姓名" />
@@ -511,11 +512,11 @@ onMounted(async () => {
                 <NInput
                   v-model:value="registerForm.qq"
                   :maxlength="12"
-                  placeholder="5-12 位数字，不能以 0 开头"
+                  placeholder="5-12 位数字 · 不以 0 开头"
                 />
               </NFormItem>
               <p class="-mt-3 mb-3 text-xs text-ink-3">
-                打印完成后系统会往这个 QQ 邮箱发取件提醒；微信号推不出邮箱地址，所以不能替代。
+                取件提醒发往这个 QQ 邮箱 · 微信号推不出邮箱地址，不能替代。
               </p>
 
               <NFormItem label="其他联系方式（选填）" path="contact">
@@ -536,7 +537,7 @@ onMounted(async () => {
                     :placeholder="
                       registerForm.contact_type
                         ? OTHER_CONTACT_PLACEHOLDER[registerForm.contact_type]
-                        : '先选类型，或留空'
+                        : '先选类型 · 或留空'
                     "
                     class="min-w-0 flex-1"
                   />
@@ -546,7 +547,7 @@ onMounted(async () => {
                 <template v-if="registerForm.contact_type">
                   {{ OTHER_CONTACT_HINT[registerForm.contact_type] }}
                 </template>
-                <template v-else>微信 / 邮箱只是备用线索，可以留空；QQ 号必填。</template>
+                <template v-else>微信 / 邮箱为备用线索 · 可留空；QQ 号为必填。</template>
               </p>
 
               <div class="grid gap-x-3 sm:grid-cols-2">
@@ -555,7 +556,7 @@ onMounted(async () => {
                     v-model:value="registerForm.password"
                     type="password"
                     show-password-on="click"
-                    placeholder="8-64 位，含字母和数字"
+                    placeholder="8-64 位 · 需同时含字母与数字"
                     autocomplete="new-password"
                   />
                 </NFormItem>
@@ -564,7 +565,7 @@ onMounted(async () => {
                     v-model:value="registerForm.confirm_password"
                     type="password"
                     show-password-on="click"
-                    placeholder="再输一次"
+                    placeholder="再次输入"
                     autocomplete="new-password"
                     @keydown.enter="submitRegister"
                   />
@@ -614,7 +615,7 @@ onMounted(async () => {
           class="underline decoration-dotted underline-offset-2 hover:text-ink-2"
           @click="auditOpen = true"
         >
-          学号不在名单上？申请人工审核 →
+          名单外学号 · 申请人工审核 →
         </button>
       </p>
       </div>

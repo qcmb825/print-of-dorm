@@ -51,8 +51,8 @@ const STATUS_META: Record<AuditStatus, { label: string; color: string; bg: strin
 /** 待审核 0 条时给一句解释，否则管理员会以为是页面坏了 */
 const emptyHint = computed(() =>
   status.value === 'pending'
-    ? '没有待处理的申请。'
-    : '这个状态下还没有记录。',
+    ? '暂无待处理申请'
+    : '暂无记录',
 )
 
 /** 处理弹窗。approve 时理由选填，reject 时必填 —— 与后端一致
@@ -80,7 +80,7 @@ async function load(silent = false): Promise<void> {
     list.value = data.requests
     for (const key of AUDIT_STATUSES) counts[key] = data.counts?.[key] ?? 0
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载审核申请失败')
+    message.error(error instanceof ApiError ? error.message : '审核申请读取失败')
   } finally {
     loading.value = false
   }
@@ -100,12 +100,12 @@ async function confirm(): Promise<void> {
   reviewing.value = true
   try {
     await auditApi.review(target.id, dialog.action, note.value.trim())
-    message.success(dialog.action === 'approve' ? '已通过 · 对方可以注册了' : '已驳回')
+    message.success(dialog.action === 'approve' ? '已通过 · 该学号可注册' : '驳回已登记')
     dialog.show = false
     // 处理完刷新：这条会从当前页签消失（待审核 → 已通过/已驳回），三个角标也跟着变。
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '处理失败')
+    message.error(error instanceof ApiError ? error.message : '提交未完成 · 稍后重试')
   } finally {
     reviewing.value = false
   }
@@ -116,7 +116,7 @@ onMounted(load)
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="身份审核" subtitle="名单里查不到学号的人，提交申请后由这里人工放行">
+    <PageHeader title="身份审核" subtitle="名单外学号 · 人工放行">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -126,8 +126,8 @@ onMounted(load)
     </PageHeader>
 
     <NAlert type="info" :bordered="false" class="mb-4" :show-icon="true">
-      通过只给「可以用这个学号注册」的资格，账号仍由本人注册；
-      这里不设密码、不自动建号。一个学号一条记录，处理过可以改判。
+      通过只给「用该学号注册」的资格：账号仍由本人注册，不设密码、不自动建号。
+      一个学号一条记录，处理过可改判。
     </NAlert>
 
     <NTabs v-model:value="status" type="line" animated @update:value="load()">
@@ -154,7 +154,7 @@ onMounted(load)
         </div>
 
         <div v-else-if="!list.length" class="panel flex flex-col items-center gap-3 py-12">
-          <EmptyState code="00 / NO REQUEST" :title="emptyHint" hint="学生提交审核申请后会出现在这里" />
+          <EmptyState code="00 / NO REQUEST" :title="emptyHint" hint="学生提交的申请在此列示" />
         </div>
 
         <ul v-else class="flex flex-col gap-3">
@@ -256,11 +256,11 @@ onMounted(load)
         </p>
 
         <NAlert v-if="dialog.action === 'approve'" type="default" :bordered="false" class="mb-3">
-          通过后对方可以用该学号注册。备注可不填，会一并展示给申请人。
+          通过后该学号可注册。备注选填，将一并展示给申请人。
         </NAlert>
         <NAlert v-else type="warning" :bordered="false" class="mb-3">
           驳回必须填理由，<strong>申请人看得到</strong>：写清缺什么、去哪补。
-          「不符合条件」只会让对方再交一次。
+          「不符合条件」只会让对方再提交一次。
         </NAlert>
 
         <NInput

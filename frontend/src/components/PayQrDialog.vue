@@ -57,11 +57,11 @@ async function onFile(event: Event): Promise<void> {
   if (!file) return
 
   if (!/\.(png|jpe?g)$/i.test(file.name)) {
-    message.error('只支持 PNG / JPG 图片')
+    message.error('图片格式无效 · 仅支持 PNG / JPG')
     return
   }
   if (file.size > MAX_BYTES) {
-    message.error('图片超过 2 MB · 压缩后再上传')
+    message.error('文件过大 · 单文件上限 2 MB')
     return
   }
 
@@ -72,7 +72,7 @@ async function onFile(event: Event): Promise<void> {
     broken.value = false
     message.success('收款码已更新')
   } catch (err) {
-    message.error(err instanceof ApiError ? err.message : '上传失败 · 稍后重试')
+    message.error(err instanceof ApiError ? err.message : '上传未完成 · 稍后重试')
   } finally {
     busy.value = false
   }
@@ -81,7 +81,7 @@ async function onFile(event: Event): Promise<void> {
 async function onRemove(): Promise<void> {
   const ok = await confirmAction({
     title: '删除收款码',
-    content: '删除后取件邮件不再带收款码，学生到取件点找你付款。',
+    content: '删除后取件邮件不再带收款码 · 学生到取件点向你付款。',
     positiveText: '删除',
     dangerous: true,
   })
@@ -94,7 +94,7 @@ async function onRemove(): Promise<void> {
     broken.value = false
     message.success('收款码已删除')
   } catch (err) {
-    message.error(err instanceof ApiError ? err.message : '删除失败 · 稍后重试')
+    message.error(err instanceof ApiError ? err.message : '删除未生效 · 稍后重试')
   } finally {
     busy.value = false
   }
@@ -114,8 +114,8 @@ async function onRemove(): Promise<void> {
       <NAlert type="info" :bordered="false">
         <!-- 正文里的「你」要落到实处：这条最容易被误解成「传一张全站公用的码」，
              所以第一句先说清归属，再说发不出去的后果。 -->
-        学生付给接单人，这张码只代表你自己。
-        上传后出现在你接单的取件邮件里；不上传也能用，只是邮件里不带图。
+        学生付给接单人 · 这张码只代表你自己。
+        上传后出现在你接单的取件邮件里；不上传也能用，仅邮件不带图。
       </NAlert>
 
       <div
@@ -136,13 +136,13 @@ async function onRemove(): Promise<void> {
         <div v-else class="flex flex-col items-center gap-2 text-center">
           <QrCode :size="34" class="opacity-40" aria-hidden="true" />
           <p class="text-sm font-semibold">
-            {{ broken ? '这张图读不到了' : '还没有上传收款码' }}
+            {{ broken ? '图片读取失败' : '尚未上传收款码' }}
           </p>
           <p class="text-xs text-ink-3">
             {{
               broken
-                ? '服务端还有记录，文件已经不在，重传一张即可。'
-                : '上传后，取件邮件里会带上它。'
+                ? '服务端仍有记录 · 文件已不存在，重传即可。'
+                : '上传后会在取件邮件里带上它。'
             }}
           </p>
         </div>
@@ -170,8 +170,8 @@ async function onRemove(): Promise<void> {
       </div>
 
       <p class="text-xs leading-relaxed text-ink-3">
-        PNG / JPG，≤ 2 MB。用微信「收付款 · 二维码收款」里保存的原图最好，
-        截图也行，但别裁掉四周留白 —— 裁了有些手机扫不出来。
+        PNG / JPG · ≤ 2 MB。用微信「收付款 · 二维码收款」保存的原图最好；
+        截图也可，但不要裁掉四周留白 —— 裁了部分手机扫不出来。
       </p>
     </div>
   </NModal>

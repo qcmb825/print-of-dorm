@@ -33,7 +33,7 @@ async function load(): Promise<void> {
     items.value = data.items ?? []
     notes.value = data.notes ?? ''
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : '价目表加载失败'
+    error.value = err instanceof ApiError ? err.message : '价目表读取失败'
   } finally {
     loading.value = false
   }
@@ -76,7 +76,7 @@ function money(value: number): string {
 
     <template v-else>
       <p v-if="!items.length" class="text-sm text-ink-3">
-        管理员还没配置价目表。下单时直接提交就行，金额由管理员核定。
+        价目表未配置 · 仍可下单 · 金额由管理员核定。
       </p>
 
       <div v-else class="overflow-x-auto">
@@ -125,8 +125,8 @@ function money(value: number): string {
       </div>
 
       <p class="mt-3 text-xs text-ink-3">
-        价格由管理员维护。下单时选一档，系统按页数与份数算出<strong>预估</strong>价，
-        最终金额以管理员核定为准。
+        价格由管理员维护。下单时选一档，系统按页数与份数算出<strong>预估</strong>价
+        · 最终金额以管理员核定为准。
       </p>
     </template>
   </NModal>

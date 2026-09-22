@@ -136,10 +136,10 @@ function fillForm(): void {
 
 const profileIssue = computed<string | null>(() => {
   if (!NICKNAME_RE.test(profileForm.nickname.trim())) {
-    return '昵称需为 2-20 位中文、字母、数字或下划线'
+    return '昵称 2-20 位 · 中文 / 字母 / 数字 / 下划线'
   }
   const dorm = profileForm.dorm.trim()
-  if (dorm.length < 2 || dorm.length > 50) return '宿舍位置需为 2-50 个字符（写到门牌号）'
+  if (dorm.length < 2 || dorm.length > 50) return '宿舍位置 2-50 字符 · 写到门牌号'
   const qqBad = qqIssue(profileForm.qq)
   if (qqBad) return qqBad
   return otherContactIssue(profileForm.contact_type, profileForm.contact)
@@ -160,14 +160,14 @@ const profileDirty = computed(() => {
 })
 
 const passwordIssueText = computed<string | null>(() => {
-  if (!passwordForm.current) return '请输入当前密码'
+  if (!passwordForm.current) return '当前密码为必填'
   const bad = passwordIssue(passwordForm.next)
   if (bad) return bad
   const current = account.value
   // 和后端 password_error(newpw, nickname, student_id) 是同一套规则：
   // 新密码不能等于昵称或学号（那样等于把登录名当密码用）。
   if (current && (passwordForm.next === current.nickname || passwordForm.next === current.student_id)) {
-    return '新密码不能与昵称或学号相同'
+    return '新密码不可与昵称或学号相同'
   }
   if (passwordForm.next !== passwordForm.confirm) return '两次输入的新密码不一致'
   return null
@@ -215,7 +215,7 @@ async function load(resetForm = true): Promise<void> {
     if (resetForm && !profileDirty.value) fillForm()
   } catch (error) {
     overviewError.value = true
-    notify.error(error instanceof ApiError ? error.message : '加载设置失败 · 稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '设置读取失败')
   } finally {
     loading.value = false
   }
@@ -255,7 +255,7 @@ async function saveProfile(): Promise<void> {
     }
     notify.success('资料已更新')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '保存失败 · 稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '资料未写入 · 稍后重试')
   } finally {
     savingProfile.value = false
   }
@@ -271,7 +271,7 @@ async function changePassword(): Promise<void> {
     passwordForm.confirm = ''
     notify.success(response.msg || '密码已修改')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '修改密码失败 · 稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '密码修改未生效 · 稍后重试')
   } finally {
     savingPassword.value = false
   }
@@ -344,7 +344,7 @@ async function loadPrefs(): Promise<void> {
     prefsLines.value = response.lines
   } catch (error) {
     prefsError.value = true
-    notify.error(error instanceof ApiError ? error.message : '加载偏好失败 · 稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '偏好读取失败')
   }
 }
 
@@ -386,10 +386,10 @@ const quietIssue = computed<string | null>(() => {
   if (!prefsForm.quietOn) return null
   const ok = (v: unknown) => typeof v === 'string' && /^\d{2}:\d{2}$/.test(v)
   if (!ok(prefsForm.quiet_from) || !ok(prefsForm.quiet_to)) {
-    return '免打扰的两个时间都要选（或整个关掉）'
+    return '免打扰需起止两个时间 · 或关闭该开关'
   }
   if (prefsForm.quiet_from === prefsForm.quiet_to) {
-    return '开始与结束时间不能一样 —— 那等于没有免打扰时段'
+    return '开始与结束时间不能相同 · 等于没有免打扰'
   }
   return null
 })
@@ -405,7 +405,7 @@ async function savePrefs(): Promise<void> {
     prefsLines.value = response.lines
     notify.success('偏好已保存')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '保存失败 · 稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '偏好未写入 · 稍后重试')
   } finally {
     savingPrefs.value = false
   }
@@ -434,9 +434,9 @@ async function reopenBotHint(): Promise<void> {
   try {
     await botHintApi.reset()
     await loadBotHint()
-    notify.success('引导已重新打开，回到任意页面就能看到')
+    notify.success('引导已重新打开 · 任意页面可见')
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '操作失败')
+    notify.error(error instanceof ApiError ? error.message : '操作未生效')
   } finally {
     botHintBusy.value = false
   }
@@ -457,7 +457,7 @@ async function onBotQrPicked(event: Event): Promise<void> {
     notify.success(res.msg || '二维码已更新')
     await loadBotHint()
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '上传失败')
+    notify.error(error instanceof ApiError ? error.message : '上传未完成 · 稍后重试')
   } finally {
     botHintBusy.value = false
   }
@@ -470,7 +470,7 @@ async function removeBotQr(): Promise<void> {
     notify.success('二维码已撤下')
     await loadBotHint()
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '撤下失败')
+    notify.error(error instanceof ApiError ? error.message : '撤下未生效')
   } finally {
     botHintBusy.value = false
   }
@@ -532,7 +532,7 @@ async function doLogout(): Promise<void> {
     // 界面其实已经算「未登录」了，只是服务端那个会话可能没断干净。
     // 提示一句再照常回登录页 —— 停在这一页更糟：用户会看到一个已经登出、
     // 却还显示着设置页的界面，比直接走更让人困惑。
-    notify.error(error instanceof ApiError ? error.message : '退出登录没成功 · 重新登录确认')
+    notify.error(error instanceof ApiError ? error.message : '退出登录未完成 · 请重新登录确认')
   } finally {
     loggingOut.value = false
     // replace 而不是 push：退出之后按浏览器后退键不该再回到设置页。
@@ -556,7 +556,7 @@ onMounted(() => {
     <header class="mb-4 flex items-center justify-between gap-3">
       <div>
         <h1 class="font-heading text-lg font-bold sm:text-xl">设置</h1>
-        <p class="mt-0.5 text-sm text-ink-3">账号资料 · 密码 · 取件提醒 · 通知与默认参数 · 存储用量</p>
+        <p class="mt-0.5 text-sm text-ink-3">账号资料 / 密码 / 取件提醒 / 通知与默认参数 / 存储用量</p>
       </div>
       <NButton size="small" quaternary :loading="loading" @click="refresh()">
         <template #icon><RefreshCw :size="15" /></template>
@@ -572,9 +572,9 @@ onMounted(() => {
          只弹一条 toast 的话，页面是空白的，用户只能刷新整页。 -->
     <div v-else-if="overviewError && !overview" class="grid place-items-center py-8">
       <div class="bracket-lg w-full max-w-md px-6 py-8 text-center" style="--bracket-arm: 22px">
-        <p class="m-0 text-sm font-semibold">资料没拉到</p>
-        <p class="mt-1 mb-3 text-xs text-ink-3">可能是网络或服务器临时的问题，再试一次通常就好。</p>
-        <NButton size="small" :loading="loading" @click="refresh()">再试一次</NButton>
+        <p class="m-0 text-sm font-semibold">资料读取失败</p>
+        <p class="mt-1 mb-3 text-xs text-ink-3">可能是网络或服务临时异常。</p>
+        <NButton size="small" :loading="loading" @click="refresh()">重试</NButton>
       </div>
     </div>
 
@@ -583,8 +583,8 @@ onMounted(() => {
            而缺了它连「改个宿舍」都保存不了（见下面那句说明）。 -->
       <NAlert v-if="needsQq" type="warning" :bordered="false" class="mb-3">
         <template #icon><TriangleAlert :size="16" /></template>
-        还没有 QQ 号：<strong>收不到取件邮件提醒</strong>，资料也保存不了。
-        在下面「QQ 号」那一栏补上（5-12 位数字）。
+        QQ 号未填：<strong>收不到取件邮件提醒</strong>，资料也无法保存。
+        在下方「QQ 号」一栏补填（5-12 位数字）。
       </NAlert>
 
       <!-- 我的下单概况 -->
@@ -647,22 +647,21 @@ onMounted(() => {
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.orders_count ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.orders_bytes) : '—' }}</span>
-              <span class="mt-0.5 block text-ink-3">还没打完的单，文件要留着给打印员</span>
+              <span class="mt-0.5 block text-ink-3">未完成订单的文件需保留给打印员</span>
             </dd>
           </div>
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">没传完的上传</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">未完成的上传</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.chunks_count ?? 0 }} / {{ usage?.chunks_max ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.chunks_bytes) : '—' }}</span>
-              <span class="mt-0.5 block text-ink-3">上传中断留下的临时数据，重传或放弃即可</span>
+              <span class="mt-0.5 block text-ink-3">上传中断留下的临时数据 · 重传或终止即可</span>
             </dd>
           </div>
         </dl>
 
         <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
-          两类都算进配额：它们在磁盘上一样占地方。快满时先看第二类 ——
-          没传完的临时文件，取消掉就回来了。
+          两类都计入配额 · 都占磁盘空间。快满时先处理第二类：终止未完成的上传即可释放。
         </p>
       </section>
 
@@ -698,7 +697,7 @@ onMounted(() => {
             <NInput
               v-model:value="profileForm.nickname"
               :maxlength="20"
-              placeholder="2-20 位中文、字母、数字或下划线"
+              placeholder="2-20 位 · 中文 / 字母 / 数字 / 下划线"
             />
           </label>
           <label class="flex flex-col gap-1">
@@ -706,7 +705,7 @@ onMounted(() => {
             <NInput
               v-model:value="profileForm.dorm"
               :maxlength="50"
-              placeholder="写到门牌号，例：3 号楼 502"
+              placeholder="写到门牌号 · 例 3 号楼 502"
             />
           </label>
           <label class="flex flex-col gap-1">
@@ -717,7 +716,7 @@ onMounted(() => {
             <NInput
               v-model:value="profileForm.qq"
               :maxlength="12"
-              placeholder="5-12 位数字，不能以 0 开头"
+              placeholder="5-12 位数字 · 不以 0 开头"
             />
           </label>
           <label class="flex flex-col gap-1">
@@ -753,7 +752,7 @@ onMounted(() => {
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p class="m-0 text-xs leading-5 text-ink-3">
             <template v-if="profileIssue">{{ profileIssue }}</template>
-            <template v-else-if="profileDirty">改完点保存。</template>
+            <template v-else-if="profileDirty">有未保存的改动。</template>
             <template v-else>学号和姓名由管理员核实，本人改不了；其余随改随生效。</template>
           </p>
           <NButton
@@ -778,44 +777,44 @@ onMounted(() => {
           取件提醒
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          状态变成「可取件」时自动发一封邮件：标题带单号，正文带取件地点与付款方式。
-          不用一直回网页刷。
+          状态变为「可取件」时自动发邮件：标题带单号，正文带取件地点与付款方式。
+          不必反复刷新网页。
         </p>
 
         <dl class="grid gap-2 text-sm sm:grid-cols-2">
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">发到哪个邮箱</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">收件邮箱</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               <template v-if="account?.qq">
                 <span class="tnum font-semibold">&lt;{{ account.qq }}&gt;@qq.com</span>
                 <span class="mt-0.5 block text-ink-3">
-                  由上面「QQ 号」那一栏自动拼出来，不用单独填邮箱
+                  由上方「QQ 号」自动拼出 · 无需单独填写邮箱
                 </span>
               </template>
               <template v-else>
-                <span style="color: var(--warn)">还没有 QQ 号，暂时收不到提醒</span>
-                <span class="mt-0.5 block text-ink-3">在上面「QQ 号」那一栏补上即可</span>
+                <span style="color: var(--warn)">QQ 号未填 · 收不到提醒</span>
+                <span class="mt-0.5 block text-ink-3">在「QQ 号」一栏补填即可</span>
               </template>
             </dd>
           </div>
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">什么时候发</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn">发送时机</dt>
             <dd class="mt-1 mb-0 text-ink-2">
-              订单变成「可取件」的时刻
+              订单状态变为「可取件」时
               <span class="mt-0.5 block text-ink-3">
-                每单只发一次 · 改价、改状态不会重复打扰
+                每单只发一次 · 改价与改状态不重复发送
               </span>
             </dd>
           </div>
         </dl>
 
         <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
-          只认 QQ：微信号推不出邮箱，「其他联系方式」里的邮箱<strong>只是备用</strong>。
-          没收到就按这个顺序查 ——
-          ① 翻 QQ 邮箱的<strong>垃圾箱</strong>与「未读邮件」；
+          只认 QQ：微信号推不出邮箱，「其他联系方式」里的邮箱<strong>仅为备用</strong>。
+          未收到时按此顺序排查：
+          ① 查 QQ 邮箱的<strong>垃圾箱</strong>与「未读邮件」；
           ② 核对上面那栏 QQ 号（地址是
-          <span class="tnum">&lt;QQ号&gt;@qq.com</span>，填错一位就寄给别人了）；
-          ③ 还没有就在「问题反馈」里留言，管理员能看到订单。
+          <span class="tnum">&lt;QQ号&gt;@qq.com</span>，填错一位即寄给他人）；
+          ③ 仍未收到就在「问题反馈」里留言，管理员可查看订单。
         </p>
       </section>
 
@@ -828,14 +827,14 @@ onMounted(() => {
           通知与偏好
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          QQ 机器人里的「设置」命令改的是<strong>同一份</strong>（改一边另一边跟着变）。
+          QQ 机器人「设置」命令改的是<strong>同一份</strong> · 改一边另一边同步。
         </p>
 
         <div v-if="!savedPrefs && prefsError" class="flex flex-wrap items-center gap-2 text-xs">
-          <span style="color: var(--warn)">偏好没拉到 —— 可能是网络或服务器临时的问题。</span>
+          <span style="color: var(--warn)">偏好读取失败 · 可能是网络或服务临时异常。</span>
           <NButton size="tiny" @click="loadPrefs">重试</NButton>
         </div>
-        <div v-else-if="!savedPrefs" class="text-xs text-ink-3">正在载入偏好…</div>
+        <div v-else-if="!savedPrefs" class="text-xs text-ink-3">读取中</div>
 
         <template v-else>
           <!-- ① 通知渠道 -->
@@ -847,7 +846,7 @@ onMounted(() => {
             >
               <span>
                 <span class="block text-sm font-semibold">QQ 推送</span>
-                <span class="mt-0.5 block text-xs text-ink-3">可取件时在 QQ 里戳你一下（要先绑定 QQ 号）</span>
+                <span class="mt-0.5 block text-xs text-ink-3">可取件时通过 QQ 提醒 · 需先填写 QQ 号</span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_qq" size="small" aria-label="QQ 推送" />
             </div>
@@ -863,7 +862,7 @@ onMounted(() => {
                 <!-- 说清边界：值班类提醒（有人等你接单、有人需要人工联系）不走这个开关，
                      不然管理员会以为自己夜里什么都不会收到（邮件审计的结论） -->
                 <span class="mt-0.5 block text-xs text-ink-3">
-                  可取件时发一封到 &lt;QQ号&gt;@qq.com；只管你自己的取件提醒
+                  可取件时发一封到 &lt;QQ号&gt;@qq.com · 仅限本人的取件提醒
                 </span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
@@ -877,7 +876,7 @@ onMounted(() => {
             >
               <span>
                 <span class="block text-sm font-semibold">隐藏已取件的单</span>
-                <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」都不再列它们</span>
+                <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」均不再列出</span>
               </span>
               <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" aria-label="隐藏已取件的单" />
             </div>
@@ -890,7 +889,7 @@ onMounted(() => {
             >
               <span>
                 <span class="block text-sm font-semibold">机器人用卡片回</span>
-                <span class="mt-0.5 block text-xs text-ink-3">关掉后订单/工单这类查询改用纯文字，省流量</span>
+                <span class="mt-0.5 block text-xs text-ink-3">停用后订单 / 工单查询改为纯文字 · 省流量</span>
               </span>
               <NSwitch v-model:value="prefsForm.card_replies" size="small" aria-label="机器人用卡片回" />
             </div>
@@ -906,8 +905,7 @@ onMounted(() => {
               <span>
                 <span class="block text-sm font-semibold">免打扰时段</span>
                 <span class="mt-0.5 block text-xs text-ink-3">
-                  这段时间的提醒<strong>不丢</strong>，攒到时段结束再推 ——
-                  单号有时效，夜里静音不等于不要了
+                  时段内的提醒<strong>不丢失</strong> · 攒到时段结束后再推。单号有时效，夜里静音不等于不需要
                 </span>
               </span>
               <NSwitch v-model:value="prefsForm.quietOn" size="small" aria-label="免打扰时段" />
@@ -930,7 +928,7 @@ onMounted(() => {
                 class="w-28"
                 :clearable="false"
               />
-              <span class="text-xs text-ink-3">（跨零点没问题，22:00 → 08:00 就是一夜）</span>
+              <span class="text-xs text-ink-3">（跨零点有效 · 22:00 → 08:00 即一夜）</span>
             </div>
           </div>
 
@@ -992,8 +990,8 @@ onMounted(() => {
           <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
             <p class="m-0 text-xs leading-5" :class="quietIssue && 'text-[var(--err)]'">
               <template v-if="quietIssue">{{ quietIssue }}</template>
-              <template v-else-if="prefsDirty">有改动还没保存。</template>
-              <template v-else>默认参数只用来预填下单表单，随时能在下单时改。</template>
+              <template v-else-if="prefsDirty">有未保存的改动。</template>
+              <template v-else>默认参数仅用于预填下单表单 · 下单时可随时修改。</template>
             </p>
             <NButton
               type="primary"
@@ -1018,7 +1016,7 @@ onMounted(() => {
           QQ 机器人
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          在 QQ 里把文件发给机器人，选档位与份数就下单；打好后 QQ 里直接推给你。
+          在 QQ 里把文件发给机器人 · 选档位与份数即下单；打好后 QQ 直接推送。
           网页端与机器人下的单是<strong>同一份</strong>，在哪边查都一样。
         </p>
         <div class="flex flex-wrap items-start gap-4">
@@ -1037,18 +1035,18 @@ onMounted(() => {
             style="border-color: var(--border); color: var(--text-tertiary)"
           >
             <span>
-              {{ botHint?.has_qr ? '二维码加载失败' : '管理员还没上传二维码' }}
+              {{ botHint?.has_qr ? '二维码读取失败' : '管理员未上传二维码' }}
             </span>
           </div>
 
           <div class="flex min-w-[200px] flex-1 flex-col gap-2">
             <p class="text-xs leading-5 text-ink-3">
               <template v-if="botHint?.closed">
-                你已经把右下角的引导收起来了 —— 想让它再出现，点下面这颗按钮。
+                右下角的引导已收起 · 点下方按钮可重新显示。
               </template>
               <template v-else>
-                右下角那条引导会显示 {{ botHint?.max_clicks ?? 3 }} 次；点满之后自动
-                收起来，之后都能在这一块找到它。
+                右下角引导会显示 {{ botHint?.max_clicks ?? 3 }} 次 · 点满后自动
+                收起，之后可在本区找回。
               </template>
             </p>
             <div class="flex flex-wrap items-center gap-2">
@@ -1116,7 +1114,7 @@ onMounted(() => {
               type="password"
               show-password-on="click"
               :maxlength="64"
-              placeholder="8-64 位，含字母和数字"
+              placeholder="8-64 位 · 需含字母与数字"
               autocomplete="new-password"
             />
           </label>
@@ -1137,7 +1135,7 @@ onMounted(() => {
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p class="m-0 text-xs leading-5 text-ink-3">
             <template v-if="passwordTouched && passwordIssueText">{{ passwordIssueText }}</template>
-            <template v-else>改完当前这台设备保持登录，别处会被踢下线。</template>
+            <template v-else>改完当前设备保持登录 · 其他设备会下线。</template>
           </p>
           <NButton
             type="primary"
@@ -1150,8 +1148,7 @@ onMounted(() => {
         </div>
 
         <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
-          其它设备（含之前复制出去的登录状态）会一起登出 ——
-          改密码的意义本来就是「怀疑别人也能进来」。密码只存哈希，管理员也看不到原文。
+          其他设备（含此前复制出去的登录状态）会一起登出。密码只存哈希，管理员也看不到原文。
         </p>
       </section>
 
@@ -1163,8 +1160,8 @@ onMounted(() => {
           账号与其他
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          与订单无关的问题（打印出错、退款、账号异常）走工单，管理员能看到订单情况。
-          退出登录只影响当前这台设备；其它设备要改密码才会下线。
+          与订单无关的问题（打印出错、退款、账号异常）请提交工单 · 管理员能看到订单情况。
+          退出登录只影响当前设备；其他设备需改密码才会下线。
         </p>
 
         <div class="flex flex-wrap items-center gap-2">
@@ -1181,10 +1178,10 @@ onMounted(() => {
         </div>
 
         <p class="mt-3 mb-0 text-xs leading-5 text-ink-3">
-          <strong>注销账号（退学、毕业不再使用）不在这里</strong> ——
-          注销会让昵称与学号被让出来、别人可以注册同名，必须由管理员在账号管理里确认，
-          本人做不了。真要注销就在「我的工单」里说明学号，管理员核实后处理；
-          注销后订单与工单记录都会保留，需要时可以恢复。
+          <strong>注销账号（退学、毕业不再使用）不在这里</strong>：
+          注销后昵称与学号会被让出，他人可注册同名；必须由管理员在账号管理里确认，
+          本人做不了。需要注销就在「我的工单」里说明学号，管理员核实后处理；
+          订单与工单记录都会保留，必要时可以恢复。
         </p>
       </section>
     </template>

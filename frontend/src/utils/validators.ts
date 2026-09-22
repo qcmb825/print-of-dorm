@@ -16,9 +16,9 @@ export const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
 export const CONTACT_MAX = 50
 
 export const CONTACT_PLACEHOLDER: Record<ContactType, string> = {
-  wechat: '5-20 位，字母开头，可含数字、_ 和 -',
-  qq: '5-12 位数字，不能以 0 开头',
-  email: '例：name@example.com',
+  wechat: '5-20 位 · 字母开头 · 可含数字 _ -',
+  qq: '5-12 位数字 · 不以 0 开头',
+  email: '例 name@example.com',
 }
 
 export function validateContact(type: ContactType, value: string): boolean {
@@ -28,9 +28,9 @@ export function validateContact(type: ContactType, value: string): boolean {
 }
 
 export const CONTACT_HINT: Record<ContactType, string> = {
-  wechat: '微信号 5-20 位，字母开头，可含数字、_ 与 -',
-  qq: 'QQ 号 5-12 位数字，不以 0 开头',
-  email: '邮箱格式不对 · 例 name@example.com',
+  wechat: '微信号 5-20 位 · 字母开头 · 可含数字 _ -',
+  qq: 'QQ 号 5-12 位数字 · 不以 0 开头',
+  email: '邮箱格式无效 · 例 name@example.com',
 }
 
 /* ---- QQ 号（必填）与其他联系方式（整组选填） ----
@@ -47,7 +47,7 @@ export const CONTACT_HINT: Record<ContactType, string> = {
 /** QQ 号校验，返回错误信息；合规时返回 null。 */
 export function qqIssue(value: string): string | null {
   const v = value.trim()
-  if (!v) return '填写 QQ 号（用来发送取件邮件提醒）'
+  if (!v) return 'QQ 号为必填 · 用于取件提醒'
   if (!QQ_RE.test(v)) return CONTACT_HINT.qq
   return null
 }
@@ -86,9 +86,9 @@ export function otherContactIssue(
   const v = value.trim()
   const t = type ?? null
   if (t === null && !v) return null
-  if (t === null) return '选择其他联系方式的类型（微信 / 邮箱），或者整组留空'
-  if (!v) return `请填写${OTHER_CONTACT_LABEL_TEXT[t]}，或者把其他联系方式留空`
-  if (v.length > CONTACT_MAX) return `联系方式不能超过 ${CONTACT_MAX} 个字符`
+  if (t === null) return '选择类型（微信 / 邮箱）· 或整组留空'
+  if (!v) return `填写${OTHER_CONTACT_LABEL_TEXT[t]} · 或整组留空`
+  if (v.length > CONTACT_MAX) return `联系方式上限 ${CONTACT_MAX} 字`
   if (t === 'wechat' && !WECHAT_RE.test(v)) return OTHER_CONTACT_HINT.wechat
   if (t === 'email' && !EMAIL_RE.test(v)) return OTHER_CONTACT_HINT.email
   return null
@@ -96,7 +96,7 @@ export function otherContactIssue(
 
 export function passwordIssue(password: string): string | null {
   if (password.length < 8 || password.length > 64) return '密码 8-64 位'
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码要同时有字母和数字'
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '需同时含字母与数字'
   return null
 }
 

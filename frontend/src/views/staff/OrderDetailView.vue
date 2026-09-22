@@ -163,7 +163,7 @@ async function load(): Promise<void> {
     order.value = data.order
     logs.value = data.logs
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载订单详情失败')
+    message.error(error instanceof ApiError ? error.message : '订单详情读取失败')
   } finally {
     loading.value = false
   }
@@ -180,7 +180,7 @@ async function download(): Promise<void> {
     // 否则「我刚下载过」这件事要刷新才看得到，像没记上。
     await load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '下载失败')
+    message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
   } finally {
     downloading.value = false
   }
@@ -223,8 +223,8 @@ onMounted(load)
       <EmptyState
         tone="alarm"
         code="ERR / 404"
-        :title="orderId === null ? '订单号不对' : '没有这个订单'"
-        hint="地址栏里的订单号可能被改过，或这一单已经被撤回了"
+        :title="orderId === null ? '订单不存在' : '无此订单 · 核对后重试'"
+        hint="地址栏里的编号可能有误，或这一单已经被撤回了"
       />
     </div>
 
@@ -268,9 +268,9 @@ onMounted(load)
           type="warning"
           :bordered="false"
           class="mt-3"
-          title="服务器上找不到这份文件了"
+          title="文件不存在 · 需人工处理"
         >
-          订单记录还在，落盘的文件已经不在上传目录。先确认是不是被手工清理过，
+          订单记录仍在，上传目录里已经找不到这份文件。先确认是否被手工清理过，
           再决定这一单怎么处理。
         </NAlert>
       </div>
@@ -284,8 +284,8 @@ onMounted(load)
           {{ order.preset_content }}
         </p>
         <p class="mt-2 text-xs text-ink-3">
-          这一单没有上传文件。上面那段是下单当时的快照，
-          预设后来改了或删了，这里显示的仍是学生当时看到的原文。
+          这一单没有上传文件 · 上面那段是下单当时的快照；
+          预设后来改过或删了，此处仍是学生当时看到的原文。
         </p>
       </section>
 
@@ -319,7 +319,7 @@ onMounted(load)
           >
             {{ order.remark }}
           </p>
-          <p v-else class="mt-1 text-sm text-ink-3">学生没有填写备注</p>
+          <p v-else class="mt-1 text-sm text-ink-3">学生未填写备注</p>
         </section>
 
         <div class="flex flex-col gap-3">
@@ -368,7 +368,7 @@ onMounted(load)
               下载文件（{{ formatBytes(order.file_size) }}）
             </NButton>
             <p v-else-if="order.claimed_by === null" class="mt-3 text-xs text-ink-3">
-              接单后才能下载文件。
+              尚未接单 · 接单后可下载文件
             </p>
           </section>
         </div>
@@ -406,8 +406,7 @@ onMounted(load)
         <!-- 老订单在这张表里本来就是空的：留痕是这次升级才加的，
              不能拿 orders 那几个时间戳倒推补几条（倒推出来的操作人只会是错的）。 -->
         <p v-else class="text-xs leading-6 text-ink-3">
-          这一单还没有操作记录。留痕是后加的，升级前的步骤不会被倒推补录 ——
-          与其显示一条猜出来的记录，不如说清这里没有。
+          这一单暂无操作记录 · 留痕功能晚于订单本身，升级前的步骤不做倒推补录。
         </p>
       </section>
 

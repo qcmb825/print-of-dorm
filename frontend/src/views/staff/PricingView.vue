@@ -135,7 +135,7 @@ async function runPreview(): Promise<void> {
     previewNote.value = data.note
   } catch (error) {
     previewPrice.value = null
-    previewNote.value = error instanceof ApiError ? error.message : '试算失败'
+    previewNote.value = error instanceof ApiError ? error.message : '试算未完成 · 稍后重试'
   } finally {
     previewLoading.value = false
   }
@@ -169,7 +169,7 @@ async function load(): Promise<void> {
     }
   } catch (error) {
     loadFailed.value = true
-    message.error(error instanceof ApiError ? error.message : '加载价目表失败')
+    message.error(error instanceof ApiError ? error.message : '价目表读取失败')
   } finally {
     loading.value = false
   }
@@ -242,7 +242,7 @@ async function submitItem(): Promise<void> {
     resetForm()
     await load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '保存失败')
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
   } finally {
     saving.value = false
   }
@@ -252,30 +252,36 @@ async function toggleActive(item: PriceItem): Promise<void> {
   const next = item.is_active !== 1
   try {
     await priceTableApi.setItemActive(item.id, next)
-    message.success(next ? '已启用' : '已停用')
+    message.success(next ? '价目项已启用 · 学生端可选' : '价目项已停用 · 学生端不再可选')
     await load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '操作失败')
+    message.error(
+      error instanceof ApiError
+        ? error.message
+        : next
+          ? '启用未完成 · 稍后重试'
+          : '停用未完成 · 稍后重试',
+    )
   }
 }
 
 async function removeItem(item: PriceItem): Promise<void> {
   const used = item.used_count ?? 0
   const ok = await confirmAction({
-    title: '删除这一档？',
+    title: '删除这一档',
     content: used
-      ? `已经有 ${used} 笔订单用过它。订单里存的是当时的名字与预估价快照，删掉不影响那些单的显示 —— 但之后「当初按哪一档打的」就只剩那句话可查了。`
-      : '还没有订单用过它。删掉之后这一档就从下单菜单里消失。',
+      ? `已有 ${used} 笔订单用过它。订单里存的是下单当时的名字与预估价快照，删除不影响那些单的显示，只是之后「当初按哪一档打的」就只剩那句话可查。`
+      : '尚无订单用过它。删除后这一档从下单菜单消失。',
     positiveText: '删除',
-    negativeText: '再想想',
+    negativeText: '取消',
   })
   if (!ok) return
   try {
     await priceTableApi.removeItem(item.id)
-    message.success('已删除')
+    message.success('价目项已删除')
     await load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '删除失败')
+    message.error(error instanceof ApiError ? error.message : '删除未生效')
   }
 }
 
@@ -295,7 +301,7 @@ async function saveRules(): Promise<void> {
     message.success('计价设置已保存 · 只影响之后下单的预估价')
     await runPreview()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '保存失败')
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
   } finally {
     saving.value = false
   }
@@ -308,7 +314,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1100px]">
     <PageHeader
       title="价目表"
-      subtitle="学生下单时选的档位与单价。估出来的价格只做参考，最终金额永远由接单人在订单台确认。"
+      subtitle="学生下单时选的档位与单价 · 预估价仅供参考，最终金额由接单人在订单台确认"
     >
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -322,9 +328,8 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <NAlert v-if="loadFailed" type="warning" class="mb-4" title="价目表没拉到">
-      可能是网络或服务器临时的问题 —— 点右上角「刷新」重试。
-      拿不到数据时**不要让保存可用**：那会把一份空规则覆盖到线上。
+    <NAlert v-if="loadFailed" type="warning" class="mb-4" title="价目表读取失败">
+      点右上角「刷新」重试 · 读取失败时保存已禁用，避免用空规则覆盖线上配置。
     </NAlert>
 
     <NSkeleton v-if="loading" text :repeat="8" class="panel p-4" />
@@ -389,7 +394,7 @@ onMounted(load)
               @update:value="onKindInput"
             />
           </NFormItem>
-          <NFormItem label="颜色（落库与统计用，会跟着「类型」自动认）" :show-feedback="false" class="!mb-0">
+          <NFormItem label="颜色（订单记录与统计用 · 随「类型」自动识别）" :show-feedback="false" class="!mb-0">
             <NSelect
               :value="form.color"
               :options="COLOR_OPTIONS"
@@ -422,8 +427,8 @@ onMounted(load)
           </NFormItem>
         </div>
         <p class="mt-2 text-xs text-ink-3">
-          最多两位小数。<strong>双面价留空 = 这一档不支持双面</strong>（相纸那一档就是），
-          下单时双面选项会直接消失 —— 不要为了"看起来完整"填 0，那会被读成双面免费。
+          最多两位小数。<strong>双面价留空 = 这一档不支持双面</strong>（相纸那一档就是）：
+          下单时双面选项直接消失。不要为了「看起来完整」填 0，那会被读成双面免费。
         </p>
         <div class="mt-3 flex items-center gap-2">
           <NButton
@@ -452,8 +457,8 @@ onMounted(load)
         <EmptyState
           v-if="!items.length"
           code="00 / NO PRICE ITEM"
-          title="还没有任何一档"
-          hint="学生下单时选不到类型，价格也就估不出来（订单照下，金额由你核定）。先加一档试试。"
+          title="暂无价目项"
+          hint="学生下单时选不到档位，算不出预估价（订单照下，金额由你核定）· 先新增一档"
         />
 
         <div v-else class="overflow-x-auto">
@@ -524,8 +529,8 @@ onMounted(load)
       <section class="panel mb-4 p-4">
         <h3 class="mb-2 font-heading text-base font-bold">价目表说明</h3>
         <p class="mb-3 text-xs text-ink-3">
-          学生点「价目表」弹窗时、以及机器人发「价目表」时，这几句会原样出现在价格表下面。
-          一行一条，写清楚工艺差异与注意事项。
+          学生打开「价目表」弹窗、机器人在 QQ 里发「价目表」时，这几句会原样显示在价格表下方。
+          一行一条，写清工艺差异与注意事项。
         </p>
         <NInput
           v-model:value="rules.notes"
@@ -541,8 +546,8 @@ onMounted(load)
       <section class="panel p-4">
         <h3 class="mb-2 font-heading text-base font-bold">试算</h3>
         <p class="mb-3 text-xs text-ink-3">
-          按<strong>已经保存的</strong>价目表算一遍。刚在表单里改过但还没点保存的，不参与试算 ——
-          试算要回答的是「线上现在会算成多少」。
+          按<strong>已保存的</strong>价目表计算。表单里改过、尚未保存的，不参与试算：
+          试算回答的是「线上现在会算成多少」。
         </p>
         <div class="grid gap-3 sm:grid-cols-4">
           <NFormItem label="价目项" :show-feedback="false" class="!mb-0">

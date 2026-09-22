@@ -129,8 +129,8 @@ const chunkCount = computed(() => {
 })
 
 const progressHint = computed(() => {
-  if (progress.value >= 99) return '正在生成订单 · 别关页面'
-  return '正在上传 · 别关页面、别断网'
+  if (progress.value >= 99) return '生成订单中 · 勿关闭页面'
+  return '上传中 · 勿关闭页面 / 勿断网'
 })
 
 /** 能不能提交。分两种模式各算一次，别合成一个布尔表达式 ——
@@ -138,11 +138,11 @@ const progressHint = computed(() => {
 const blockReason = computed<string | null>(() => {
   if (submitting.value) return null
   if (usingPreset.value) {
-    if (!presets.value.length) return '还没有可用的预设打印服务'
-    if (presetId.value === null) return '选一项预设打印服务'
+    if (!presets.value.length) return '暂无可用预设打印服务'
+    if (presetId.value === null) return '尚未选择预设打印服务'
     return null
   }
-  if (!selected.value) return '先选择要打印的文件'
+  if (!selected.value) return '尚未选择文件'
   return null
 })
 
@@ -154,7 +154,7 @@ async function loadOptions(): Promise<void> {
     presets.value = data.presets ?? []
     priceItems.value = data.price_items ?? []
   } catch (error) {
-    optionsError.value = error instanceof ApiError ? error.message : '打印选项加载失败'
+    optionsError.value = error instanceof ApiError ? error.message : '打印选项读取失败'
   } finally {
     optionsLoading.value = false
   }
@@ -169,10 +169,10 @@ async function cancelSession(uploadId: string): Promise<void> {
   try {
     await chunkApi.cancel(uploadId)
     if (activeChunkUploadId.value === uploadId) activeChunkUploadId.value = null
-    message.success('已放弃该上传 · 额度已释放')
+    message.success('上传已终止 · 额度已释放')
     await refreshPending()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '取消失败 · 稍后重试')
+    message.error(error instanceof ApiError ? error.message : '终止未完成 · 稍后重试')
   }
 }
 
@@ -294,7 +294,7 @@ function announceOrder(info: OrderInfo): void {
     : ` · 预估 ¥${info.estPrice.toFixed(2)}`
   showReceipt({
     code: 'ORDER SUBMITTED',
-    title: '下单成功',
+    title: '订单已提交',
     detail: `单号 ${pickupCodeLabel(info.code)} · ${info.filename}${estimate}`,
     target: (router.resolve('/my-orders').meta.title as string | undefined) ?? '我的订单',
   })
@@ -366,9 +366,9 @@ async function submit(): Promise<void> {
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
       void refreshPending()
-      message.error('额度已满 · 先放弃一份未完成的上传')
+      message.error('上传额度已满 · 需先终止一份未完成任务')
     } else {
-      message.error(error instanceof ApiError ? error.message : '提交失败 · 稍后重试')
+      message.error(error instanceof ApiError ? error.message : '提交未完成 · 稍后重试')
     }
   } finally {
     submitting.value = false
@@ -419,7 +419,7 @@ onMounted(async () => {
             <CircleCheck :size="17" />
           </span>
           <div class="min-w-0 flex-1">
-            <p class="font-heading text-base font-bold">下单成功</p>
+            <p class="font-heading text-base font-bold">订单已提交</p>
             <!-- 不显示内部订单 id：学生面前只有单号（下面那块就是）。
                  这里原先写「订单 #12」，而 12 是数据库主键 —— 学生照着它
                  跟打印员对不上任何东西。 -->
@@ -454,7 +454,7 @@ onMounted(async () => {
               <span class="text-xs text-ink-3">· 以管理员核定为准</span>
             </p>
             <p class="mt-3 text-xs text-ink-3">
-              管理员接单打印后，凭上面的单号到打印点取件。
+              管理员接单打印后，凭单号到打印点取件。
             </p>
           </div>
         </div>
@@ -495,7 +495,7 @@ onMounted(async () => {
         />
       </div>
       <NButton size="small" @click="cancelSession(session.upload_id)" :disabled="submitting">
-        放弃这次上传
+        终止上传
       </NButton>
     </section>
 
@@ -504,8 +504,8 @@ onMounted(async () => {
       title="下单打印"
       :subtitle="
         usingPreset
-          ? '选一项预设服务下单，管理员按它的说明打印，不需要上传文件。'
-          : 'PDF / Word / 图片 · 上传后由管理员接单打印。'
+          ? '选预设服务下单 · 管理员按其说明打印 · 无需上传文件'
+          : 'PDF / Word / 图片 · 上传后由管理员接单打印'
       "
     />
 
@@ -539,7 +539,7 @@ onMounted(async () => {
             :options="presetOptions"
             :loading="optionsLoading"
             :disabled="submitting || !presets.length"
-            placeholder="选一项已配置好的打印服务"
+            placeholder="选择打印服务"
             class="w-full"
           />
         </NFormItem>
@@ -584,7 +584,7 @@ onMounted(async () => {
             >
               <Upload :size="20" />
             </span>
-            <p class="text-base font-semibold">点击选择文件，或拖到这里</p>
+            <p class="text-base font-semibold">点击选择文件 · 或将文件拖入此处</p>
             <p class="tech-label text-ink-3 text-2xs">PDF · JPG · PNG · DOC · DOCX</p>
           </div>
         </NUploadDragger>
@@ -636,14 +636,14 @@ onMounted(async () => {
               :loading="optionsLoading"
               :disabled="submitting || optionsLoading"
               class="min-w-0 flex-1"
-              placeholder="选一档（纸张与单价都在里面）"
+              placeholder="选择档位 · 含纸张与单价"
               @update:value="onItemChange"
             />
             <NButton
               size="small"
               quaternary
               :disabled="submitting"
-              title="看完整价目表与注意事项"
+              title="查看完整价目表与说明"
               @click="priceTableOpen = true"
             >
               <template #icon><ReceiptText :size="15" /></template>
@@ -677,27 +677,27 @@ onMounted(async () => {
       <p class="mt-2 text-xs text-ink-3">
         份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。
         <template v-if="selectedItem && !duplexAllowed">
-          这一档<strong>不支持双面</strong>，按单面计。
+          本档<strong>不支持双面</strong>，按单面计。
         </template>
         <template v-if="!priceItemOptions.length && !optionsLoading">
-          管理员还没配置价目表 —— 照样能下单，金额由管理员核定。
+          价目表未配置 · 仍可下单 · 金额由管理员核定。
         </template>
         <template v-if="defaultsApplied">
-          已按你在「设置」里的<strong>默认参数</strong>预填，随时可以改。
+          已按「设置」里的<strong>默认参数</strong>预填 · 可随时修改。
         </template>
       </p>
 
       <!-- 价目表弹窗：想细看才点（价目项下拉里已经带了单价，这里给的是完整那张表 + 注） -->
       <PriceTableDialog v-model:show="priceTableOpen" />
 
-      <NFormItem label="备注（可选）" :show-feedback="false" class="mt-4">
+      <NFormItem label="备注（选填）" :show-feedback="false" class="mt-4">
         <NInput
           v-model:value="remark"
           type="textarea"
           :maxlength="200"
           show-count
           :autosize="{ minRows: 2, maxRows: 4 }"
-          placeholder="例：只打印第 3-10 页；需要装订"
+          placeholder="例：只打印第 3–10 页 / 需装订"
           :disabled="submitting"
         />
       </NFormItem>
@@ -749,9 +749,9 @@ onMounted(async () => {
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
           <Hash :size="12" />
-          <template v-if="usingPreset">不需要上传文件，提交后立即生成单号</template>
-          <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传，断了可续传</template>
-          <template v-else>上传完成后立即生成单号</template>
+          <template v-if="usingPreset">无需上传文件 · 提交后即生成单号</template>
+          <template v-else-if="chunkCount">分 {{ chunkCount }} 片上传 · 断了可续传</template>
+          <template v-else>上传完成后即生成单号</template>
         </span>
       </div>
     </div>

@@ -182,13 +182,13 @@ http.interceptors.response.use(
     if (data?.msg) {
       message = data.msg
     } else if (status === 0) {
-      message = error.code === 'ECONNABORTED' ? '请求超时 · 重试' : '网络不可达 · 检查连接后重试'
+      message = error.code === 'ECONNABORTED' ? '响应超时 · 重试' : '连接中断 · 稍后重试'
     } else if (status === 413) {
-      message = '文件过大 · 换一份更小的'
+      message = '文件过大 · 更换后重试'
     } else if (status >= 500) {
-      message = '服务器错误 · 稍后重试'
+      message = '服务暂不可用 · 稍后重试'
     } else {
-      message = `请求失败 · HTTP ${status}`
+      message = `请求未完成 · HTTP ${status}`
     }
 
     if (status === 401) unauthorizedHandler?.()

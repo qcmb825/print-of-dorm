@@ -282,7 +282,7 @@ async function load(silent = false): Promise<void> {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让管理员以为刚刷出来的列表是坏的。
     if (!silent && mySeq === requestSeq)
-      message.error(error instanceof ApiError ? error.message : '加载订单失败')
+      message.error(error instanceof ApiError ? error.message : '订单读取失败')
   } finally {
     // loading / 转圈状态也只由最后一次请求收尾：被丢弃的旧响应提前灭掉它，
     // 会让列表在真正的新数据到达前先「亮一下」。
@@ -315,10 +315,10 @@ function canDownload(order: Order): boolean {
 
 /** 改状态按钮点不动的原因；null 表示可以点。分支与后端 `api_update_status` 一一对应。 */
 function statusBlockReason(order: Order): string | null {
-  if (order.status === WAIT_PRICE) return '还没计费 · 先填金额'
+  if (order.status === WAIT_PRICE) return '待计费 · 先填金额'
   if (!canReachOrder(order)) {
     // 未接单和「别人接的」是两回事：一个是还没轮到自己，一个是轮不到自己
-    return order.claimed_by === null ? '先接单才能改状态' : '这单是别人接的'
+    return order.claimed_by === null ? '尚未接单 · 接单后可改状态' : '已由他人接单 · 仅接单人可改'
   }
   return null
 }
@@ -337,9 +337,9 @@ function canReachOrder(order: Order): boolean {
  *  分三种而不是一句笼统的「不能计费」：按钮灰在那儿的时候，
  *  管理员得知道下一步该干什么 —— 是去接单，还是去找揽下这单的人。 */
 function priceBlockReason(order: Order): string | null {
-  if (order.status === DONE) return '订单已取件，金额不再改动'
-  if (order.claimed_by === null) return '先接单，看过文件后再填金额'
-  if (!canReachOrder(order)) return '这单是别人接的 · 只有接单人能计费'
+  if (order.status === DONE) return '已取件 · 金额不可修改'
+  if (order.claimed_by === null) return '尚未接单 · 接单后可填金额'
+  if (!canReachOrder(order)) return '已由他人接单 · 仅接单人可计费'
   return null
 }
 
@@ -360,7 +360,7 @@ const pricing = ref(false)
 /** 空输入不算错（用户刚开始输），填了东西才给格式提示 */
 const priceError = computed(() =>
   priceInput.value.trim() === '' ? null : normalizePrice(priceInput.value) === null
-    ? '金额 ≤ 99999.99，最多两位小数'
+    ? '金额格式无效 · 上限 99999.99 / 最多两位小数'
     : null,
 )
 
@@ -392,7 +392,7 @@ async function submitPrice(): Promise<void> {
   if (!order) return
   const amount = normalizePrice(priceInput.value)
   if (amount === null) {
-    message.error('金额格式不对')
+    message.error('金额格式无效 · 例 3.50')
     return
   }
   pricing.value = true
@@ -402,13 +402,13 @@ async function submitPrice(): Promise<void> {
     await staffOrderApi.price(order.id, amount)
     message.success(
       order.price === null || order.price === undefined
-        ? `订单 #${order.id} 已计费 ¥${Number(amount).toFixed(2)}`
-        : `订单 #${order.id} 金额已改为 ¥${Number(amount).toFixed(2)}`,
+        ? `单号 ${pickupCodeLabel(order.pickup_code)} · 已计费 ¥${Number(amount).toFixed(2)}`
+        : `单号 ${pickupCodeLabel(order.pickup_code)} · 金额已改为 ¥${Number(amount).toFixed(2)}`,
     )
     priceOrder.value = null
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '计费失败')
+    message.error(error instanceof ApiError ? error.message : '计费未完成 · 稍后重试')
     // 409「刚被别人计过费了」这类要刷一下才看得到新金额
     await load(true)
   } finally {
@@ -419,11 +419,11 @@ async function claim(order: Order): Promise<void> {
   busyId.value = order.id
   try {
     await staffOrderApi.claim(order.id)
-    message.success(`已接单 #${order.id}`)
+    message.success(`单号 ${pickupCodeLabel(order.pickup_code)} 已接单`)
     await load(true)
   } catch (error) {
     // 抢单失败（409）是正常竞争，如实把后端的话转给用户
-    message.error(error instanceof ApiError ? error.message : '接单失败')
+    message.error(error instanceof ApiError ? error.message : '接单未完成 · 稍后重试')
     await load(true)
   } finally {
     busyId.value = null
@@ -434,10 +434,10 @@ async function release(order: Order): Promise<void> {
   busyId.value = order.id
   try {
     await staffOrderApi.release(order.id)
-    message.success(`已释放 #${order.id}`)
+    message.success(`单号 ${pickupCodeLabel(order.pickup_code)} 已释放`)
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '释放失败')
+    message.error(error instanceof ApiError ? error.message : '释放未完成 · 稍后重试')
   } finally {
     busyId.value = null
   }
@@ -448,10 +448,10 @@ async function changeStatus(order: Order, next: OrderStatus): Promise<void> {
   busyId.value = order.id
   try {
     await staffOrderApi.setStatus(order.id, next)
-    message.success(`订单 #${order.id} 已更新为「${next}」`)
+    message.success(`单号 ${pickupCodeLabel(order.pickup_code)} · 状态更新为「${next}」`)
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '更新状态失败')
+    message.error(error instanceof ApiError ? error.message : '状态更新未完成 · 稍后重试')
   } finally {
     busyId.value = null
   }
@@ -463,7 +463,7 @@ async function download(order: Order): Promise<void> {
     // 所以走 client 里那条兜底超时；详情页那边才是按真实大小估的。
     await staffOrderApi.download(order.id, orderFileLabel(order))
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '下载失败')
+    message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
   }
 }
 
@@ -522,8 +522,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
               to: `/staff/orders/${row.id}`,
               class: 'min-w-0 flex-1 truncate text-sm font-semibold hover:underline',
               title: row.preset_content
-                ? `${row.preset_content} · 点开看详情`
-                : `${row.filename} · 点开看详情`,
+                ? `${row.preset_content} · 查看详情`
+                : `${row.filename} · 查看详情`,
             },
             { default: () => orderFileLabel(row) },
           ),
@@ -537,7 +537,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
             {
               class: 'shrink-0 border px-1 text-2xs whitespace-nowrap',
               style: 'color: var(--secondary); border-color: var(--accent-tint-border)',
-              title: `这一单是从 ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}下的`,
+              title: `来源 · ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}`,
             },
             [ORDER_SOURCE_BOT_LABEL_SHORT],
           ) as never,
@@ -583,7 +583,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
                 class:
                   'mt-1 inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap',
                 style: NOTIFY_BADGE_STYLE,
-                title: '推不出邮箱（填的是微信或没填）· 取件邮件发不出去，需手动联系',
+                title: '无可用邮箱（填的是微信或未填）· 取件邮件发不出去，需手动联系',
               },
               '需人工通知',
             )
@@ -673,10 +673,10 @@ const columns = computed<DataTableColumns<Order>>(() => [
                   type: hasGroup(row) ? 'primary' : 'default',
                   disabled: busyId.value === row.id || noPresets,
                   title: noPresets
-                    ? '打印服务名单没取到，去「打印服务」页看看是不是一条都没有'
+                    ? '打印服务名单读取失败 · 到「打印服务」页确认是否为空'
                     : hasGroup(row)
                       ? '改分组 / 取消归类'
-                      : '归入某条打印服务后，按服务筛选就能和同一批单一起看到',
+                      : '归入某条打印服务后 · 可按服务筛选查看',
                 },
                 { icon: () => h(FolderPlus, { size: 13 }) },
               ),
@@ -736,7 +736,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
       if (row.est_price !== null && row.est_price !== undefined) {
         lines.push(h('span', {
           class: 'tnum text-2xs text-ink-3',
-          title: row.est_pages ? `按下单时的 ${row.est_pages} 页估算，仅供参考` : '下单时的估算，仅供参考',
+          title: row.est_pages ? `按下单时的 ${row.est_pages} 页估算 · 以接单人确认金额为准` : '下单时的估算 · 以接单人确认金额为准',
         }, `预估 ${priceLabel(row.est_price)}`))
       }
       return h('div', { class: 'min-w-0' }, lines)
@@ -829,7 +829,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
             size: 'tiny',
             quaternary: true,
             class: '!h-7 !w-7 !p-0',
-            title: '查看详情与操作记录',
+            title: '详情与操作记录',
             onClick: () => openDetail(row),
           },
           { icon: () => h(Info, { size: 13 }) },
@@ -906,11 +906,15 @@ const hasFilter = computed(
 
 const emptyText = computed(() =>
   hasFilter.value
-    ? '没有匹配的订单，换个条件或清除筛选'
+    ? '无匹配结果 · 调整筛选条件'
     : scope.value === 'pool'
-      ? '待接单池是空的，都处理完了'
-      : '没有符合条件的订单',
+      ? '待接单池为空 · 新单提交后在此列示'
+      : '无订单记录',
 )
+
+/** 空态第二行。只在**真的开着筛子**时才给「去调筛选」这个动作 ——
+ *  没筛子的时候指着一个不存在的条件说「调整筛选」是假话。 */
+const emptyHint = computed(() => (hasFilter.value ? '清除筛选条件可恢复默认视角' : undefined))
 
 /** 清掉这一屏所有筛子，回到「待接单池 + 隐藏已取件」的默认视角。 */
 function resetFilters(): void {
@@ -953,7 +957,7 @@ async function setGroup(order: Order, key: string): Promise<void> {
     message.success(res.msg)
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '归类失败')
+    message.error(error instanceof ApiError ? error.message : '归类未生效 · 稍后重试')
     // 404「这条打印服务不存在（可能刚被删掉）」这类要重新拿一份名单，
     // 否则那个已消失的选项会一直赖在下拉框里。
     await loadPresets()
@@ -1028,7 +1032,7 @@ onBeforeUnmount(() => {
     </PageHeader>
 
     <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
-      <StatCard label="当页订单" :value="orders.length" :icon="Package" />
+      <StatCard label="本页订单" :value="orders.length" :icon="Package" />
       <StatCard label="本页待接单" :value="poolSummary.pool" accent />
       <StatCard label="本页待计费" :value="poolSummary.unpriced" />
       <StatCard label="本页我接的" :value="poolSummary.mine" />
@@ -1077,7 +1081,7 @@ onBeforeUnmount(() => {
         v-model:value="keyword"
         size="small"
         class="!w-[280px]"
-        placeholder="搜单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式"
+        placeholder="检索单号 / 文件名 / 订单号 / 昵称 / 姓名 / 学号 / 宿舍 / 联系方式"
         clearable
         :loading="keywordPending"
         @update:value="onKeywordInput"
@@ -1093,7 +1097,7 @@ onBeforeUnmount(() => {
         <NSwitch :round="false" :value="excludeDone" size="small" @update:value="onExcludeDoneChange" />
         <span
           class="tech-label cursor-pointer text-ink-3 tech-label--cn text-xs"
-          title="已取件是终态与累计数，看活件时它只会把待办的单顶到下一页"
+          title="已取件是终态与累计数 · 查看待办时会把活单顶到下一页"
           @click="onExcludeDoneChange(!excludeDone)"
         >
           隐藏已取件
@@ -1108,7 +1112,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-else-if="!orders.length" class="grid place-items-center py-14">
-        <EmptyState code="00 / NO ORDER" :title="emptyText" hint="筛出来的空通常不是真的空">
+        <EmptyState code="00 / NO ORDER" :title="emptyText" :hint="emptyHint">
           <template #icon><Inbox :size="28" /></template>
           <!-- 筛出一片空的时候得给条退路：这一屏上同时开着五个筛子
                （范围、状态、打印服务、关键词、隐藏已取件），挨个去关
@@ -1160,7 +1164,7 @@ onBeforeUnmount(() => {
               <RouterLink
                 :to="`/staff/orders/${order.id}`"
                 class="block truncate text-sm font-bold hover:underline"
-                :title="`${orderFileLabel(order)} · 点开看详情`"
+                :title="`${orderFileLabel(order)} · 查看详情`"
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
@@ -1175,7 +1179,7 @@ onBeforeUnmount(() => {
                   v-if="isBotOrder(order)"
                   class="shrink-0 border px-1 text-2xs whitespace-nowrap"
                   style="color: var(--secondary); border-color: var(--accent-tint-border)"
-                  :title="`这一单是从 ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}下的`"
+                  :title="`来源 · ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}`"
                 >{{ ORDER_SOURCE_BOT_LABEL_SHORT }}</span>
                 <span class="truncate text-2xs text-ink-3">
                   #{{ order.id }} · {{ shortTime(order.create_time) }}
@@ -1202,7 +1206,7 @@ onBeforeUnmount(() => {
             >
               需人工通知
             </span>
-            <span class="text-ink-3">没有可用邮箱 · 取件邮件发不出去，手动联系一下</span>
+            <span class="text-ink-3">没有可用邮箱 · 取件邮件发不出去，需手动联系</span>
           </p>
 
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
@@ -1254,7 +1258,7 @@ onBeforeUnmount(() => {
               v-if="(order.price === null || order.price === undefined)
                 && order.est_price !== null && order.est_price !== undefined"
               class="tnum text-ink-3"
-              :title="order.est_pages ? `按下单时的 ${order.est_pages} 页估算，仅供参考` : '下单时的估算，仅供参考'"
+              :title="order.est_pages ? `按下单时的 ${order.est_pages} 页估算 · 以接单人确认金额为准` : '下单时的估算 · 以接单人确认金额为准'"
             >
               预估 {{ priceLabel(order.est_price) }}
             </span>
@@ -1364,7 +1368,7 @@ onBeforeUnmount(() => {
       class="max-w-[420px]"
       :title="
         priceOrder && (priceOrder.price === null || priceOrder.price === undefined)
-          ? '给订单计费'
+          ? '订单计费'
           : '修改金额'
       "
       :bordered="false"
@@ -1408,7 +1412,7 @@ onBeforeUnmount(() => {
           <template v-if="priceOrder.est_pages"> {{ priceOrder.est_pages }} 页 </template>
           文件估算为
           <span class="tnum font-semibold text-ink">¥{{ priceOrder.est_price.toFixed(2) }}</span>
-          （已预填，改不改由你定）。实际页数以你打开的文件为准。
+          · 已预填，可改；最终金额以你打开文件核定为准。
         </p>
 
         <NInput
@@ -1425,7 +1429,7 @@ onBeforeUnmount(() => {
         <!-- 这行是 11px 的操作说明，属于要读的字，走三级文字色而不是四级。
              原先的 var(--ink-4) 不存在（见 tokens.css 里 --color-ink-* 的说明），静默失效。 -->
         <p class="mt-2 text-xs" :style="{ color: priceError ? 'var(--err)' : 'var(--text-tertiary)' }">
-          {{ priceError ?? '最多两位小数。计费后订单从「待计费」进入「待打印」。' }}
+          {{ priceError ?? '最多两位小数 · 计费后订单从「待计费」进入「待打印」' }}
         </p>
 
         <NAlert
@@ -1434,7 +1438,7 @@ onBeforeUnmount(() => {
           :bordered="false"
           class="mt-3"
         >
-          当前 ¥{{ priceOrder.price.toFixed(2) }} · 改完学生端立即看到新金额。
+          当前 ¥{{ priceOrder.price.toFixed(2) }} · 修改后学生端立即生效。
         </NAlert>
       </template>
 

@@ -60,22 +60,28 @@ async function togglePresetActive(item: PrintPreset): Promise<void> {
   const next = item.is_active !== 1
   try {
     await staffPrintOptionsApi.setPresetActive(item.id, next)
-    message.success(next ? '预设已启用' : '预设已停用')
+    message.success(next ? '预设已启用 · 学生端可选' : '预设已停用 · 学生端不再可选')
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '操作失败')
+    message.error(
+      error instanceof ApiError
+        ? error.message
+        : next
+          ? '启用未完成 · 稍后重试'
+          : '停用未完成 · 稍后重试',
+    )
   }
 }
 
 async function removePreset(item: PrintPreset): Promise<void> {
   const used = item.used_count ?? 0
   const ok = await confirmAction({
-    title: '删除这条预设？',
+    title: '删除预设',
     content: used
-      ? `已经有 ${used} 笔订单用过它。订单里存的是当时的正文快照，删掉不影响那些单的显示 —— 但之后「当初是哪一条」就只剩那句话可查了。`
-      : '还没有订单用过它。删掉之后这条服务就从下单页消失。',
+      ? `已有 ${used} 笔订单用过它。订单里存的是下单当时的正文快照，删除不影响那些单的显示，只是之后「当初是哪一条」就只剩那句话可查。`
+      : '尚无订单用过它。删除后这条服务不再出现在下单页。',
     positiveText: '删除',
-    negativeText: '再想想',
+    negativeText: '取消',
   })
   if (!ok) return
   try {
@@ -83,7 +89,7 @@ async function removePreset(item: PrintPreset): Promise<void> {
     message.success('预设已删除')
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '删除失败')
+    message.error(error instanceof ApiError ? error.message : '删除未生效')
   }
 }
 
@@ -93,7 +99,7 @@ async function load(silent = false): Promise<void> {
     const data = await staffPrintOptionsApi.presets()
     presets.value = data.presets ?? []
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载预设失败')
+    message.error(error instanceof ApiError ? error.message : '预设读取失败')
   } finally {
     loading.value = false
   }
@@ -114,7 +120,7 @@ async function submitPreset(): Promise<void> {
     resetPresetForm()
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '保存失败')
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
   } finally {
     saving.value = false
   }
@@ -126,7 +132,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="打印选项"
-      subtitle="预设打印服务在这里维护，学生下单时可选。停用只对新订单生效，旧订单记录不变。纸张与单价在「价目表」里维护。"
+      subtitle="预设打印服务：学生下单时可选 · 停用只对新订单生效，旧订单记录不变 · 纸张与单价在「价目表」维护"
     >
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
@@ -160,8 +166,8 @@ onMounted(load)
             />
           </NFormItem>
           <p class="mb-3 text-xs text-ink-3">
-            预设只有这一句话，没有名字。
-            这句话会原样显示给学生，也会被订单存下来。
+            预设没有名字，只有这一句话：
+            它会原样显示给学生，也会随订单存下来。
           </p>
 
           <div class="flex items-center gap-2">
@@ -192,7 +198,7 @@ onMounted(load)
           </div>
 
           <div v-else-if="!presets.length" class="panel grid place-items-center py-10">
-            <EmptyState code="00 / NO PRESET" title="还没有配置预设打印服务" hint="左侧新建一条，学生端就能选到">
+            <EmptyState code="00 / NO PRESET" title="暂无预设打印服务" hint="新建后学生端即可选到">
               <template #icon><Printer :size="26" /></template>
             </EmptyState>
           </div>
@@ -232,7 +238,7 @@ onMounted(load)
                       : { backgroundColor: 'var(--muted)', color: 'var(--text-quaternary)' }
                   "
                 >
-                  {{ item.is_active === 1 ? '启用中' : '已停用' }}
+                  {{ item.is_active === 1 ? '已启用' : '已停用' }}
                 </span>
                 <span class="text-xs text-ink-3">
                   #{{ item.id }} · {{ item.author ?? '系统' }} ·
@@ -251,7 +257,7 @@ onMounted(load)
                 <!-- 用过多少单要写在删除按钮旁边，而不是藏进二次确认里：
                      点了删除才知道「这玩意儿有 87 单在用」，后退一步很尴尬。 -->
                 <span class="text-xs text-ink-3">
-                  {{ item.used_count ? `已被 ${item.used_count} 单使用` : '还没有人用过' }}
+                  {{ item.used_count ? `已被 ${item.used_count} 单使用` : '暂无使用记录' }}
                 </span>
                 <NButton size="tiny" quaternary class="ml-auto" @click="removePreset(item)">
                   <template #icon><Trash2 :size="12" /></template>
@@ -284,13 +290,13 @@ onMounted(load)
           </h3>
           <p class="mb-3 text-sm leading-6 text-ink-2">
             一条价目项 = 纸张 + 类型 + 单面价 + 双面价 + 备注，学生下单时选的就是它。
-            纸张（A4 70g、6 寸相纸这些）在那里和维护价格一起填，
-            不必也不该在这里单独维护。
+            纸张（A4 70g、6 寸相纸这些）在价目表里与价格一起填，
+            不要在此单独维护。
           </p>
           <RouterLink to="/staff/pricing" class="no-underline">
             <NButton size="small" type="primary" class="!font-bold">
               <template #icon><ReceiptText :size="15" /></template>
-              去维护价目表
+              维护价目表
             </NButton>
           </RouterLink>
           <p class="mt-3 text-xs text-ink-3">

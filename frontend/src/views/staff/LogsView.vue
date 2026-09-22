@@ -69,7 +69,7 @@ async function load(): Promise<void> {
     total.value = list.total
     stats.value = overview
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '加载历史记录失败，请稍后重试')
+    notify.error(error instanceof ApiError ? error.message : '历史记录读取失败 · 稍后重试')
   } finally {
     loading.value = false
   }
@@ -201,7 +201,7 @@ onMounted(() => {
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="历史记录" subtitle="全部订单操作的留痕 · 可按时间、类型、结果状态与关键词筛选">
+    <PageHeader title="历史记录" subtitle="全部订单操作留痕 · 按时间 / 类型 / 结果状态 / 关键词筛选">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load">
           <template #icon><RefreshCw :size="15" /></template>
@@ -268,7 +268,7 @@ onMounted(() => {
           <template #icon><X :size="13" /></template>
           清除筛选
         </NButton>
-        <span>共 {{ total }} 条记录（统计与明细用的是同一套筛选条件）</span>
+        <span>共 {{ total }} 条记录 · 统计与明细共用同一套筛选条件</span>
       </div>
     </section>
 
@@ -319,7 +319,7 @@ onMounted(() => {
               :title="`${day.date}：${day.count} 条`"
             />
           </div>
-          <p v-else class="text-[12px] text-ink-4">这个范围内没有记录。</p>
+          <p v-else class="text-[12px] text-ink-4">此范围内无记录</p>
         </div>
       </div>
 
@@ -336,9 +336,9 @@ onMounted(() => {
             <dd class="tnum m-0 font-semibold">{{ item.count }}</dd>
           </div>
         </dl>
-        <p v-else class="text-[12px] text-ink-4">这个范围内没有状态变更记录。</p>
+        <p v-else class="text-[12px] text-ink-4">此范围内无状态变更记录</p>
 
-        <h2 class="mt-3 mb-1.5 font-heading text-[14px] font-bold">操作最多的人</h2>
+        <h2 class="mt-3 mb-1.5 font-heading text-[14px] font-bold">操作人排行</h2>
         <ol v-if="stats.by_actor.length" class="m-0 list-none p-0 text-[12px]">
           <li
             v-for="(item, index) in stats.by_actor"
@@ -352,7 +352,7 @@ onMounted(() => {
             <b class="tnum">{{ item.count }}</b>
           </li>
         </ol>
-        <p v-else class="text-[12px] text-ink-4">暂无数据。</p>
+        <p v-else class="text-[12px] text-ink-4">暂无数据</p>
       </div>
     </section>
 

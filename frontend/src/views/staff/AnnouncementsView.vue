@@ -85,7 +85,7 @@ async function load(silent = false): Promise<void> {
     const data = await announcementApi.list()
     list.value = data.announcements
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载公告失败')
+    message.error(error instanceof ApiError ? error.message : '公告读取失败')
   } finally {
     loading.value = false
   }
@@ -104,7 +104,7 @@ async function submit(): Promise<void> {
   try {
     if (editingId.value === null) {
       await announcementApi.create(payload)
-      message.success('公告已发布')
+      message.success('公告已发布 · 旧公告已停用')
     } else {
       await announcementApi.update(editingId.value, payload)
       message.success('公告已更新')
@@ -113,7 +113,7 @@ async function submit(): Promise<void> {
     await load(true)
     await announcementStore.load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '保存失败')
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
   } finally {
     saving.value = false
   }
@@ -131,18 +131,24 @@ async function toggleActive(item: Announcement): Promise<void> {
   const next = item.is_active !== 1
   try {
     await announcementApi.setActive(item.id, next)
-    message.success(next ? '公告已启用' : '公告已停用')
+    message.success(next ? '公告已启用 · 学生端可见' : '公告已停用 · 学生端不再显示')
     await load(true)
     await announcementStore.load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '操作失败')
+    message.error(
+      error instanceof ApiError
+        ? error.message
+        : next
+          ? '启用未完成 · 稍后重试'
+          : '停用未完成 · 稍后重试',
+    )
   }
 }
 
 async function remove(item: Announcement): Promise<void> {
   const ok = await confirmAction({
     title: '删除公告',
-    content: '这条公告会被删除，不可恢复。',
+    content: '公告将被删除，不可撤销。',
     positiveText: '删除',
   })
   if (!ok) return
@@ -153,7 +159,7 @@ async function remove(item: Announcement): Promise<void> {
     await load(true)
     await announcementStore.load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '删除失败')
+    message.error(error instanceof ApiError ? error.message : '删除未生效')
   }
 }
 
@@ -162,7 +168,7 @@ onMounted(load)
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="公告管理" subtitle="同一时间只有一条生效，发布新公告会自动停用旧的">
+    <PageHeader title="公告管理" subtitle="单条生效 · 发布新公告将停用旧公告">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -221,11 +227,11 @@ onMounted(load)
                 :style="{ backgroundColor: item.paper, borderColor: item.line }"
               >
                 <p class="whitespace-pre-wrap break-words" :style="[previewFont, { color: item.ink }]">
-                  {{ form.content.trim() || '公告内容会显示在这里' }}
+                  {{ form.content.trim() || '公告内容将在此预览' }}
                 </p>
               </div>
               <p v-if="item.overridden" class="mt-1 text-xs text-ink-3">
-                对比度不足 · 会回落到主题文字色
+                对比度不足 · 已回退至主题文字色
               </p>
             </div>
           </div>
@@ -245,7 +251,7 @@ onMounted(load)
           <NButton v-if="editingId !== null" quaternary @click="resetForm">取消编辑</NButton>
         </div>
         <p v-if="editingId === null" class="mt-3 text-xs text-ink-3">
-          保存后立即生效，并停用上一条公告。
+          发布后立即生效 · 上一条公告同时停用。
         </p>
       </section>
 
@@ -262,7 +268,7 @@ onMounted(load)
         </div>
 
         <div v-else-if="!list.length" class="panel grid place-items-center py-12">
-          <EmptyState code="00 / NO NOTICE" title="还没有发布过公告" hint="左侧写完保存，就会出现在这里">
+          <EmptyState code="00 / NO NOTICE" title="暂无公告记录" hint="发布后在此列示">
             <template #icon><Megaphone :size="28" /></template>
           </EmptyState>
         </div>

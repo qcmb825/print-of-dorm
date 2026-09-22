@@ -150,13 +150,13 @@ onMounted(() => {
 
     <div v-if="showQqReminder" class="mx-auto w-full max-w-6xl px-3 pt-3 sm:px-5 sm:pt-4">
       <NAlert type="warning" :bordered="false" closable @close="dismissQqReminder">
-        这个账号还没有 QQ 号，取件邮件提醒将无法送达；补充 QQ 后，其他资料也才能正常保存。
+        账号未填 QQ 号 · 取件提醒无法送达；补充 QQ 后，其他资料才能保存。
         <RouterLink
           :to="{ name: 'student-settings' }"
           class="ml-1 font-semibold underline underline-offset-2"
           style="color: var(--warn)"
         >
-          去设置补充
+          前往设置补充
         </RouterLink>
       </NAlert>
     </div>

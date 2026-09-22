@@ -67,7 +67,7 @@ async function load(): Promise<void> {
     lastId.value = detail.value.last_id ?? 0
     emit('changed') // 详情接口会推进已读时间，让列表同步刷新未读徽标
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载工单失败')
+    message.error(error instanceof ApiError ? error.message : '工单读取失败')
   } finally {
     loading.value = false
   }
@@ -129,7 +129,7 @@ async function send(): Promise<void> {
     await scrollToBottom(true)
     pollInterval.value = POLL_ACTIVE
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '发送失败')
+    message.error(error instanceof ApiError ? error.message : '发送未完成 · 稍后重试')
   } finally {
     sending.value = false
   }
@@ -138,10 +138,10 @@ async function send(): Promise<void> {
 async function toggleStatus(): Promise<void> {
   try {
     await ticketApi.setStatus(props.ticketId, closed.value ? 'open' : 'closed')
-    message.success(closed.value ? '工单已重新打开' : '工单已关闭')
+    message.success(closed.value ? '工单已重开' : '工单已关闭')
     await load()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '操作失败')
+    message.error(error instanceof ApiError ? error.message : '工单状态未变更 · 稍后重试')
   }
 }
 
@@ -187,7 +187,7 @@ onBeforeUnmount(pause)
           {{ ticket?.subject ?? '读取中' }}
         </h3>
         <p class="tech-label mt-1 text-ink-3 tech-label--cn text-xs">
-          #{{ ticketId }}
+          工单 {{ ticketId }}
           <template v-if="staff && ticket"> · 提交人 {{ ticket.owner_nickname }}</template>
           <template v-if="ticket"> · {{ TICKET_STATUS_LABEL[ticket.status] }}</template>
         </p>

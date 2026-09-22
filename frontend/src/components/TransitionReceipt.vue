@@ -65,13 +65,13 @@ const holdStyle = { '--receipt-hold': `${EVENT_HOLD_MS}ms` }
 
           </span>
 
-          <!-- "正在进入 X"只在 X 与主文不是同一个词时才出：
+          <!-- "进入中 · X"只在 X 与主文不是同一个词时才出：
                主文本身就是目的页名时，再补一句是同一句话说两遍。 -->
           <span
             v-if="info.target && info.target !== info.title"
             class="min-w-0 truncate text-xs text-ink-3"
           >
-            <span class="hidden sm:inline">· </span>正在进入{{ info.target }}
+            <span class="hidden sm:inline">· </span>进入中 · {{ info.target }}
           </span>
 
           <!-- 右侧读数带：刻度 + 时间戳。机能风里"这一条是系统自己报的"靠这截收尾。 -->

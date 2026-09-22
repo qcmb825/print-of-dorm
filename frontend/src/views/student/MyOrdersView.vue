@@ -58,7 +58,7 @@ async function toggleHideDone(value: boolean): Promise<void> {
     await authApi.savePrefs({ hide_done_orders: value })
   } catch (error) {
     hideDone.value = previous
-    notify.error(error instanceof ApiError ? error.message : '设置没保存上 · 稍后再试')
+    notify.error(error instanceof ApiError ? error.message : '偏好未写入 · 稍后重试')
   } finally {
     savingHideDone.value = false
   }
@@ -122,7 +122,7 @@ async function load(silent = false): Promise<void> {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让用户以为刚刷出来的列表是坏的。
     if (!silent && mySeq === requestSeq)
-      notify.error(error instanceof ApiError ? error.message : '加载订单失败')
+      notify.error(error instanceof ApiError ? error.message : '订单读取失败')
   } finally {
     if (mySeq === requestSeq) loading.value = false
   }
@@ -154,8 +154,8 @@ onMounted(async () => {
 /** 撤回按钮点不动的原因；null 表示可以点。
  *  两句话分别对应后端的 400「订单已经被接取，无法撤回」和 400「订单已完成，不能撤回」。 */
 function withdrawBlockReason(order: Order): string | null {
-  if (order.status === '已取件') return '已取件 · 不能再撤回'
-  if (order.claimed_by !== null) return '已被接单 · 要撤回请到工单里说一声'
+  if (order.status === '已取件') return '已取件 · 不可撤回'
+  if (order.claimed_by !== null) return '已接单 · 撤回请提交工单'
   return null
 }
 
@@ -179,11 +179,11 @@ async function withdraw(order: Order): Promise<void> {
   // 确认框里印一个用户在页面上找不到的号，只会让人以为撤错了单。
   const code = pickupCodeLabel(order.pickup_code)
   const ok = await confirmAction({
-    title: '撤回这份订单？',
+    title: '撤回订单',
     content: order.preset_content
-      ? `「${orderFileLabel(order)}」单号 ${code} 会被整条删除，无法恢复。这一单没有文件，不会动到任何文件。`
-      : `「${orderFileLabel(order)}」单号 ${code} 会被整条删除，上传的文件也会一并删掉，无法恢复。`,
-    positiveText: '撤回订单',
+      ? `「${orderFileLabel(order)}」单号 ${code} 将被删除，不可撤销。本单没有上传文件，不会动到任何文件。`
+      : `「${orderFileLabel(order)}」单号 ${code} 将被删除，上传文件一并移除，不可撤销。`,
+    positiveText: '撤回',
     negativeText: '取消',
   })
   if (!ok) return
@@ -197,7 +197,7 @@ async function withdraw(order: Order): Promise<void> {
   } catch (error) {
     // 409 是这期间刚好被人接走了，照原样把后端那句中文透出来，
     // 再补一次刷新，界面就回到真实状态了。
-    notify.error(error instanceof ApiError ? error.message : '撤回失败')
+    notify.error(error instanceof ApiError ? error.message : '撤回未生效')
     await load(true)
   } finally {
     withdrawingId.value = null
@@ -207,7 +207,7 @@ async function withdraw(order: Order): Promise<void> {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <PageHeader heading="md" title="我的订单" subtitle="每 20 秒自动刷新，切走页面时暂停">
+    <PageHeader heading="md" title="我的订单" subtitle="自动刷新 20 秒 · 离开页面暂停">
       <template #actions>
         <!-- 「隐藏已取件」是个**偏好**（存在服务端），所以这里是个开关而不是页内筛选：
              点完就落库，下次进来还是这个状态，机器人「订单」也跟着变。 -->
@@ -282,9 +282,9 @@ async function withdraw(order: Order): Promise<void> {
         <div class="mt-3 flex justify-center text-ink-4">
           <Inbox :size="30" />
         </div>
-        <p class="mt-3 text-sm font-semibold">还没有订单</p>
+        <p class="mt-3 text-sm font-semibold">队列为空</p>
         <p class="mt-1 text-xs text-ink-3">
-          去「下单打印」提交第一份文件 · 提交后立刻生成单号
+          从「下单打印」提交文件 · 自动生成单号
         </p>
         <span class="ticks mx-auto mt-4 block w-32" aria-hidden="true" />
       </div>
@@ -299,9 +299,9 @@ async function withdraw(order: Order): Promise<void> {
         <div class="mt-3 flex justify-center text-ink-4">
           <Inbox :size="30" />
         </div>
-        <p class="mt-3 text-sm font-semibold">已取件的单都收起来了</p>
+        <p class="mt-3 text-sm font-semibold">已取件订单已折叠</p>
         <p class="mt-1 text-xs text-ink-3">
-          {{ orders.length }} 份订单都已完成 —— 想看就把上面的「隐藏已取件」关掉
+          共 {{ orders.length }} 单 · 关闭「隐藏已取件」可查看
         </p>
         <NButton class="mt-3" size="small" @click="toggleHideDone(false)">显示全部订单</NButton>
       </div>

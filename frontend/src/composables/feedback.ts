@@ -95,7 +95,7 @@ export function confirmAction(options: {
     dialogApi!.warning({
       title: options.title,
       content: options.content,
-      positiveText: options.positiveText ?? '确定',
+      positiveText: options.positiveText ?? '确认',
       negativeText: options.negativeText ?? '取消',
       onPositiveClick: () => resolve(true),
       onNegativeClick: () => resolve(false),

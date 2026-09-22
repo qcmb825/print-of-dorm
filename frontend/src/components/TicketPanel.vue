@@ -56,7 +56,7 @@ async function load(silent = false): Promise<void> {
       selectedId.value = null
     }
   } catch (error) {
-    if (!silent) message.error(error instanceof ApiError ? error.message : '加载工单失败')
+    if (!silent) message.error(error instanceof ApiError ? error.message : '工单读取失败')
   } finally {
     loading.value = false
   }
@@ -70,20 +70,20 @@ function open(ticket: Ticket): void {
 
 async function createTicket(): Promise<void> {
   if (!form.subject.trim() || !form.body.trim()) {
-    message.warning('标题和描述都要填')
+    message.warning('标题与描述为必填')
     return
   }
   creating.value = true
   try {
     const data = await ticketApi.create(form.subject.trim(), form.body.trim())
-    message.success('工单已提交 · 等待回复')
+    message.success('工单已提交 · 待回复')
     createOpen.value = false
     form.subject = ''
     form.body = ''
     await load()
     selectedId.value = data.id
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '提交失败')
+    message.error(error instanceof ApiError ? error.message : '提交未完成 · 稍后重试')
   } finally {
     creating.value = false
   }
@@ -112,8 +112,8 @@ onMounted(async () => {
       :title="staff ? '工单处理' : '问题反馈'"
       :subtitle="
         staff
-          ? '学生提交的问题与需求，回复后对方会看到未读提示'
-          : '有打印相关的问题，在这里留言给管理员'
+          ? '学生提交的问题与需求 · 回复后对方收到未读提示'
+          : '打印相关问题 · 在此留言给管理员'
       "
     >
       <template #title-append>
@@ -143,8 +143,8 @@ onMounted(async () => {
         <div v-else-if="!tickets.length" class="grid place-items-center py-12">
           <EmptyState
             code="00 / NO TICKET"
-            :title="staff ? '无工单' : '还没有工单'"
-            :hint="staff ? '学生提交后会自动出现在这里' : '有打印相关的问题，点右上角新建'"
+            :title="staff ? '无工单' : '尚未提交工单'"
+            :hint="staff ? '学生提交后在此列示' : '打印相关问题 · 新建工单提交'"
           >
             <template #icon><Inbox :size="28" /></template>
           </EmptyState>
@@ -186,7 +186,7 @@ onMounted(async () => {
               </div>
               <p class="mt-1 line-clamp-2 text-xs text-ink-3">{{ ticket.last_body }}</p>
               <p class="tech-label mt-1.5 text-ink-3 tech-label--cn text-xs">
-                #{{ ticket.id }}
+                工单 {{ ticket.id }}
                 <template v-if="staff && ticket.owner_nickname"> · {{ ticket.owner_nickname }}</template>
                 · {{ shortTime(ticket.update_time) }} · {{ ticket.msg_count }} 条
               </p>
@@ -209,7 +209,7 @@ onMounted(async () => {
           @changed="load(true)"
         />
         <div v-else class="grid h-full place-items-center py-16">
-          <EmptyState code="00 / NO TICKET" title="从左侧选一个工单查看详情" hint="窄屏会以抽屉形式打开">
+          <EmptyState code="00 / NO TICKET" title="从左侧选择工单" hint="窄屏以抽屉打开">
             <template #icon><MessageSquarePlus :size="28" /></template>
           </EmptyState>
         </div>
@@ -250,7 +250,7 @@ onMounted(async () => {
           :maxlength="1000"
           show-count
           :autosize="{ minRows: 4, maxRows: 8 }"
-          placeholder="写清订单号、遇到的问题、期望的处理方式"
+          placeholder="写清单号、遇到的问题与期望的处理方式"
         />
       </NFormItem>
       <template #footer>

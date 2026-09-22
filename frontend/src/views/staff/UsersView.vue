@@ -142,7 +142,7 @@ async function load(silent = false): Promise<void> {
     users.value = data.users
     closedTotal.value = data.closed_total
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载账号列表失败')
+    message.error(error instanceof ApiError ? error.message : '账号列表读取失败')
   } finally {
     loading.value = false
   }
@@ -173,10 +173,10 @@ watch(advanced, () => {
 async function setRole(user: AdminUser, role: Role): Promise<void> {
   try {
     await adminApi.setRole(user.id, role)
-    message.success(`已将「${user.nickname}」设为${ROLE_LABELS[role]}`)
+    message.success(`「${user.nickname}」已设为${ROLE_LABELS[role]}`)
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '修改角色失败')
+    message.error(error instanceof ApiError ? error.message : '角色修改未完成 · 稍后重试')
   }
 }
 
@@ -187,7 +187,7 @@ async function toggleStatus(user: AdminUser): Promise<void> {
     message.success(next === 'active' ? '账号已启用' : '账号已禁用')
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '修改状态失败')
+    message.error(error instanceof ApiError ? error.message : '状态修改未完成 · 稍后重试')
   }
 }
 
@@ -198,16 +198,16 @@ async function toggleStatus(user: AdminUser): Promise<void> {
 async function closeUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '注销账号',
-    content: `注销「${user.nickname}」后立刻失去登录资格，昵称与学号会让出来（别人可以注册同名）。订单与工单全部保留，之后可以恢复。`,
+    content: `注销「${user.nickname}」后立刻失去登录资格，昵称与学号会被让出（别人可以注册同名）。订单与工单全部保留，之后可恢复。`,
     positiveText: '注销',
   })
   if (!ok) return
   try {
     await adminApi.closeUser(user.id)
-    message.success('账号已注销')
+    message.success('账号已注销 · 昵称与学号已让出')
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '注销失败')
+    message.error(error instanceof ApiError ? error.message : '注销未完成 · 稍后重试')
   }
 }
 
@@ -215,13 +215,13 @@ async function closeUser(user: AdminUser): Promise<void> {
 async function restoreUser(user: AdminUser): Promise<void> {
   const ok = await confirmAction({
     title: '恢复账号',
-    content: `恢复「${user.nickname}」后重新可以登录。若昵称或学号已被占用，本次恢复会被拒绝。`,
+    content: `恢复「${user.nickname}」后重新可登录。昵称或学号已被占用时，本次恢复会被拒绝。`,
     positiveText: '恢复',
   })
   if (!ok) return
   try {
     await adminApi.restoreUser(user.id)
-    message.success('账号已恢复 · 可以用原学号登录')
+    message.success('账号已恢复 · 可用原学号登录')
     await load(true)
   } catch (error) {
     if (error instanceof ApiError) {
@@ -236,7 +236,7 @@ async function restoreUser(user: AdminUser): Promise<void> {
       }
       message.error(error.message)
     } else {
-      message.error('恢复失败')
+      message.error('恢复未完成 · 稍后重试')
     }
   }
 }
@@ -337,11 +337,11 @@ function openDialog(user: AdminUser, kind: DialogKind): void {
  *  那正是这两个函数存在的原因。 */
 const profileIssue = computed<string | null>(() => {
   if (!NICKNAME_RE.test(profileForm.nickname.trim()))
-    return '昵称 2-20 位：中文、字母、数字或下划线'
-  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名 2-20 位中文或字母'
+    return '昵称 2-20 位 · 中文 / 字母 / 数字 / 下划线'
+  if (!REALNAME_RE.test(profileForm.real_name.trim())) return '姓名 2-20 位 · 中文或字母'
   if (!STUDENT_ID_RE.test(profileForm.student_id.trim())) return '学号 4-20 位数字'
   const dorm = profileForm.dorm.trim()
-  if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符，写到门牌号'
+  if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符 · 写到门牌号'
   const qqBad = qqIssue(profileForm.qq)
   if (qqBad) return qqBad
   return otherContactIssue(profileForm.contact_type, profileForm.contact ?? '')
@@ -351,7 +351,7 @@ const profileIssue = computed<string | null>(() => {
  *  确认框是注册（自己打字）防手滑用的，管理员重置是打一串临时密码交给本人。 */
 const passwordIssueText = computed<string | null>(() => {
   const pwd = newPassword.value
-  if (!pwd) return '填写新密码'
+  if (!pwd) return '新密码为必填'
   const issue = passwordIssue(pwd)
   if (issue) return issue
   const target = dialog.target
@@ -388,7 +388,7 @@ async function confirmDialog(): Promise<void> {
     dialog.show = false
     await load(true)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '操作失败')
+    message.error(error instanceof ApiError ? error.message : '提交未完成 · 稍后重试')
   } finally {
     submitting.value = false
   }
@@ -416,12 +416,12 @@ async function saveProfile(target: AdminUser): Promise<void> {
 async function savePassword(target: AdminUser): Promise<void> {
   await adminApi.resetPassword(target.id, newPassword.value)
   // 回执里绝不重复密码本身：提示会挂在屏幕上，密码就跟着被截图了。
-  message.success(`已重置「${target.nickname}」的密码 · 请转告本人`)
+  message.success(`「${target.nickname}」的密码已重置 · 请转告本人`)
 }
 
 async function sendTicket(target: AdminUser): Promise<void> {
   await adminApi.ticketFor(target.id, ticketForm.subject.trim(), ticketForm.body.trim())
-  message.success(`已替「${target.nickname}」提交工单`)
+  message.success(`已代「${target.nickname}」提交工单`)
 }
 
 /** 某一行的动作菜单。已注销的那行只留一个出口 —— 其余动作对一个登不进来的
@@ -652,7 +652,7 @@ onMounted(load)
   <div class="mx-auto max-w-[1400px]">
     <PageHeader
       title="账号管理"
-      subtitle="名单对所有管理员可见；改角色、禁用、注销会写入审计日志"
+      subtitle="名单对全体管理员可见 · 改角色 / 禁用 / 注销写入审计日志"
     >
       <template #actions>
         <span v-if="advanced" class="flex items-center gap-2">
@@ -699,7 +699,7 @@ onMounted(load)
            开关打开时不能再报这条：那些账号此刻就在列表里，
            再说一句「未列出」等于自己打自己（浏览器里看到过这条自相矛盾的文案）。 -->
       <span class="tech-label ml-auto text-ink-3 tech-label--cn text-xs">
-        显示 {{ filtered.length }} / {{ users.length }} 个账号<span
+        {{ filtered.length }} / {{ users.length }} 个账号<span
           v-if="closedTotal && !includeClosed"
         >
           · 另有 {{ closedTotal }} 个已注销未列出</span
@@ -716,7 +716,7 @@ onMounted(load)
         color: var(--warn);
       "
     >
-      正在显示全部账号的明文密码。此操作已记入安全日志，勿截图、勿外传。
+      正在显示全部账号的明文密码 · 已记入安全日志，勿截图、勿外传
     </p>
 
     <div class="bracket panel overflow-hidden">
@@ -724,7 +724,7 @@ onMounted(load)
         <NSkeleton v-for="index in 6" :key="index" height="48px" :sharp="false" />
       </div>
       <div v-else-if="!filtered.length" class="grid place-items-center py-14">
-        <EmptyState code="00 / NO MATCH" title="没有匹配的账号" hint="换个关键词，或把筛选清掉" />
+        <EmptyState code="00 / NO MATCH" title="无匹配账号" hint="调整关键词或清除筛选条件" />
       </div>
       <NDataTable
         v-else
@@ -783,12 +783,12 @@ onMounted(load)
             <label class="flex flex-col gap-1">
               <span class="tech-label text-ink-3 tech-label--cn">
                 QQ 号
-                <span class="ml-1 font-normal">（收件提醒用，必填）</span>
+                <span class="ml-1 font-normal">（取件提醒用，必填）</span>
               </span>
               <NInput
                 v-model:value="profileForm.qq"
                 :maxlength="12"
-                placeholder="5-12 位数字，不以 0 开头"
+                placeholder="5-12 位数字 · 不以 0 开头"
               />
             </label>
             <label class="flex flex-col gap-1">
@@ -820,32 +820,31 @@ onMounted(load)
             </label>
           </div>
           <p class="mt-3 text-xs leading-5 text-ink-3">
-            学号是登录名，改完本人必须用新学号登录。这里不核对名单：
-            名单是注册的闸门，改资料是人工介入。
-            QQ 号必填的原因很实际 —— 取件提醒只能发到
-            <span class="tnum">&lt;QQ号&gt;@qq.com</span>，缺了它这个账号收不到任何通知
-            （列里会标出来）。
+            学号是登录名，改完本人须用新学号登录。名单是注册的闸门，
+            改资料不核对名单。QQ 号必填：取件提醒只发到
+            <span class="tnum">&lt;QQ号&gt;@qq.com</span>，缺了它该账号收不到任何通知
+            （列表里会标出）。
           </p>
         </template>
 
         <template v-else-if="dialog.kind === 'password'">
           <NAlert type="warning" :bordered="false" class="mb-3">
-            新密码立即生效，当面或可靠方式转告本人。此操作记入审计日志，
-            但日志里不会出现密码本身。
+            新密码立即生效，当面或可靠方式转告本人 · 本次重置记入审计日志，
+            日志内不会出现密码本身。
           </NAlert>
           <NInput
             v-model:value="newPassword"
             type="password"
             show-password-on="click"
             :maxlength="64"
-            placeholder="8-64 位，同时包含字母和数字"
+            placeholder="8-64 位 · 需同时含字母与数字"
             autocomplete="new-password"
           />
         </template>
 
         <template v-else>
           <NAlert type="info" :bordered="false" class="mb-3">
-            工单归属这个学生，第一条消息以他的名义发出；
+            工单归属该学生：第一条消息以他的名义发出，
             学生端打开会话看到的就是自己提的问题。
           </NAlert>
           <div class="flex flex-col gap-3">
@@ -861,7 +860,7 @@ onMounted(load)
               :rows="4"
               :maxlength="BODY_MAX"
               show-count
-              placeholder="写清订单号、文件名、时间…"
+              placeholder="写清单号、文件名、时间"
             />
           </div>
         </template>
@@ -886,12 +885,12 @@ onMounted(load)
       v-model:show="conflicts.show"
       preset="card"
       class="max-w-[520px]"
-      title="无法恢复：昵称或学号已被占用"
+      title="无法恢复 · 昵称或学号已被占用"
       :bordered="false"
     >
       <NAlert v-if="conflicts.target" type="warning" :bordered="false" class="mb-3">
-        「{{ conflicts.target.nickname }}」注销时把昵称与学号让了出去，现在被下面这些账号占着。
-        先和对方确认怎么处理（改名，或就这样）；系统不会替任何人改名。
+        「{{ conflicts.target.nickname }}」注销时让出的昵称与学号，现在被下面这些账号占着。
+        先和对方确认怎么处理（改名，或保持现状），系统不会替任何人改名。
       </NAlert>
       <ul class="flex flex-col gap-2">
         <li
@@ -912,7 +911,7 @@ onMounted(load)
       </ul>
       <template #footer>
         <div class="flex justify-end">
-          <NButton quaternary @click="conflicts.show = false">知道了</NButton>
+          <NButton quaternary @click="conflicts.show = false">确认</NButton>
         </div>
       </template>
     </NModal>

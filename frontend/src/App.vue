@@ -30,7 +30,7 @@ const shellTransitionKey = computed(() => {
  *  那时 shellTransitionKey 会算出 'student'，等路由落定再变成 'guest' 或 'staff' ——
  *  key 一变就是一次完整的外壳换场，而它的「旧页」是一棵空树。
  *  结果是：用户什么都没点，冷加载却先看一整场换场（减少动效下也要几百毫秒），
- *  缝上还写着 GUEST / 接入终端 —— 正是 RouteTransition.vue 顶部说好不要的那种「推迟可用时间」。
+ *  缝上还写着 GUEST / 登录入口 —— 正是 RouteTransition.vue 顶部说好不要的那种「推迟可用时间」。
  *
  *  首帧本来就只会渲染出一个空的 RouterView（没有任何组件可挂），所以这里干脆等落定
  *  再挂这一层：挂载时是这个 Transition 的**首次**渲染，没有 appear，不会补入场动画。
@@ -69,16 +69,16 @@ watch(
 
 /** 外壳档的场记读数。必须在这里写死，不能从 route.meta 取：换场那一刻读到的 meta
  *  是**目标页**的，登录 → 学生端会读到「下单打印」，而这一层换掉的是整个外壳，
- *  说「学生终端」才对。代号走等宽大写，是站内 .tech-label 既有的语气。 */
+ *  说「学生端」才对。代号走等宽大写，是站内 .tech-label 既有的语气。 */
 
 const shellLabel = computed(() => {
   switch (shellTransitionKey.value) {
     case 'guest':
-      return { code: 'GUEST', title: '接入终端' }
+      return { code: 'GUEST', title: '登录入口' }
     case 'staff':
-      return { code: 'STAFF', title: '控制台' }
+      return { code: 'STAFF', title: '管理控制台' }
     default:
-      return { code: 'STUDENT', title: '学生终端' }
+      return { code: 'STUDENT', title: '学生端' }
   }
 })
 </script>

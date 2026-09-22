@@ -88,7 +88,7 @@ function onBrandClick(event: MouseEvent): void {
     if (!auth.toggleAdvanced()) return
     // 没资格的人连点五下什么都不给（连提示都不给）：一句「你没有更多视图」
     // 等于承认这里有个按权限开放的东西，反倒把入口卖了。
-    message.success(auth.advanced ? '已切换到高级视图' : '已切回普通视图')
+    message.success(auth.advanced ? '高级视图已开启' : '高级视图已关闭')
     return
   }
   // 还没点满：先等一小会儿再当普通点击处理。要是不等就立刻跳走，

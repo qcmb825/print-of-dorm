@@ -81,7 +81,7 @@ export function statusOption(
       borderColor: palette.border,
       borderWidth: 1,
       textStyle: { color: palette.text, fontSize: 12 },
-      formatter: '{b}<br/><b>{c}</b> 单（{d}%）',
+      formatter: '{b}<br/><b>{c}</b> 单 · {d}%',
     },
     legend: {
       orient: 'vertical',

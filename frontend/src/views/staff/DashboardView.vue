@@ -115,7 +115,7 @@ async function load(): Promise<void> {
   try {
     stats.value = await adminApi.stats()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '加载统计数据失败')
+    message.error(error instanceof ApiError ? error.message : '统计数据读取失败')
   } finally {
     loading.value = false
   }
@@ -126,7 +126,7 @@ onMounted(load)
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="数据看板" subtitle="订单与账号的实时汇总，含近 14 天趋势">
+    <PageHeader title="数据看板" subtitle="订单 / 账号实时汇总 · 近 14 天趋势">
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load">
           <template #icon><RefreshCw :size="15" /></template>
@@ -199,7 +199,7 @@ onMounted(load)
         <section class="panel p-4 lg:border-l lg:border-[var(--border)] lg:pl-4">
           <h3 class="mb-1 font-heading text-base font-bold">接单排行</h3>
           <p class="tech-label mb-3 text-ink-3 text-2xs">Top 5 claimers</p>
-          <ChartBox :option="rank" :height="248" :empty="!hasRankData" empty-text="还没有接单记录" />
+          <ChartBox :option="rank" :height="248" :empty="!hasRankData" empty-text="暂无接单记录" />
         </section>
       </div>
 
@@ -211,7 +211,7 @@ onMounted(load)
             <div class="tnum font-heading text-2xl font-bold">{{ count }}</div>
           </div>
           <p v-if="!Object.keys(userStats?.by_role ?? {}).length" class="text-sm text-ink-3">
-            无账号数据
+            暂无账号数据
           </p>
         </div>
       </section>

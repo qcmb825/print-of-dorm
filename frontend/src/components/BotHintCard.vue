@@ -120,7 +120,7 @@ async function dismiss(): Promise<void> {
             type="button"
             class="icon-btn -mt-0.5 -mr-1 grid size-7 shrink-0 place-items-center"
             style="color: var(--text-secondary)"
-            title="关闭（点满几次后不再自动出现，随时能在设置里找回来）"
+            title="关闭 · 点满几次后不再自动出现 · 可在设置里找回"
             aria-label="关闭引导"
             :disabled="closing"
             @click="dismiss"
@@ -130,13 +130,13 @@ async function dismiss(): Promise<void> {
         </div>
 
         <p v-if="justClosed" class="mt-2 text-xs leading-5" style="color: var(--secondary)">
-          引导已收进「设置 → QQ 机器人」，那里有二维码，也能重新打开它。
+          引导已收进「设置 → QQ 机器人」· 二维码在那一块，可重新打开。
         </p>
         <template v-else>
           <ul class="mt-1.5 flex list-none flex-col gap-0.5 p-0 text-xs leading-5 text-ink-3">
-            <li>· 在 QQ 里把文件发给机器人，选档位与份数就下单</li>
-            <li>· 打好后 QQ 里直接推给你，凭单号取件</li>
-            <li>· 也能在网页端下单，两边的订单是同一份</li>
+            <li>· 在 QQ 里发文件，选档位与份数下单</li>
+            <li>· 打印完成即在 QQ 推送 · 凭单号取件</li>
+            <li>· 网页端同样可下单 · 订单是同一份</li>
           </ul>
 
           <div class="mt-2 flex items-center gap-3">
@@ -158,13 +158,13 @@ async function dismiss(): Promise<void> {
             </span>
             <p class="min-w-0 text-xs leading-5 text-ink-3">
               <template v-if="guest">
-                还没账号也别急：注册之后在设置里能随时找到这张二维码。
+                注册后即可使用 · 二维码在设置里随时可查。
               </template>
               <template v-else-if="hint?.has_qr">
-                手机 QQ 扫码加机器人，之后直接在 QQ 里发文件。
+                手机 QQ 扫码加机器人 · 之后直接在 QQ 里发文件。
               </template>
               <template v-else>
-                管理员还没上传机器人二维码，可以先在网页端下单。
+                管理员尚未上传机器人二维码 · 可先在网页端下单。
               </template>
             </p>
           </div>

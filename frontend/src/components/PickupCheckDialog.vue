@@ -94,7 +94,7 @@ async function lookup(): Promise<void> {
     order.value = data.order
     if (data.order.status !== READY) missHint.value = ''
   } catch (error) {
-    missHint.value = error instanceof ApiError ? error.message : '查不到这一单 · 核对单号'
+    missHint.value = error instanceof ApiError ? error.message : '无此单号 · 核对后重试'
   } finally {
     looking.value = false
   }
@@ -108,9 +108,9 @@ async function lookup(): Promise<void> {
  *  填完、点下去、再被 409 拒回来，白让人等一个来回 —— 而屏幕上
  *  本来就已经显示着这一单的状态了。 */
 function confirmBlockReason(current: PickupOrder): string | null {
-  if (current.status === DONE) return '这一单已经取走了'
-  if (current.status === WAIT_PRICE) return '还没计费 · 先在订单台填金额'
-  if (current.status !== READY) return `当前「${current.status}」· 还不能交件`
+  if (current.status === DONE) return '已取件 · 不可重复交件'
+  if (current.status === WAIT_PRICE) return '待计费 · 先在订单台填金额'
+  if (current.status !== READY) return `当前「${current.status}」· 不可交件`
   return null
 }
 
@@ -129,7 +129,7 @@ async function confirmPickup(): Promise<void> {
     justPicked.value = true
     emit('done', data.order_id)
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '取件失败')
+    message.error(error instanceof ApiError ? error.message : '取件未完成 · 稍后重试')
     // 409 多数是「刚刚被别人改过状态」，本地这份已经过期了，重新拉一次才对得上。
     await lookup()
   } finally {
@@ -151,7 +151,7 @@ function close(): void {
     :bordered="false"
   >
     <p class="mb-3 text-xs leading-5 text-ink-3">
-      输入单号回车。核对姓名、学号、份数再交件：交错了，纸找不回来。
+      输入单号回车 · 核对姓名、学号、份数再交件 · 交件后不可撤销
     </p>
 
     <NInput
@@ -260,7 +260,7 @@ function close(): void {
       </div>
 
       <NAlert v-if="justPicked" type="success" :bordered="false" class="mt-3">
-        已标记「已取件」，可以交件了。
+        已标记「已取件」· 可以交件
       </NAlert>
       <NAlert v-else-if="blockReason" type="warning" :bordered="false" class="mt-3">
         {{ blockReason }}

@@ -73,8 +73,8 @@ function barWidth(count: number): string {
 const myLine = computed(() => {
   const me = current.value?.me
   if (!me) return ''
-  if (!me.count) return '还没下过单 · 榜上留着一个位置'
-  return `共 ${me.count} 单 · 第 ${me.rank} 名（共 ${me.ranked} 人上榜）`
+  if (!me.count) return '尚未下单 · 暂无名次'
+  return `共 ${me.count} 单 · 第 ${me.rank} 名 · 共 ${me.ranked} 人上榜`
 })
 
 /** 「我的名次」那格。**没下过单时不报名次**：后端为了让「比我多的有几个人 + 1」
@@ -100,7 +100,7 @@ async function load(): Promise<void> {
   try {
     board.value = await boardApi.load()
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '加载服务数据失败')
+    notify.error(error instanceof ApiError ? error.message : '服务数据读取失败')
   } finally {
     loading.value = false
   }
@@ -237,8 +237,8 @@ onMounted(load)
             <div class="mt-3 flex justify-center text-ink-4">
               <Inbox :size="28" />
             </div>
-            <p class="mt-3 text-sm font-semibold">这张榜还空着</p>
-            <p class="mt-1 text-xs text-ink-3">第 1 单就是你</p>
+            <p class="mt-3 text-sm font-semibold">榜单为空</p>
+            <p class="mt-1 text-xs text-ink-3">下单后即可上榜</p>
             <span class="ticks mx-auto mt-3.5 block w-28" aria-hidden="true" />
           </div>
         </div>

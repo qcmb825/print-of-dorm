@@ -92,7 +92,7 @@ const contactOptions = (Object.keys(CONTACT_LABELS) as ContactType[]).map((value
 
 const rules = computed<FormRules>(() => ({
   student_id: [
-    { required: true, message: '填写学号', trigger: ['blur', 'input'] },
+    { required: true, message: '学号为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => STUDENT_ID_RE.test(value),
       message: '学号 4-20 位数字',
@@ -100,24 +100,24 @@ const rules = computed<FormRules>(() => ({
     },
   ],
   real_name: [
-    { required: true, message: '填写姓名', trigger: ['blur', 'input'] },
+    { required: true, message: '姓名为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) => REALNAME_RE.test(value),
-      message: '姓名 2-20 位中文或字母',
+      message: '姓名 2-20 位 · 中文或字母',
       trigger: ['blur', 'input'],
     },
   ],
   contact: [
-    { required: true, message: '填写联系方式', trigger: ['blur', 'input'] },
+    { required: true, message: '联系方式为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) =>
         value.length <= 50 && validateContact(form.contact_type, value),
-      message: '联系方式格式不对',
+      message: '联系方式格式无效',
       trigger: ['blur', 'input'],
     },
   ],
   note: [
-    { required: true, message: '填写情况说明', trigger: ['blur', 'input'] },
+    { required: true, message: '情况说明为必填', trigger: ['blur', 'input'] },
     {
       validator: (_rule, value: string) =>
         value.trim().length >= NOTE_MIN && value.trim().length <= NOTE_MAX,
@@ -128,7 +128,7 @@ const rules = computed<FormRules>(() => ({
 }))
 
 const queryRules: FormRules = {
-  student_id: [{ required: true, message: '填写学号', trigger: ['blur', 'input'] }],
+  student_id: [{ required: true, message: '学号为必填', trigger: ['blur', 'input'] }],
   contact: [{ required: true, message: '填写申请时留下的联系方式', trigger: ['blur', 'input'] }],
 }
 
@@ -163,7 +163,7 @@ async function submit(): Promise<void> {
       note: form.note.trim(),
     })
     submitted.value = true
-    message.success('申请已提交 · 等待审核')
+    message.success('申请已提交 · 待审核')
     // 顺手把查询页填好：这个弹窗关掉之后，用户下次回来大概率是来问「到哪一步了」，
     // 而他要填的两个值刚刚就在手上。
     queryForm.student_id = form.student_id.trim()
@@ -171,7 +171,7 @@ async function submit(): Promise<void> {
     tab.value = 'query'
     await check()
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : '提交失败 · 稍后重试')
+    message.error(error instanceof ApiError ? error.message : '提交未完成 · 稍后重试')
   } finally {
     submitting.value = false
   }
@@ -193,7 +193,7 @@ async function check(): Promise<void> {
     result.value = null
     // 学号不存在和联系方式对不上在后端是同一句话（防「拿学号挨个试」），
     // 前端照原样显示，不自己拆开说。
-    message.error(error instanceof ApiError ? error.message : '查询失败 · 稍后重试')
+    message.error(error instanceof ApiError ? error.message : '查询未完成 · 稍后重试')
   } finally {
     querying.value = false
   }
@@ -212,11 +212,11 @@ async function check(): Promise<void> {
     <NTabs v-model:value="tab" type="line" animated>
       <NTabPane name="submit" tab="提交申请">
         <NAlert v-if="submitted" type="success" :bordered="false" class="mb-4">
-          审核通过后即可用该学号注册。进度可以随时回来查。
+          审核通过后即可用该学号注册 · 进度可随时回来查。
         </NAlert>
 
         <p class="mb-4 text-sm leading-6 text-ink-3">
-          名单上查不到学号时才需要提交。填一份能联系到你的资料，由管理员人工核对。
+          名单上查不到学号时才需要提交 · 填一份能联系到你的资料，由管理员人工核对。
           <span class="text-ink-3">一个学号只能提交一次。</span>
         </p>
 
@@ -264,7 +264,7 @@ async function check(): Promise<void> {
               :maxlength="NOTE_MAX"
               show-count
               :placeholder="
-                '例：新生还没录进名单、转过专业换了学号、名单里的名字写错了（' +
+                '例：新生还没录进名单 / 转专业换过学号 / 名单里的名字写错了（' +
                 NOTE_MIN +
                 '-' +
                 NOTE_MAX +
@@ -289,8 +289,8 @@ async function check(): Promise<void> {
 
       <NTabPane name="query" tab="查询进度">
         <p class="mb-4 text-sm leading-6 text-ink-3">
-          填申请时留下的<strong>学号与联系方式</strong>，两个都对才查得到 ——
-          免得有人拿学号逐个试出谁申请过。
+          填申请时留下的<strong>学号与联系方式</strong> · 两个都对才查得到
+          （防止拿学号逐个试出谁申请过）。
         </p>
 
         <NForm
@@ -348,17 +348,17 @@ async function check(): Promise<void> {
           </NAlert>
 
           <p v-if="result.status === 'approved'" class="mt-3 text-sm leading-6">
-            现在可以用这个学号去「注册」了。
+            现在可以用该学号注册。
           </p>
           <p v-else-if="result.status === 'rejected'" class="mt-3 text-sm leading-6 text-ink-3">
-            情况有变化就直接找管理员当面说明：一个学号只有一条记录，
+            情况有变化 · 找管理员当面说明；一个学号只有一条记录，
             不能重复提交。
           </p>
         </div>
 
         <p v-else class="mt-5 flex items-center gap-1.5 text-xs text-ink-3">
           <CircleHelp :size="13" />
-          没有查到记录。学号与联系方式都对才查得到。
+          无此记录 · 学号与联系方式都对才查得到。
         </p>
       </NTabPane>
     </NTabs>
