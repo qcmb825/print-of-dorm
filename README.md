@@ -473,11 +473,12 @@ SUPER_ADMIN_STUDENT_ID=2024001      # 它现在**就是登录名**，不能留�
 SUPER_ADMIN_REALNAME=
 SUPER_ADMIN_DORM=
 
-# 数据库默认落在项目根的 data/ 目录（DATA_DIR），一般不用改这两项
-DATABASE_PATH=data/print_service.db
-ROSTER_DB_PATH=data/roster.db
-# 上传目录建议指到项目外的数据盘：升级代码时完全不会碰到用户上传的文件
-UPLOAD_FOLDER=D:/print_data/files/
+# 运行期数据的唯一根目录：主库、名单库、上传的打印件、收款码、二维码、日志全在它下面。
+# 换服务器 = 把这个目录整个拷过去（再带一份 .env），不用去别处各找一遍。
+# 想放独立数据盘就**只改这一行**，其余各项都从它派生。
+DATA_DIR=data
+# 确实要单独挪某一项时才取消注释覆盖它（改完记得跑 scripts/migrate_data_root.py）
+# UPLOAD_FOLDER=data/uploads
 
 # 生产环境必须是 false
 DEBUG=false
@@ -592,10 +593,10 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `HOST` | `0.0.0.0` | 监听地址 |
 | `PORT` | `8080` | 监听端口 |
 | `DEBUG` | `false` | 生产必须 `false` |
-| `DATA_DIR` | `data` | 数据目录：所有 SQLite 库文件（主库、名单库、迁移前的 `.bak` 备份）都落在这里 |
-| `DATABASE_PATH` | `data/print_service.db` | 主数据库文件位置 |
-| `ROSTER_DB_PATH` | `data/roster.db` | 学生名单库（学号 → 姓名），注册时校验身份用。**不在仓库里**，换机器 / 重装要人工拷过去 |
-| `UPLOAD_FOLDER` | `data/uploads` | 打印文件目录。建议按第 4 步指到项目外的数据盘 |
+| `DATA_DIR` | `data` | **运行期数据的唯一根目录**：主库、名单库、上传件、收款码、二维码、日志、迁移备份全在它下面。换服务器只拷这一个目录 |
+| `DATABASE_PATH` | `<DATA_DIR>/print_service.db` | 主数据库文件位置（账号、订单、留痕、工单都在这个库里） |
+| `ROSTER_DB_PATH` | `<DATA_DIR>/roster.db` | 学生名单库（学号 → 姓名），注册时校验身份用。**不在仓库里**，换机器 / 重装要人工拷过去 |
+| `UPLOAD_FOLDER` | `<DATA_DIR>/uploads` | 打印文件目录。要单独挪就改它，改完必须跑 `scripts/migrate_data_root.py` |
 | `MAX_UPLOAD_MB` | `50` | 单文件上传上限 |
 | `ALLOWED_EXTENSIONS` | `pdf,jpg,jpeg,png,doc,docx` | 上传白名单 |
 | `SECRET_KEY` | 空 | 会话签名密钥，**必须固定**，否则每次重启全体掉线 |
@@ -608,7 +609,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `UI_MODE` | `random` | 默认给哪套前端（`classic` / `vue` / `random`，`config.py` 里写死的默认值是 `random`；写错的值不报错，只记一条 `logger.error` 再按 `random` 处理）。**目前已被 `app.py` 的 `UI_SWITCH_ENABLED = False` 铉死成新版**，所以这一项实际不生效；`?ui=` 参数同样静默失效（不报错、不记日志）。需要临时看经典版时，把那个开关改回 `True` 再重启 |
 | `LOGIN_MAX_FAILS` / `LOGIN_LOCK_SECONDS` | `5` / `300` | 连续失败多少次锁定、锁多久（只在本进程内计数，见「已知不足」） |
 | `LOG_CONSOLE` | `true` | 是否同时输出到控制台。服务化运行（NSSM / systemd）时建议改 `false` |
-| `LOG_DIR` | `logs` | 日志目录，相对路径按 `app.py` 所在目录解析 |
+| `LOG_DIR` | `<DATA_DIR>/logs` | 日志目录。跟着 DATA_DIR 走 —— 日志是要跟数据一起带走的那份 |
 | `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` | `5MB` / `10` | 日志轮转大小与保留份数 |
 
 内置超级管理员也在 `.env` 里配置，共 5 项：`SUPER_ADMIN_NICKNAME`、`SUPER_ADMIN_PASSWORD`、
@@ -970,17 +971,44 @@ print-of-dorm/
 ```
 ├── .env                   # 真实配置，含密钥，绝对不要提交
 ├── .venv/                 # 虚拟环境
-├── logs/                  # 日志文件
-├── data/                  # 运行期数据（已 gitignore）：SQLite 库、迁移备份、默认的上传目录
-├── print_files/           # 上传的原件（含学生提交的内容）
+├── data/                  # ★ 运行期数据的唯一根目录（已 gitignore）—— 见下
+│   ├── print_service.db   #     账号 / 订单 / 留痕 / 工单（整个业务都在这个库里）
+│   ├── print_service.db.bak-*  # 迁移前自动生成的备份
+│   ├── roster.db          #     学生名单库（几万人的真实姓名 + 学号）
+│   ├── uploads/           #     学生上传的打印件
+│   ├── pay_qr/            #     每个管理员一张的收款码
+│   ├── assets/            #     全站一张的 QQ 机器人二维码
+│   └── logs/              #     业务 / 访问 / 安全日志
+├── LLBot-CLI-win-x64-v8/  # 本机那份 LLOneBot 安装（打印件之外的独立服务，见 QQ 机器人一节）
 ├── frontend/node_modules/ # 前端依赖（只有改前端时才存在）
 ├── secrets/               # 生产 .env、学号姓名导出源（含明文口令，绝不提交）
 ├── vendor/_retired/       # 退役的 QQ 框架与安装包，留着只是为了查历史，可以整个删掉
-├── LLBot-CLI-win-x64-v8/  # **本机正在跑的** LLOneBot 安装（带 auth_token.txt 等凭据，
-│                          #   所以整块不进仓库；仓库里那份在 vendor/llonebot/ 里）
 ├── memoryandtest/         # 本地工作目录，按用途分了子目录（见该目录下的 README.md）
 └── *.md（除 README 外）    # 本地文档
 ```
+
+### 搬服务器：只需要拷 `data/`
+
+`data/` 是**运行期数据的唯一根目录**：账号与订单、学生名单、上传的打印件、收款码、
+机器人二维码、日志、迁移备份，全都在它下面。所以换机器就是：
+
+```bash
+# 1) 在新机器上把代码克隆/解包好，按老机器填一份 .env（含 SECRET_KEY / PASSWORD_ENC_KEY）
+# 2) 把老机器的整个 data/ 拷到新机器（路径随便，用 .env 的 DATA_DIR 指过去即可）
+#    DATA_DIR=/srv/print-service-data
+# 3) 起服务。老订单里的文件、账号、密码、二维码全在，不用逐项找回
+```
+
+> **这条纪律是踩出来的**，不是设计洁癖：上传件一度被配到项目外的 `D:/print/print_files/`、
+> 日志留在项目根的 `logs/`，于是「拷了 `data/` 就算搬完」是个陷阱 —— 订单记录全在、
+> **文件一个都找不到**，而 `orders.file_path` 存的是绝对路径，换台机器就是另一套前缀，
+> 这种错要等学生点下载才暴露。
+> 存量数据搬家（以及将来要单独挪某一项时）用 `scripts/migrate_data_root.py`：
+> 默认只预演，`--apply` 才落盘；它会**先备份数据库**、搬文件、把库里所有绝对路径一并改掉，
+> 最后逐条复核「每个订单的文件都在」。只搬文件不改库 = 把每一单都指空。
+>
+> 回归脚本 `memoryandtest/tests/test_data_dir.py` 钉着这条纪律（18 项断言）：
+> 它断言六个路径全部落在 `DATA_DIR` 内，一旦有人又把某一项指到外面就会红。
 
 所有 SQLite 库文件（主库、学生名单库、迁移前自动生成的 `.bak` 备份）都收在 `data/` 下，
 不再散在项目根 —— 不和源码、前端产物混在一起，清理旧版本时才不会误伤。

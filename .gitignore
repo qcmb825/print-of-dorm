@@ -60,7 +60,11 @@ vendor/_retired/
 !README.md
 !vendor/llonebot/README.md
 
-# 运行日志里有客户端 IP、账号和操作记录，算隐私数据，不要提交到公开仓库
+# 运行日志里有客户端 IP、账号和操作记录，算隐私数据，不要提交到公开仓库。
+#
+# 2026-09-22 起日志默认落在 `<DATA_DIR>/logs`（也就是 data/logs），已经被上面的 data/ 规则挡住；
+# 这条 `logs/` 留着是为了兜住两件事：① 老部署升级前日志还在项目根；② 有人显式把 LOG_DIR
+# 配回项目根。`*.log` 那两条则是兜 printbot 与 LLBot 各自的日志目录。
 logs/
 *.log
 *.log.*

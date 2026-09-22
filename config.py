@@ -127,7 +127,28 @@ LOG_LEVEL_NAME = os.getenv('LOG_LEVEL', 'INFO').strip().upper()
 
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
-LOG_DIR = resolve_path(os.getenv('LOG_DIR', 'logs').strip() or 'logs')
+# ---- 运行期数据的**唯一根目录** --------------------------------------------
+# 这里定的是一条部署纪律：**所有会变的东西都住在这一个目录下** ——
+# 主库、学生名单库、上传的打印件、收款码、机器人二维码、日志、迁移前的 .bak 备份。
+# 于是「换服务器」就是把这个目录整个拷过去，而不是去五六个地方各找一遍。
+#
+# 这条纪律不是凭空写的：曾经上传件被指到 D:/print/print_files/、日志留在项目根 logs/，
+# 结果拷了 data/ 过去，订单记录都在、**文件全找不到** —— 而 orders.file_path 存的是
+# 绝对路径，换台机器就是另一套前缀，这种错要等学生点下载才暴露出来。
+#
+# 想放到数据盘（推荐）就在 .env 里只改这一处：DATA_DIR=D:/print-service-data
+# 下面每一项都从它派生。单独覆盖某一项仍然有效 —— 迁移期间新旧目录并存时会用到。
+DATA_DIR = resolve_path(os.getenv('DATA_DIR', '').strip() or 'data')
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+# 日志也住进 DATA_DIR。它同样是「运行期长出来的东西」，而且是排查线上问题时要一起带走的那份：
+# 客户让你「把数据发过来看看」时，日志和数据分在两个地方，总有人漏掉一个。
+# 注意这一段必须排在 DATA_DIR 之后 —— 反过来写就是 NameError，起不来。
+LOG_DIR = resolve_path(
+    os.getenv('LOG_DIR', '').strip() or os.path.join(DATA_DIR, 'logs')
+)
 
 LOG_FILE = os.getenv('LOG_FILE', 'app.log').strip() or 'app.log'
 
@@ -245,16 +266,8 @@ class _DropWerkzeugRequestLines(logging.Filter):
 logging.getLogger('werkzeug').addFilter(_DropWerkzeugRequestLines())
 
 
-# 数据目录：所有 SQLite 库文件（主库、学生名单库、迁移前自动生成的 .bak 备份）都放这里。
-# 单独收进 data/ 而不是散在项目根：库文件和源码、前端产物混在一起时，
-# 「哪些文件是运行期数据、哪些能删」光看目录根本分不出来，
-# 清理旧版本或整目录替换前端产物时特别容易误伤。
-DATA_DIR = resolve_path(os.getenv('DATA_DIR', '').strip() or 'data')
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-
-# 主数据库路径。默认落在 data/ 下，也可以用环境变量指到别的磁盘（迁移时用得上）
+# 主数据库路径。默认落在 DATA_DIR 下，也可以用环境变量另行指路（迁移时用得上）。
+# 它是「一个目录装全部」这套里的核心一份：账号、订单、留痕、工单全在这个库里。
 DATABASE_PATH = resolve_path(
     os.getenv('DATABASE_PATH', '').strip() or os.path.join(DATA_DIR, 'print_service.db')
 )
