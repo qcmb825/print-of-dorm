@@ -7,24 +7,41 @@
  *  分片上传那三条路也各自挡了一道）。这里把上传框藏起来只是让人看不见它，
  *  不是那条规矩本身 —— 谁都能手搓一个带文件的请求打过来。
  *
- *  上传分两条路，由 `uploadFile()` 按文件大小自动选：
+ *  ## 上传与下单是**两步**（2026-09-24 改）
+ *
+ *  原先上传完成的那一刻就把单建好了，学生要等下单成功才看到「预估 ¥x.xx」——
+ *  而价格恰恰是他最想知道的事。现在：
+ *
+ *    选完文件 → 立刻自动预上传（只是传上去，**没有订单**）→ 拿到 file_token
+ *             → 只要改了类型/份数/单双面，就请服务端重算一次预估价
+ *             → 点「提交订单」才真的建单
+ *
+ *  页数由服务端从文件里数（客户端报上来的数不可信，见 pricing 模块注释第②条），
+ *  公式也只有服务端一份（前端不镜像 —— 镜像必然漂移，而漂了不报错，
+ *  只是页面上的数字开始说谎）。
+ *
+ *  上传分两条路，由 `prepareUpload()` 按文件大小自动选：
  *  小文件走单请求直传；大文件切 8MB 分片。原因见 utils/chunkedUpload.ts 顶部的注释。
- *  预设那条路根本没有文件，所以和分片上传完全不搭界。
+ *  预设那条路根本没有文件，报价走预设自己的纸与价。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CircleCheck,
   FileText,
   Hash,
   History,
   Layers,
+  Loader2,
   Printer,
   ReceiptText,
   Rocket,
+  ScanEye,
+  TriangleAlert,
   Upload,
   X,
 } from '@lucide/vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PresetDocViewer from '@/components/PresetDocViewer.vue'
 import PriceTableDialog from '@/components/PriceTableDialog.vue'
 import StageHead from '@/components/StageHead.vue'
 import {
@@ -32,6 +49,7 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
+  NModal,
   NProgress,
   NRadioButton,
   NRadioGroup,
@@ -45,8 +63,8 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showReceipt } from '@/composables/transition-receipt'
 import { chunkApi, orderApi, printOptionsApi, authApi } from '@/api/endpoints'
-import type { ChunkSession, PriceItem, PrintPreset } from '@/api/types'
-import { pendingUploads, prettySize, uploadFile } from '@/utils/chunkedUpload'
+import type { ChunkSession, EstimateResponse, PriceItem, PrintPreset } from '@/api/types'
+import { pendingUploads, prettySize, prepareUpload } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
 import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
 
@@ -71,7 +89,7 @@ const priceItemId = ref<number | null>(null)
 const presetId = ref<number | null>(null)
 const router = useRouter()
 const submitting = ref(false)
-const progress = ref(0)
+/** 已经传上去的字节数与总量 —— 进度条用（预上传那一次，不是提交）。 */
 const uploadedBytes = ref(0)
 const totalBytes = ref(0)
 /** 服务端还留着的未完成上传，进页面时提醒一句 */
@@ -89,6 +107,28 @@ const optionsLoading = ref(true)
 /** 下单成功后的回执（类型与 announceOrder 的入参是同一个 —— 两处各写一份，
  *  加一个字段时必然会漏掉一处，而漏掉的那处不报错，只是那一格不显示）。 */
 const receipt = ref<OrderInfo | null>(null)
+
+/* ---------- 实时预估（见文件开头那段「上传与下单是两步」）----------
+ *
+ *  三个状态分开表达，因为它们在界面上是三句话：
+ *    · prepareState —— 文件传上去了没有（传的过程中显示进度条）；
+ *    · fileToken    —— 传上去了才有，之后每次试算都要带上它；
+ *    · quote        —— 服务端最后一次算出来的价（可能算不出，hint 里写着为什么）。
+ */
+type PrepareState = 'idle' | 'uploading' | 'ready' | 'failed'
+const prepareState = ref<PrepareState>('idle')
+/** 预上传返回的凭据。**文件单提交时用它，不用再把文件传一遍。** */
+const fileToken = ref<string | null>(null)
+const preparedPages = ref<number | null>(null)
+const prepareError = ref('')
+/** 预上传期间的进度（它独立于「提交」那一次上传的进度）。 */
+const preparePercent = ref(0)
+const uploading = computed(() => prepareState.value === 'uploading')
+
+const quote = ref<EstimateResponse | null>(null)
+const quoting = ref(false)
+/** 防抖用的定时器：份数是输入框，连着按上下箭头会一秒打出七八次请求。 */
+let quoteTimer: number | null = null
 
 const selected = computed(() => fileList.value[0] ?? null)
 const selectedFile = computed(() => selected.value?.file ?? null)
@@ -118,9 +158,28 @@ const priceItemOptions = computed(() =>
 const selectedItem = computed(
   () => priceItems.value.find((item) => item.id === priceItemId.value) ?? null,
 )
+
+/** 预设模式下、且那条服务**绑了**档位 → 这一格变成只读。
+ *
+ *  与后端 orders.resolve_preset_item 是同一个判据：绑了就以预设为准，
+ *  请求里带的 price_item_id 一律忽略。两边各写一套的话，会出现
+ *  「界面让学生选、服务端却不理」这种谁也说不清的状态。 */
+const presetBoundItem = computed(() =>
+  usingPreset.value && selectedPreset.value?.price_item_id ? selectedPreset.value : null,
+)
+
 /** 这一档支不支持双面。不支持时把双面单选禁掉 —— 而不是让学生选了再被服务端改回单面
  *  （那样他看到的选项和最终计价就不是一回事）。 */
-const duplexAllowed = computed(() => selectedItem.value?.price_double !== null)
+const duplexAllowed = computed(() => {
+  // 预设指定了档位时以那一档为准。它可能不在 priceItems 里（那一档被停用后
+  // 学生端就拿不到了），这时**不禁用**双面：服务端会在试算里把 duplex 归正成
+  // single 并回给前端，界面跟着它改 —— 那一条路比在这里猜要准。
+  if (presetBoundItem.value) {
+    const bound = priceItems.value.find((item) => item.id === presetBoundItem.value?.price_item_id)
+    return bound ? bound.price_double !== null : true
+  }
+  return selectedItem.value?.price_double !== null
+})
 
 /** 只有大文件才会走分片，提前告诉用户「会分几片」，免得他以为卡住了。 */
 const chunkCount = computed(() => {
@@ -129,12 +188,16 @@ const chunkCount = computed(() => {
 })
 
 const progressHint = computed(() => {
-  if (progress.value >= 99) return '生成订单中 · 勿关闭页面'
+  if (preparePercent.value >= 99) return '正在解析文件 · 请稍候'
   return '上传中 · 勿关闭页面 / 勿断网'
 })
 
 /** 能不能提交。分两种模式各算一次，别合成一个布尔表达式 ——
- *  按钮上要显示的「为什么按不动」是两套完全不同的话。 */
+ *  按钮上要显示的「为什么按不动」是两套完全不同的话。
+ *
+ *  文件模式多一道「文件必须已经传完」：预上传现在是**自动**跑的（选完文件就传），
+ *  所以学生完全有可能在传完之前就点了提交 —— 那时 file_token 还不存在，
+ *  建单接口会顶回来。在这一句里挡掉，比让他点一次、再看到一屏报错要好。 */
 const blockReason = computed<string | null>(() => {
   if (submitting.value) return null
   if (usingPreset.value) {
@@ -143,6 +206,8 @@ const blockReason = computed<string | null>(() => {
     return null
   }
   if (!selected.value) return '尚未选择文件'
+  if (uploading.value) return '文件上传中 · 传完即可提交'
+  if (prepareState.value !== 'ready') return '文件还没传完 · 重新选择一次'
   return null
 })
 
@@ -181,6 +246,8 @@ onBeforeUnmount(() => {
   if (activeChunkUploadId.value) {
     void chunkApi.cancel(activeChunkUploadId.value).catch(() => {})
   }
+  // 防抖定时器也要停掉：组件都没了还去打一次试算，纯属白跑一趟。
+  if (quoteTimer !== null) window.clearTimeout(quoteTimer)
 })
 
 function reset(): void {
@@ -188,9 +255,18 @@ function reset(): void {
   remark.value = ''
   presetId.value = null
   mode.value = 'file'
-  progress.value = 0
   uploadedBytes.value = 0
   totalBytes.value = 0
+  // 预上传与报价的那一份状态：清干净，下一单从头来。
+  // （fileList 置空本身会触发 watcher 把 prepareState 打回 idle，
+  //   但 token / 报价不会跟着走 —— 它们是「上一条文件」的东西，必须显式清。）
+  fileToken.value = null
+  preparedPages.value = null
+  prepareState.value = 'idle'
+  preparePercent.value = 0
+  prepareError.value = ''
+  quote.value = null
+  presetDocOpen.value = false
   // 打印参数回到**偏好里的默认值**（而不是写死的黑白/单面/1 份）：
   // 下第二单时把自己设过的默认值丢掉，那个设置就等于不存在。
   applyDefaults()
@@ -264,6 +340,140 @@ function onItemChange(): void {
 /** 价目表弹窗 */
 const priceTableOpen = ref(false)
 
+/** 预设附带文档的预览弹窗（null = 不显示）。 */
+const presetDocOpen = ref(false)
+
+/** 试算的输入变了就重算。**350ms 防抖**：份数是数字输入框，
+ *  连点上下箭头会一秒打出七八个请求，而每一次都要服务端读一遍文件页数。 */
+function scheduleQuote(): void {
+  if (quoteTimer !== null) window.clearTimeout(quoteTimer)
+  quoteTimer = window.setTimeout(() => {
+    quoteTimer = null
+    void refreshQuote()
+  }, 350)
+}
+
+async function refreshQuote(): Promise<void> {
+  // 预设模式还没选服务、文件模式还没有 token —— 都没什么可算的。
+  let payload: { preset_id: number } | { file_token: string } | null = null
+  if (usingPreset.value) {
+    if (presetId.value !== null) payload = { preset_id: presetId.value }
+  } else if (fileToken.value) {
+    payload = { file_token: fileToken.value }
+  }
+  if (!payload) {
+    quote.value = null
+    return
+  }
+  quoting.value = true
+  try {
+    const data = await orderApi.estimate({
+      ...payload,
+      copies: copies.value ?? COPIES_DEFAULT,
+      duplex: duplex.value,
+      price_item_id: priceItemId.value,
+    })
+    quote.value = data
+    //    服务端归正过的单双面要跟着改回来：这一档不支持双面时它会回 single，
+    //    而屏幕上还写着「双面」的话，学生看到的选项和计价就不是一回事了。
+    if (data.duplex !== duplex.value) duplex.value = data.duplex
+  } catch {
+    //    试算失败**不报错**：它是锦上添花的东西，为它弹一个红条会让下单页看着像坏了。
+    //    界面上那句「暂时算不出预估」已经把状态说清楚了。
+    quote.value = null
+  } finally {
+    quoting.value = false
+  }
+}
+
+const quoteText = computed(() => {
+  if (quoting.value && !quote.value) return '估算中'
+  if (!quote.value || quote.value.price === null) return '暂时算不出预估'
+  return `预估 ¥${quote.value.price.toFixed(2)}`
+})
+
+const quoteHint = computed(() => {
+  const data = quote.value
+  if (!data) return ''
+  if (data.price === null) return data.hint || '以管理员核定为准'
+  const parts = ['以管理员核定为准']
+  if (data.pages !== null) parts.unshift(`按 ${data.pages} 页`)
+  return parts.join(' · ')
+})
+
+/** 选完文件立刻预上传。**它不下单** —— 只是把文件交上去换一个 token，
+ *  服务端据此数出页数（页数只能在服务端数：客户端报上来的数直接进公式，不可信）。 */
+async function prepareSelectedFile(): Promise<void> {
+  const file = selectedFile.value
+  if (!file) {
+    prepareState.value = 'idle'
+    fileToken.value = null
+    preparedPages.value = null
+    return
+  }
+  prepareState.value = 'uploading'
+  prepareError.value = ''
+  fileToken.value = null
+  preparedPages.value = null
+  preparePercent.value = 0
+  totalBytes.value = file.size
+  try {
+    const data = await prepareUpload(
+      file,
+      (state) => {
+        preparePercent.value = state.percent
+        uploadedBytes.value = state.uploaded
+      },
+      (uploadId) => {
+        activeChunkUploadId.value = uploadId
+      },
+    )
+    activeChunkUploadId.value = null
+    fileToken.value = data.file_token
+    preparedPages.value = data.pages
+    prepareState.value = 'ready'
+    uploadedBytes.value = file.size
+    void refreshQuote()
+  } catch (error) {
+    activeChunkUploadId.value = null
+    prepareState.value = 'failed'
+    prepareError.value = error instanceof ApiError ? error.message : '文件上传未完成'
+    if (error instanceof ApiError && error.status === 429) {
+      // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
+      void refreshPending()
+    }
+  } finally {
+    void refreshPending()
+  }
+}
+
+/** 换文件 → 重新预上传（顺带把上一条的报价清掉，免得旧价留在屏幕上）。 */
+watch(selectedFile, () => {
+  quote.value = null
+  if (usingPreset.value) return
+  void prepareSelectedFile()
+})
+
+/** 换路径（文件 ↔ 预设）：两边都清一次。 */
+watch(mode, () => {
+  quote.value = null
+  if (usingPreset.value) {
+    if (presetId.value !== null) scheduleQuote()
+  } else if (selectedFile.value) {
+    if (fileToken.value) scheduleQuote()
+    else void prepareSelectedFile()
+  }
+})
+
+/** 换打印服务 → 它的纸与价都变了。 */
+watch(presetId, () => {
+  quote.value = null
+  if (usingPreset.value) scheduleQuote()
+})
+
+/** 价目项 / 份数 / 单双面：这三个是「改一下就要重算」的那一组。 */
+watch([priceItemId, copies, duplex], () => scheduleQuote())
+
 /** 下单成功的回执信息。
  *
  *  estPrice 是**预估价**（服务端按下单时的文件页数算的），null = 没估出来。
@@ -309,8 +519,6 @@ async function submit(): Promise<void> {
     return
   }
   submitting.value = true
-  progress.value = 0
-  uploadedBytes.value = 0
   try {
     // 份数已经是 number（NInputNumber），这里原样传 —— 不做字符串拼装、不做算术。
     // 顺着后端的口径走：份数只认整数，范围由服务端最终裁定。
@@ -329,7 +537,8 @@ async function submit(): Promise<void> {
         orderId: data.order_id,
         code: data.pickup_code,
         filename: preset.content,
-        // 预设单恒为 null（没有文件可数页数，见后端 create_preset_order）
+        // v22 起预设单也可能有预估价（预设价 × 份数，或按附带文档的页数算）；
+        // 都没有时仍是 null。
         estPrice: data.est_price,
       }
       receipt.value = info
@@ -338,21 +547,16 @@ async function submit(): Promise<void> {
       return
     }
 
+    //    文件单：文件**早就传上去了**（选完文件就自动预上传），这里只是拿那个
+    //    token 去建单 —— 所以这一下几乎不花时间，进度条那块也不会再出现。
     const file = selectedFile.value
-    if (!file) return
-    totalBytes.value = file.size
-    const data = await uploadFile(
-      file,
-      common,
-      (state) => {
-        progress.value = state.percent
-        uploadedBytes.value = state.uploaded
-      },
-      (uploadId) => {
-        activeChunkUploadId.value = uploadId
-      },
-    )
-    activeChunkUploadId.value = null
+    const token = fileToken.value
+    if (!file || !token) return
+    const data = await orderApi.createFromPrepared({
+      file_token: token,
+      filename: file.name,
+      ...common,
+    })
     const info = {
       orderId: data.order_id,
       code: data.pickup_code,
@@ -546,19 +750,55 @@ onMounted(async () => {
 
         <div
           v-if="selectedPreset"
-          class="mt-3 flex items-start gap-3 border p-3"
+          class="mt-3 border p-3"
           style="border-color: var(--border); background-color: var(--muted)"
         >
-          <span
-            class="mt-0.5 grid size-9 shrink-0 place-items-center"
-            style="background-color: var(--accent-tint); color: var(--accent-text)"
-            aria-hidden="true"
+          <div class="flex items-start gap-3">
+            <span
+              class="mt-0.5 grid size-9 shrink-0 place-items-center"
+              style="background-color: var(--accent-tint); color: var(--accent-text)"
+              aria-hidden="true"
+            >
+              <Printer :size="17" />
+            </span>
+            <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
+              {{ selectedPreset.content }}
+            </p>
+          </div>
+
+          <!-- v22：这条服务自带的档位与定价。有哪样显示哪样 ——
+               都没设置时不占一行（老预设就是只有一句描述）。 -->
+          <div
+            v-if="selectedPreset.price_item_label || selectedPreset.preset_price != null"
+            class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-3"
           >
-            <Printer :size="17" />
-          </span>
-          <p class="min-w-0 flex-1 text-sm leading-relaxed whitespace-pre-wrap">
-            {{ selectedPreset.content }}
-          </p>
+            <span v-if="selectedPreset.price_item_label" class="flex items-center gap-1">
+              <ReceiptText :size="12" aria-hidden="true" />
+              本条服务指定：{{ selectedPreset.price_item_label }}
+              <span v-if="selectedPreset.price_item_stopped" style="color: var(--warn)">
+                · 该档已停用
+              </span>
+            </span>
+            <span
+              v-if="selectedPreset.preset_price !== null && selectedPreset.preset_price !== undefined"
+              class="tnum"
+            >
+              定价 ¥{{ selectedPreset.preset_price.toFixed(2) }} / 份
+            </span>
+          </div>
+
+          <!-- 附带文档：**在线看**，不给下载。按钮只在真的有文档时才出现 ——
+               一个点了没反应的按钮比没有按钮更让人困惑。 -->
+          <NButton
+            v-if="selectedPreset.has_doc"
+            size="tiny"
+            quaternary
+            class="mt-1.5"
+            @click="presetDocOpen = true"
+          >
+            <template #icon><ScanEye :size="12" /></template>
+            查看附带文档{{ selectedPreset.doc_name ? ` · ${selectedPreset.doc_name}` : '' }}
+          </NButton>
         </div>
       </template>
 
@@ -590,35 +830,70 @@ onMounted(async () => {
         </NUploadDragger>
       </NUpload>
 
-      <!-- 已选文件 -->
+      <!-- 已选文件。选完就**自动预上传**（还没下单）—— 所以这里同时是那一次
+           上传的进度面板：传完了显示页数，失败了给「重试上传」。
+           学生不必知道后面那一步叫什么，他只需要看到「文件传上去了没有」。 -->
       <div
         v-if="!usingPreset && selected"
-        class="mt-3 flex items-center gap-3 border p-3"
+        class="mt-3 border p-3"
         style="border-color: var(--border)"
       >
-        <span
-          class="grid size-9 shrink-0 place-items-center"
-          style="background-color: var(--muted); color: var(--secondary)"
-          aria-hidden="true"
-        >
-          <FileText :size="17" />
-        </span>
-        <div class="min-w-0 flex-1">
-          <p class="truncate text-sm font-semibold">{{ selected.name }}</p>
-          <p class="tnum text-2xs text-ink-3">
-            {{ selectedFile ? prettySize(selectedFile.size) : '' }}
-          </p>
+        <div class="flex items-center gap-3">
+          <span
+            class="grid size-9 shrink-0 place-items-center"
+            style="background-color: var(--muted); color: var(--secondary)"
+            aria-hidden="true"
+          >
+            <FileText :size="17" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-semibold">{{ selected.name }}</p>
+            <p class="tnum text-2xs text-ink-3">
+              {{ selectedFile ? prettySize(selectedFile.size) : '' }}
+              <template v-if="uploading"> · 上传中 {{ preparePercent }}%</template>
+              <template v-else-if="prepareState === 'ready'">
+                <template v-if="preparedPages"> · 共 {{ preparedPages }} 页</template>
+                <template v-else> · 页数读不出</template>
+              </template>
+            </p>
+          </div>
+          <NButton
+            quaternary
+            class="!h-8 !w-8 !p-0"
+            size="small"
+            aria-label="移除已选文件"
+            :disabled="submitting"
+            @click="fileList = []"
+          >
+            <template #icon><X :size="15" /></template>
+          </NButton>
         </div>
-        <NButton
-          quaternary
-          class="!h-8 !w-8 !p-0"
-          size="small"
-          aria-label="移除已选文件"
-          :disabled="submitting"
-          @click="fileList = []"
+
+        <NProgress
+          v-if="uploading"
+          type="line"
+          :percentage="preparePercent"
+          :height="4"
+          :border-radius="0"
+          :show-indicator="false"
+          class="mt-2.5"
+        />
+        <p v-if="uploading" class="mt-1 flex flex-wrap justify-between gap-2 text-2xs text-ink-3">
+          <span>{{ progressHint }}</span>
+          <span class="tnum">{{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}</span>
+        </p>
+
+        <div
+          v-else-if="prepareState === 'failed'"
+          class="mt-2 flex flex-wrap items-center gap-2 text-xs"
+          style="color: var(--warn)"
         >
-          <template #icon><X :size="15" /></template>
-        </NButton>
+          <TriangleAlert :size="13" aria-hidden="true" />
+          <span>{{ prepareError }}</span>
+          <NButton size="tiny" quaternary :disabled="submitting" @click="prepareSelectedFile">
+            重试上传
+          </NButton>
+        </div>
       </div>
 
       <!-- ② 打印参数 -->
@@ -627,9 +902,32 @@ onMounted(async () => {
       <div class="grid gap-4 sm:grid-cols-2">
         <!-- 价目项：纸张 + 类型 + 单价都在这一条里（v20 起取代了"颜色 + 纸张"两个下拉）。
              颜色由它决定，所以这一屏不再有「打印颜色」那一项 —— 让学生再选一次颜色，
-             就会出现「选了彩色、价目项却是黑白」这种自相矛盾的组合。 -->
+             就会出现「选了彩色、价目项却是黑白」这种自相矛盾的组合。
+
+             v22：预设**绑了**档位时这一格变成只读 —— 以那条服务指定的为准。
+             服务端也这么判（orders.resolve_preset_item 忽略请求里带的 id），
+             所以这里不是"界面上不让改"，而是"这条服务本来就只有一种打法"。 -->
         <NFormItem label="类型 / 纸张" :show-feedback="false" class="!mb-0 sm:col-span-2">
-          <div class="flex w-full min-w-0 items-center gap-2">
+          <div v-if="presetBoundItem" class="flex w-full min-w-0 flex-wrap items-center gap-2">
+            <span class="tech-label px-2 py-0.5 tech-label--cn text-xs"
+                  style="background-color: var(--accent-tint); color: var(--accent-text)">
+              本条服务指定
+            </span>
+            <span class="min-w-0 flex-1 truncate text-sm font-semibold">
+              {{ presetBoundItem.price_item_label || '（这一档已删除）' }}
+            </span>
+            <NButton
+              size="small"
+              quaternary
+              :disabled="submitting"
+              title="查看完整价目表与说明"
+              @click="priceTableOpen = true"
+            >
+              <template #icon><ReceiptText :size="15" /></template>
+              价目表
+            </NButton>
+          </div>
+          <div v-else class="flex w-full min-w-0 items-center gap-2">
             <NSelect
               v-model:value="priceItemId"
               :options="priceItemOptions"
@@ -676,7 +974,7 @@ onMounted(async () => {
       </div>
       <p class="mt-2 text-xs text-ink-3">
         份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。
-        <template v-if="selectedItem && !duplexAllowed">
+        <template v-if="(selectedItem || presetBoundItem) && !duplexAllowed">
           本档<strong>不支持双面</strong>，按单面计。
         </template>
         <template v-if="!priceItemOptions.length && !optionsLoading">
@@ -689,6 +987,34 @@ onMounted(async () => {
 
       <!-- 价目表弹窗：想细看才点（价目项下拉里已经带了单价，这里给的是完整那张表 + 注） -->
       <PriceTableDialog v-model:show="priceTableOpen" />
+
+      <!-- 实时预估：文件传完（或选了预设）就显示，改一次份数/档位/面数就重算一次。
+           它是这一页在改版之后新增的**唯一**一处「还没提交就有反馈」的地方 ——
+           「预估」三个字必须留着：最终金额由管理员看过文件之后核定，
+           这个数只是让学生在按下提交之前心里有数。 -->
+      <div
+        v-if="quote || quoting"
+        class="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border px-3 py-2.5"
+        style="
+          border-color: var(--accent-tint-border);
+          background-color: var(--accent-tint-soft);
+        "
+        role="status"
+        aria-live="polite"
+      >
+        <span class="tech-label text-ink-3 tech-label--cn text-xs">预估费用</span>
+        <span class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
+          {{ quoteText }}
+        </span>
+        <span v-if="quoteHint" class="text-xs text-ink-3">· {{ quoteHint }}</span>
+        <Loader2
+          v-if="quoting"
+          :size="13"
+          class="animate-spin"
+          style="color: var(--text-tertiary)"
+          aria-hidden="true"
+        />
+      </div>
 
       <NFormItem label="备注（选填）" :show-feedback="false" class="mt-4">
         <NInput
@@ -705,26 +1031,10 @@ onMounted(async () => {
       <!-- ③ 提交 -->
       <StageHead code="03" title="提交" step="STEP 3/3" class="mt-6 mb-3" />
 
-      <!-- 上传进度。进度条只在真正上传时出现（而不是一直占着位置显示 0%），
-           它存在本身就意味着「有事在发生」。预设单没有文件，所以这一块不会出现
-           （它被 `submitting` 关着，但预设单提交时 totalBytes 是 0，
-           进度条会出现一条 0/0 的空条 —— 所以这里还要排掉 usingPreset）。 -->
-      <div v-if="submitting && !usingPreset" class="mt-4">
-        <div class="mb-1.5 flex items-center justify-between gap-3 text-xs">
-          <span class="text-ink-3">{{ progressHint }}</span>
-          <span class="tnum shrink-0 text-ink-3">
-            {{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}
-          </span>
-        </div>
-        <NProgress
-          type="line"
-          :percentage="progress"
-          :height="6"
-          :border-radius="0"
-          :show-indicator="false"
-          :status="progress >= 100 ? 'success' : 'default'"
-        />
-      </div>
+      <!-- 上传进度**不在这里**：文件是选完就传的（见上面那张文件卡片），
+           点「提交订单」时只剩一次建单请求，几乎不花时间。
+           原先那块进度条挂在这里，是因为那时「提交」才等于「开始上传」——
+           改版之后留着它，它会一直显示 0%，看着像卡住了。 -->
 
       <div class="flex flex-wrap items-center gap-3">
         <!-- 按钮禁用时把原因**写在脸上**：title 提示在触摸端出不来（禁用的按钮连 hover 都没有），
@@ -745,7 +1055,7 @@ onMounted(async () => {
             <Layers v-if="usingPreset" :size="16" />
             <Rocket v-else :size="16" />
           </template>
-          {{ submitting ? (usingPreset ? '提交中' : '上传中') : '提交订单' }}
+          {{ submitting ? '提交中' : '提交订单' }}
         </NButton>
         <span class="tech-label flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
           <Hash :size="12" />
@@ -755,5 +1065,24 @@ onMounted(async () => {
         </span>
       </div>
     </div>
+
+    <!-- 预设附带文档：**在线看**，页面里没有下载入口（见 PresetDocViewer 开头那段）。
+         用 NModal 而不是抽屉：文档是「看一眼就关」的东西，抽屉会让人以为它是个工作区。 -->
+    <NModal
+      :show="presetDocOpen"
+      preset="card"
+      :bordered="false"
+      class="max-w-[860px]"
+      :title="`附带文档 · ${selectedPreset?.doc_name ?? ''}`"
+      @update:show="(value: boolean) => (presetDocOpen = value)"
+    >
+      <PresetDocViewer
+        v-if="selectedPreset"
+        :key="selectedPreset.id"
+        :preset-id="selectedPreset.id"
+        :doc-name="selectedPreset.doc_name ?? null"
+        :width="740"
+      />
+    </NModal>
   </div>
 </template>

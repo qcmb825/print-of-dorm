@@ -525,8 +525,8 @@ export interface OrderDetailResponse extends ApiEnvelope {
 
 export interface PrintPreset {
   id: number
-  /** 预设的说明文字。预设刻意**没有名字**：一个描述就够了，
-   *  再加一个名字，两处描述迟早会各说一套，而学生看到的是名字、打印员看到的是描述。 */
+  /** 预设的说明文字，也是它在学生端唯一的名字 —— 一个描述就够了，
+   *  再加一个「短名」就有两处描述，迟早各说一套（学生看短名、打印员看描述）。 */
   content: string
   is_active?: number
   create_time?: string | null
@@ -536,6 +536,23 @@ export interface PrintPreset {
   /** 已经有多少单用过它。删之前要让人看见这个数字 ——
    *  预设被删了，历史订单里那份快照还在，但「当初是哪条预设」就断线了。 */
   used_count?: number
+  /* ---- v22：预设从「一段文本」扩成「一条服务」---- */
+  /** 绑定的价目项 id。**绑了就以它为准** —— 学生端连选择框都不显示，
+   *  服务端下单时也忽略请求里带的 price_item_id（见 orders.resolve_preset_item）。 */
+  price_item_id?: number | null
+  /** 绑定那一档的显示名（服务端拼好的「A4 70g · 黑白」）。
+   *  展示用它，别拿 price_items 自己对 —— 绑的那一档被停用后，
+   *  学生端的价目清单里就没有它了，自己找会显示成一个裸 id。 */
+  price_item_label?: string
+  /** 绑的那一档已经被停用（名字照给，界面要提示一句）。 */
+  price_item_stopped?: boolean
+  /** 这条服务的定价（**元/份**，总价由它乘份数）。null = 不定价，
+   *  退回按附带文档的页数走公式估。 */
+  preset_price?: number | null
+  /** 附带文档的原始文件名（有值 = 有文档可预览）。 */
+  doc_name?: string | null
+  /** 有没有附带文档。服务端算好的布尔，省得每处再判一次 doc_name。 */
+  has_doc?: boolean
 }
 
 export interface PaperType {
@@ -696,19 +713,77 @@ export interface PricePreviewResponse extends ApiEnvelope {
 export interface PresetOrderRequest {
   preset_id: number
   copies: number
-  /** 选的价目项；null = 不选（管理员还没配价目表时走这条路，金额由管理员核定） */
+  /** 选的价目项；null = 不选（管理员还没配价目表时走这条路，金额由管理员核定）。
+   *  预设**绑了**价目项时，服务端一律忽略这里传的值（以预设为准）。 */
   price_item_id: number | null
   duplex: Duplex
   remark: string
+}
+
+/** 新建 / 修改一条预设打印服务的请求体（管理端）。
+ *
+ *  与 OrderOptions 一样，金额走**字符串**：服务端按十进制正则校验
+ *  （pricing.parse_coefficient），前端先 Number() 再传就轮到浮点误差接管那个值了。
+ *  null 表示「清掉这一项」——后端按**键在不在**区分「清空」与「老客户端没这个字段」。 */
+export interface PresetInput {
+  content: string
+  price_item_id: number | null
+  preset_price: string | null
 }
 
 export interface UploadResponse extends ApiEnvelope {
   order_id: number
   pickup_code: string
   /** 下单时算出来的预估价（元）；null = 没估出来（页数读不出、或自动估价没开）。
-   *  三个下单口（直传 / 分片 / 预设）都带这个键，只是预设单恒为 null。
+   *  四个下单口（直传 / 分片 / 预设 / 预上传）都带这个键。
    *  下单成功那一屏要立刻把「预估 ¥x.xx」告诉学生，不该再让他去打一次列表接口。 */
   est_price: number | null
+}
+
+/** 预上传的结果：文件已经落在服务端了，但**还没有订单**。
+ *
+ *  这是「先上传、后下单」那条链的第一步（见后端 routes/estimate.py 开头那段）：
+ *  学生选完文件就先传上来，服务端据此数出页数 ——
+ *  页数只能由服务端数（客户端报上来的数直接进公式，不可信）。
+ *  之后拿 file_token 反复试算，最后才建单。 */
+export interface UploadPrepareResponse extends ApiEnvelope {
+  /** 那份已落盘文件的凭据。**只在本人名下找得到**（后端按账号分目录存）。 */
+  file_token: string
+  filename: string
+  size: number
+  /** 数出来的页数；null = 读不出来（扫描件、加密、太大没扫）。 */
+  pages: number | null
+  /** 为什么没数出页数（给日志与排查用；界面上说的是另一句）。 */
+  pages_note: string
+}
+
+/** 实时试算的响应。**price 不是最终价** —— 最终金额永远由管理员核定，
+ *  这里只是「照现在的选择大概多少钱」。 */
+export interface EstimateResponse extends ApiEnvelope {
+  /** 预估金额（元）；null = 这组参数算不出价，原因在 hint 里 */
+  price: number | null
+  pages: number | null
+  /** 这一档的显示名（服务端拼的） */
+  label: string
+  /** 算不出价时给学生看的一句话。算得出时是空串。 */
+  hint: string
+  /** 服务端归正过的单双面：这一档不支持双面时会给回 single（界面据此改选项）。 */
+  duplex: Duplex
+}
+
+/** 预上传之后建单的请求体。与 UploadOptions 的区别只有第一个字段：
+ *  文件不再随请求走，而是已经躺在服务端的那份。 */
+export interface PreparedOrderRequest extends UploadOptions {
+  file_token: string
+  /** 原始文件名（服务端只存了 uuid 名）。它只用于展示，
+   *  但服务端仍然会校验扩展名与那份文件一致。 */
+  filename: string
+}
+
+/** 预上传时的进度回调（大文件走分片，这里回的是整份的百分比）。 */
+export interface PrepareProgress {
+  percent: number
+  uploaded: number
 }
 
 /** 下单时选的打印选项，直传、分片、预设三条路共用。

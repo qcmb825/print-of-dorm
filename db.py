@@ -269,7 +269,17 @@ def find_paper_type(conn, paper_type_id):
 #               外加新表 price_rules（计价公式的各项系数，管理员可改）。
 #            同一批里还顺手订正了历史数据：备注正好等于那句占位文案的老订单，
 #            把备注清空、来源标成 bot —— 那不是学生写的话，留着就是留一条假记录。
-SCHEMA_VERSION = '21'
+# v21 -> v22：print_presets 从「一段文本」扩成「一条服务」，加四列：
+#            doc_file / doc_name（这条服务附带的标准文档，学生只能在线看）、
+#            price_item_id（绑一条价目项：用什么纸、什么工艺）、
+#            preset_price（这条服务的定价，元/份）。
+#            纯加列，不重建表，**不回填**老预设 —— 老预设就是只有一句描述，
+#            给它猜一个价或猜一档纸，等于把我们的猜测写成管理员的意思，
+#            而订单和计费都会照着这个猜测走。
+#            文档那一列存的是**文件名**（住 config.PRESET_DOC_FOLDER），
+#            与收款码、二维码同一个道理：存绝对路径的话，改配置那一刻全站的
+#            预览会集体失联，而且是静默失联。
+SCHEMA_VERSION = '22'
 
 
 
@@ -996,12 +1006,19 @@ def init_database():
         # 「索引建在补列之前」那个坑（见 idx_orders_preset_group 的注释）。
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_order_logs_time ON order_logs(create_time)')
 
-        # 预设打印服务：管理员维护的「一段描述」，学生下单时可以挑一条套用。
+        # 预设打印服务：管理员维护的「一条服务」，学生下单时可以挑一条套用。
         #
-        # 只有 content 一个业务字段，是刻意的：见 config.PRESET_CONTENT_MIN 上面那段
-        # 「多一个短名就有两处描述」的说明。要停用一种预设就 is_active = 0，
-        # 不删 —— 老订单里存的虽然是文本快照，列表页还按 preset_id 反查它是不是还在，
-        # 删掉只会让那一列永远显示「预设已删除」，而停用还能说清「这条停用了」。
+        # v22 起它不再只是「一段描述」，而是**一份服务**：正文之外还可以带
+        #   ① doc_file / doc_name —— 一份标准文档，学生能在线看（只看、不给下载）；
+        #   ② price_item_id —— 绑一条价目项（这条服务用什么纸、什么工艺）；
+        #   ③ preset_price —— 这条服务的定价（元/份），填了就不再按页数公式估。
+        # 加这三样是因为「预设」原先只能描述要求，价格和纸还得学生自己再选一遍 ——
+        # 而一条服务本来就说清了「这份东西怎么打、多少钱」，再让学生选一次
+        # 只会出现「选的服务是胶装、纸却选了相纸」这种自相矛盾的组合。
+        #
+        # 要停用一种预设就 is_active = 0，不删 —— 老订单里存的虽然是文本快照，
+        # 列表页还按 preset_id 反查它是不是还在，删掉只会让那一列永远显示「预设已删除」，
+        # 而停用还能说清「这条停用了」。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS print_presets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1009,12 +1026,32 @@ def init_database():
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_by INTEGER,
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                doc_file TEXT,
+                doc_name TEXT,
+                price_item_id INTEGER,
+                preset_price REAL
             )
         ''')
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_print_presets_active ON print_presets(is_active)'
         )
+        # v22 的四列（老库补列）。
+        # ⚠️ **必须排在上面那句 CREATE TABLE 之后** —— 全新库的建表语句里已经带着
+        # 这四列，老库才需要 ALTER。挪到文件前面那段通用补列区里，全新库会对着
+        # 还不存在的表 ALTER，init_database 当场挂 ——
+        # 这是 v19（paper_types）、v20（user_prefs）、v21 各踩过一次的那个坑，
+        # 而所有回归脚本跑的都是全新库，发现不了。判据：跑 check_old_db_upgrade.py。
+        preset_columns = {row[1] for row in
+                          cursor.execute('PRAGMA table_info(print_presets)').fetchall()}
+        if 'doc_file' not in preset_columns:
+            cursor.execute('ALTER TABLE print_presets ADD COLUMN doc_file TEXT')
+        if 'doc_name' not in preset_columns:
+            cursor.execute('ALTER TABLE print_presets ADD COLUMN doc_name TEXT')
+        if 'price_item_id' not in preset_columns:
+            cursor.execute('ALTER TABLE print_presets ADD COLUMN price_item_id INTEGER')
+        if 'preset_price' not in preset_columns:
+            cursor.execute('ALTER TABLE print_presets ADD COLUMN preset_price REAL')
 
         # 纸张类型：管理员自己加（A4 / A3 / 16K / 相纸……），不写死在代码里。
         #

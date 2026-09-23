@@ -4,6 +4,7 @@ import re
 import uuid
 import zipfile
 import secrets
+from pathlib import Path
 
 from config import (
     ALLOWED_EXTENSIONS,
@@ -149,6 +150,30 @@ def content_signature_error(path, ext):
     logger.warning('上传文件内容与扩展名不符：扩展名=%s 期望=%s 实际文件头=%r',
                    ext, '|'.join(kind for _sig, kind in entry), head)
     return _SIGNATURE_MISMATCH_HINT
+
+
+
+def resolve_contained_file(root, filename):
+    """把「库里存的那个文件名」还原成 root 目录下的真实路径；出了目录或不存在就 None。
+
+    库里存的应当永远是我们自己生成的 uuid 名（收款码 / 机器人二维码 / 预设文档
+    都是这么存的）。正常不会出事 —— 但历史数据、手工改库、或者以后有人把某处
+    改成「用原始文件名」，这一步就是唯一的拦网：`Path(root, filename)` 拼出来的是
+    用户可控的字符串，不做这一步校验的话，`../../.env` 就是一个能读到任意文件的口子。
+
+    三个调用点（收款码 / 二维码 / 预设文档）各写一遍迟早漏一处，
+    而漏掉的那处不报错、只是多了一条读文件的路 —— 所以抽在这里。
+    """
+    if not filename:
+        return None
+    root_path = Path(root).resolve()
+    try:
+        path = Path(root_path, filename).resolve()
+        path.relative_to(root_path)          # 不在目录内会抛 ValueError
+    except (OSError, ValueError):
+        logger.warning('文件不在预期目录内，已忽略（name=%s）', filename)
+        return None
+    return path if path.is_file() else None
 
 
 

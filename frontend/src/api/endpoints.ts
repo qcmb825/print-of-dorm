@@ -1,7 +1,7 @@
 /** 接口封装 —— 按功能域分组，返回的已经是拆过信封的强类型数据。
  *  路径与权限见 README「接口一览」和 routes/ 下各模块。
  */
-import { del, download, get, post, put, putRaw, upload } from './client'
+import { del, download, get, getBinary, post, put, putRaw, upload } from './client'
 import type {
   AdminUsersResponse,
   BotHint,
@@ -15,6 +15,7 @@ import type {
   ChunkSession,
   DashboardStats,
   Duplex,
+  EstimateResponse,
   MeOverviewResponse,
   MeResponse,
   OrderLogListResponse,
@@ -26,6 +27,8 @@ import type {
   OtherContactType,
   PaperTypeListResponse,
   PickupLookupResponse,
+  PreparedOrderRequest,
+  PresetInput,
   PriceItemInput,
   PriceItemListResponse,
   PriceRules,
@@ -45,6 +48,7 @@ import type {
   TicketMessagesResponse,
   TicketStatus,
   UploadOptions,
+  UploadPrepareResponse,
   UploadResponse,
   UserPrefs,
 } from './types'
@@ -144,6 +148,35 @@ export const orderApi = {
     }
     return upload<UploadResponse>('/api/upload', form, onProgress)
   },
+
+  /** **预上传**：把文件先传上来、先不下单，换一个 file_token 去试算。
+   *
+   *  这是下单页实时预估的第一步（见后端 routes/estimate.py 开头那段）。
+   *  与 upload() 的区别只有「建不建单」——文件本身的校验、
+   *  频控、配额与直传那条路完全共用。 */
+  prepare: (file: File, onProgress?: (percent: number) => void) => {
+    const form = new FormData()
+    form.append('file', file)
+    return upload<UploadPrepareResponse>('/api/upload/prepare', form, onProgress)
+  },
+
+  /** 实时试算。**公式在服务端**（pricing.py），前端不镜像 ——
+   *  镜像必然漂移，而漂了不报错，只是页面上的数字开始说谎。
+   *
+   *  两种来源二选一：`file_token`（文件单，页数由服务端数）
+   *  或 `preset_id`（打印服务，价与纸取自那条服务）。 */
+  estimate: (payload: {
+    file_token?: string
+    preset_id?: number
+    price_item_id?: number | null
+    copies: number
+    duplex: Duplex
+  }) => post<EstimateResponse>('/api/estimate', payload),
+
+  /** 用预上传好的文件建单 —— 「先上传、后下单」那条链的最后一步。 */
+  createFromPrepared: (payload: PreparedOrderRequest) =>
+    post<UploadResponse>('/api/order/prepared', payload),
+
   /** 用预设打印服务下单 —— 这一单**没有文件**。
    *  单独一个接口而不是给 upload 传「文件为空」：那样这个函数就有两种
    *  完全不同的输入形状，谁调用它、传了什么都看不出。
@@ -201,6 +234,9 @@ export const chunkApi = {
   /** 所有分片到位后合并落盘并生成订单。 */
   complete: (uploadId: string, options: UploadOptions) =>
     post<UploadResponse>(`/api/upload/chunked/${uploadId}/complete`, options),
+  /** 合并落盘，但**先不下单** —— 收进预上传区换一个 file_token（大文件版的实时预估）。 */
+  prepare: (uploadId: string) =>
+    post<UploadPrepareResponse>(`/api/upload/chunked/${uploadId}/prepare`, {}),
   /** 放弃一份未完成的上传，腾出额度。界面上没放入口，留给工具和未来的运维需要。 */
   cancel: (uploadId: string) =>
     del<{ code: number; msg: string }>(`/api/upload/chunked/${uploadId}`),
@@ -352,13 +388,24 @@ export const printOptionsApi = {
 
 export const staffPrintOptionsApi = {
   presets: () => get<PrintPresetListResponse>('/api/admin/print-presets'),
-  createPreset: (content: string) =>
-    post<{ code: number; msg: string; id: number }>('/api/admin/print-presets', { content }),
-  updatePreset: (id: number, content: string) =>
-    put<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`, { content }),
+  createPreset: (payload: PresetInput) =>
+    post<{ code: number; msg: string; id: number }>('/api/admin/print-presets', payload),
+  updatePreset: (id: number, payload: PresetInput) =>
+    put<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`, payload),
   setPresetActive: (id: number, active: boolean) =>
     put<{ code: number; msg: string }>(`/api/admin/print-presets/${id}/active`, { active }),
   removePreset: (id: number) => del<{ code: number; msg: string }>(`/api/admin/print-presets/${id}`),
+
+  /** 传（或换一份）预设的附带文档。只收 pdf / jpg / png ——
+   *  判据是「浏览器能不能原样渲染出来」，见后端 PRESET_DOC_EXTENSIONS。 */
+  uploadPresetDoc: (id: number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return upload<{ code: number; msg: string; doc_name: string }>(
+      `/api/admin/print-presets/${id}/doc`, form)
+  },
+  removePresetDoc: (id: number) =>
+    del<{ code: number; msg: string }>(`/api/admin/print-presets/${id}/doc`),
 
   papers: () => get<PaperTypeListResponse>('/api/admin/paper-types'),
   /** price_delta 是「这种纸每页加价」（元/页），可以不传 —— 不传就保持原值。
@@ -483,3 +530,17 @@ export const botHintApi = {
 /** 二维码原图地址。**同一个地址换码后立刻生效**（服务端 no-store），
  *  所以不需要带时间戳参数去破缓存。 */
 export const BOT_QR_URL = '/api/bot-qr'
+
+
+/* 预设打印服务的附带文档：**在线看**，不给下载。
+ *
+ * 后端那条 GET 只要求登录（学生也要看），返回 `Content-Disposition: inline`
+ * 的原图；前端交给 PresetDocViewer 渲染。**它不是 DRM**，别把它当成权限边界 ——
+ * 能看到的字节本来就在用户浏览器里，真正的边界是「只给登录用户」这一条。
+ * 界面上没有下载入口，这就是「不提供下载选项」的全部含义。 */
+export const presetDocApi = {
+  /** 图片类型的原图地址（直接当 <img> 的 src 用，浏览器自己加载与缓存）。 */
+  url: (presetId: number) => `/api/preset-doc/${presetId}`,
+  /** 取回 PDF 的字节（交给 pdf.js 渲染到 canvas）。 */
+  binary: (presetId: number) => getBinary(`/api/preset-doc/${presetId}`),
+}

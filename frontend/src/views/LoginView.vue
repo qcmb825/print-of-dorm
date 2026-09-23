@@ -76,6 +76,16 @@ const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
   value,
 }))
 
+/** 品牌行的「喵」个数：**每次刷新都不一样**（主人点名要的，全站唯一一处不走简报体）。
+ *
+ *  为什么在本地掷骰子、不向服务端要：它是个纯装饰，一次刷新变一次就是它全部的意义，
+ *  为它多跑一个请求反而会在打开页面时抖一下。
+ *  上下限的由来：3 是「比原来那两行多一点」的下限，9 是上限 —— 再多就会把
+ *  lg 断点左边那一栏（只有 1fr 宽）撑到难看地折行。 */
+const MEOW_MIN = 3
+const MEOW_MAX = 9
+const meowCount = MEOW_MIN + Math.floor(Math.random() * (MEOW_MAX - MEOW_MIN + 1))
+
 /** 品牌区那三条流程说明。编号写死在这里而不是从路由取：它们描述的是**服务流程**，
  *  不是页面 —— 与导航栏那几项没有一一对应关系，混用会让以后改导航的人莫名背锅。 */
 const flowRows = [
@@ -321,9 +331,18 @@ onMounted(async () => {
         </div>
 
         <div class="mt-7">
-          <p class="max-w-md font-heading text-4xl leading-[1.08] font-bold tracking-[-0.04em]">
-            把字交给纸<br />
-            <span style="color: var(--accent-text)">把纸交到你手上</span>
+          <!-- 品牌行：一堆「喵」（主人点名要的，全站唯一一处不走简报体的地方，
+               别按文案规范「改回去」）。**个数每次刷新都不同**，交替上色、
+               最后一个带波浪号 —— 它是这一页的招牌，不是一条读数，所以允许它不一致。
+               下面那行才是这页真正要说的事。 -->
+          <p
+            class="flex max-w-md flex-wrap items-baseline gap-x-2 font-heading text-4xl leading-[1.15] font-bold tracking-[-0.04em]"
+          >
+            <span
+              v-for="n in meowCount"
+              :key="n"
+              :style="n % 2 === 0 ? 'color: var(--accent-text)' : undefined"
+            >{{ n === meowCount ? '喵~' : '喵' }}</span>
           </p>
           <p class="mt-4 max-w-sm text-base leading-7 text-ink-3">
             上传文件 → 接单打印 → 凭单号取件

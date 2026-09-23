@@ -5,8 +5,12 @@
 """
 from . import (account, admin, announcements, bot, bot_hint, history, order_options, orders,
                price_table, tickets)
-# upload_chunks 依赖 orders 里的建订单函数，所以写在上面那行之后：
-# Python 从左到右导入，到这一行时 orders 已经进了 sys.modules。
+# estimate 依赖 orders（建单、落盘校验），order_options 依赖它读预设 —— 都写在上面那行之后。
+# 它管的是「先上传、后下单」那条链：预上传 + 实时试算 + 用预上传的文件建单，
+# 见 routes/estimate.py 开头那段。
+from . import estimate
+# upload_chunks 依赖 orders 里的建订单函数，还依赖 estimate 的预上传区
+# （合并完先不下单那条路），所以写在上面两行之后。
 from . import upload_chunks
 # audit 这个名字容易和「审计日志」(audit_action) 混起来，这里指的是
 # 「身份审核」—— 学号不在名单上时的人工通道，见 routes/audit.py 开头。
@@ -18,6 +22,7 @@ BLUEPRINTS = (
     account.bp,
     bot.bp,
     orders.bp,
+    estimate.bp,
     upload_chunks.bp,
     admin.bp,
     history.bp,

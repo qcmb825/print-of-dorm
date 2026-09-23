@@ -260,6 +260,20 @@ export async function putRaw<T>(
   return response.data
 }
 
+/** 取回一段二进制（预设文档预览用，交给 pdf.js 渲染成 canvas）。
+ *
+ *  走 axios 而不是直接 `fetch`：只有这条出口才有统一的错误提示 ——
+ *  预览拉不到时要说得出一句「为什么」，而不是给用户一块空白。
+ *  超时按文件大小估（与 download 同一套算法），大文档在慢链路上不会被 30 秒掐断。
+ */
+export async function getBinary(url: string, sizeBytes?: number): Promise<ArrayBuffer> {
+  const timeout = sizeBytes
+    ? Math.min(Math.ceil((sizeBytes / 307_200) * 1.5 * 1000), 600_000)
+    : 300_000
+  const response = await http.get<ArrayBuffer>(url, { responseType: 'arraybuffer', timeout })
+  return response.data
+}
+
 /** 以 blob 取回文件再触发浏览器下载 -- 走 axios 才有统一的错误处理。
  *
  *  @param sizeBytes 文件预期大小（字节）。用于计算超时：按 300KB/s 的保守速率

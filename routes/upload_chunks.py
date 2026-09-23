@@ -46,6 +46,7 @@ from config import (
     ALLOWED_EXTENSIONS,
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_MB,
+    PENDING_UPLOAD_MAX_FILES,
     UPLOAD_FOLDER,
     logger,
 )
@@ -57,10 +58,14 @@ from .orders import (
     UPLOAD_MAX_IN_WINDOW,
     UPLOAD_WINDOW_SECONDS,
     create_order_from_saved_file,
+    discard_upload_file,
     quota_rejection,
     register_chunk_usage_provider,
     resolve_price_item,
 )
+# estimate 依赖 orders，本模块又依赖 estimate —— 没有环：orders 谁都不依赖。
+# 用它的是「合并完先不下单」那条路（见下面 api_chunk_prepare）。
+from .estimate import cleanup_pending, pages_for_pending, pending_count, store_pending_file
 
 bp = Blueprint('upload_chunks', __name__)
 
@@ -655,6 +660,73 @@ def api_chunk_put(upload_id, index):
     })
 
 
+def merge_session(upload_id, session_dir, meta):
+    """把分片会话合并成一个完整文件，返回 (final_path, failure)。
+
+    failure 非空时调用方直接 `return failure`。会话目录「该留还是该清」也由这里定：
+      · **留**：分片还没收齐 —— 用户把那几片补上再提交就行，不用从头开始；
+      · **清**：内容与扩展名不符、或合并时报错 —— 同样的字节再合一次也不会变得合规。
+
+    抽出来是因为「合并」现在有两个出口：`/complete`（合并完就下单）与
+    `/prepare`（合并完先落进预上传区，让学生看到预估再下单）。
+    复制成两份的话，哪天补了一条校验，只改了其中一处 ——
+    症状会是「大文件走预上传那条路时漏了一道检查」，而两次合并都成功。
+    """
+    ext = meta['filename'].rsplit('.', 1)[1].lower()
+    final_path = os.path.join(UPLOAD_FOLDER, '%s.%s' % (uuid.uuid4().hex, ext))
+
+    received = set(_received_indexes(session_dir))
+    missing = [i for i in range(meta['total_chunks']) if i not in received]
+    if missing:
+        # 会话目录原地没动过，用户把那几片补上再提交就行，不用从头开始
+        return None, (jsonify({
+            'code': 400,
+            'msg': '还有 %s 个分片没有收到，请继续上传' % len(missing),
+            'missing': missing,
+        }), 400)
+
+    try:
+        with open(final_path, 'wb') as out:
+            for index in range(meta['total_chunks']):
+                part_path = os.path.join(session_dir, _part_name(index))
+                # 每片的大小都要对得上 —— 前面收分片时已经查过一遍，
+                # 这里再查是因为「文件被别人动过」和「磁盘写满」都只会在这一刻暴露。
+                actual = os.path.getsize(part_path)
+                want = _expected_part_size(meta, index)
+                if actual != want:
+                    raise ValueError('第 %s 片大小是 %s，期望 %s' % (index, actual, want))
+                with open(part_path, 'rb') as src:
+                    shutil.copyfileobj(src, out, 1024 * 1024)
+
+        merged_size = os.path.getsize(final_path)
+        if merged_size != meta['size']:
+            raise ValueError('合并后 %s 字节，声明的是 %s 字节' % (merged_size, meta['size']))
+    except Exception:
+        discard_upload_file(final_path)
+        logger.exception('分片合并失败 upload_id=%s 文件=%s 用户=%s ip=%s',
+                         upload_id, meta['filename'], g.user['nickname'], client_ip())
+        # 分片清掉：失败的会话本来就已经不可用（分片可能被读坏了），
+        # 让用户重传比留个再也合不上的残骸更干净。
+        shutil.rmtree(session_dir, ignore_errors=True)
+        return None, (jsonify({'code': 500, 'msg': '文件合并失败，请重新上传'}), 500)
+
+    # 内容校验只能放在这一刻：init 时手上只有文件名和声明的大小，
+    # 里面装的是什么字节，要到分片拼成一个完整文件之后才看得到。
+    content_error = content_signature_error(final_path, ext)
+    if content_error is not None:
+        security_event('upload_content_mismatch',
+                       '分片上传 upload_id=%s 文件「%s」的内容与扩展名 %s 不符'
+                       % (upload_id, meta['filename'][:80], ext))
+        # 整份丢掉：这份文件里有问题的字节是接单人**必然会打开**的，
+        # 留一份在盘上等人点开，正是要防的那件事。
+        discard_upload_file(final_path)
+        shutil.rmtree(session_dir, ignore_errors=True)
+        return None, (jsonify({'code': 400, 'msg': content_error}), 400)
+
+    return final_path, None
+
+
+
 @bp.route('/api/upload/chunked/<upload_id>/complete', methods=['POST'])
 @login_required
 def api_chunk_complete(upload_id):
@@ -712,63 +784,18 @@ def api_chunk_complete(upload_id):
         logger.info('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
         return jsonify({'code': 409, 'msg': '这份上传正在处理中，请勿重复提交'}), 409
 
-    ext = meta['filename'].rsplit('.', 1)[1].lower()
-    final_path = os.path.join(UPLOAD_FOLDER, '%s.%s' % (uuid.uuid4().hex, ext))
     try:
-        received = set(_received_indexes(session_dir))
-        missing = [i for i in range(meta['total_chunks']) if i not in received]
-        if missing:
-            # 会话目录原地没动过，用户把那几片补上再提交就行，不用从头开始
-            return jsonify({
-                'code': 400,
-                'msg': '还有 %s 个分片没有收到，请继续上传' % len(missing),
-                'missing': missing,
-            }), 400
-
-        with open(final_path, 'wb') as out:
-            for index in range(meta['total_chunks']):
-                part_path = os.path.join(session_dir, _part_name(index))
-                # 每片的大小都要对得上 —— 前面收分片时已经查过一遍，
-                # 这里再查是因为「文件被别人动过」和「磁盘写满」都只会在这一刻暴露。
-                actual = os.path.getsize(part_path)
-                want = _expected_part_size(meta, index)
-                if actual != want:
-                    raise ValueError('第 %s 片大小是 %s，期望 %s' % (index, actual, want))
-                with open(part_path, 'rb') as src:
-                    shutil.copyfileobj(src, out, 1024 * 1024)
-
-        merged_size = os.path.getsize(final_path)
-        if merged_size != meta['size']:
-            raise ValueError('合并后 %s 字节，声明的是 %s 字节' % (merged_size, meta['size']))
-
-        # 内容校验只能放在这一刻：init 时手上只有文件名和声明的大小，
-        # 里面装的是什么字节，要到分片拼成一个完整文件之后才看得到。
-        content_error = content_signature_error(final_path, ext)
-        if content_error is not None:
-            security_event('upload_content_mismatch',
-                           '分片上传 upload_id=%s 文件「%s」的内容与扩展名 %s 不符'
-                           % (upload_id, meta['filename'][:80], ext))
-            # 整份丢掉，会话目录也一起清：这份文件里有问题的字节是接单人**必然会打开**的，
-            # 留一份在盘上等人点开，正是要防的那件事；而同样的内容再合并一次也不会变得合规。
-            try:
-                os.remove(final_path)
-            except OSError:
-                logger.warning('清理内容校验失败的合并文件失败: %s', final_path)
-            shutil.rmtree(session_dir, ignore_errors=True)
-            return jsonify({'code': 400, 'msg': content_error}), 400
-
+        final_path, failure = merge_session(upload_id, session_dir, meta)
+        if failure is not None:
+            return failure
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——单号重摇、失败清理都只有一份实现。
         order_id, pickup_code, est_price = create_order_from_saved_file(
             meta['filename'], final_path, color, duplex, remark, copies, item)
     except Exception:
-        # create_order_from_saved_file 失败时自己删了文件；这里兜住合并阶段抛出的异常
-        if os.path.exists(final_path):
-            try:
-                os.remove(final_path)
-            except OSError:
-                logger.warning('清理合并失败的文件失败: %s', final_path)
-        logger.exception('分片合并失败 upload_id=%s 文件=%s 用户=%s ip=%s',
+        # create_order_from_saved_file 失败时自己删了文件；这里兜住剩下的异常
+        discard_upload_file(final_path)
+        logger.exception('分片合并后建单失败 upload_id=%s 文件=%s 用户=%s ip=%s',
                          upload_id, meta['filename'], g.user['nickname'], client_ip())
         # 分片仍然清掉：失败的会话本来就已经不可用（分片可能被读坏了），
         # 让用户重传比留个再也合不上的残骸更干净。与改动前同一口径。
@@ -792,6 +819,87 @@ def api_chunk_complete(upload_id):
         # 与直传那条路同一个字段（预估价可能为 null）：
         # 大文件走分片、小文件走直传，两个下单口回给前端的东西必须一模一样。
         'est_price': est_price,
+    })
+
+
+
+@bp.route('/api/upload/chunked/<upload_id>/prepare', methods=['POST'])
+@login_required
+def api_chunk_prepare(upload_id):
+    """分片到齐后合并成一个文件，**但先不下单** —— 收进预上传区换一个 token。
+
+    这是「先上传、后下单」那条链的大文件版本（小文件走 /api/upload/prepare），
+    之后前端拿这个 token 反复试算、最后调 /api/order/prepared 建单
+    （见 routes/estimate.py 开头那段）。
+
+    与 /complete 的差别**只有最后一步**：合并、锁、清理、失败处理全部共用
+    merge_session，所以两条路的成败判据不会漂移。
+    """
+    # 合并也是往盘上写文件，与 /complete 共用同一把频控计数器。
+    if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
+        return rate_limited('upload_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次上传'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
+
+    session_dir, meta, failure = _load_session(upload_id)
+    if failure is not None:
+        return failure
+
+    data = request.get_json(silent=True) or {}
+    if data.get('preset_id'):
+        return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
+
+    # 份数上限先判：别白合一份出来再告诉人家放不下（与直传预上传同一个数）。
+    cleanup_pending()
+    kept = pending_count(g.user['id'])
+    if kept >= PENDING_UPLOAD_MAX_FILES:
+        return jsonify({
+            'code': 429,
+            'msg': '还有 %s 份文件传了没下单，先下掉它们、或者重选一份' % kept,
+        }), 429
+
+    try:
+        lock_path, busy = _acquire_merge_lock(upload_id)
+    except OSError as exc:
+        logger.exception('创建合并锁失败 upload_id=%s：%s', upload_id, exc)
+        return jsonify({'code': 500, 'msg': '服务器暂时无法处理这份上传，请稍后重试'}), 500
+    if busy:
+        logger.info('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
+        return jsonify({'code': 409, 'msg': '这份上传正在处理中，请勿重复提交'}), 409
+
+    try:
+        final_path, failure = merge_session(upload_id, session_dir, meta)
+        if failure is not None:
+            return failure
+        ext = meta['filename'].rsplit('.', 1)[1].lower()
+        try:
+            token = store_pending_file(g.user['id'], final_path, ext)
+        except OSError:
+            # 没能收进预上传区：把合并结果删掉。分片会话**留着**——
+            # 它没被破坏，用户再点一次「提交」就能重来，不必重传几十兆。
+            discard_upload_file(final_path)
+            logger.exception('合并结果收进 .pending 失败 upload_id=%s 用户=%s',
+                             upload_id, g.user['nickname'])
+            return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
+    finally:
+        _release_merge_lock(lock_path)
+    # 分片已经在合并结果里了（那份文件现在住在 .pending）。
+    shutil.rmtree(session_dir, ignore_errors=True)
+
+    pages, note = pages_for_pending(g.user['id'], token)
+    logger.info('分片上传完成（合并 -> 预上传）upload_id=%s 用户=%s 文件=%s 大小=%sKB '
+                '共 %s 片 页数=%s ip=%s',
+                upload_id, g.user['nickname'], meta['filename'],
+                meta['size'] // 1024, meta['total_chunks'],
+                pages if pages is not None else '（%s）' % note, client_ip())
+    return jsonify({
+        'code': 0,
+        'file_token': token,
+        'filename': meta['filename'],
+        'size': meta['size'],
+        'pages': pages,
+        'pages_note': note,
     })
 
 

@@ -339,6 +339,35 @@ BOT_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
 BOT_QR_MAX_BYTES = max(64 * 1024, env_int('BOT_QR_MAX_BYTES', 4 * 1024 * 1024))
 
 
+# ---- 预设打印服务的附带文档（2026-09-24 加）--------------------------------
+# 一条打印服务可以带一份「标准文档」：学生下单时能**在线看**它长什么样
+# （比如「这份表就是照着打的」），而不是靠正文里那句描述去猜。
+#
+# 与二维码同一个套路：库里存**文件名**，目录由这里决定 —— 换盘或改目录名只改配置。
+# 为什么单开一个目录、不塞进 UPLOAD_FOLDER：那个目录装的是订单附件，生命周期跟着
+# 订单走（撤回订单会删文件、运维清理整目录扫的就是它）。预设文档是长期资产，
+# 混进去早晚被顺手清掉，而且是**静默**清掉 —— 学生打开预览只会看到一块空白。
+PRESET_DOC_FOLDER = resolve_path(
+    os.getenv('PRESET_DOC_FOLDER', '').strip() or os.path.join(DATA_DIR, 'preset_docs')
+)
+
+os.makedirs(PRESET_DOC_FOLDER, exist_ok=True)
+
+# 只收这三种，判据是**浏览器能不能原样渲染出来**。
+# docx / doc 明确不收：网页里没有版式引擎，把它转成文本再预览，学生看到的
+# 排版和真正打出来的不是一回事 —— 而这一屏的用途恰恰是「看一眼长什么样」，
+# 给一份会骗人的预览比不给更糟。管理员要提供 Word 模板，先导出成 PDF。
+PRESET_DOC_EXTENSIONS = ('pdf', 'jpg', 'jpeg', 'png')
+
+# 单份预设文档的上限。它是**模板**（一页表格、一份样张），不是学生作业，
+# 20MB 已经远超正常用量；上限直接决定学生点「预览」时要等多久。
+PRESET_DOC_MAX_BYTES = max(1024 * 1024, env_int('PRESET_DOC_MAX_BYTES', 20 * 1024 * 1024))
+
+# 预设服务的定价（preset_price）上限，与价目表里的单价同一套口径。
+# 它在界面上的名字是「本服务定价（元/份）」——**每份**，总价由它乘份数得来。
+PRESET_PRICE_MAX = float(env_int('PRESET_PRICE_MAX', 999))
+
+
 # 兜底收款码：接单人没传自己的码、内置管理员也没传时，用这一张。
 # 留住它是为了让「还没人上传过」这件事不表现为邮件缺图 ——
 # 部署时把默认管理员那张码丢成 data/pay_qr/default.png 就能立刻跑起来。
@@ -362,6 +391,24 @@ ALLOWED_EXTENSIONS = {
     for ext in os.getenv('ALLOWED_EXTENSIONS', 'pdf,jpg,jpeg,png,doc,docx').split(',')
     if ext.strip()
 }
+
+
+# ---- 预上传（下单页的实时预估要用）----------------------------------------
+# 学生选完文件就先把文件传上来（但**先不下单**），服务端据此数出页数、
+# 算出一个可以随配置实时重算的预估价 —— 见 routes/estimate.py 开头那段。
+#
+# TTL 给 6 小时：比一次下单会话长得多（选完文件去改个论文、吃个饭再回来是常事），
+# 又远比「永远」短。清理是惰性的（下次有人预上传时顺带扫一遍）。
+PENDING_UPLOAD_TTL_HOURS = max(1, env_int('PENDING_UPLOAD_TTL_HOURS', 6))
+
+# 每个账号最多留几份「传了但还没下单」的文件。与分片会话那个上限同一套思路：
+# 拦的不是正常用户（他一次也就准备一份），而是拿这个接口当网盘刷的人。
+PENDING_UPLOAD_MAX_FILES = max(1, env_int('PENDING_UPLOAD_MAX_FILES', 5))
+
+# 试算接口的频控。它被调得很勤是**正常的**——学生每改一次份数就重算一次，
+# 所以额度给得很宽：一分钟 90 次，足够一次下单会话随便点，又拦得住脚本刷。
+ESTIMATE_WINDOW_SECONDS = 60
+ESTIMATE_MAX_IN_WINDOW = max(10, env_int('ESTIMATE_MAX_IN_WINDOW', 90))
 
 
 # 订单状态机

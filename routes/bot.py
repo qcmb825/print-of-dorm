@@ -41,7 +41,8 @@ from db import db_conn, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
 from utils import allowed_file, content_signature_error, parse_copies
 from .orders import (create_order_from_saved_file, create_preset_order, log_event,
-                     quota_rejection, quota_snapshot, resolve_price_item,
+                     quota_rejection, quota_snapshot, resolve_preset_item,
+                     resolve_price_item,
                      UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
 
 bp = Blueprint('bot', __name__)
@@ -256,17 +257,43 @@ def _presets_payload(conn=None):
             rows = _active_presets(own)
     else:
         rows = _active_presets(conn)
-    return {'presets': [{'preset_id': row['id'],
-                         # 换行压成空格：QQ 消息里一段多行说明会把清单顶得没法看
-                         'content': (row['content'] or '').replace('\n', ' ')}
-                        for row in rows]}
+    return {'presets': [_preset_dict(row) for row in rows]}
+
+
+def _preset_dict(row):
+    """一条预设对机器人的样子。
+
+    文本清单、卡片、下单流程共用这一份 —— 各拼一次迟早出现
+    「清单上写着 ¥5、卡片上却没有价」这种同一件事两个说法。
+    v22 起带上定价与绑定的价目项：学生选服务时该看到的正是
+    「这条服务多少钱、用什么纸」，而不是只看到一句描述。
+    """
+    return {
+        'preset_id': row['id'],
+        # 换行压成空格：QQ 消息里一段多行说明会把清单顶得没法看
+        'content': (row['content'] or '').replace('\n', ' '),
+        'price_item_id': row['price_item_id'],
+        'price_item_label': pricing.format_item_label(
+            {'paper': row['item_paper'], 'kind': row['item_kind']}),
+        'preset_price': row['preset_price'],
+        'has_doc': bool(row['doc_name']),
+    }
 
 
 def _active_presets(conn):
-    """启用中的预设打印服务。两个端点共用一份 SQL，避免「一个改了另一个忘」。"""
-    return conn.execute(
-        'SELECT id, content FROM print_presets WHERE is_active = 1 ORDER BY id LIMIT 20'
-    ).fetchall()
+    """启用中的预设打印服务。三个端点共用一份 SQL，避免「一个改了另一个忘」。
+
+    带上绑定的价目项与定价（v22），理由见 _preset_dict。
+    """
+    return conn.execute('''
+        SELECT p.id, p.content, p.price_item_id, p.preset_price, p.doc_name,
+               i.paper AS item_paper, i.kind AS item_kind
+        FROM print_presets p
+        LEFT JOIN price_items i ON i.id = p.price_item_id
+        WHERE p.is_active = 1
+        ORDER BY p.id
+        LIMIT 20
+    ''').fetchall()
 
 
 def _price_items_payload(conn=None):
@@ -304,8 +331,7 @@ def api_bot_print_options():
     return jsonify({
         'code': 0,
         'msg': 'ok',
-        'presets': [{'preset_id': r['id'],
-                     'content': (r['content'] or '').replace('\n', ' ')} for r in presets],
+        'presets': [_preset_dict(r) for r in presets],
         'price_items': items,
     })
 
@@ -611,10 +637,10 @@ def api_bot_order_preset():
                 return jsonify({'code': 400, 'msg': '这个预设服务不存在了，重新发 /preset 看一下清单'}), 400
             if preset['is_active'] != 1:
                 return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，重新发 /preset 看一下清单'}), 400
-            item, duplex, error = resolve_price_item(conn, data)
+            item, duplex, error = resolve_preset_item(conn, preset, data)
             if error:
                 return jsonify({'code': 400, 'msg': error}), 400
-            order_id, pickup_code = create_preset_order(
+            order_id, pickup_code, est_price = create_preset_order(
                 preset, copies, item, duplex, remark, source=ORDER_SOURCE_BOT)
         except Exception:
             logger.exception('bot 预设下单失败：下单人=%s 预设#%s ip=%s',
@@ -625,8 +651,9 @@ def api_bot_order_preset():
                 order_id, g.user['nickname'], preset_id, copies, pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
                     'pickup_code': pickup_code,
-                    # 预设单恒为 null（没有文件可数页数）。键要在，理由同网页端。
-                    'est_price': None})
+                    # v22 起预设单也可能有预估价（预设价 × 份数，或按附带文档的页数算）。
+                    # 键必须在，理由同网页端。
+                    'est_price': est_price})
 
 
 @bp.post('/api/bot/order/file')

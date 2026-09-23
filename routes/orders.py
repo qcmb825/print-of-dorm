@@ -30,6 +30,7 @@ from config import (
     ORDER_STATUSES_MANUAL,
     ORDER_STATUSES_QUEUE,
     PICKUP_CODE_DIGITS,
+    PRESET_DOC_FOLDER,
     ROLE_ADMIN,
     ROLE_SUPER,
     ST_DONE,
@@ -47,7 +48,7 @@ from mail import user_mailbox
 import pricing
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import (allowed_file, content_signature_error, display_name, mask_nickname,
-                   parse_copies, parse_price, positive_int)
+                   parse_copies, parse_price, positive_int, resolve_contained_file)
 
 bp = Blueprint('orders', __name__)
 
@@ -567,9 +568,82 @@ def describe_print_options(copies, item):
 
 
 
+def _preset_bound_item_id(preset):
+    """预设绑的价目项 id（没绑、或老库那几列还没补上时是 None）。
+
+    sqlite3.Row 取一个不存在的列会抛 IndexError，所以先判 keys() ——
+    迁移中途、或脚本里拿旧形状的 Row 进来时，这条判断是唯一的兜底。
+    """
+    try:
+        if 'price_item_id' not in preset.keys():
+            return None
+        return preset['price_item_id'] or None
+    except (KeyError, TypeError):
+        return None
+
+
+
+def preset_price_of(preset):
+    """预设自己定的价（元/份）；没填就是 None（退回按页数估）。"""
+    try:
+        if 'preset_price' not in preset.keys():
+            return None
+        return preset['preset_price']
+    except (KeyError, TypeError):
+        return None
+
+
+
+def preset_doc_pages(preset):
+    """预设附带文档的页数，返回 (页数, 说明)。
+
+    没有文档、文档文件不见了、解析不出来 —— 一律 (None, 说明)，
+    与文件单同一条纪律：读不出页数只是「这单没有预估价」，绝不因此让下单失败。
+    """
+    try:
+        doc_file = preset['doc_file'] if 'doc_file' in preset.keys() else None
+        doc_name = preset['doc_name'] if 'doc_name' in preset.keys() else None
+    except (KeyError, TypeError):
+        return None, '读不出预设的文档信息'
+    if not doc_file:
+        return None, '这条预设没有附带文档'
+    path = resolve_contained_file(PRESET_DOC_FOLDER, doc_file)
+    if path is None:
+        logger.warning('预设 #%s 的附带文档文件不见了，这一单没有预估价', preset['id'])
+        return None, '预设文档文件不在'
+    return pricing.count_pages(str(path), doc_name or path.name)
+
+
+
+def resolve_preset_item(conn, preset, data):
+    """预设单要用哪一档价目项，返回 (价目项, 生效的单双面, 错误信息)。
+
+    **预设绑了就以它为准**（v22）：学生端在这种情况下连选择框都不显示，
+    所以请求里带的 price_item_id 一律忽略 —— 有人手搓一个别的档也没用，
+    「这条服务用什么纸」是管理员定的事，不是每次下单可以改的选项。
+    绑定的那一档后来被停用也照用：管理员停用的是「不再给新单选」，
+    真想让这条服务作废，该做的是停用这条服务本身（就在列表上那一栏）。
+
+    没绑 → 走学生自己选的那一档（与文件单同一套校验 resolve_price_item）。
+    """
+    bound = _preset_bound_item_id(preset)
+    if not bound:
+        return resolve_price_item(conn, data)
+    item = pricing.find_item(conn, bound)
+    duplex = pricing.normalize_duplex(data.get('duplex'))
+    if item is None:
+        # 价目项被删了（不是停用）。这不是「用默认值」能糊过去的情形 ——
+        # 这条服务声称自己用某一档纸，而那一档已经不存在了。
+        return None, duplex, '这条打印服务绑定的价目项已被删除，请联系管理员'
+    if duplex == 'double' and not pricing.supports_duplex(item):
+        duplex = 'single'
+    return item, duplex, None
+
+
+
 def create_preset_order(preset, copies, item, duplex, remark,
                         source=ORDER_SOURCE_WEB):
-    """用预设打印服务下单 —— 这一单**没有文件**，返回 (order_id, pickup_code)。
+    """用预设打印服务下单 —— 这一单**没有文件**，返回 (order_id, pickup_code, est_price)。
 
     filename / file_path 存空字符串，不是编一个假路径：
     这两列是 NOT NULL，而 SQLite 要改掉 NOT NULL 只能把整张表重建一遍，
@@ -583,14 +657,20 @@ def create_preset_order(preset, copies, item, duplex, remark,
     打印员拿着被改过的要求去核对一份早就打完的活，谁也说不清当时要的是什么。
     preset_id 一并留着，是为了能回答「这一单当初用的是哪条预设」。
 
-    **预设单没有预估价**：预估要按页数算，而这类单没有文件 —— 它要打的东西
-    就写在预设正文里（「学位论文胶装」这种）。按 1 页去估会给出一个荒唐的低价，
-    按「预设正文长度」折算更是凭空发明一个数字。所以一律留空，
-    由管理员看过实物（或者本来就按服务定价）再填。
+    **预估价（v22 起）**：预设价（元/份 × 份数）优先；没有预设价就按附带文档
+    数出的页数走公式（与文件单同一条路）。两条都不成 → 没有预估价，
+    由管理员看过实物（或者本来就按服务定价）再填 —— 这一条仍然是硬边界：
+    est_price 只是给学生看的参考，最终金额永远由管理员在订单台确认。
     """
     conn = None
     try:
         conn = get_db()
+        est_pages, est_note = preset_doc_pages(preset)
+        est_price, est_reason = pricing.estimate_for_preset(
+            conn, est_pages, copies, duplex, item, preset_price_of(preset))
+        if est_price is None:
+            logger.info('预设单预估价为空（%s / %s）：预设#%s',
+                        est_note, est_reason, preset['id'])
         order_id, pickup_code = insert_order_row(conn, {
             'user_id': g.user['id'],
             'filename': '',
@@ -608,15 +688,18 @@ def create_preset_order(preset, copies, item, duplex, remark,
             'price_item_id': item['id'] if item else None,
             'price_item_name': pricing.format_item_label(item) if item else None,
             'source': source,
-            'est_price': None,
-            'est_pages': None,
+            'est_price': est_price,
+            #    页数只在**真的估出价**时才存（与文件单同一条理由：存一个
+            #    「读了 12 页、但没算出价」的孤零零数字，界面上会显示「按 12 页估」
+            #    却又没有价格，读的人只会以为价格丢了）。
+            'est_pages': est_pages if est_price is not None else None,
         })
         log_event(order_id, ORDER_LOG_CREATE,
                   '使用预设打印服务下单：%s%s'
                   % (preset['content'], describe_print_options(copies, item)),
                   conn=conn)
         conn.commit()
-        return order_id, pickup_code
+        return order_id, pickup_code, est_price
     except Exception:
         if conn is not None:
             conn.rollback()
@@ -662,6 +745,86 @@ def resolve_price_item(conn, data):
     return row, duplex, None
 
 
+def save_incoming_file(file):
+    """把一次上传的文件落盘，并做完所有**文件本身**的校验。
+
+    返回 (info, error_response)：
+      · info = {'path', 'name', 'ext', 'size'}，成功时才非空；
+      · error_response 非空时调用方直接 `return error_response` ——
+        那种情况下盘上不会有残留文件（每一条失败路径都自己清理过了）。
+
+    「直传下单」与「预上传（只上传、先不下单）」共用这一份实现。复制成两份的话，
+    哪天放宽了白名单、或者加了新的一条嗅探规则，改漏的那一条就会变成
+    「小文件能传、大文件不能」这种没人能解释的差别。
+
+    ⚠️ 顺序是有讲究的，别调：
+      ① 配额**在落盘前**先拦一道 —— 已经超额的人连文件都不该落盘，
+         否则等于拿磁盘替被拒绝的请求付一遍代价（刷盘的正是这种人）；
+      ② 空文件与内容嗅探**在落盘后** —— 那时才知道里面装的是什么字节；
+      ③ 配额**按真实大小再核一次** —— multipart 的 Content-Length 是整个请求的
+         大小，不是文件的。只做第①道的话，卡在边界上的人每传一次就能多占一份文件。
+    """
+    original_name = os.path.basename(file.filename)
+    if not allowed_file(original_name):
+        # 上传可执行文件或脚本是典型的攻击试探，必须单独留痕
+        security_event('upload_blocked_type', '文件「%s」不在白名单内' % original_name[:80])
+        return None, (jsonify({
+            'code': 400,
+            'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
+        }), 400)
+
+    ext = original_name.rsplit('.', 1)[1].lower()
+    save_path = os.path.join(UPLOAD_FOLDER, '%s.%s' % (uuid.uuid4().hex, ext))
+
+    quota_error = quota_rejection()
+    if quota_error is not None:
+        return None, quota_error
+    try:
+        file.save(save_path)
+        file_size = os.path.getsize(save_path)
+    except OSError:
+        # 写了一半也可能留下半个文件（磁盘满就会这样），判存在再删。
+        discard_upload_file(save_path)
+        logger.exception('上传文件落盘失败：账号=%s 文件=%s ip=%s',
+                         g.user['nickname'], original_name, client_ip())
+        return None, (jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500)
+
+    if file_size == 0:
+        # 0 字节的文件排出来就是一张白纸。上传成功、下单成功、到手却什么都没有——
+        # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
+        os.remove(save_path)
+        return None, (jsonify({'code': 400, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400)
+
+    # 扩展名白名单只约束了文件名，证明不了里面装的是什么 ——
+    # 而这份文件接单人一定会打开，改名过来的可执行体不能靠「他没双击」来防。
+    content_error = content_signature_error(save_path, ext)
+    if content_error is not None:
+        os.remove(save_path)
+        security_event('upload_content_mismatch',
+                       '文件「%s」的内容与扩展名 %s 不符' % (original_name[:80], ext))
+        return None, (jsonify({'code': 400, 'msg': content_error}), 400)
+
+    quota_error = quota_rejection(file_size)
+    if quota_error is not None:
+        os.remove(save_path)
+        return None, quota_error
+
+    return {'path': save_path, 'name': original_name, 'ext': ext, 'size': file_size}, None
+
+
+
+def discard_upload_file(save_path):
+    """删掉一份刚落盘、但没能登记成订单的文件。删不掉只记 warning。"""
+    if not save_path:
+        return
+    try:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+    except OSError:
+        logger.warning('清理上传失败的文件失败: %s', save_path)
+
+
+
 @bp.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
@@ -695,53 +858,14 @@ def api_upload():
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    # 文件名安全处理 + 扩展名白名单校验
-    original_name = os.path.basename(file.filename)
-    if not allowed_file(original_name):
-        # 上传可执行文件或脚本是典型的攻击试探，必须单独留痕
-        security_event('upload_blocked_type', '文件「%s」不在白名单内' % original_name[:80])
-        return jsonify({
-            'code': 400,
-            'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
-        }), 400
-
-    # 先落盘再写库，哪一步失败都不留下孤儿文件
-    ext = original_name.rsplit('.', 1)[1].lower()
-    new_filename = f"{uuid.uuid4().hex}.{ext}"
-    save_path = os.path.join(UPLOAD_FOLDER, new_filename)
+    # 落盘 + 文件本身的校验（白名单 / 空文件 / 内容嗅探 / 配额）都在这一步，
+    # 与「预上传」那条路共用同一份实现（见 save_incoming_file 的 docstring）。
+    info, error_response = save_incoming_file(file)
+    if error_response is not None:
+        return error_response
+    save_path, original_name, file_size = info['path'], info['name'], info['size']
 
     try:
-        # 动磁盘之前先按「在盘总量」拦一道。已经超额的人连文件都不该落盘：
-        # 等到写完再说，等于拿磁盘替被拒绝的请求付一遍代价（刷盘的正是这种人）。
-        quota_error = quota_rejection()
-        if quota_error is not None:
-            return quota_error
-
-        file.save(save_path)
-        file_size = os.path.getsize(save_path)
-        if file_size == 0:
-            # 0 字节的文件排出来就是一张白纸。上传成功、下单成功、到手却什么都没有——
-            # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
-            os.remove(save_path)
-            return jsonify({'code': 400, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
-
-        # 扩展名白名单只约束了文件名，证明不了里面装的是什么 ——
-        # 而这份文件接单人一定会打开，改名过来的可执行体不能靠「他没双击」来防。
-        content_error = content_signature_error(save_path, ext)
-        if content_error is not None:
-            os.remove(save_path)
-            security_event('upload_content_mismatch',
-                           '文件「%s」的内容与扩展名 %s 不符' % (original_name[:80], ext))
-            return jsonify({'code': 400, 'msg': content_error}), 400
-
-        # 落盘后按真实大小再核一次：请求体里这份文件多大，事前拿不到准数
-        # （multipart 的 Content-Length 是整个请求的大小，不是文件的）。
-        # 只做上面那道检查的话，卡在边界上的人每传一次就能多占一份文件、永远挤得过。
-        quota_error = quota_rejection(file_size)
-        if quota_error is not None:
-            os.remove(save_path)
-            return quota_error
-
         order_id, pickup_code, est_price = create_order_from_saved_file(
             original_name, save_path, color, duplex, remark, copies, item)
     except Exception:
@@ -750,11 +874,7 @@ def api_upload():
         # 上传频控允许一分钟 20 次，刷起来很快就不是「几个残留」的量级。
         # create_order_from_saved_file 失败时自己已经删过一次，这里判存在再删，
         # 重复走到也不会出问题；删不掉只记 warning —— 它不该盖住上面那个真正的错误。
-        if os.path.exists(save_path):
-            try:
-                os.remove(save_path)
-            except OSError:
-                logger.warning('清理上传失败的文件失败: %s', save_path)
+        discard_upload_file(save_path)
         logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
                          g.user['nickname'], original_name, save_path, client_ip())
         return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
@@ -825,10 +945,10 @@ def api_create_preset_order():
             if preset['is_active'] != 1:
                 # 页面打开着、管理员刚好把它停用了。明确说清楚，别让学生以为是系统坏了。
                 return jsonify({'code': 400, 'msg': '这个预设服务已经停用了，刷新页面重新选择'}), 400
-            item, duplex, error = resolve_price_item(conn, data)
+            item, duplex, error = resolve_preset_item(conn, preset, data)
             if error:
                 return jsonify({'code': 400, 'msg': error}), 400
-            order_id, pickup_code = create_preset_order(
+            order_id, pickup_code, est_price = create_preset_order(
                 preset, copies, item, duplex, remark)
         except Exception:
             logger.exception('预设下单失败：下单人=%s 预设#%s ip=%s',
@@ -843,10 +963,11 @@ def api_create_preset_order():
         'msg': '下单成功！用的是预设服务，不需要上传文件',
         'order_id': order_id,
         'pickup_code': pickup_code,
-        # 恒为 null（预设单没有文件可数页数），但**键要在**：
-        # 前端两个下单口共用一套类型，少一个键在 TS 里是「可选」、
-        # 在运行时是 undefined，界面上就会从「预估：—」变成一整行不显示。
-        'est_price': None,
+        # v22 起预设单也可能有预估价了（预设价 × 份数，或按附带文档的页数算）。
+        # 仍然可能是 null —— 键必须在：前端两个下单口共用一套类型，
+        # 少一个键在 TS 里是「可选」、在运行时是 undefined，
+        # 界面上就会从「预估：—」变成一整行不显示。
+        'est_price': est_price,
     })
 
 

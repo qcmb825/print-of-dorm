@@ -115,6 +115,17 @@
 > （含两套前端可切换、用词统一、一键启动脚本）。两套前端的切换现在被开关铉死成新版，
 > 说明见下面「两套前端，怎么选」。
 
+> **2026-09-24 增补** —— 四件事：
+> ① **下单页实时预估**：选完文件就先传上来（但还没下单），改一次份数 / 档位 / 面数就重算一次，
+> 点「提交订单」才真的建单 —— 价格不再是「下完单才看得到」。老的上传接口一个字没改，
+> 机器人、旧页面照旧能用。
+> ② **预设打印服务**从「一段文本」扩成「一条服务」：可绑价目表里的档位、可定一个价（元/份）、
+> 可附一份**学生只能在线看**的文档（pdf.js 渲染进 canvas，页面里没有下载入口）。
+> ③ **QQ 机器人引导**改成屏幕正中的弹窗，未登录与已登录两套文案，**两边都给二维码**。
+> ④ 登录页那堆「喵」的个数改成**每次刷新都不同**。
+> 数据层加了一版迁移（v21 → v22，`print_presets` 四列），老库升级脚本同步补了断言；
+> 回归脚本新加一套 `test_estimate.py`（预上传 / 试算 / token 建单 / 预设自带的纸价文档，52 项）。
+
 ---
 
 ## ✨ 功能一览
@@ -643,6 +654,11 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `POST` | `/api/audit-request` | 公开 | 提交身份审核申请（学号 / 姓名 / 联系方式 + 说明），同一学号只能提一次 |
 | `GET` | `/api/audit-request/status` | 公开 | 查申请进度（学号 + 联系方式都对才给看，限流 20 次/小时） |
 | `POST` | `/api/upload` | 登录 | 上传文件并提交订单（落「待计费」） |
+| `POST` | `/api/upload/prepare` | 登录 | **预上传**：把文件先传上来但**不下单**，换回一个 `file_token`（放在 `UPLOAD_FOLDER/.pending/<账号>/` 下，TTL 与每账号份数上限见 `PENDING_UPLOAD_*`）。大文件走分片那条 `/api/upload/chunked/<id>/prepare` |
+| `POST` | `/api/estimate` | 登录 | **实时试算**：给「`file_token`（或 `preset_id`）+ 档位 + 份数 + 单双面」算一遍预估价。**页数由服务端数**（客户端报的不可信），公式只有 `pricing.py` 一份；算不出时回 `price: null` + 一句 `hint` |
+| `POST` | `/api/order/prepared` | 登录 | 用预上传好的那份文件建单（`file_token` + 文件原名 + 打印参数）。文件会**搬出 `.pending`**，此后生命周期跟着订单走 |
+| `GET` | `/api/preset-doc/<id>` | 登录 | 预设的附带文档原图（`Content-Disposition: inline`）。前端用 pdf.js 画进 canvas，界面上没有下载入口 —— **它不是 DRM**，真正的边界只有「只给登录用户」这一条 |
+| `POST`/`DELETE` | `/api/admin/print-presets/<id>/doc` | 管理员 | 上传 / 撤下预设的附带文档（只收 pdf / jpg / png，判据是浏览器能不能原样渲染） |
 | `POST` | `/api/order/preset` | 登录 | 预设下单：不传文件，直接套一条预设服务下单（学生端的另一条下单路径；带了文件会被 400 拒绝，频控与上传共用一个计数器） |
 | `GET`/`PUT`/`POST`/`DELETE` | `/api/upload/chunked*` | 登录 | 大文件分片：建会话 / 列未完成会话 / 查进度 / 传分片 / 合并 / 取消（路径见 `routes/upload_chunks.py`） |
 | `POST` | `/api/order/<id>/withdraw` | 登录 | 学生自助撤回**自己还没被接单**的订单 —— **网页端**唯一会真正 DELETE 订单行的接口（机器人那条 `/api/bot/order/withdraw` 同样真删），会在留痕里记一条指向已删订单的「本人撤回」 |

@@ -420,6 +420,46 @@ def estimate_for_order(conn, pages, copies, duplex, item):
         return None, '估算时出错'
 
 
+
+def estimate_for_preset(conn, pages, copies, duplex, item, preset_price):
+    """预设打印服务的预估价，返回 (金额, 说明)。**预设价优先**。
+
+    两条路：
+      · `preset_price` 填了（元/份）→ 总价 = 预设价 × 份数。
+        **不过 min_price、也不加 base_fee**：那是管理员对这条服务定的一口价，
+        而「每单基础费」是给"按页数算"那条路准备的全局系数，把它加在一口价头上
+        会得出一个连定价人自己都算不出来的数。
+      · 没填 → 退回按页数公式算（用预设附带的文档数出页数 + 它绑的价目项），
+        规矩与文件单完全一致，直接复用 estimate()。
+
+    仍然受 `enabled` 约束：关掉自动估价 = **订单上不再出现任何预估价**，
+    预设价也不例外 —— 关它的理由通常是「不想让学生看到系统给的数」，
+    而一个管理员手填的数同样会引来"凭什么收这么多"的追问。
+    """
+    try:
+        rules = get_rules(conn)
+    except Exception:
+        logger.exception('读取计价规则失败，这一单不带预估价')
+        return None, '读取计价规则失败'
+    if not rules.get('enabled'):
+        return None, '自动估价未启用'
+    if preset_price is None:
+        return estimate(rules, item, pages, copies, duplex)
+    try:
+        count = int(copies)
+    except (TypeError, ValueError):
+        count = COPIES_MIN
+    count = max(COPIES_MIN, min(COPIES_MAX, count))
+    total = round(max(0.0, float(preset_price)) * count, 2)
+    if total <= 0:
+        return None, '这条服务的定价是 0 元（检查预设里的价格）'
+    #    与 estimate() 同一条边界：超出计费上限的预估**不给** —— 那个数连管理员
+    #    都填不进最终价（utils.parse_price 会拒），摆在屏幕上只会让人以为系统坏了。
+    if total > PRICE_MAX_YUAN:
+        return None, '按这条服务的定价算出来的价格超出金额上限'
+    return total, '预设价 %s 元 × %s 份' % (_money(preset_price), count)
+
+
 # ---- 页数 -------------------------------------------------------------------
 #
 # 下面每个解析器都只做一件事：**尽力**给出一个页数，给不出就 None。

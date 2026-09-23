@@ -683,7 +683,22 @@ def start_server(host, port):
             _run_dev_server(host, port)
         else:
             logger.info('使用 waitress 生产服务器启动：http://%s:%s（8 线程）', host, port)
-            serve(app, host=host, port=port, threads=8)
+            # waitress 出于防伪造，默认会把 X-Forwarded-* 从 WSGI environ 里整个删掉：
+            # security.client_ip() 因此读不到 nginx 写进来的真实 IP，全站请求都记成
+            # 127.0.0.1。而注册、身份审核那几个限流是**按 IP 记账**的（那时还没有账号，
+            # 键只按 IP），全校于是共用一把计数器 —— 迎新季 20 次/小时的注册额度会被
+            # 一批新生打满，3 次/小时的审核申请更是一碰就满；日志与安全留痕里的 ip=
+            # 也全部失真，等于失去了「谁在做什么」这一维。
+            # （登录失败锁定用的是「IP+学号」，不受这条影响。）
+            #
+            # 信任边界：只信**来自 127.0.0.1 的连接**（应用本身也只监听回环）。开启后
+            # waitress 还会顺手净化：按 trusted_proxy_count（默认 1）只取 XFF 的
+            # **最右一跳**、丢掉左边那些客户端可能自己填的部分再写回 environ，不在
+            # 白名单里的其它 forwarded 头（X-Forwarded-Proto 之类）也一律清除 ——
+            # 所以 nginx 那边就算换成追加式写法，伪造的值同样进不来。
+            serve(app, host=host, port=port, threads=8,
+                  trusted_proxy='127.0.0.1',
+                  trusted_proxy_headers={'x-forwarded-for'})
     except (OSError, SystemExit) as exc:
         # 自检通过、真正绑定时仍然失败：属于极小概率的竞争（自检释放端口到服务器绑定
         # 之间被别的程序抢走），这种情况没什么好办法，如实报出来就行。
