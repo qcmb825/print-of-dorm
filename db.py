@@ -8,7 +8,8 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ORDER_SOURCE_BOT, ROLE_SUPER, ST_DONE,
+from config import (DATABASE_PATH, ORDER_LOG_DETAIL_MAX, ORDER_SOURCE_BOT, PICKUP_ADDRESS,
+                    ROLE_SUPER, ST_DONE,
                     ST_READY, ST_UNPRICED, STATUS_CLOSED, logger)
 from security import audit_action, make_password_records
 from utils import generate_pickup_code
@@ -147,6 +148,41 @@ def find_paper_type(conn, paper_type_id):
 
 
 
+# 站点取件信息（site_assets 的两列，v23 起）。读这一处的是三个地方
+# （学生订单载荷、取件邮件、管理端表单），所以取值只有这一个函数 ——
+# 谁自己拼 SQL，谁就成了第二处真相。
+PICKUP_FIELD_MAX = 120
+
+
+def get_pickup_info(conn=None, apply_fallback=True):
+    """读站点取件信息，返回 {'pickup_place':…, 'pickup_hours':…}（值可能为 None）。
+
+    `apply_fallback=True` 时地点为空回退 `config.PICKUP_ADDRESS` —— 老部署只配了
+    那个环境变量，升级后卡片与邮件不该因为「库里那列还没填」就空掉。
+    管理端表单用 `apply_fallback=False`：它要显示**实际存了什么**，
+    把兜底值当已存值回填进输入框，管理员保存后 env 就悄悄变成了库里的数据。
+
+    表读不到（迁移中途挂了）时按「没有」处理，绝不抛：取件信息是锦上添花，
+    订单列表不能因为它打不开。
+    """
+    sql = 'SELECT pickup_place, pickup_hours FROM site_assets WHERE id = 1'
+    try:
+        if conn is None:
+            with db_conn() as own:
+                row = own.execute(sql).fetchone()
+        else:
+            row = conn.execute(sql).fetchone()
+    except Exception:
+        logger.exception('读取站点取件信息失败，本次按「没有」处理')
+        row = None
+    place = ((row['pickup_place'] if row is not None else None) or '').strip() or None
+    hours = ((row['pickup_hours'] if row is not None else None) or '').strip() or None
+    if apply_fallback and place is None:
+        place = (PICKUP_ADDRESS or '').strip() or None
+    return {'pickup_place': place, 'pickup_hours': hours}
+
+
+
 # 数据库结构版本，用来判断是否要做一次性迁移
 # v2 -> v3：新增了联系方式列、工单表和公告表，全是加东西，老数据一概保留
 # v3 -> v4：users 表那三个列级 UNIQUE 换成「部分唯一索引」，
@@ -279,7 +315,13 @@ def find_paper_type(conn, paper_type_id):
 #            文档那一列存的是**文件名**（住 config.PRESET_DOC_FOLDER），
 #            与收款码、二维码同一个道理：存绝对路径的话，改配置那一刻全站的
 #            预览会集体失联，而且是静默失联。
-SCHEMA_VERSION = '22'
+# v22 -> v23：site_assets 加两列 pickup_place / pickup_hours（取件地点与时间）。
+#            原先取件地点只活在 .env 的 PICKUP_ADDRESS 里，改一次要重启服务，
+#            而学生端的订单卡片根本读不到它 —— 取件信息全靠公告记忆。
+#            现在它是站点级数据，住进那张「全站一行」的表，管理员在公告管理页
+#            就能改；env 退居兜底（库里为空时回退），取件邮件与订单载荷读同一处，
+#            不留第二处真相。纯加列，不回填 —— 空就是空，回退逻辑替它说话。
+SCHEMA_VERSION = '23'
 
 
 
@@ -1182,17 +1224,29 @@ def init_database():
             cursor.execute(
                 'ALTER TABLE user_prefs ADD COLUMN bot_hint_clicks INTEGER NOT NULL DEFAULT 0')
 
-        # ---- v21：全站资产（目前只有 QQ 机器人二维码）----
-        # 单行表（主键写死 1）：这张表表达的是「这个站点的某一张图是什么」，
+        # ---- v21：全站资产（QQ 机器人二维码 + v23 起的取件地点/时间）----
+        # 单行表（主键写死 1）：这张表表达的是「这个站点的一件事是什么」，
         # 没有「多条」的语义。允许插第二行只会多出一个说不清的状态 —— 到底哪一行算数？
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS site_assets (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 bot_qr_file TEXT,
+                pickup_place TEXT,
+                pickup_hours TEXT,
                 updated_by INTEGER,
                 update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # v23 补列。**必须排在上面那句 CREATE 之后**（v19/v20/v21 各踩过一次的那个坑：
+        # 对全新库的表 ALTER 一个建表语句里已经带着的列，init_database 当场挂，
+        # 而所有回归脚本跑的都是全新库，发现不了）。判据：check_old_db_upgrade.py。
+        asset_columns = {row[1] for row in
+                         cursor.execute('PRAGMA table_info(site_assets)').fetchall()}
+        if 'pickup_place' not in asset_columns:
+            cursor.execute('ALTER TABLE site_assets ADD COLUMN pickup_place TEXT')
+        if 'pickup_hours' not in asset_columns:
+            cursor.execute('ALTER TABLE site_assets ADD COLUMN pickup_hours TEXT')
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，

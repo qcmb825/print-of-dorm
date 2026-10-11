@@ -43,6 +43,7 @@ import type {
   RestoreResponse,
   Role,
   ServiceBoard,
+  SitePickup,
   TicketDetailResponse,
   TicketListResponse,
   TicketMessagesResponse,
@@ -525,6 +526,13 @@ export const botHintApi = {
     return upload<{ code: number; msg: string }>('/api/admin/bot-qr', form)
   },
   removeQr: () => del<{ code: number; msg: string }>('/api/admin/bot-qr'),
+}
+
+/* 站点取件信息（地点/时间）—— 存 site_assets，学生可取件卡片与取件邮件读同一处。
+ * GET 给的是**库里实际存的值**（不套 env 兜底），表单回填才不会把兜底值存成数据。 */
+export const sitePickupApi = {
+  get: () => get<SitePickup & { code: number }>('/api/site-pickup'),
+  save: (body: SitePickup) => put<SitePickup & { code: number; msg: string }>('/api/site-pickup', body),
 }
 
 /** 二维码原图地址。**同一个地址换码后立刻生效**（服务端 no-store），

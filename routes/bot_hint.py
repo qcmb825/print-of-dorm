@@ -20,6 +20,13 @@
 `site_assets.bot_qr_file`（**文件名**，目录由 `config.ASSET_FOLDER` 决定）。
 读取接口 `GET /api/bot-qr` **不要求登录** —— 登录页也要显示它，而它本来就是
 贴在校门口给所有人扫的那种二维码。
+
+## 取件地点 / 时间（v23 起，同一张 site_assets）
+
+`pickup_place` / `pickup_hours` 两列：管理员在公告管理页改，学生端的可取件卡片
+直接显示。库里为空时地点回退 `.env` 的 `PICKUP_ADDRESS`（老部署的既有配置），
+时间没有兜底 —— 空就是不显示。**读这一处的是三个地方**（订单载荷、取件邮件、
+管理端表单），所以取值统一走 `get_pickup_info()`，别让任何一处自己拼 SQL。
 """
 
 import os
@@ -30,8 +37,8 @@ from flask import Blueprint, Response, g, jsonify, request
 
 from auth import login_required, roles_required
 from config import (ASSET_FOLDER, BOT_HINT_MAX_CLICKS, BOT_QR_EXTENSIONS, BOT_QR_MAX_BYTES,
-                    ROLE_SUPER, logger)
-from db import db_conn
+                    ROLE_ADMIN, ROLE_SUPER, logger)
+from db import PICKUP_FIELD_MAX, db_conn, get_pickup_info
 import prefs
 from security import client_ip, security_event
 from utils import content_signature_error
@@ -245,3 +252,49 @@ def api_admin_delete_bot_qr():
     logger.info('QQ 机器人二维码已撤下 操作人=%s(%s) ip=%s',
                 g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '二维码已撤下'})
+
+
+@bp.get('/api/site-pickup')
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_site_pickup_get():
+    """管理端表单读当前存的取件信息（**不套 env 兜底**，理由见 get_pickup_info）。"""
+    return jsonify({'code': 0, **get_pickup_info(apply_fallback=False)})
+
+
+@bp.put('/api/site-pickup')
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_site_pickup_save():
+    """保存取件地点/时间（管理员可改；空串存 NULL，界面回退 env 或干脆不显示）。
+
+    UPSERT 只动这两列 —— 同一行里还住着二维码文件名，
+    写整行等于拿一份旧快照覆盖别人刚上传的图。
+    """
+    data = request.get_json(silent=True) or {}
+    values = {}
+    for field in ('pickup_place', 'pickup_hours'):
+        raw = data.get(field)
+        if raw is None:
+            values[field] = None
+            continue
+        if not isinstance(raw, str):
+            return jsonify({'code': 400, 'msg': '取件信息必须是文字'}), 400
+        text = raw.strip()
+        if len(text) > PICKUP_FIELD_MAX:
+            return jsonify({'code': 400,
+                            'msg': '取件信息太长了（上限 %d 字）' % PICKUP_FIELD_MAX}), 400
+        values[field] = text or None
+    with db_conn() as conn:
+        conn.execute('''
+            INSERT INTO site_assets (id, pickup_place, pickup_hours, updated_by)
+            VALUES (1, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                pickup_place = excluded.pickup_place,
+                pickup_hours = excluded.pickup_hours,
+                updated_by = excluded.updated_by,
+                update_time = CURRENT_TIMESTAMP
+        ''', (values['pickup_place'], values['pickup_hours'], g.user['id']))
+        conn.commit()
+    logger.info('站点取件信息已更新 地点=%s 时间=%s 操作人=%s(%s) ip=%s',
+                values['pickup_place'] or '（空）', values['pickup_hours'] or '（空）',
+                g.user['nickname'], g.user['role'], client_ip())
+    return jsonify({'code': 0, 'msg': '取件信息已保存', **values})

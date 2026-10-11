@@ -93,20 +93,29 @@ def compose_pickup_subject(order):
     return '[打印服务] 单号 %s 已可取件' % (code or '（缺失）')
 
 
-def compose_pickup_body(order, has_qr=True):
+def compose_pickup_body(order, has_qr=True, pickup=None):
     """纯文本正文。不支持 HTML 的客户端看到的就是这一份，
     所以它必须**独立完整** —— 只写「请查看 HTML 版本」等于这封信没发。
 
     `has_qr=False` 时那句「扫描下方收款码」必须一起去掉：纯文本里根本没有图，
     写了就是指向不存在的东西 —— HTML 那条路早就这么做了，纯文本漏了（邮件审计）。
+
+    `pickup` 是 `db.get_pickup_info()` 的结果（站点取件地点/时间，DB 优先 env 兜底）。
+    不传时退回 `PICKUP_ADDRESS` —— 保持老调用方与测试的形状不变。
     """
+    place = (pickup or {}).get('pickup_place') or PICKUP_ADDRESS
+    hours = (pickup or {}).get('pickup_hours')
     lines = [
         '你好%s：' % ('，' + order['owner'] if order['owner'] else ''),
         '',
         '你在小猫娘打印服务提交的订单已经打印完成，可以来取了。',
         '',
         '单号：%s' % (order['pickup_code'] or '（缺失，请联系管理员）'),
-        '取件地点：%s' % PICKUP_ADDRESS,
+        '取件地点：%s' % place,
+    ]
+    if hours:
+        lines.append('取件时间：%s' % hours)
+    lines += [
         '应付金额：%s' % _price_text(order['price']),
         '',
         '  内容：%s（%s）' % (_shorten(order['filename'] or '（无文件名）', _FILENAME_MAX),
@@ -127,7 +136,7 @@ def compose_pickup_body(order, has_qr=True):
     return '\n'.join(lines)
 
 
-def compose_pickup_html(order, has_qr=True):
+def compose_pickup_html(order, has_qr=True, pickup=None):
     """HTML 正文。
 
     has_qr=False 时不渲染 <img>：宁可不显示图，也不要让收件人看到一张破图 ——
@@ -135,13 +144,17 @@ def compose_pickup_html(order, has_qr=True):
     这种情况下正文里那句「扫描下方收款码」也得跟着去掉，
     不然说的是一张不存在的图，同样是假话。
 
+    `pickup` 同 compose_pickup_body：站点取件地点/时间，缺省退回 PICKUP_ADDRESS。
+
     样式一律写成内联 style：邮件客户端对 <style> 块和 class 的支持
     各不相同（Gmail 会直接删掉 <style>），内联是唯一到处都认的写法。
     """
+    place = (pickup or {}).get('pickup_place') or PICKUP_ADDRESS
+    hours = (pickup or {}).get('pickup_hours')
     #    列表里**不放内部订单 id**（原先第二位就是 `order['id']`）：学生这封信对外
     #    只认单号，管理员那封才有 id（邮件审计）。
     safe = [_e(order['owner']), _e(order['pickup_code'] or '（缺失，请联系管理员）'),
-            _e(PICKUP_ADDRESS), _e(_price_text(order['price'])),
+            _e(place), _e(_price_text(order['price'])),
             _e(_shorten(order['filename'] or '（无文件名）', _FILENAME_MAX)), _e(_spec_text(order))]
     owner, code, address, price, filename, spec = safe
     #    没定价（老单）时 price 那一格是「未计费」四个字，不能塞进「支付 X」的句式里
@@ -181,6 +194,11 @@ def compose_pickup_html(order, has_qr=True):
         '<p style="margin:16px 0 6px">应付金额 <strong>%s</strong>，请到取件点向管理员付款。</p>'
         % (price if _price_known else '以取件点为准'))
 
+    hours_block = (
+        '<p style="margin:0 0 4px">取件时间</p>'
+        '<p style="margin:0 0 16px;font-weight:600">%s</p>' % _e(hours)
+    ) if hours else ''
+
     return (
         '<div style="font-family:-apple-system,\'Segoe UI\',\'Microsoft YaHei\',sans-serif;'
         'font-size:14px;line-height:1.7;color:#222;max-width:560px">'
@@ -190,12 +208,13 @@ def compose_pickup_html(order, has_qr=True):
         '<p style="margin:0 0 16px;font-size:28px;font-weight:700;letter-spacing:4px">%s</p>'
         '<p style="margin:0 0 4px">取件地点</p>'
         '<p style="margin:0 0 16px;font-weight:600">%s</p>'
+        '%s'
         '<table style="border-collapse:collapse;font-size:13px;color:#444">%s</table>'
         '%s%s'
         '<p style="margin:20px 0 0;color:#999;font-size:12px">'
         '（本邮件由系统自动发出，请勿直接回复。）</p>'
         '</div>'
-    ) % (('，' + owner) if order['owner'] else '', code, address, detail_rows, pay_hint, pay_line + qr_block)
+    ) % (('，' + owner) if order['owner'] else '', code, address, hours_block, detail_rows, pay_hint, pay_line + qr_block)
 
 
 def compose_manual_subject(total):

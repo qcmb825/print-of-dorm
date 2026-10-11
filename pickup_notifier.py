@@ -44,7 +44,7 @@ from config import (CONTACT_LABELS, PAY_QR_FALLBACK_IMAGE, PAY_QR_FOLDER, PICKUP
                     ST_READY, logger)
 import prefs
 
-from db import db_conn
+from db import db_conn, get_pickup_info
 from mail import (PAY_QR_CID, alert_recipients, compose_manual_body, compose_manual_subject,
                   compose_pickup_body, compose_pickup_html, compose_pickup_subject,
                   is_configured, send_mail, user_mailbox)
@@ -182,11 +182,13 @@ def _may_notify(conn, order):
 def _send_student(order, mailbox, qr_path):
     """给一个学生发他的取件通知。一单一封，所以这里只管一笔。"""
     has_qr = bool(qr_path)
+    # 取件地点/时间读站点设置（DB 优先、env 兜底）—— 与学生端卡片同一处真相
+    pickup = get_pickup_info()
     return send_mail(
         compose_pickup_subject(order),
-        compose_pickup_body(order),
+        compose_pickup_body(order, pickup=pickup),
         [mailbox],
-        html=compose_pickup_html(order, has_qr=has_qr),
+        html=compose_pickup_html(order, has_qr=has_qr, pickup=pickup),
         inline_images=[(PAY_QR_CID, qr_path)] if has_qr else [],
         label='取件提醒',
     )
