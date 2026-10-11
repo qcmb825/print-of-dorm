@@ -188,3 +188,11 @@ router.beforeEach(async (to) => {
   if (to.meta.super && !auth.advancedAllowed) return '/staff/orders'
   return true
 })
+
+// 标题跟着路由走：全站一个标题时，用户在浏览器标签栏/书签里找「我的订单」
+// 只能挨个点。页面名取最深一层 matched 的 meta.title —— 与换场场记板同源，
+// 路由表仍是页面名的单一事实来源，这里不另写一份名字。
+router.afterEach((to) => {
+  const page = to.matched[to.matched.length - 1]?.meta.title
+  document.title = page ? `${page} · 猫娘打印服务` : '猫娘打印服务'
+})
