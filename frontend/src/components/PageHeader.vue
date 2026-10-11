@@ -74,9 +74,11 @@ const clock = useClock()
     </div>
 
     <!-- ③ 字段行：等宽标签 + 点线引导 + 等宽值。
-         窄屏整行一个字段（点线引导要有一截长度才读得出是"引导线"，
-         挤成三个短横线就退化成装饰），sm 以上并排。 -->
-    <div class="mt-3.5 flex flex-wrap gap-x-5 gap-y-1.5" aria-hidden="true">
+         窄屏**整行撤掉**（2026-10-11 改）：这一行是装饰性读数，不携带任务信息，
+         而手机上它把订单卡顶到一屏半之外 —— 回访学生最想看的恰恰是订单卡。
+         「退到静态等价形态或整件撤掉」是 DESIGN_RULES §1 的既定选项，这里选撤掉。
+         sm 以上并排。 -->
+    <div class="mt-3.5 hidden flex-wrap gap-x-5 gap-y-1.5 sm:flex" aria-hidden="true">
       <span class="field w-full sm:w-auto sm:min-w-[13rem]">
         <span class="field__k">PATH</span>
         <span class="field__lead" />
@@ -97,8 +99,9 @@ const clock = useClock()
     </div>
 
     <!-- ④ 收尾：扫描基线 + 扇区读数 + 刻度尺。
-         扫描高光走的就是这条 1px 基线本身，所以它永远压在**没有正文**的位置上。 -->
-    <div class="relative mt-4 flex items-center gap-3">
+         扫描高光走的就是这条 1px 基线本身，所以它永远压在**没有正文**的位置上。
+         窄屏整行撤掉，理由同 ③。 -->
+    <div class="relative mt-4 hidden items-center gap-3 sm:flex">
       <span class="scan-rule flex-1" aria-hidden="true" />
       <span v-if="pageCode" class="readout shrink-0">SECTOR {{ pageCode }} / GRID 48</span>
       <span class="ticks w-20 shrink-0" aria-hidden="true" />

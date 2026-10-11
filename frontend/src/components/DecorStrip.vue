@@ -42,7 +42,7 @@ const dump = computed(() => {
        深度与内容层同源：小条 5（它是这一页页脚的记号，跟内容同一张纸），
        大组 7（尺度更大、读作稍近的一层）。 -->
   <div
-    class="mt-4 flex items-end gap-4 overflow-hidden select-none"
+    class="mt-4 hidden items-end gap-4 overflow-hidden select-none sm:flex"
     style="--depth: 5px"
     data-parallax
     aria-hidden="true"
@@ -69,7 +69,7 @@ const dump = computed(() => {
        版号走自家产品名 NEKO PRINT SERVICE —— 版式学的是技术档案那套
        （密级/版号/页码/转储），名字用系统自己的，不借别的作品。 -->
   <div
-    class="mt-5 flex flex-wrap items-end gap-x-6 gap-y-3"
+    class="mt-5 hidden flex-wrap items-end gap-x-6 gap-y-3 sm:flex"
     style="--depth: 7px"
     data-parallax
     aria-hidden="true"

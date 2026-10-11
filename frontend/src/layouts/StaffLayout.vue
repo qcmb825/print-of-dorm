@@ -371,7 +371,7 @@ style="--depth: 20px"
           {{ route.meta.code ?? '--' }} // PRINT SERVICE
         </span>
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
-        <span class="readout shrink-0" aria-hidden="true">P.{{ pageNo }}</span>
+        <span class="readout hidden shrink-0 sm:inline" aria-hidden="true">P.{{ pageNo }}</span>
       </div>
       <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
            放在文档流末尾，所以永远不会压到内容上。 -->
