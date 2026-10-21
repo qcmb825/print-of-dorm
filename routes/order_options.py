@@ -31,13 +31,14 @@ from urllib.parse import quote
 from flask import Blueprint, Response, g, jsonify, request
 
 from auth import login_required, roles_required
-from config import (PAPER_NAME_MAX, PAPER_REMARK_MAX, PRESET_CONTENT_MAX, PRESET_CONTENT_MIN,
+from config import (BATCH_ORDER_MAX_FILES, PAPER_NAME_MAX, PAPER_REMARK_MAX,
+                    PRESET_CONTENT_MAX, PRESET_CONTENT_MIN,
                     PRESET_DOC_EXTENSIONS, PRESET_DOC_FOLDER, PRESET_DOC_MAX_BYTES,
                     PRESET_PRICE_MAX, ROLE_ADMIN, ROLE_SUPER, logger)
 from db import db_conn, find_paper_type, find_preset
 import pricing
 from security import audit_action, client_ip, security_event
-from utils import content_signature_error, resolve_contained_file
+from utils import content_signature_error, parse_bool_flag, resolve_contained_file
 
 bp = Blueprint('order_options', __name__)
 
@@ -236,6 +237,10 @@ def api_print_options():
         'presets': [_preset_public(dict(row)) for row in presets],
         'paper_types': [dict(row) for row in papers],
         'price_items': items,
+        # 一次最多几份文件（批量打印）。**界面上的这个数字必须来自服务端** ——
+        # 前端写死 10、服务端配的是 5 的话，学生会选满 10 份、传完，
+        # 在最后一步才吃到一句「一次最多 5 份」，而那几份文件早躺在服务端了。
+        'batch_max_files': BATCH_ORDER_MAX_FILES,
     })
 
 
@@ -360,7 +365,10 @@ def api_admin_update_print_preset(pid):
 def api_admin_toggle_print_preset(pid):
     """启用 / 停用。停用只是不再出现在学生的可选项里，记录和引用都保留。"""
     data = request.get_json(silent=True) or {}
-    active = bool(data.get('active'))
+    # 不能拿原始值直接过 bool()：'false' 是真值字符串，停用会变成启用（见 utils.parse_bool_flag）。
+    active = parse_bool_flag(data.get('active'))
+    if active is None:
+        return jsonify({'code': 400, 'msg': '启用状态只能是 true 或 false'}), 400
     with db_conn() as conn:
         if find_preset(conn, pid) is None:
             return jsonify({'code': 404, 'msg': '预设不存在'}), 404
@@ -649,7 +657,10 @@ def api_admin_update_paper_type(tid):
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_toggle_paper_type(tid):
     data = request.get_json(silent=True) or {}
-    active = bool(data.get('active'))
+    # 同上：字符串 'false' 不是假值，必须走白名单解析（见 utils.parse_bool_flag）。
+    active = parse_bool_flag(data.get('active'))
+    if active is None:
+        return jsonify({'code': 400, 'msg': '启用状态只能是 true 或 false'}), 400
     with db_conn() as conn:
         if find_paper_type(conn, tid) is None:
             return jsonify({'code': 404, 'msg': '纸张类型不存在'}), 404

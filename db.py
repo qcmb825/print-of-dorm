@@ -128,6 +128,50 @@ def insert_order_row(conn, values):
     raise RuntimeError('单号连续 5 次都与其他订单重复')
 
 
+def insert_order_files(conn, order_id, files):
+    """给一张订单登记它的文件清单（一单多份），**不 commit**（事务归调用方）。
+
+    files 是 [{'filename':.., 'file_path':.., 'size':.., 'pages':..}, ...]，
+    顺序就是展示顺序（sort_order 取下标）。
+
+    与 insert_order_row 一样只写一份：网页直传、预上传批量、机器人批量
+    三条路都走它。各写各的话，哪天加了列（比如以后要记单份文件的旋转角度），
+    漏掉的那条路会安静地少写一个字段，而界面上看起来只是那一格空着。
+    """
+    for index, item in enumerate(files):
+        conn.execute('''
+            INSERT INTO order_files (order_id, filename, file_path, size, pages, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (order_id, item.get('filename') or '', item.get('file_path') or '',
+              item.get('size'), item.get('pages'), index))
+
+
+def files_for_orders(conn, order_ids):
+    """一次取回多张订单的文件清单，返回 {order_id: [行, ...]}。
+
+    列表接口必须走这个「一次查一批」，不能每行订单各查一次 ——
+    订单台一页 20 条就是 20 次查询（N+1），而这个接口本来就是
+    每次开台都要跑的热路径。详情页只有一单，用同样这个函数也不吃亏。
+    """
+    grouped = {}
+    ids = [int(value) for value in order_ids if value is not None]
+    if not ids:
+        return grouped
+    # 分批拼 IN：SQLite 的变量个数上限（老版本 999）是按**参数个数**算的，
+    # 一页 100 条订单也不会碰到它，但列表接口的 size 是可以调的，
+    # 与其在某天有人传 size=2000 时炸掉，不如这里就切成 400 一批。
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        placeholders = ','.join('?' * len(chunk))
+        rows = conn.execute(
+            'SELECT id, order_id, filename, file_path, size, pages, sort_order '
+            'FROM order_files WHERE order_id IN (%s) ORDER BY order_id, sort_order, id'
+            % placeholders, chunk).fetchall()
+        for row in rows:
+            grouped.setdefault(row['order_id'], []).append(row)
+    return grouped
+
+
 
 def find_preset(conn, preset_id):
     """按 id 取一条预设打印服务，没有就返回 None。
@@ -279,7 +323,21 @@ def find_paper_type(conn, paper_type_id):
 #            文档那一列存的是**文件名**（住 config.PRESET_DOC_FOLDER），
 #            与收款码、二维码同一个道理：存绝对路径的话，改配置那一刻全站的
 #            预览会集体失联，而且是静默失联。
-SCHEMA_VERSION = '22'
+# v22 -> v23：新增 order_files 表 —— **一单可以带多份文件**（批量打印）。
+#            原先 orders 只有 filename / file_path 一对列，一份文件一张单；
+#            批量上传之后（QQ 一次发几份、网页一次选几份），同一档参数的文件
+#            要合进同一张单：学生只拿一个单号、管理员只接一次、只计一次费。
+#            为什么另开一张表而不是往 orders 上再加 file_path_2/3/4：
+#            文件份数是开放的（今天 5 份、明天 8 份），加列就得改表结构；
+#            而且「这一单有哪些文件」天然是一对多，摊平成多列之后
+#            每多一份就要多写一段 COALESCE，漏一段就是静默少显示一份文件。
+#            orders.filename / file_path **保留**，含义收窄成「第一份文件」：
+#            搜索、邮件、数据卡、老下载链接都还在读它们，一夜之间全改掉
+#            只会让某几处悄悄变成空白。真正的清单以 order_files 为准。
+#            同一批里回填老订单：每一单照原样插一条 order_files 记录 ——
+#            这不是编数据（文件就在那儿、路径也是原路径），
+#            不填的话「读 order_files 为准」的那些地方会把老单一律显示成没有文件。
+SCHEMA_VERSION = '24'
 
 
 
@@ -301,12 +359,109 @@ def backup_database_file():
 
 
 
+def _schema_work_pending(cursor, current_version):
+    """这一轮启动**真的要改表结构吗**？只用来决定「要不要先备份整库」。
+
+    为什么要问这一句（P1-4）：`backup_database_file()` 原先在 init_database 里
+    无条件执行，于是每启动一次就多一个整库副本 —— 实测 data/ 下已经堆了 32 个
+    `.bak-*`，而库只会越来越大。盘被备份吃满的那天，最先失败的是**写库**
+    （新建订单报错），看起来像「订单存不进去」，而根因是启动脚本默默复制了 32 份库里。
+
+    判据全部是只读查询（sqlite_master + PRAGMA），用的是下面几段迁移本来就要判的条件：
+    缺哪一列、哪张表还是老结构、哪个迁移还没跑。**宁可按「有活干」判**（多备份一次
+    只是多一个文件），也不能漏判 —— 漏了就是重建表那一步没有退路。
+
+    返回待做事项的短名字列表；空列表 = 结构已经是最新的，这轮不必备份。
+
+    （下面用到的 _table_exists / _table_columns / _migration_version 定义在本函数之后，
+    调用点在 init_database，那时它们已经全部就绪 —— 模块级函数在调用时才解析。）
+    """
+    pending = []
+
+    # 补列类：老库才需要，全新库在 CREATE TABLE 里就带着了。
+    if _table_exists(cursor, 'users'):
+        users_columns = _table_columns(cursor, 'users')
+        for column in ('contact_type', 'contact', 'pay_qr_file', 'session_epoch', 'qq'):
+            if column not in users_columns:
+                pending.append('users.' + column)
+    if _table_exists(cursor, 'orders'):
+        order_columns = _table_columns(cursor, 'orders')
+        for column in ('price', 'priced_by', 'price_time', 'preset_id', 'preset_content',
+                       'copies', 'paper_type_id', 'paper_name', 'paper_remark',
+                       'claim_alert_time', 'ready_notify_time', 'preset_group_id',
+                       'source', 'est_price', 'est_pages', 'price_item_id',
+                       'price_item_name'):
+            if column not in order_columns:
+                pending.append('orders.' + column)
+    if _table_exists(cursor, 'order_logs') and 'to_status' not in _table_columns(cursor, 'order_logs'):
+        pending.append('order_logs.to_status')
+    if _table_exists(cursor, 'print_presets'):
+        preset_columns = _table_columns(cursor, 'print_presets')
+        for column in ('doc_file', 'doc_name', 'price_item_id', 'preset_price'):
+            if column not in preset_columns:
+                pending.append('print_presets.' + column)
+    if _table_exists(cursor, 'paper_types') and 'price_delta' not in _table_columns(cursor, 'paper_types'):
+        pending.append('paper_types.price_delta')
+    if _table_exists(cursor, 'user_prefs'):
+        pref_columns = _table_columns(cursor, 'user_prefs')
+        for column in ('default_price_item_id', 'bot_hint_clicks'):
+            if column not in pref_columns:
+                pending.append('user_prefs.' + column)
+
+    # v24：一单多文件里的「每份文件自己的参数」。
+    if _table_exists(cursor, 'order_files'):
+        file_columns = _table_columns(cursor, 'order_files')
+        for column in ('color_type', 'duplex', 'copies', 'price_item_id',
+                       'price_item_name', 'paper_name', 'paper_remark'):
+            if column not in file_columns:
+                pending.append('order_files.' + column)
+    # v24：密码找回表。缺了它「忘记密码」整条链会 500，属于必须备份后再建的结构。
+    if not _table_exists(cursor, 'password_resets'):
+        pending.append('password_resets(新表)')
+
+    # 重建 / 数据搬迁类：判据是「老结构还在」而不是版本号，理由同各迁移函数自己
+    # 那句注释 —— 版本号是记录，可能和实际结构对不上（上次建好新表、更新版本号前被杀）。
+    if _table_exists(cursor, 'price_rules') and 'page_black_single' in _table_columns(cursor, 'price_rules'):
+        pending.append('price_rules(重建为价目表)')
+    if _table_exists(cursor, 'price_rules_v19'):
+        pending.append('price_rules_v19(中断恢复)')
+
+    # 兜底：版本号落后就当成「可能还有数据迁移要跑」（v17 改状态文案、v19 清机器人备注、
+    # v23 回填 order_files 都属于只改数据的那种，不会在上面几条结构判据里留痕）。
+    if _migration_version(current_version) < _migration_version(SCHEMA_VERSION):
+        pending.append('版本 %s → %s' % (current_version or '（无记录）', SCHEMA_VERSION))
+
+    return pending
+
+
+
 def _migration_version(text):
     """把 schema_meta 里存的版本号读成整数，读不出来就当 0（等同于很老的库）。"""
     try:
         return int(str(text).strip())
     except (TypeError, ValueError):
         return 0
+
+
+
+def _table_exists(cursor, name):
+    """这张表在不在。名字全部来自本文件的字面量，不接外部输入。"""
+    row = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+
+def _table_columns(cursor, name):
+    """这张表此刻有哪几列；表不存在时返回空集合（PRAGMA 对不存在的表就是空结果）。
+
+    存在性要另外判（_table_exists）：「表不存在」和「表在但没有某列」在
+    迁移判据里是两件完全不同的事 —— 全新库是前者（无需迁移），
+    老库是后者（要补列）。把两者混成一个空集合，就会在全新库上
+    以为「该迁移」，或者在老库上以为「已经迁过了」。
+    """
+    return {row[1] for row in cursor.execute('PRAGMA table_info("%s")' % name).fetchall()}
 
 
 
@@ -452,9 +607,38 @@ def _migrate_price_table(cursor, current_version):
     而 price_items 保持空 —— 空表是有意义的状态（价目表页会给出引导），
     不该拿两条"示例数据"去冒充业主的价目。
     """
-    if _migration_version(current_version) >= 20:
+    # ⚠️ **中断恢复（P1-3）必须排在版本号判断之前，也排在下面「没有旧列就返回」之前。**
+    # 本函数是 rename → create → insert → drop 四步，DDL 在 Python 的 sqlite3 里是即时
+    # 提交的（不参与事务）。进程若死在 rename 与 create 之间，下次启动时
+    # init_database 前面那句 `CREATE TABLE IF NOT EXISTS price_rules` 会先建出一张
+    # **新结构的空表**，于是原来的判断（「结构里没有旧列 → 什么都不用做」）直接 return，
+    # 真正的数据留在孤儿表 price_rules_v19 里 —— 四档单价静默归零、price_items
+    # 一条都不生成，而日志上只有一句「迁移：计价规则换成价目表（换算成 0 条价目项）」。
+    # 判据就是「旧表还在」：全仓只有本函数会写出 price_rules_v19 这个名字
+    # （与 _migrate_release_unique_names 里 `DROP TABLE IF EXISTS users_new` 同一思路：
+    # 先清掉上次留下的半成品，再走一遍完整流程）。
+    recovered = False
+    if _table_exists(cursor, 'price_rules_v19'):
+        if 'page_black_single' not in _table_columns(cursor, 'price_rules_v19'):
+            # 名字对、结构不对：可能是人手建的备份表。不删、不动，只留个记号让人看。
+            logger.warning('计价表迁移：发现一张结构不像老版规则的 price_rules_v19，'
+                           '已跳过恢复、原样保留，请人工确认它是什么')
+        else:
+            # 把半成品的新表丢掉、旧表改回原名，再照常走一遍完整迁移。
+            # 丢掉的那张新表里最多只有一行 (enabled, base_fee, min_price)，
+            # 而这三个数本来就是从这张旧表搬过去的 —— 重跑会再算一遍，不丢信息。
+            # （此刻服务还没起来，中间不会有人改过它。）
+            cursor.execute('DROP TABLE IF EXISTS price_rules')
+            cursor.execute('ALTER TABLE price_rules_v19 RENAME TO price_rules')
+            # 恢复完必须把迁移**做完**，哪怕版本号已经是 20 以上：此时的
+            # price_rules 又变回了旧结构，只看版本号返回就会留下一张四档单价表，
+            # 而代码只认新结构（读 base_fee/min_price 之外还会去读价目项）。
+            recovered = True
+            logger.warning('计价表迁移：上次迁移停在「改名」之后的某一步（进程被杀/断电），'
+                           '已把旧表 price_rules_v19 改回 price_rules，本轮重新完成迁移')
+    if not recovered and _migration_version(current_version) >= 20:
         return
-    columns = {row[1] for row in cursor.execute('PRAGMA table_info(price_rules)').fetchall()}
+    columns = _table_columns(cursor, 'price_rules')
     if 'page_black_single' not in columns:
         # 全新库 / 已经迁过的库：结构里没有旧列，什么都不用做
         return
@@ -534,6 +718,35 @@ def _migrate_bot_remark_cleanup(cursor, current_version):
                     fixed, LEGACY_BOT_REMARK, ORDER_SOURCE_BOT)
 
 
+def _migrate_order_files_backfill(cursor, current_version):
+    """v22 -> v23：给老订单补上它们那一份 order_files 记录。
+
+    为什么这不算「编数据」：老订单的文件本来就在盘上（orders.file_path），
+    文件名、页数也都是当时真记下来的值 —— 这里只是把同一份事实搬到
+    「一单多文件」的新表里。不搬的话，所有以 order_files 为准的地方
+    （详情页的文件清单、逐份下载、撤回时删文件）会把**每一张老单**都显示成
+    「没有文件」，而它们的文件还好端端躺在盘上。
+
+    单文件老单的 est_pages 就是那份文件的页数，所以 pages 直接拿它填；
+    size 一律留 NULL —— 库里的老记录没有这个数，为了填它去 stat 一遍全表的文件
+    既慢又会在「文件被运维清理过」时留下失败记录，而读的时候本来就要 stat。
+
+    幂等：`NOT EXISTS` 那一句保证重复执行只会补还没补过的单（新单在建单时
+    就自己写了记录，不会被这里再插一条）。
+    """
+    if _migration_version(current_version) >= 23:
+        return
+    filled = cursor.execute("""
+        INSERT INTO order_files (order_id, filename, file_path, size, pages, sort_order)
+        SELECT o.id, o.filename, o.file_path, NULL, o.est_pages, 0
+        FROM orders o
+        WHERE o.file_path IS NOT NULL AND o.file_path <> ''
+          AND NOT EXISTS (SELECT 1 FROM order_files f WHERE f.order_id = o.id)
+    """).rowcount
+    if filled:
+        logger.info('迁移：把 %s 张老订单的文件补进 order_files（此后清单一律以它为准）', filled)
+
+
 def _migrate_relax_real_name_unique(cursor, current_version):
     """v4 -> v5：姓名不再要求唯一，只留普通索引加速查询。
 
@@ -576,6 +789,9 @@ def init_database():
         cursor.execute('CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)')
         row = cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
         current_version = row['value'] if row is not None else None
+        # 单独存一份「这个库本来就没有版本记录」：本函数后面用了好几个同名的 row
+        # （PRAGMA 结果的推导式、迁移函数的返回值），留一个不会被覆盖的标记更稳。
+        fresh_database = row is None
         if row is None:
             # 真正要防的是这一种：表里躺着订单，版本记录却没了（schema_meta 被误删、
             # 库文件被换过、DATABASE_PATH 指到了别的库）。这种时候再无条件 DROP，
@@ -681,10 +897,80 @@ def init_database():
                          '请先处理这些重复数据；本次仍会继续启动，但单号暂时不能保证唯一')
             logger.error('!!! 迁移未完成：单号唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
 
-        # 补列之前先备份：ALTER 随时能撤，但万一中途断电/进程被杀，
-        # 老表就剩一个残缺的壳。重建表那条路已经在 _migrate_release_unique_names
-        # 里单独备份了，这里只防 ALTER 这条路。
-        backup_database_file()
+        # v23：一单多文件。清单以这张表为准，orders.filename / file_path
+        # 退化成「第一份文件」的冗余快照（见版本注释）。
+        #
+        # 不建外键：全仓的 orders 关联（order_logs / tickets…）都没有 FK，
+        # 而撤回订单是「先删库、再删文件」，顺序一乱外键就会把删除挡回来 ——
+        # 那时候报的是 IntegrityError，看着像数据损坏，其实是约束在替我们挡路。
+        # 也不给 order_id 建唯一索引：一单本来就要有多行。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                size INTEGER,
+                pages INTEGER,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                color_type TEXT,
+                duplex TEXT,
+                copies INTEGER,
+                price_item_id INTEGER,
+                price_item_name TEXT,
+                paper_name TEXT,
+                paper_remark TEXT
+            )
+        ''')
+        # v24：**每份文件自己的打印参数**。以前「一单多文件」是「参数相同的几份合到
+        # 一单」，参数不同就自动拆成几张单、给几个单号；学生一次交 5 份作业，
+        # 里面有两份要彩色，就得拿两个单号去柜台报两次。
+        #
+        # 现在一份文件可以带自己的档位 / 单双面 / 份数，这些列就是那几项的快照。
+        # 三条纪律，改读法的人必须知道：
+        #   ① **NULL 是有意义的**，表示「这一份沿用订单级的值」。v24 之前的老单、
+        #      以及「整单一套参数」的新单，这些列都会是 NULL —— 读的时候先看本行，
+        #      为空再回落到 orders 上对应的列，**不要当成「没选」**。
+        #   ② 单价/纸张名同样抄快照（price_item_name / paper_name / paper_remark），
+        #      理由与 orders 上那几列一样：三个月后管理员改了价目表，这一单当时
+        #      用什么纸、按什么名目算的钱，不能跟着变。
+        #   ③ 订单级的 orders.copies 现在写「总份数」（Σ 每份份数），
+        #      orders.duplex 在混合时写 config.DUPLEX_MIXED（'mixed'）——
+        #      老单与单一参数的单不受影响，展示层按这两个提示走。
+        order_file_columns = {row[1] for row in
+                              cursor.execute('PRAGMA table_info(order_files)').fetchall()}
+        for column, ddl in (
+                ('color_type', 'TEXT'),
+                ('duplex', 'TEXT'),
+                ('copies', 'INTEGER'),
+                ('price_item_id', 'INTEGER'),
+                ('price_item_name', 'TEXT'),
+                ('paper_name', 'TEXT'),
+                ('paper_remark', 'TEXT')):
+            if column not in order_file_columns:
+                cursor.execute('ALTER TABLE order_files ADD COLUMN %s %s' % (column, ddl))
+        # 取「某一单有哪些文件」是详情 / 下载 / 撤回 / 配额四条路上的必查，
+        # 而这张表会随文件数线性增长（订单数 × 平均 1~3 行），索引不能省。
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_order_files_order ON order_files(order_id)'
+        )
+
+        # 备份只在**这一轮真的有事要做**时才做（P1-4）。原先这里无条件
+        # backup_database_file()，于是每启动一次就多一份整库副本：实测 data/ 下
+        # 已经堆了 32 个 .bak，而库还在长 —— 备份吃满盘的那天，最先坏的是写库，
+        # 而症状看起来是「订单存不进去」，没人会想到是启动脚本复制了 32 份库。
+        # 判据见 _schema_work_pending（缺列 / 老结构 / 版本落后），全是只读查询。
+        # 全新库（schema_meta 里连版本记录都没有，见上面的 fresh_database）不备份：
+        # 那时候库里没有老数据要保护，复制一份刚建出来的空壳只是又一个垃圾文件。
+        pending_changes = [] if fresh_database else _schema_work_pending(cursor, current_version)
+        if pending_changes:
+            # cursor.connection.commit()：改动是先写日志再回放主文件的，事务没提交时
+            # 直接复制主文件可能拷到一个中间态，而备份的意义正是「能拿它换回来」。
+            cursor.connection.commit()
+            backup = backup_database_file()
+            logger.info('本轮启动要改数据库结构（%s），已先备份整库：%s',
+                        '、'.join(pending_changes[:6]) + ('…' if len(pending_changes) > 6 else ''),
+                        backup or '（库文件还不存在，无需备份）')
 
         # 这轮新增联系方式，给已有的 users 表补两列。
         # CREATE TABLE IF NOT EXISTS 对已存在的表没有任何改动，老库只能靠 ALTER TABLE；
@@ -1194,6 +1480,35 @@ def init_database():
             )
         ''')
 
+        # ---- v24：密码找回（QQ 邮箱验证码）----
+        # 为什么要单独一张表、而不是往 users 上加两列：
+        #   ① 一次找回是**一条有生命周期的事件**（发了什么码、试了几次、用掉没有、
+        #      什么时候过期），而 users 那一行只该放「当前状态」；
+        #   ② 失败/过期/被换新的那些记录要留着给安全审计看，放 users 上会被覆盖掉；
+        #   ③ 一个账号可以有多次找回（上次没收到、重新发一次），一对多只能在独立表里。
+        # 只存**哈希**：验证码只有 6 位，明文落库等于「拿到库就能重置任何人的密码」。
+        # attempts 计错误次数（到上限这条记录作废，必须重新申请）—— 它挡的是
+        # 「6 位数一共 100 万种，慢慢试」这件事，而不是挡人正常输错一次。
+        # used 是一次性标记：重置成功后立刻置 1，同一个码不能再用第二次。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                code_hash TEXT NOT NULL,
+                expire_time TIMESTAMP NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                used INTEGER NOT NULL DEFAULT 0,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                request_ip TEXT
+            )
+        ''')
+        # 按账号找「最近一条还有效的」是每次提交验证码都要跑的查询；
+        # 按时间清理过期行（惰性）也要扫这一列。
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_password_resets_user '
+            'ON password_resets(user_id, create_time)'
+        )
+
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，
         # 老库当场 `no such column: to_status`，**整个 init_database 挂掉**，
@@ -1209,6 +1524,11 @@ def init_database():
         # 同一条纪律：它读写的是上面那段 v19 才补出来的 orders.source，
         # 排在补列之前就是老库升级当场挂（见上面那段注释）。
         _migrate_bot_remark_cleanup(cursor, current_version)
+
+        # v23 的 order_files 已在上面建好；这里只负责把老单搬进去。
+        # 位置无所谓（只读 orders、写自己的新表），跟着其它迁移排在最后，
+        # 免得又出现「用结构的语句排在产生结构的语句之前」那一类坑。
+        _migrate_order_files_backfill(cursor, current_version)
 
         if _pickup_index_ok and _qq_index_ok:
             cursor.execute(

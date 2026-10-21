@@ -20,11 +20,15 @@ import { CircleAlert, PackageCheck, Search } from '@lucide/vue'
 import { NAlert, NButton, NInput, NModal, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
+//    v24：订单级单双面可能是 'mixed'（一单里几份不一样）。
+//    utils/format 里的 DUPLEX_LABEL 只认 single/double，用它索引 mixed 会拿到
+//    undefined（TS 也会报「不能用 OrderDuplex 索引 Record<Duplex, string>」），
+//    所以这里直接用 api/types 的那一份（它含 'mixed': '混合'）。
+import { DUPLEX_LABELS } from '@/api/types'
 import type { PickupOrder } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
 import {
   COLOR_TYPE_LABEL,
-  DUPLEX_LABEL,
   contactLabel,
   copiesLabel,
   orderFileLabel,
@@ -204,7 +208,7 @@ function close(): void {
         <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span class="spec-chip">{{ copiesLabel(order.copies) }}</span>
           <span class="text-sm font-bold">
-            {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
+            {{ order.duplex ? DUPLEX_LABELS[order.duplex] : '单面' }}
             <span class="font-normal text-ink-3">
               · {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
             </span>

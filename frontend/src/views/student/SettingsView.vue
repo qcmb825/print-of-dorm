@@ -839,25 +839,27 @@ onMounted(() => {
         <template v-else>
           <!-- ① 通知渠道 -->
           <div class="grid gap-2 sm:grid-cols-2">
+            <!-- 点击处理挂在**文字**上，不挂外层这一圈 div。
+                 Naive 的 NSwitch 点击后不 stopPropagation：外层再翻一次就成了
+                 「开关自己翻 + 事件冒泡又翻」，两次抵消，净效果为零 ——
+                 鼠标点开关永远不生效，只有点旁边的文字才行。
+                 口径与 OrdersView 筛选栏那颗「隐藏已取件」一致。 -->
             <div
-              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              class="flex items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
-              @click="prefsForm.notify_qq = !prefsForm.notify_qq"
             >
-              <span>
+              <span class="cursor-pointer" @click="prefsForm.notify_qq = !prefsForm.notify_qq">
                 <span class="block text-sm font-semibold">QQ 推送</span>
                 <span class="mt-0.5 block text-xs text-ink-3">可取件时通过 QQ 提醒 · 需先填写 QQ 号</span>
               </span>
               <NSwitch v-model:value="prefsForm.notify_qq" size="small" aria-label="QQ 推送" />
             </div>
-            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
-                 点文字是没反应的（光标却显示可点） -->
+            <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
-              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              class="flex items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
-              @click="prefsForm.notify_mail = !prefsForm.notify_mail"
             >
-              <span>
+              <span class="cursor-pointer" @click="prefsForm.notify_mail = !prefsForm.notify_mail">
                 <span class="block text-sm font-semibold">邮件提醒</span>
                 <!-- 说清边界：值班类提醒（有人等你接单、有人需要人工联系）不走这个开关，
                      不然管理员会以为自己夜里什么都不会收到（邮件审计的结论） -->
@@ -867,27 +869,26 @@ onMounted(() => {
               </span>
               <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
             </div>
-            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
-                 点文字是没反应的（光标却显示可点） -->
+            <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
-              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              class="flex items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
-              @click="prefsForm.hide_done_orders = !prefsForm.hide_done_orders"
             >
-              <span>
+              <span
+                class="cursor-pointer"
+                @click="prefsForm.hide_done_orders = !prefsForm.hide_done_orders"
+              >
                 <span class="block text-sm font-semibold">隐藏已取件的单</span>
                 <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」均不再列出</span>
               </span>
               <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" aria-label="隐藏已取件的单" />
             </div>
-            <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里
-                 点文字是没反应的（光标却显示可点） -->
+            <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
-              class="flex cursor-pointer items-center justify-between gap-3 px-2.5 py-2"
+              class="flex items-center justify-between gap-3 px-2.5 py-2"
               style="background-color: var(--muted)"
-              @click="prefsForm.card_replies = !prefsForm.card_replies"
             >
-              <span>
+              <span class="cursor-pointer" @click="prefsForm.card_replies = !prefsForm.card_replies">
                 <span class="block text-sm font-semibold">机器人用卡片回</span>
                 <span class="mt-0.5 block text-xs text-ink-3">停用后订单 / 工单查询改为纯文字 · 省流量</span>
               </span>
@@ -898,11 +899,11 @@ onMounted(() => {
           <!-- ② 免打扰。跨零点（22:00-08:00）是常态，所以两个时间点不设约束：
                谁前谁后由服务端判定（见 prefs.in_quiet_hours）。 -->
           <div class="mt-3 px-2.5 py-2.5" style="background-color: var(--muted)">
+            <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
-              class="flex cursor-pointer items-center justify-between gap-3"
-              @click="prefsForm.quietOn = !prefsForm.quietOn"
+              class="flex items-center justify-between gap-3"
             >
-              <span>
+              <span class="cursor-pointer" @click="prefsForm.quietOn = !prefsForm.quietOn">
                 <span class="block text-sm font-semibold">免打扰时段</span>
                 <span class="mt-0.5 block text-xs text-ink-3">
                   时段内的提醒<strong>不丢失</strong> · 攒到时段结束后再推。单号有时效，夜里静音不等于不需要

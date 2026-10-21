@@ -89,6 +89,24 @@ def _request_bytes(path, timeout=60, retries=1):
     raise ApiError('服务器暂时不可达（%s）' % last_exc)
 
 
+def _safe_filename(name):
+    """把文件名洗成**不会破坏 multipart 表单**的形状。
+
+    表单里的 filename 是用双引号包起来的，所以名字里出现 `"`、`\r`、`\n` 或
+    控制字符时，那一行会提前结束 / 分裂成两行 —— 轻则服务器收到的文件名被截断，
+    重则整个请求体解析失败（学生看到「上传失败」，而他什么都没做错）。
+    QQ 里的文件名是对方给的，`a"b.pdf` 这种完全可能出现。
+
+    只做最小转义：引号换成单引号、去掉换行与控制字符（含 DEL）。
+    **不做路径净化、不改扩展名** —— 那是服务端校验的事；客户端偷偷改名会让
+    盘上的文件名和学生发的那个对不上，反而更难排查。
+    """
+    text = str(name or '')
+    text = text.replace('"', "'").replace('\r', '').replace('\n', '')
+    text = ''.join(ch for ch in text if ord(ch) >= 32 and ord(ch) != 127)
+    return text or 'file'
+
+
 def _request_multipart(path, fields, file_field, file_name, file_bytes,
                        timeout=180):
     """multipart 文件上传（手工拼 body，标准库没有现成的）。
@@ -104,7 +122,7 @@ def _request_multipart(path, fields, file_field, file_name, file_bytes,
                      % (boundary, name, value))
     lines.append('--%s\r\nContent-Disposition: form-data; name="%s"; filename="%s"\r\n'
                  'Content-Type: application/octet-stream\r\n\r\n'
-                 % (boundary, file_field, file_name))
+                 % (boundary, file_field, _safe_filename(file_name)))
     body = ''.join(lines).encode('utf-8') + file_bytes + \
         ('\r\n--%s--\r\n' % boundary).encode('ascii')
     req = urllib.request.Request(
@@ -254,6 +272,48 @@ def order_file(qq, file_name, file_bytes, duplex='single',
                               file_field='file',
                               file_name=file_name,
                               file_bytes=file_bytes)
+
+
+def upload_prepare(qq, file_name, file_bytes):
+    """**批量下单的第一步**：把一份文件先传上来（不下单），换一个 file_token。
+
+    批量不能像单文件那样一次请求塞几份：服务端的 MAX_CONTENT_LENGTH 卡的是
+    **整个请求体**（默认 50MB），三份 20MB 的讲义合在一个请求里当场 413 ——
+    而用户没做错任何事。所以走「一份一个请求 → 最后按组一次性建单」这条路，
+    与网页端的「先上传、后下单」共用服务端同一套逻辑（.pending 那一套）。
+
+    不重试：它虽然不是建单，但同一份文件重复传会白占服务端的暂存额度
+    （每账号最多几份），失败时让学生重发一遍更干净。
+    """
+    return _request_multipart('/api/bot/upload/prepare',
+                              fields={'qq': qq},
+                              file_field='file',
+                              file_name=file_name,
+                              file_bytes=file_bytes)
+
+
+def order_prepared(qq, groups):
+    """**批量下单的第二步**：用已经传上来的文件建单，一个 group = 一张订单。
+
+    groups 里每一项：{'files': [{'file_token','filename'}, …],
+    'price_item_id', 'copies', 'duplex', 'remark'}。
+    组内几份文件同参数、合成一张单；参数不一样的由**调用方**分成多组
+    （机器人那边按「档位 + 单双面 + 份数」分，学生看到的就是「同类型的合并」）。
+
+    不重试（见模块注释）：响应丢了不等于没建成，重发一次就是重复下单。
+    """
+    return _request('POST', '/api/bot/order/prepared',
+                    {'qq': qq, 'groups': groups}, retries=0)
+
+
+def discard_prepared(qq, tokens):
+    """丢弃几份还没下单的预上传文件（批量中途失败时把已传的收回来）。
+
+    语义上是删除，**不重试**：丢不掉只是白占一份额度，重试没有收益，
+    而多一次请求就多一次跨洋往返 —— 这条路径本来就是在处理失败。
+    """
+    return _request('POST', '/api/bot/upload/discard',
+                    {'qq': qq, 'file_tokens': list(tokens or [])}, retries=0)
 
 
 def events(since):

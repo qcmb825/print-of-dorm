@@ -32,14 +32,26 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import api, config
+from . import api, config, llm, nlu
 from .onebot import OneBotClient, OneBotError
 
 # 使用说明**不再本地维护**：服务端存结构（config 里那份 BOT_HELP_SECTIONS），
 # 机器人拿它拼文本、服务端拿它画卡片 —— 两边各存一份必然漂移，而且不报错。
 # 这里只留一句「够不着服务器」时的兜底：帮助恰恰是网络不好时最想看到的东西。
-HELP_OFFLINE = ('机器人暂时连不上服务器，稍后再试一次。' + chr(10) +
-                               '网页端也能下单和查单：%s' % config.SITE_URL)
+# ⚠️ 兜底也要**有用**：只回一句「稍后再试」等于什么都没说，所以它会把本地认识的
+# 命令列一遍（清单从命令表生成，见 _local_help_lines —— 手抄一份必然出现
+# 「帮助里教了、解析表里没有」的旧流程，用户照着做才发现机器人不认识）。
+def help_offline_text():
+    """服务器够不着时的兜底帮助（命令清单与解析表同源）。"""
+    lines = ['机器人暂时连不上服务器，稍后再试一次。',
+             '这些命令我认识（服务器恢复后照常可用）：']
+    lines += _local_help_lines()
+    lines.append('要下单：等服务器恢复后把文件重发一次，要求写在同一条消息里就行，')
+    lines.append('　例「黑白 2份」「第 2 份彩色」「A4 80g 双面」「都双面」。')
+    lines.append('网页端也能下单和查单：%s'
+                 % (config.SITE_URL or '地址请向管理员索取'))
+    return chr(10).join(lines)
+
 
 
 def render_help_text(sections):
@@ -98,7 +110,8 @@ def reply_settings(client, qq):
 def _save_pref(client, qq, fields, ok_text):
     resp = api.save_prefs(qq, fields)
     if resp.get('code') != 0:
-        client.send_private_msg(qq, '没能保存：%s' % resp.get('msg', '未知原因'))
+        client.send_private_msg(qq, '没能保存：%s\n稍后再发一次这条命令就行。'
+                                    % resp.get('msg', '未知原因'))
         return False
     _prefs_cache_clear(qq)
     client.send_private_msg(qq, ok_text)
@@ -148,12 +161,14 @@ def reply_pref_quiet(client, qq, argument):
 
 def reply_pref_size(client, qq, argument):
     """「每页 N」：订单列表一次给几条。"""
-    if not (argument or '').strip().isdigit():
+    size = _digit_arg(argument)
+    if size is None:
         client.send_private_msg(qq, '用法：「每页 8」（3-20 条之间）')
         return
-    resp = api.save_prefs(qq, {'orders_page_size': int(argument)})
+    resp = api.save_prefs(qq, {'orders_page_size': size})
     if resp.get('code') != 0:
-        client.send_private_msg(qq, '没能保存：%s' % resp.get('msg', '未知原因'))
+        client.send_private_msg(qq, '没能保存：%s\n稍后再发一次这条命令就行。'
+                                    % resp.get('msg', '未知原因'))
         return
     _prefs_cache_clear(qq)
     saved = (resp.get('prefs') or {}).get('orders_page_size')
@@ -209,7 +224,8 @@ def reply_pref_default(client, qq, argument):
         return
     resp = api.save_prefs(qq, fields)
     if resp.get('code') != 0:
-        client.send_private_msg(qq, '没能保存：%s' % resp.get('msg', '未知原因'))
+        client.send_private_msg(qq, '没能保存：%s\n稍后再发一次这条命令就行。'
+                                    % resp.get('msg', '未知原因'))
         return
     _prefs_cache_clear(qq)
     lines = ['默认打印参数已记下：']
@@ -258,6 +274,51 @@ def _prefs_cache_get(qq):
 IDENTITY_CACHE_TTL = 60
 _identity_cache = {}
 
+# 身份闸门回的三种 code，各对应**学生下一步要做的不同事**：
+#   404 = 这个 QQ 还没注册/绑定 → 去注册（给可直接点的地址）；
+#   403 = 账号被停用/注销     → 找管理员，不是再注册一遍（注册也过不了闸门）；
+#   409 = 一个 QQ 命中多个账号 → 找管理员合并，学生自己无论怎么试都过不去。
+_IDENTITY_CODES = (403, 404, 409)
+
+
+def _site_line(label='网页端'):
+    """带站点链接的一行；SITE_URL 没配时给一句能执行的替代话（不留空括号）。"""
+    if config.SITE_URL:
+        return '%s：%s' % (label, config.SITE_URL)
+    return '网页端地址请向管理员索取。'
+
+
+def _register_hint(qq):
+    """「还没注册」时给学生的可执行路径。
+
+    注册**没有独立路由**：登录与注册是同一个页面上的两个页签
+    （frontend/src/views/LoginView.vue），路由表里只有 `/login`。
+    所以链接只能给 `/login`，并且必须在话里点明「切到注册那一栏」——
+    否则学生打开只看到登录框，会以为没有注册入口（这正是主人要求「一眼看明白」的由来）。
+    SITE_URL 在 config.py 里已经 rstrip('/')，这里自己补 `/login`，不会拼出 `//login`。
+    """
+    if not config.SITE_URL:
+        return ('先到打印服务网站注册一个账号再来找我：注册时把 QQ 填成 %s（就是你现在这个号），'
+                '注册完直接回来发文件就行。' % qq)
+    return ('先注册一个账号再来找我：%s/login（打开后切到「注册」那一栏）\n'
+            '注册时把 QQ 填成 %s（就是你现在这个号），注册完直接回来发文件就行。'
+            % (config.SITE_URL, qq))
+
+
+def _identity_text(code, qq):
+    """身份类失败的学生话术。**每条都要说清下一步做什么**，不暴露 code。"""
+    if code == 404:
+        return '你这个 QQ 还没注册/绑定账号，这一单不会落到任何账号上。\n' + _register_hint(qq)
+    if code == 403:
+        return ('这个 QQ 对应的账号现在用不了（被停用或已注销），不是重注册能解决的。\n'
+                '请联系管理员帮你看一下账号状态，恢复之后直接回来发文件就行。\n'
+                + _site_line())
+    if code == 409:
+        return ('这个 QQ 同时绑定了好几个账号，我这边分不出该用哪一个，所以先停下不动作。\n'
+                '请联系管理员帮你合并成一个账号（只留一个），之后回来发文件就行。\n'
+                + _site_line())
+    return '这个 QQ 号现在不能用，请联系管理员。'
+
 
 def _identity_error(qq):
     """这个 QQ 有没有对应账号：没有就回一句给用户看的话，有（或问不到）回 None。
@@ -282,19 +343,22 @@ def _identity_error(qq):
     cached = _identity_cache.get(key)
     if cached and now - cached[0] < IDENTITY_CACHE_TTL:
         return cached[1]
-    problem = None
     try:
         resp = api.orders(qq)
-        if resp.get('code') in (403, 404, 409):
-            problem = resp.get('msg') or '这个 QQ 号还没有对应的账号'
     except api.ApiError:
-        problem = None
-    if problem is None:
-        # 只有「确实有账号」才记缓存（理由见上面 IDENTITY_CACHE_TTL 那段）
-        _identity_cache[key] = (now, None)
-    else:
+        #    够不着服务器：**放行，也不写缓存**。把「网络不通」说成「你没注册」是
+        #    更坏的错；而缓存一个「有账号」会在服务器恢复之后继续骗自己 60 秒。
+        return None
+    code = resp.get('code')
+    if code in _IDENTITY_CODES:
+        #    服务器原话只进日志：学生看到的是人话（见 _identity_text），
+        #    运维要的是 code 与原文 —— 两边各取所需，不混在一句里。
+        log.info('身份闸门拦下 qq=%s code=%s msg=%s', qq, code, resp.get('msg'))
         _identity_cache.pop(key, None)
-    return problem
+        return _identity_text(code, qq)
+    #    只有「确实有账号」才记缓存（理由见上面 IDENTITY_CACHE_TTL 那段）
+    _identity_cache[key] = (now, None)
+    return None
 
 
 def reply_help(client, qq, prefix=''):
@@ -330,7 +394,7 @@ def reply_help(client, qq, prefix=''):
             return
     except api.ApiError:
         pass
-    client.send_private_msg(qq, prefix + HELP_OFFLINE)
+    client.send_private_msg(qq, prefix + help_offline_text())
 
 log = logging.getLogger('printbot')
 
@@ -394,23 +458,104 @@ _EN_ALIAS = {'help': 'help', 'orders': 'orders', 'code': 'code',
              'announce': 'announce', 'announcement': 'announce',
              'withdraw': 'withdraw'}
 
-# ---- 发完文件后的参数追问 ----------------------------------------------------
-# 状态：qq → {'path','name','step','color','duplex','ts'}。
-# step 只有两步：先问打印方式（mode），再问份数（copies）——
-# 问题和选项都带默认值，用户一路回数字就能下单，不想选就发「取消」。
+# 离线兜底帮助里的每条命令 + 一句人话。
+# **命令词必须真的在上面那三张表里**（_local_help_lines 会过滤），
+# 否则就成了「帮助里教了、机器人不认识」——比不给帮助更糟。
+# 也不许写已经删掉的旧流程：打印参数早就改成**一句话说完**（「黑白 2份」），
+# 「先回打印方式、再回份数」那套三连问不存在了。
+_COMMAND_HINTS = (
+    ('订单', '最近的订单和状态（含单号）'),
+    ('单号', '查一张单，例「单号 25124」'),
+    ('撤回', '撤回还没被接单的单（两道口令：「撤回 25124」→「确认撤回 25124」）'),
+    ('打印服务', '看可选的打印服务；「打印服务 2」就是按第 2 条下单'),
+    ('价目表', '当前价目与说明'),
+    ('我的', '单数、累计花费、存储用量'),
+    ('公告', '看当前公告'),
+    ('工单', '看工单进展'),
+    ('反馈', '发起工单，例「反馈 3 号机打出来有黑边」'),
+    ('回复工单', '接着聊，例「回复工单 3 已经取到了」'),
+    ('设置', '看偏好与改法'),
+    ('通知', '「通知 开」/「通知 关」：QQ 取件推送'),
+    ('邮件', '「邮件 开」/「邮件 关」：邮件提醒'),
+    ('免打扰', '「免打扰 22:00-08:00」/「免打扰 关」'),
+    ('每页', '「每页 8」：机器人订单列表一次给几条'),
+    ('默认', '「默认 3 双面 2份」：记住常用的下单参数'),
+    ('取消', '放弃这一批，什么都不下'),
+    ('帮助', '这份说明'),
+)
+
+
+def _local_help_lines():
+    """把 _COMMAND_HINTS 里**解析表真的认识**的命令拼成几行。
+
+    末尾再补一条**不是命令**的说明：这一批的规矩（一次发多份 → 一张单）。
+    它进不了 _COMMAND_HINTS —— 那张表会被「命令词是否被解析表认识」过滤掉，
+    塞进去就被静默滤走了；而不说这一条，学生一口气发三份会以为要拿三个单号。
+    """
+    known = set(_ZH_EXACT) | set(_ZH_PREFIX) | set(_ZH_FREETEXT)
+    lines = ['　「%s」%s' % (word, desc)
+             for word, desc in _COMMAND_HINTS if word in known]
+    lines.append('　发文件：一次最多 %d 份，合成一张单、只给一个单号。'
+                 % config.BATCH_MAX_FILES)
+    return lines
+
+
+# ---- 批量下单：文件怎么收、要求怎么听、什么时候下单 --------------------------
+#
+# 状态：qq → {
+#     'kind': 'file' | 'preset',
+#     'preset_id' / 'preset_content'：预设单才有（「打印服务 3」那条路），
+#     'files': [{'path','name','size','spec'}]，   spec 见下（没定就是 None），
+#     'items': [...],          本批用的价目项快照（一次请求拉回来，全批共用），
+#     'remark': str | None,
+#     'asked_at' / 'reminders'：上一次追问的时刻与次数（排提醒用），
+#     'ts': 最后一次活动时刻（新文件、新消息都会刷新）。
+# }
+#
+# **没有「步骤」这个概念了**（2026-09-28）。老流程是一串单选题：
+# 打印方式 → 份数 → 纸张，学生要回好几次数字，而他要说的其实一句话就能说完
+# （「黑白 2份」）。现在是：每份文件带一个可选的 spec，
+# **全批都定下来了就下单**，没定下来才问一次 —— 问的那一次也允许直接回「好」
+# 按默认参数成交。spec 的形状就是 nlu.resolve_spec 的返回值：
+# {'price_item_id', 'label', 'color', 'duplex', 'copies', 'assumed'}。
+#
 # 状态存在内存里：printbot 重启后这份对话就没了，但暂存的文件在磁盘上，
-# 启动时统一清理，用户重发即可（下面有超时/丢失时的明确话术）。
+# 启动时统一清理，用户重发即可（超时与丢失都有明确话术）。
 _pending = {}
-PENDING_TTL_SECONDS = 600  # 10 分钟没选完就作废（文件白占磁盘没意义）
 PENDING_DIR = Path(__file__).resolve().parent / 'data' / 'pending'
 
-# 单双面：**不再是"打印方式"菜单**（那一步把颜色和单双面捆在一起，
-# 而 v20 起颜色由价目项决定）。现在它是一道独立的小选择题，只在该档支持双面时才问。
-_DUPLEX_MAP = {'1': 'single', '2': 'double'}
+#    `_pending` 会被**两个线程**同时摸：事件线程（handle_attachments /
+#    handle_event）与推送线程（_sweep_expired_pending 里到点作废）。原先既没有锁、
+#    也不刷新 ts，于是会出现：大文件还在下载 → 巡检按 300 秒判超时 → 删掉暂存文件 →
+#    事件线程下载完再把同一个 entry 写回去，僵尸条目复活 ——
+#    之后每次下单都是 FileNotFoundError，而日志里只有一句「取回附件失败」。
+#    这里只做三件最小的事（不做整体重构）：一把锁 + 两个读写函数 + entry['dead'] 标记。
+_pending_lock = threading.RLock()
 
-# 份数上限。⚠️ 必须与服务端 `config.COPIES_MAX` 一致 —— printbot 是自包含包
-# （不 import 项目模块），所以这里只能各写一份，改的时候两边一起改。
-COPY_MAX = 50
+
+def _pending_get(qq):
+    """拿某个 QQ 的待办（没有则 None）。**别再绕过它直接下标 `_pending`**。"""
+    with _pending_lock:
+        return _pending.get(qq)
+
+
+def _pending_set(qq, entry):
+    """挂上（或替换）某个 QQ 的待办。"""
+    with _pending_lock:
+        _pending[qq] = entry
+
+
+def _pending_pop(qq):
+    """摘掉某个 QQ 的待办（不删文件，删文件是 _clear_pending 的事）。"""
+    with _pending_lock:
+        return _pending.pop(qq, None)
+
+
+def _pending_keys():
+    """当前有待办的 QQ 列表（快照：巡检遍历时别人可能正在增删）。"""
+    with _pending_lock:
+        return list(_pending.keys())
+
 
 # 渲染好的数据卡落这儿（启动时统一清一次）。**别发完就删**：框架那边是拿到文件、
 # 发完才回执的，抢在中间删会发出一张白图 —— 一张几十 KB，留着更稳。
@@ -450,21 +595,20 @@ def _send_card_or_text(client, qq, kind, fallback):
             log.exception('发卡片失败（%s），这条改发文本', kind)
     client.send_private_msg(qq, fallback())
 
-_COPIES_ASK = '打几份？（回复数字，最多 %d 份；发「取消」可以放弃）' % COPY_MAX
-# 纸张是可选项：管理员没配纸张类型时这一步整个跳过（见 _consume_pending_answer），
-# 配了才问 —— 没人用得到的选择题不该占一轮对话。
-_SKIP_WORDS = ('跳过', '默认', '不指定', '不用', '跳', '0')
+# 份数上限：搬到 config.py 了（nlu / llm 也要用它判越界），这里留个别名，
+# 老代码里的 COPY_MAX 与提示文案照旧。
+COPY_MAX = config.COPY_MAX
 
 
 def _items_menu(items, name=None, intro=None, defaults=None):
     """价目项菜单：**下单要选的就是这一条**（纸张 + 类型，自带单价）。
 
-    intro 让预设单和文件单共用这一屏（预设没有文件，改成「下单：打印服务「…」」
-    更准确）；不传就是文件单的默认说法。
+    现在它只在两种场合出现：学生明确说要看（「价目表」走卡片），
+    以及**他的要求落不到任何一档**时（说了「A3」而管理员没配 A3）——
+    那时把现有档位摆出来，比一句「没有这一档」有用得多。
 
     `defaults` 是用户的偏好（「默认 3 2份」设过的那份）。设过就在对应那条后面
-    标一句「你的默认」、并允许直接回「默认」—— 否则那条命令只写不读，
-    而回执里却说「下次下单时当默认值」，等于骗人（偏好审计抓到的）。
+    标一句「你的默认」—— 回执里写着「下次下单时当默认值」，这里要认得出它。
 
     每行把**单价**写出来：这一屏是学生下单时唯一一次看到价格的地方，
     不写的话他只能盲选（价目表本身是另一条命令，不是每个人都会去发）。
@@ -480,18 +624,8 @@ def _items_menu(items, name=None, intro=None, defaults=None):
         rows.append(' %s. %s（%s）%s'
                     % (item['price_item_id'], item['label'], price, mark))
     head = intro % name if name else ''
-    tail = '选哪一档？（回复编号%s；发「价目表」看完整价目与说明，发「取消」可以放弃）' % (
-        '，或回「默认」' if default_id else '')
+    tail = '要打哪一档？（回复编号；发「价目表」看完整价目，发「取消」可以放弃）'
     return '\n'.join([head, tail] + rows).strip()
-
-
-def _duplex_menu():
-    """单双面。**只在那一档支持双面时才问**（相纸那一档没有双面）。"""
-    return '要单面还是双面？（回复 1 单面 / 2 双面；发「取消」可以放弃）'
-
-
-def _duplex_text(duplex):
-    return '双面' if duplex == 'double' else '单面'
 
 
 def _human_bytes(num):
@@ -559,8 +693,8 @@ def extract_text(message):
     return ''
 
 
-def extract_file(message):
-    """取消息里的第一个附件段，返回 (段类型, 段数据)；没有就 (None, None)。
+def extract_attachments(message):
+    """取消息里的**所有**附件段，返回 [(段类型, 段数据), ...]。
 
     段类型有两种都要认：
       - 'file'：QQ 里「发送文件」的附件（pdf / docx 等）；
@@ -568,15 +702,68 @@ def extract_file(message):
         data 里的字段也不同（file 是文件名、url 是带 rkey 的下载地址）——
         只认 'file' 的版本真机上把三张图片当成了「非命令」回帮助文本，
         这是实测抓出来的教训。
+
+    为什么返回**列表**而不是第一个（2026-09-28 批量改造）：一次选几份文件发出去
+    时，它们会落在同一条消息的多个段里。老版本只取第一个，后面的文件被静默丢掉 ——
+    学生看到「收到 1 份」而自己明明发了 3 份，且没有任何地方会报错。
     字段名各实现略有出入（file_id / id / file 几种写法），取值留在
     _fetch_attachment 里按段类型分别处理。
     """
     if not isinstance(message, list):
-        return None, None
+        return []
+    found = []
     for seg in message:
         if isinstance(seg, dict) and seg.get('type') in ('file', 'image'):
-            return seg.get('type'), (seg.get('data') or {})
-    return None, None
+            found.append((seg.get('type'), (seg.get('data') or {})))
+    return found
+
+
+def extract_file(message):
+    """取消息里的**第一个**附件段，返回 (段类型, 段数据)；没有就 (None, None)。
+
+    保留这个「只取一个」的口径给还在用它的调用方（回归脚本、以及
+    「这条消息里有没有附件」这类只关心有无的判断）。
+    """
+    found = extract_attachments(message)
+    return found[0] if found else (None, None)
+
+
+def extract_reply(message):
+    """取「引用回复」指向的那条消息 id；没有引用就 None。
+
+    OneBot v11 的 reply 段是 {'type': 'reply', 'data': {'id': '12345'}}，
+    少数实现把字段写成 message_id —— 两种都认。引用本身**不带被引用的内容**，
+    要拿它的附件名得再调一次 get_msg（见 _quoted_names）。
+    """
+    if not isinstance(message, list):
+        return None
+    for seg in message:
+        if isinstance(seg, dict) and seg.get('type') == 'reply':
+            data = seg.get('data') or {}
+            value = str(data.get('id') or data.get('message_id') or '').strip()
+            return value or None
+    return None
+
+
+def _quoted_names(client, reply_id):
+    """被引用那条消息里的附件名，返回 (名单, 是否读成功)。
+
+    读成功但名单为空 = 引用的是没带文件的消息（比如 bot 自己发的提问），
+    那不是错误，调用方照常把要求当成「整批的」。读失败（get_msg 挂了）返回
+    (None, False) —— 这两件事必须分开：batch 里有多份文件时，
+    「读不到引用」和「引用里没有文件」对应完全不同的处理（前者宁可多问一句）。
+    """
+    try:
+        info = client.call_action('get_msg', {'message_id': reply_id}) or {}
+    except (OneBotError, OSError) as exc:
+        log.warning('取引用消息失败 id=%s：%s', reply_id, exc)
+        return None, False
+    names = []
+    for _kind, data in extract_attachments(info.get('message')):
+        name = str(data.get('file_name') or data.get('name') or data.get('file') or '').strip()
+        if name:
+            names.append(name)
+    return names, True
 
 
 def parse_command(text):
@@ -702,8 +889,12 @@ def _local_prelaunch_check(file_name, size):
     name = (file_name or '').strip()
     ext = name.rsplit('.', 1)[1].lower() if '.' in name else ''
     if ext not in config.ALLOWED_EXTENSIONS:
-        return '这个文件类型（%s）打不了，目前支持：%s' % (
-            ext or '无后缀', '、'.join(config.ALLOWED_EXTENSIONS))
+        #    列出**现在支持哪几种**（学生只会照着念，写「格式不支持」等于没说），
+        #    并给出两条能立刻走的路：换格式再发，或去网页端。
+        return ('这个文件类型（%s）打不了。现在支持：%s。\n'
+                '换成这些格式再发一次就行；或者导出成 PDF 发给我，网页端也能上传：%s'
+                % (ext or '无后缀', '、'.join(config.ALLOWED_EXTENSIONS),
+                   config.SITE_URL or '地址请向管理员索取'))
     if size == 0:
         return '这个文件是空的，换一个再发'
     if size > config.MAX_UPLOAD_MB * 1024 * 1024:
@@ -714,19 +905,133 @@ def _local_prelaunch_check(file_name, size):
     return None
 
 
-def handle_file(client, qq, kind, data):
-    """QQ 附件（图片或文件）→ 本地校验 → 暂存 → 追问打印参数。
+def _new_entry(kind='file', preset=None):
+    """开一批新的待办。preset 是预设记录（预设单才有）。"""
+    return {
+        'kind': kind,
+        'preset_id': (preset or {}).get('id'),
+        'preset_content': (preset or {}).get('content'),
+        'preset_item_id': (preset or {}).get('price_item_id'),
+        'files': [],
+        'items': None,
+        'remark': None,
+        'raw': None,          # 预设单的要求（文件单是每份文件各存一份 raw）
+        'asked_at': None,
+        'reminders': 0,
+        'ts': time.time(),
+    }
 
-    下载和校验放在提问之前：不合格的文件当场就拒（省一轮对话），
-    合格的先落进暂存目录，等用户选完参数再上传建单。
+
+def _file_refs(files):
+    """把几份文件说成「第 1 份、第 3 份」—— 学生在下一句话里就是这么指它们的。"""
+    return '、'.join('第 %d 份' % index for index, _item in files)
+
+
+def _unspecified(entry):
+    """这一批里还没定下打印要求的文件（带 1 起的序号）。"""
+    return [(index, item) for index, item in enumerate(entry['files'], start=1)
+            if not item.get('raw')]
+
+
+def _all_specified(entry):
+    """这一批是不是**每一份**都说清楚要什么了。
+
+    判据是「有没有原始要求」（raw），不是「能不能算出档位」：
+    后者永远为真（没说的地方都能用默认值补齐），拿它当判据会变成
+    「文件一到就自动下单」—— 那不是少操作，那是替学生做主。
     """
-    #    身份也放在**下载之前**问一次：没注册的号不该让他答完三轮再被拒
-    #    （见 _identity_error 的说明）。放在取附件之前还顺带省下一次
-    #    下载 —— 那份文件反正也用不上。
+    if entry['kind'] == 'preset':
+        return bool(entry.get('raw'))
+    return bool(entry['files']) and not _unspecified(entry)
+
+
+def handle_attachments(client, qq, attachments, text=''):
+    """一条消息里的**全部**附件：本地校验 → 暂存 → 挂进这一批 → 看要不要下单。
+
+    attachments 是 [(段类型, 段数据), ...]。QQ 里一次选几份文件发出去，
+    OneBot 可能给一条消息里多个附件段，也可能拆成几个独立事件 —— 两种都由
+    这里接住：前者一次挂完，后者分几次挂进**同一批**（这就是「合并同样的要求
+    一起下单」的基础）。
+
+    附件与文字在同一条消息里时，那句要求只作用于**这条消息带来的这几份**
+    （见 _apply_requirement 的 scope 参数）：学生一边发文件一边写「这张彩色」，
+    说的是这一份，不是整批。
+    """
+    #    身份放在取附件之前问一次：没注册的号不该让他把文件全传完再被拒，
+    #    还顺带省下几次下载（那些文件反正用不上）。
     problem = _identity_error(qq)
     if problem:
         client.send_private_msg(qq, problem)
         return
+
+    entry = _pending_get(qq)
+    if entry is not None and time.time() - (entry.get('ts') or 0) > config.BATCH_TTL_SECONDS:
+        #    上一批已经超时了（推送循环每 15 秒扫一次，中间这几秒里进来的
+        #    新文件不该被算进那批已经作废的东西里）。
+        _clear_pending(qq)
+        entry = None
+    if entry is None:
+        entry = _new_entry('file')
+
+    #    **下载之前就把 ts 刷新**：取一份附件要走 QQ 的 file 接口、可能几十秒，
+    #    而巡检是按 ts 判「闲置多久」的。不刷新的话，一份大文件还在下载时就被
+    #    判成「300 秒没动静」→ 这一批当场作废、暂存被删，学生看到的是
+    #    「文件没能取回来，请重新发一次」，而真正的原因是我们在自己拆自己的台。
+    entry['ts'] = time.time()
+
+    room = config.BATCH_MAX_FILES - len(entry['files'])
+    if room <= 0:
+        client.send_private_msg(
+            qq, '这一批已经有 %d 份文件了，一次最多 %d 份。\n'
+                '回「好」把这一批下掉，或发「取消」重来。'
+                % (len(entry['files']), config.BATCH_MAX_FILES))
+        return
+
+    accepted = []
+    for kind, data in attachments:
+        if len(accepted) >= room:
+            break
+        added = _ingest_attachment(client, qq, kind, data)
+        if added is not None:
+            entry['files'].append(added)
+            accepted.append(added)
+    if len(attachments) > room:
+        client.send_private_msg(
+            qq, '一次最多 %d 份，这条消息里后 %d 份没有收下。'
+                % (config.BATCH_MAX_FILES, len(attachments) - room))
+    if not accepted:
+        # 全都不合格：_ingest_attachment 已经逐份说过原因了，这里不再补一句。
+        return
+
+    if entry.get('dead'):
+        #    下载这段时间里这一批已经被作废了（巡检判超时 / 学生发「取消」/
+        #    又开了一批预设单）。刚落盘的这几份没有主人 —— 删掉就走，
+        #    **绝不能**把僵尸 entry 写回 _pending（写回去的症状是之后每次下单
+        #    都 FileNotFoundError，而日志里看不出是谁删了文件）。
+        for item in accepted:
+            _remove_quiet(item.get('path'))
+        return
+
+    entry['ts'] = time.time()
+    if not entry.get('items'):
+        entry['items'] = _fetch_price_items()
+    _pending_set(qq, entry)
+
+    if text.strip():
+        if _apply_requirement(client, qq, entry, text, scope=accepted):
+            return
+        # 附件带的那句没听懂：不当作要求，退回「问一句」那条路。
+        _after_change(client, qq, entry)
+        return
+    _after_change(client, qq, entry)
+
+
+def _ingest_attachment(client, qq, kind, data):
+    """取回一份附件 → 本地校验 → 落进暂存目录。成功返回文件条目，失败返回 None。
+
+    失败路径都自己回了话（学生要知道是哪一份、为什么没收下），
+    所以调用方只需要看返回值是不是 None。
+    """
     try:
         blob, name = _fetch_attachment(client, kind, data)
     except (OneBotError, OSError) as exc:
@@ -738,22 +1043,20 @@ def handle_file(client, qq, kind, data):
         if '不支持的文件类型' in str(exc):
             hint = '（当前机器人版本收不了「文件」附件，请把内容截图或拍照成图片发给我）'
         client.send_private_msg(qq, '文件没能取回来%s，请重新发一次' % hint)
-        return
+        return None
     name = _normalize_attachment_name(kind, name, blob)
     if name is None:
         client.send_private_msg(qq, '这张图片的格式打不了（只支持 JPG / PNG），'
                                     '换一张，或把文件当附件发过来')
-        return
+        return None
     problem = _local_prelaunch_check(name, len(blob))
     if problem:
         client.send_private_msg(qq, problem)
-        return
-
-    # 换新文件：旧的那份没选完就作废（同一时间只维护一份待办，少一种状态）。
-    if _clear_pending(qq):
-        client.send_private_msg(qq, '（上一份文件已作废，按新文件来）')
+        return None
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
-    path = str(PENDING_DIR / ('%s_%d_%s' % (qq, int(time.time()),
+    #    文件名里带一段随机串：同一秒里连发两份同名文件时，只按时间戳命名会
+    #    让后一份覆盖前一份的暂存（学生看到「收到 2 份」，实际盘上只剩 1 份）。
+    path = str(PENDING_DIR / ('%s_%s_%s' % (qq, uuid.uuid4().hex[:8],
                                             os.path.basename(name)[:80])))
     try:
         with open(path, 'wb') as fh:
@@ -761,26 +1064,8 @@ def handle_file(client, qq, kind, data):
     except OSError:
         log.exception('暂存文件失败 qq=%s', qq)
         client.send_private_msg(qq, '文件没能存下来，请重新发一次')
-        return
-    _pending[qq] = {'kind': 'file', 'path': path, 'name': name, 'intro': None,
-                    'step': 'item', 'price_item_id': None, 'item_label': None,
-                    'item_supports_duplex': False, 'duplex': None, 'copies': None,
-                    'remark': None, 'ts': time.time()}
-    items = _fetch_price_items()
-    entry = _pending[qq]
-    entry['items'] = items
-    if items:
-        client.send_private_msg(qq, _items_menu(items, name, defaults=_prefs_cache_get(qq)))
-    else:
-        #    管理员还没配价目表：不能装作没这回事（学生选了档却算不出价）。
-        #    明说一句，然后**照常下单** —— 金额本来就由管理员核定。
-        #    duplex 也要在这里定成单面：留 None 的话回执与状态里会是个空值，
-        #    而服务端照样兜成单面 —— 两边说的不是同一件事。
-        entry['duplex'] = 'single'
-        entry['step'] = 'copies'
-        client.send_private_msg(
-            qq, '收到「%s」。\n管理员还没配置价目表，这一单先按老规矩提交、'
-                '金额由管理员核定。\n%s' % (name, _COPIES_ASK))
+        return None
+    return {'path': path, 'name': name, 'size': len(blob), 'raw': None}
 
 
 # ---- 参数追问的状态机 --------------------------------------------------------
@@ -802,11 +1087,45 @@ def _remove_quiet(path):
 
 
 def _clear_pending(qq):
-    """清掉某个 QQ 的待办（内存 + 磁盘），返回被清掉的那条（没有则 None）。"""
-    entry = _pending.pop(qq, None)
+    """清掉某个 QQ 的待办（内存 + 磁盘），返回被清掉的那条（没有则 None）。
+
+    文件单要删掉**每一份**暂存（批量之后一单就是好几份）——
+    只删第一份的话，剩下的会一直躺在 data/pending 里，直到下次重启才被扫掉，
+    而重启之前它们既没主人、也没人知道该不该删。
+    """
+    entry = _pending_pop(qq)
     if entry:
-        _remove_quiet(entry['path'])
+        #    **先打死亡标记再删文件**：事件线程可能正拿着同一个 entry 在下载、
+        #    马上要把文件 append 进去再写回 _pending。它在写回之前会查这个标记，
+        #    发现就删掉刚落盘的文件并放弃（见 handle_attachments）。
+        #    没有这一步的话，这里删掉的只是「当时」那几份，后来那份成了
+        #    没有主人、也没有对应文件的僵尸，之后每次下单都 FileNotFoundError。
+        entry['dead'] = True
+        for item in entry.get('files') or []:
+            _remove_quiet(item.get('path'))
     return entry
+
+
+def _cancel_confirm_text(entry):
+    """「已取消」的统一说法。
+
+    **命令「取消」与整句「算了」共用同一句句式**：同一种结果两种说法，
+    学生会以为其中一种没生效（对话审计里就吃过这种不一致）。
+    每一句都带上「什么都没下」，因为他最担心的正是「是不是已经下了」。
+    """
+    if entry is None:
+        return '现在没有正在进行的下单，什么都没取消。'
+    count = len(entry.get('files') or []) if entry.get('kind') != 'preset' else 0
+    if not count:
+        return '已取消，什么都没下。'
+    return '已取消，什么都没下（这 %d 份文件已作废，要打请重新发）。' % count
+
+
+def _cancel_pending(client, qq):
+    """丢弃这一批并回一句统一的话；返回有没有东西可取消。"""
+    entry = _clear_pending(qq)
+    client.send_private_msg(qq, _cancel_confirm_text(entry))
+    return entry is not None
 
 
 def _purge_pending_dir():
@@ -833,35 +1152,95 @@ def _purge_pending_dir():
 
 
 def _timeout_text(entry):
-    """超时取消的话术。**要看卡在哪一步、以及是不是预设单**：
+    """作废时的话术。**文件单与预设单分开说**：
 
-    · 卡在份数/纸张的人早就选过打印方式了，跟他说「还没选打印方式」是错的；
-    · 预设单没有文件，「刚才那份文件」也就不成立（它要重新发的是「打印服务 N」）。
+    · 文件单要说明「哪几份」没了，并让用户重新发文件；
+    · 预设单没有文件，「刚才那几份」不成立（它要重新发的是「打印服务 N」）。
+
+    两种都不写「失败」二字：这是等太久了，不是出了错 —— 学生要做的动作
+    是重发，不是去找管理员。
     """
-    preset = entry.get('kind') == 'preset'
-    step_text = {'mode': '还没选打印方式', 'copies': '还没回份数',
-                 'paper': '还没选纸张'}.get(entry.get('step'), '还没选完参数')
-    if preset:
-        return ('刚才那单「%s」%s，已超时取消。\n要打请重新发「打印服务 %s」。'
-                % (entry.get('name'), step_text, entry.get('preset_id') or '编号'))
-    return ('刚才发的「%s」%s，已超时取消。\n要打印请重新发一次文件。'
-            % (entry.get('name'), step_text))
+    if entry.get('kind') == 'preset':
+        return ('「打印服务 %s」等太久了，已取消。\n要打请重新发一次。'
+                % (entry.get('preset_content') or entry.get('preset_id') or ''))
+    names = [item.get('name') or '' for item in entry.get('files') or []]
+    if len(names) == 1:
+        return ('刚才那份「%s」等太久了，已取消。\n要打印请重新发一次。' % names[0])
+    return ('刚才那 %d 份文件等太久了，已取消。\n要打印请重新发一次。' % len(names))
+
+
+def _remind_text(entry, qq):
+    """「还没回话」的追问：把默认配置完整念一遍，让回一个「好」就能成交。"""
+    if entry.get('kind') == 'preset':
+        head = '「打印服务 %s」还没说要怎么打。' % (entry.get('preset_content') or '')
+    else:
+        missing = _unspecified(entry)
+        if missing:
+            head = '%s 还没说要怎么打。' % _file_refs(missing)
+        else:
+            head = '还在等你的回复。'
+    default, error = _default_spec(entry, qq)
+    if error or default is None:
+        return head + '\n回「好」直接下单，或发「取消」放弃。'
+    return (head + '\n回「好」按 %s 下单，或说要怎么打（如「黑白 2份」）。'
+            % nlu.describe(default))
 
 
 def _sweep_expired_pending(client):
-    """超时未选参数的待办：删文件并告知本人（在推送循环里定期跑）。"""
-    if not _pending:
+    """批量待办的巡检：到点追问、追几次没动静就作废（在推送循环里定期跑）。
+
+    时间线（config 里可调）：闲置 45 秒问一次、150 秒再问一次、
+    300 秒作废 —— 用户的要求是「过了几秒没回复就追问，追问几次仍然不回复则取消」。
+    追问只针对**还没定下要求**的批次；已经说全的那批在收到消息的那一刻就下单了，
+    根本不会留在这里。
+    """
+    keys = _pending_keys()
+    if not keys:
         return
     now = time.time()
-    for qq in list(_pending.keys()):
-        entry = _pending.get(qq)
-        if entry is None or now - entry['ts'] <= PENDING_TTL_SECONDS:
+    for qq in keys:
+        entry = _pending_get(qq)
+        if entry is None:
             continue
-        _clear_pending(qq)
+        idle = now - (entry.get('ts') or 0)
         try:
-            client.send_private_msg(qq, _timeout_text(entry))
+            if idle > config.BATCH_TTL_SECONDS:
+                _clear_pending(qq)
+                client.send_private_msg(qq, _timeout_text(entry))
+                continue
+            asked = entry.get('reminders') or 0
+            if asked >= len(config.BATCH_REMIND_AT):
+                continue
+            if idle >= config.BATCH_REMIND_AT[asked]:
+                entry['reminders'] = asked + 1
+                entry['asked_at'] = now
+                client.send_private_msg(qq, _remind_text(entry, qq))
         except OneBotError:
-            log.warning('超时提醒发送失败 qq=%s（连接不可用）', qq)
+            log.warning('待办提醒发送失败 qq=%s（连接不可用）', qq)
+
+
+# ---- 数字参数的口径 ---------------------------------------------------------
+# 「单号 / 工单号 / 打印服务编号 / 每页条数」原先各处各写一遍 `.isdigit()`：
+#   · **不限长度** —— 一串 200 位数字会原样变成一次跨洋请求（和一条查不到的错误）；
+#   · **放行全角数字** —— `'２５１２４'.isdigit()` 是 True，而服务端只认 ASCII，
+#     于是「单号 ２５１２４」会被当成一个合法参数发出去、回一句「查不到」。
+# 收口成一个判据：ASCII、纯数字、长度 ≤ 12（单号最长形态远小于此，
+# 与 config.QQ_RE 的 12 位上限同一个量级）。
+_MAX_DIGITS_ARG = 12
+
+
+def _digit_arg(argument):
+    """命令里的数字参数 → int；不合法返回 None。"""
+    text = (argument or '').strip()
+    if not (text.isascii() and text.isdigit()) or len(text) > _MAX_DIGITS_ARG:
+        return None
+    return int(text)
+
+
+def _digit_arg_text(argument):
+    """同上，但要原样字符串（查单 / 撤回都按字符串传给服务端）。"""
+    value = _digit_arg(argument)
+    return None if value is None else str(value)
 
 
 def _site_hint(resp):
@@ -872,16 +1251,293 @@ def _site_hint(resp):
     return ''
 
 
-def _ask_current(client, qq, entry):
-    """按当前步骤把问题再发一遍（答案不合法、或用户中途设了备注时用）。"""
-    if entry['step'] == 'item':
-        client.send_private_msg(qq, _items_menu(entry.get('items') or [],
-                                                entry.get('name'), entry.get('intro'),
-                                                defaults=_prefs_cache_get(qq)))
-    elif entry['step'] == 'duplex':
-        client.send_private_msg(qq, _duplex_menu())
-    elif entry['step'] == 'copies':
-        client.send_private_msg(qq, _COPIES_ASK)
+def _duplex_text(duplex):
+    return '双面' if duplex == 'double' else '单面'
+
+
+# 给学生看的序号。**上标圆圈**（①②③）比「1)」在手机上一眼能认出来，
+# 而学生回话时说的「第 2 份」对应的就是这里的 ②。
+_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫'
+
+
+def _file_label(index, item):
+    return '%s %s' % (_CIRCLED[index - 1] if index <= len(_CIRCLED) else '%d.' % index,
+                      item.get('name') or '')
+
+
+def _resolve_raw(entry, qq, raw):
+    """把一份「原始要求」落成一档（没说的地方用学生的默认值补）。
+
+    ⚠️ 「能不能落成档」与「学生说没说」是两件事（见 _all_specified）：
+    这个方法对**空要求**也会返回一个合法的默认档 —— 那是用来展示和下单的，
+    不是用来判断学生是否已经表态的。
+
+    管理员**一份价目项都没配**时不当成错误：这一单照下（不带 price_item_id），
+    金额由管理员核定 —— 与老流程那句「先按老规矩提交」是同一个口径。
+    把它当错误的话，学生会在最后一步收到一句「没有这一档」而下不了单，
+    而那时他什么都做不了（价目表不是他能配的）。
+    """
+    if not entry.get('items'):
+        prefs = _prefs_cache_get(qq)
+        duplex = (raw or {}).get('duplex') or prefs.get('default_duplex') or 'single'
+        #    份数上限在**这里也要夹**：没有价目项时这一单照样要提交，
+        #    不夹的话「80 份」会在最后一步被服务端 400 顶回来（学生只能反复回「好」）。
+        asked_copies = (raw or {}).get('copies') or prefs.get('default_copies')
+        copies = nlu.clamp_copies(asked_copies or 1)
+        assumed = []
+        if (raw or {}).get('copies') and (raw or {}).get('copies') != copies:
+            assumed.append('份数最多 %d 份，按 %d 份' % (config.COPY_MAX, copies))
+        return {
+            'price_item_id': None, 'label': '',
+            'color': (raw or {}).get('color') or 'black',
+            'duplex': duplex if duplex in ('single', 'double') else 'single',
+            'copies': copies,
+            'assumed': assumed,
+        }, None
+    prefs = _prefs_cache_get(qq)
+    return nlu.resolve_spec(
+        raw or {}, entry.get('items') or [],
+        default_item_id=entry.get('preset_item_id') or prefs.get('default_price_item_id'),
+        default_copies=prefs.get('default_copies'),
+        default_duplex=prefs.get('default_duplex'))
+
+
+def _resolve_file(entry, qq, item):
+    return _resolve_raw(entry, qq, (item or {}).get('raw'))
+
+
+def _default_spec(entry, qq):
+    """这一批「什么都不说」时会落到哪儿 —— 提问与追问都要把它完整念出来。"""
+    return _resolve_raw(entry, qq, None)
+
+
+def _no_item_text(error, items):
+    """要求落不到任何一档时的话术：先说错在哪，再把现有档摆出来。
+
+    不摆编号菜单（老流程那种「回 1 选黑白」）：现在回一个数字是「打几份」的
+    意思，再摆一份要人回编号的菜单，两套规则会当场打架。
+    """
+    labels = ' / '.join(str(item.get('label') or '') for item in (items or [])[:6])
+    lines = [error or '这一档现在打不了。']
+    if labels:
+        lines.append('现有：%s' % labels)
+    lines.append('再说一次要哪一档就行，例如「A4 70g 黑白」。')
+    return '\n'.join(lines)
+
+
+def _ask_text(entry, qq):
+    """把「还缺什么 + 默认会怎么打」写成一条消息。"""
+    default, error = _default_spec(entry, qq)
+    lines = []
+    if not entry.get('items') and entry.get('kind') != 'preset':
+        #    管理员还没配价目表：不能装作没这回事（学生选了档却算不出价）。
+        #    明说一句，然后**照常下单** —— 金额本来就由管理员核定。
+        if entry.get('files'):
+            names = [item.get('name') or '' for item in entry['files']]
+            lines.append('收到「%s」。' % names[0] if len(names) == 1
+                         else '收到 %d 份文件。' % len(names))
+        lines.append('管理员还没配置价目表，这一单按老规矩提交、金额由管理员核定。')
+        lines.append('回「好」直接下单，或发「取消」放弃。')
+        return '\n'.join(lines)
+    if entry.get('kind') == 'preset':
+        lines.append('「打印服务 %s」还没说要怎么打。' % (entry.get('preset_content') or ''))
+    else:
+        files = entry.get('files') or []
+        missing = _unspecified(entry)
+        if len(files) == 1:
+            #    只有一份：把文件名说出来就够了（「收到「论文.pdf」。」）——
+            #    「第 1 份 还没说要怎么打」在只有一份时是句废话。
+            lines.append('收到「%s」。' % (files[0].get('name') or ''))
+        elif len(missing) == len(files):
+            lines.append('收到 %d 份文件：' % len(files))
+            for index, item in enumerate(files, start=1):
+                lines.append(' ' + _file_label(index, item))
+        elif missing:
+            lines.append('%s 还没说要怎么打。' % _file_refs(missing))
+    if error or default is None:
+        #    管理员还没配价目表：不能装作没这回事（学生选了档却算不出价）。
+        #    明说一句，然后**照常下单** —— 金额本来就由管理员核定。
+        lines.append('管理员还没配置价目表，这一单按老规矩提交、金额由管理员核定。')
+        lines.append('回「好」直接下单，或发「取消」放弃。')
+        return '\n'.join(lines)
+    lines.append('要按 %s 下单吗？' % nlu.describe(default))
+    lines.append('回「好」直接下单，或说要怎么打：「黑白 2份」「第 2 份彩色」「都双面」。')
+    return '\n'.join(lines)
+
+
+def _after_change(client, qq, entry):
+    """收完文件 / 听完要求之后的收口：能下单就下单，不能就问一句。"""
+    entry['ts'] = time.time()
+    if _all_specified(entry):
+        _submit_batch(client, qq, entry)
+        return
+    #    学生刚说过话，追问重新计时（否则「他一直在回，我们一直在催」）。
+    entry['asked_at'] = time.time()
+    entry['reminders'] = 0
+    client.send_private_msg(qq, _ask_text(entry, qq))
+
+
+def _fill_defaults(entry):
+    """把还没表态的那些文件标成「按默认来」（学生回了「好」时用）。
+
+    标成一个**非空**的要求字典，是为了让 _all_specified 认为它已经表态 ——
+    这个空壳里没有 color/duplex/copies/paper，resolve 时会逐项落到默认值上，
+    所以它表达的正是「没说，按默认」。
+    """
+    if entry.get('kind') == 'preset':
+        entry['raw'] = entry.get('raw') or {'default': True}
+        return
+    for item in entry.get('files') or []:
+        if not item.get('raw'):
+            item['raw'] = {'default': True}
+
+
+def _match_by_name(entry, names):
+    """按文件名把「被引用的那几份」找出来（返回文件条目列表）。
+
+    QQ 的文件名常常被框架改过（hash.jpg / 时间戳命名），所以判据分三档、
+    从严到松：完全同名 > 去扩展名同名 > 互为子串。三档都不中就不认领 ——
+    宁可让用户用「第 2 份」再说一遍，也不要把要求安到别的文件上。
+    """
+    found = []
+    for raw in names or []:
+        base = os.path.basename(str(raw or '')).strip()
+        if not base:
+            continue
+        stem = base.rsplit('.', 1)[0]
+        for item in entry.get('files') or []:
+            if item in found:
+                continue
+            name = item.get('name') or ''
+            if name == base or name.rsplit('.', 1)[0] == stem \
+                    or (len(stem) >= 4 and stem in name) or (len(name) >= 4 and name in base):
+                found.append(item)
+                break
+    return found
+
+
+def _apply_spec_to(client, qq, entry, targets, spec):
+    """把一份要求并进这几份文件。**全部能落地才写**，否则一个字都不改。
+
+    先整批试算、再整批提交，是因为「说了一半」比「什么都没说」更难处理：
+    第 1 份并进去了、第 2 份因为「没有 A3 这一档」失败，学生看到的是一半生效的
+    结果，而他刚才只说了**一句话**。要么整句生效，要么整句不认。
+    """
+    staged = []
+    notes = []
+    for item in targets:
+        merged = dict(item.get('raw') or {})
+        nlu.merge_spec(merged, spec)
+        resolved, error = _resolve_raw(entry, qq, merged)
+        if error:
+            client.send_private_msg(qq, _no_item_text(error, entry.get('items') or []))
+            return False
+        #    份数被夹了（「彩色 80 份」→ 50）要**当场说**，不能等下单回执：
+        #    回执上只会写「50 份」，学生会以为是自己说错了，或者干脆没注意到，
+        #    然后拿到 50 份的账单。这里只说一次（同一句话不重复刷屏）。
+        asked = merged.get('copies')
+        if asked and resolved.get('copies') != asked:
+            note = ('份数最多 %d 份：你说的 %s 份按 %d 份下。'
+                    % (config.COPY_MAX, asked, resolved.get('copies')))
+            if note not in notes:
+                notes.append(note)
+        staged.append((item, merged))
+    for item, merged in staged:
+        item['raw'] = merged
+    for note in notes:
+        client.send_private_msg(qq, note)
+    return True
+
+
+def _apply_requirement(client, qq, entry, text, scope=None, target_names=None):
+    """把一条文本要求作用到这一批上。**消费掉了返回 True**。
+
+    scope 是「这条消息里带来的那几份文件」（附件里带文字时用）；
+    target_names 是「引用回复带过来的文件名」（学生引用某一份说要求时用）。
+
+    三种作用范围的优先级，以及为什么这么定：
+      · 引用点名的 → 只作用于那几份（他说得最具体）；
+      · 这条消息带的文件 → 只作用于它们（「这张彩色」说的是这一张）；
+      · 其余 → 作用于**还没表态**的那些（一句「黑白2份」就是给剩下那些的）。
+        一份都不剩时改作用于全批 —— 那是「都彩色」这种改主意的说法。
+    """
+    parsed = nlu.parse_requirement(text)
+    if parsed['cancel']:
+        #    「算了」「不打了」这类整句取消：nlu 早就认出来了，但 bot 侧原先没人
+        #    消费它 —— 于是这句话会掉进大模型兜底，学生收到的是一句「没看懂」，
+        #    而他的意思恰恰是「别下了」。命令「取消」与它走同一个收口。
+        _cancel_pending(client, qq)
+        return True
+    if not parsed['submit'] and not parsed['remark'] and parsed['empty']:
+        #    「备注」两个字后面什么都没写：这不是「没听懂」，学生是想设备注、
+        #    只是不知道格式。直接告诉他怎么写，比回一句「没看懂」有用得多。
+        if (text or '').strip().startswith('备注'):
+            client.send_private_msg(qq, '备注要写成「备注 你的内容」，比如「备注 靠窗那台打印」。')
+            return True
+        #    规则一个字都没认出来 → 让大模型看一遍（没配 key 时这步是空操作）。
+        #    只在「确实没认出来」时才打扰它：绝大多数消息在上面那一行就结束了。
+        fallback = llm.extract_requirement(text, entry.get('items') or [])
+        if fallback is None:
+            return False
+        fallback['raw'] = text
+        parsed = fallback
+
+    if parsed['submit']:
+        _fill_defaults(entry)
+        _after_change(client, qq, entry)
+        return True
+
+    applied = False
+    if parsed['remark']:
+        entry['remark'] = parsed['remark']
+        client.send_private_msg(qq, '备注记下了：%s' % parsed['remark'])
+        applied = True
+
+    global_spec = parsed['global']
+    if not nlu.spec_is_empty(global_spec) or target_names:
+        if target_names:
+            targets = _match_by_name(entry, target_names)
+            if not targets:
+                client.send_private_msg(
+                    qq, '引用的那几份不在这一批里（可能已经下过单了）。\n'
+                        '用「第 1 份」这样告诉我，或者把文件重发一次。')
+                return True
+        elif scope:
+            targets = list(scope)
+        else:
+            targets = [item for _index, item in _unspecified(entry)]
+            if not targets:
+                #    全都表过态了：这句话当作**改主意**，作用于全批
+                #    （「都彩色」这种说法本来就是说给整个批量听的）。
+                targets = list(entry.get('files') or [])
+        if targets and not _apply_spec_to(client, qq, entry, targets, global_spec):
+            return True
+        applied = applied or bool(targets)
+
+    for index, spec in parsed['scoped']:
+        files = entry.get('files') or []
+        #    「最后一份」在 nlu 里只是一个语义标记（REF_LAST = -1）：那一批到底有
+        #    几份只有 bot 这边知道，所以到这一步才落成具体下标。
+        if index == nlu.REF_LAST:
+            if not files:
+                client.send_private_msg(
+                    qq, '现在没有待处理的文件。把文件发给我，再说「最后一份彩色」这样的要求。')
+                return True
+            index = len(files)
+        if not 1 <= index <= len(files):
+            client.send_private_msg(
+                qq, '这一批一共 %d 份文件，没有第 %d 份。\n'
+                    '可以说「第 1 份彩色」或「最后一份彩色」；也可以把文件重发一次。'
+                    % (len(files), index))
+            return True
+        if not _apply_spec_to(client, qq, entry, [files[index - 1]], spec):
+            return True
+        applied = True
+
+    if applied:
+        _after_change(client, qq, entry)
+        return True
+    return False
 
 
 def _fetch_price_items():
@@ -903,183 +1559,284 @@ def _fetch_price_items():
     return resp.get('price_items') or []
 
 
-def _consume_pending_answer(client, qq, text):
-    """把一条文本当成「参数追问」的回答处理。消费掉了返回 True。
+def _upload_problem_text(problem):
+    """这一批没下成时，把「接下来做什么」写清楚。
 
-    约定：**命令先于回答**（handle_event 里先 parse_command）——
-    用户选到一半想查订单就发「订单」，不该被追问卡住。
-    「备注 xxx」是**任何一步都能用的旁路**：记下备注、把当前问题重发一遍，
-    不给流程增加必答步数（网页端也允许随时填备注）。
+    分两种情形，因为学生要做的事完全不同：
+      · **额度满**（服务端每账号的在途预上传有上限，默认 15 份）：QQ 里没有任何
+        手段能处理它 —— 只能去网页看已下的单、或者等几分钟让旧令牌过期；
+      · 其它（网络抖动、参数被拒）：那几份还在待办里，回「好」就能重试。
+    只回一句服务端的原话（比如「太多了」）等于把问题丢回给学生，而这句话光是
+    看不出「我该怎么办」的。
     """
-    entry = _pending.get(qq)
-    if entry is None:
-        return False
-    if time.time() - entry['ts'] > PENDING_TTL_SECONDS:
-        _clear_pending(qq)
-        client.send_private_msg(
-            qq, '刚才那份文件等太久了（%d 分钟），已取消，请重新发一次。'
-                % (PENDING_TTL_SECONDS // 60))
-        return True
-    answer = (text or '').strip()
-
-    if answer.startswith('备注'):
-        #    剥掉分隔符：用户很自然写成「备注：靠窗」，不剥的话备注值会带着那个冒号
-        #    （管理员在订单台上看到「：靠窗」只会莫名其妙）。
-        remark = answer[len('备注'):].lstrip('：: \t').strip()[:200]   # 与网页端同一长度上限
-        if not remark:
-            client.send_private_msg(qq, '备注要写成「备注 你的内容」，比如「备注 靠窗那台打印」。')
-            return True
-        entry['remark'] = remark
-        entry['ts'] = time.time()
-        client.send_private_msg(qq, '备注记下了：%s' % remark)
-        _ask_current(client, qq, entry)
-        return True
-
-    if entry['step'] == 'item':
-        #    「默认 3 2份」设过就要真的用上：那条命令原先只写不读，
-        #    回执里却说「下次下单时当默认值」（偏好审计抓到的）。
-        if answer in ('默认', '默认值'):
-            now = _prefs_cache_get(qq)
-            default_id = now.get('default_price_item_id')
-            chosen = next((p for p in entry.get('items') or []
-                           if p['price_item_id'] == default_id), None)
-            if chosen is None:
-                client.send_private_msg(
-                    qq, '你还没设过默认价目项（或者它已经被管理员停用了）。'
-                        '发「默认 3 2份」可以设一个 —— 3 是上面菜单里的编号。')
-                return True
-            if _apply_item(client, qq, entry, chosen) and now.get('default_copies'):
-                #    份数也设过就一路套到底，直接下单（不再问单双面：默认单双面
-                #    在 _apply_item 里已经套上了）
-                entry['copies'] = int(now['default_copies'])
-                _submit_pending(client, qq, entry)
-            return True
-        if answer.isdigit():
-            chosen = next((p for p in entry.get('items') or []
-                           if str(p['price_item_id']) == answer), None)
-            if chosen is not None:
-                _apply_item(client, qq, entry, chosen)
-                return True
-        client.send_private_msg(
-            qq, '没看懂「%s」—— 回复上面菜单里的编号选一档，'
-                '或发「价目表」看完整价目，发「取消」放弃。' % (answer or '')[:20])
-        _ask_current(client, qq, entry)
-        return True
-
-    if entry['step'] == 'duplex':
-        if answer in _DUPLEX_MAP:
-            entry['duplex'] = _DUPLEX_MAP[answer]
-            entry['ts'] = time.time()
-            entry['step'] = 'copies'
-            client.send_private_msg(qq, _COPIES_ASK)
-        else:
-            client.send_private_msg(qq, '回复 1（单面）或 2（双面），或发「取消」放弃。')
-            _ask_current(client, qq, entry)
-        return True
-
-    if entry['step'] == 'copies':
-        #    ⚠️ 上限必须与服务端 config.COPIES_MAX 一致（这里收 999 的话，
-        #    用户在最后一步才会被 400 顶回来 —— 而那时暂存文件已经删了，
-        #    他得把整份文件重发一遍）。
-        if answer.isdigit() and 1 <= int(answer) <= COPY_MAX:
-            entry['copies'] = int(answer)
-            entry['ts'] = time.time()
-            _submit_pending(client, qq, entry)
-        else:
-            client.send_private_msg(qq, '回复份数（数字，比如 1），或发「取消」放弃。')
-        return True
-
-        return True
-    return False
+    text = str(problem or '文件没能传上去')
+    if any(word in text for word in ('太多', '额度', '上限', '满了', '超出', '配额')):
+        return ('%s\n（服务器的上传额度满了。去网页「我的订单」核对已经下成的单：%s；'
+                '或者等几分钟再回「好」重试。）' % (text, config.SITE_URL))
+    return text
 
 
-def _apply_item(client, qq, entry, chosen):
-    """把选中的价目项装进待办，并推进到下一步（单双面 或 份数）。返回是否已提交。
+def _receipt_text(entry, created, failed, summary=None, note=None):
+    """下单回执。**一个单号一行**；一张单里好几份时只念订单级汇总。
 
-    两条分支合在一处，是因为**同一档的后续问法必须一致**：
-    支持双面 → 问单双面；不支持（相纸那一档）→ 直接问份数，
-    并把 duplex 定成 single。分开写的话，迟早出现「走默认那条路时不问单双面、
-    手选编号时又问」这种一半对一半的行为差异。
+    「预估」两个字不能省：最终金额由管理员看过文件之后核定，
+    学生掏钱时得知道这个数还不是账单。
+
+    2026-10「一批 = 一张单」之后回执也跟着收口。三种情形分开写，因为学生
+    要看的东西不一样：
+      · 整单只有一份：照老样子把那**一份**的档位/份数/单双面念全 —— 参数只有
+        一组，逐项说出来最有用，也不占几行；
+      · 一张单好几份、各份参数一致：念档位与单双面 + **合计份数**（学生是按
+        「一共多少张纸」心疼钱的，逐份念没有额外信息）；
+      · 一张单好几份、参数不一致：**只**念份数与合计，再补一句「混合」——
+        手机里逐份念参数是一大坨，反而把单号淹了；而硬说成某一档更是错的
+        （那会让学生以为全批都是那一档），明细让他去网页看。
+
+    summary 由 _submit_batch 按**已定参数**算出来（不是服务端返回的订单级字段）：
+    混合与否、合计份数都只有调用方知道，服务端那个 copies 是订单级的单值。
+    note 是「可能已经下成」这类只能由调用方判断的补充说明。
     """
-    entry['price_item_id'] = chosen['price_item_id']
-    entry['item_label'] = chosen['label']
-    entry['item_supports_duplex'] = bool(chosen.get('supports_duplex'))
-    entry['ts'] = time.time()
-    if not entry['item_supports_duplex']:
-        #    不支持双面的档（相纸）：不问那一句，也不留一个能传出 double 的状态 ——
-        #    服务端也会兜（resolve_price_item 会强制成 single），两处一致。
-        entry['duplex'] = 'single'
-        entry['step'] = 'copies'
-        client.send_private_msg(
-            qq, '「%s」不支持双面，按单面算。\n%s' % (chosen['label'], _COPIES_ASK))
-        return False
-    #    默认单双面设过就直接套上、跳过这一问（与「默认」命令的承诺一致）
-    default_duplex = _prefs_cache_get(qq).get('default_duplex')
-    if default_duplex in ('single', 'double'):
-        entry['duplex'] = default_duplex
-        entry['step'] = 'copies'
-        client.send_private_msg(
-            qq, '「%s」· 你的默认%s。\n%s'
-                % (chosen['label'], _duplex_text(default_duplex), _COPIES_ASK))
-        return False
-    entry['step'] = 'duplex'
-    client.send_private_msg(qq, '「%s」\n%s' % (chosen['label'], _duplex_menu()))
-    return False
-
-
-def _submit_pending(client, qq, entry):
-    """参数齐了：下单（文件单上传 / 预设单直接建）。成败都清掉待办。"""
-    _pending.pop(qq, None)
-    is_preset = entry.get('kind') == 'preset'
-    blob = None
-    if not is_preset:
-        try:
-            with open(entry['path'], 'rb') as fh:
-                blob = fh.read()
-        except OSError:
-            _remove_quiet(entry['path'])
-            client.send_private_msg(qq, '刚才那份文件没能读出来，请重新发一次。')
-            return
-    try:
-        if is_preset:
-            resp = api.order_preset(qq, entry['preset_id'],
-                                    duplex=entry['duplex'],
-                                    copies=entry.get('copies') or 1,
-                                    price_item_id=entry.get('price_item_id'),
-                                    remark=entry.get('remark'))
+    lines = []
+    if created:
+        if summary and len(created) == 1 and summary.get('file_count', 0) > 1:
+            order = created[0]
+            count = summary.get('file_count')
+            total = summary.get('copies') or count
+            est = order.get('est_price')
+            est_text = (' · 预估 %.2f 元' % est) if isinstance(est, (int, float)) else ''
+            lines.append('已下单｜单号 %s' % (order.get('pickup_code'),))
+            if summary.get('mixed'):
+                lines.append('%d 份文件 · 共 %s 份%s' % (count, total, est_text))
+                lines.append('（混合单：各份参数不同，明细见网页「我的订单」）')
+            else:
+                grade = (order.get('price_item_name') or summary.get('label')
+                         or '未选档')
+                lines.append('%d 份文件 · %s · %s · 共 %s 份%s' % (
+                    count, grade,
+                    _duplex_text(order.get('duplex') or summary.get('duplex')),
+                    total, est_text))
         else:
-            resp = api.order_file(qq, entry['name'], blob,
-                                  duplex=entry['duplex'],
-                                  copies=entry.get('copies') or 1,
-                                  price_item_id=entry.get('price_item_id'),
-                                  remark=entry.get('remark'))
-    except api.ApiError as exc:
-        client.send_private_msg(qq, str(exc))
-        return
-    finally:
-        if not is_preset:
-            _remove_quiet(entry['path'])
-    if resp.get('code') == 0:
-        lines = ['下单成功：%s' % entry['name'],
-                 '　%s，%s 份' % (_duplex_text(entry['duplex']),
-                                 entry.get('copies') or 1)]
-        if entry.get('item_label'):
-            lines.append('　价目项：%s' % entry['item_label'])
+            # 老形状（单文件单、预设单）与「服务端回了不止一张单」的极端情形
+            # 都走这里：一张单一行，信息不删减。
+            lines.append('已下单 %d 单' % len(created) if len(created) > 1 else '已下单')
+            for order in created:
+                parts = [order.get('price_item_name') or '未选档',
+                         '%s 份' % (order.get('copies') or 1),
+                         _duplex_text(order.get('duplex'))]
+                est = order.get('est_price')
+                if isinstance(est, (int, float)):
+                    parts.append('预估 %.2f 元' % est)
+                lines.append('单号 %s · %s' % (order.get('pickup_code'), ' · '.join(parts)))
+                names = order.get('files') or []
+                if names:
+                    shown = ' / '.join(names[:3])
+                    if len(names) > 3:
+                        shown += ' 等 %d 份' % len(names)
+                    lines.append('　%s' % shown)
         if entry.get('remark'):
-            lines.append('　备注：%s' % entry['remark'])
-        # 预估价：服务端按下单时的文件页数算的（预设单没有文件，拿到的是 null）。
-        # **「预估」两个字不能省** —— 最终金额由管理员看过文件之后核定，
-        # 学生掏钱时得知道这个数还不是账单。
-        est = resp.get('est_price')
-        if isinstance(est, (int, float)):
-            lines.append('　预估 %.2f 元（以管理员核定为准）' % est)
-        # 只给单号：它是取件时报的号，也是查单/撤回时引用的号
-        lines.append('单号：%s' % resp.get('pickup_code'))
-        lines.append('订单进展在网页端看得更全：%s' % config.SITE_URL)
-        client.send_private_msg(qq, '\n'.join(lines))
+            lines.append('备注：%s' % entry['remark'])
+        if note:
+            lines.append(note)
+        lines.append('金额以管理员核定为准 · 网页端：%s' % config.SITE_URL)
+    if failed:
+        #    「一组没下成」的说法已经作废：一批现在就是一张单，
+        #    学生看到的只有「这一批下了没有」。
+        lines.append('这一批没下成：%s' % '；'.join(str(item) for item in failed[:2]))
+        lines.append('这几份还在我这儿，回「好」重试一次；'
+                     '也可以先去网页「我的订单」核对已经下成的单：%s' % config.SITE_URL)
+    return '\n'.join(lines)
+
+
+def _discard_tokens(qq, tokens):
+    """把已经拿到的预上传令牌退回去（不退还一直占着在途额度）。
+
+    失败只记日志：丢不掉只是白占服务端一份「每账号最多几份」的额度，
+    而这条路径本来就是在处理别的失败 —— 不能让它把回执也一起吞掉。
+    """
+    if not tokens:
+        return
+    try:
+        api.discard_prepared(qq, [token['file_token'] for token in tokens])
+    except api.ApiError as exc:
+        log.warning('丢弃预上传令牌失败 qq=%s：%s', qq, exc)
+
+
+def _submit_batch(client, qq, entry):
+    """下单：**这一批 = 一次请求 = 一张单、一个单号**（服务端 2026-10 起的新契约）。
+
+    以前这里按 (档位, 单双面, 份数) 把这一批分成几组、一组发一次建单请求 ——
+    于是学生一次发了 3 份、参数不一样，就拿到 3 个单号：取件要报三个号、
+    管理员要接三次、还要计三次费，而他只做了一件事。现在服务端允许**一个 group
+    里每份文件带自己的参数**，所以整批只发一次，学生只拿一个单号。
+
+    逐份上传那段**保留**（见 api.upload_prepare 的说明）：不能把几份文件塞进
+    一个 multipart —— 服务端的 MAX_CONTENT_LENGTH 卡的是整个请求体（50MB），
+    三份 20MB 的讲义合在一起当场 413，而学生没做错任何事。
+
+    失败时这一批**整批**留在待办里（已经拿到的预上传令牌一并退回），
+    学生回一个「好」就能重试；只有真建成单了才删本地暂存。
+    """
+    if entry.get('kind') == 'preset':
+        _submit_preset(client, qq, entry)
+        return
+    files = entry.get('files') or []
+    if not files:
+        _clear_pending(qq)
+        return
+
+    #    每一份的参数**各自**落成档：份数不同就是各自的份数、档位不同就是各自的
+    #    档位。绝不取第一份或最大值代表全批 —— 那是打错纸、算错钱，
+    #    而学生从回执上根本看不出来。
+    resolved_files = []
+    for item in files:
+        resolved, error = _resolve_file(entry, qq, item)
+        if error:
+            client.send_private_msg(qq, _no_item_text(error, entry.get('items') or []))
+            return
+        resolved_files.append((item, resolved))
+
+    #    回执要用的汇总：混合与否、合计份数只有这里知道（服务端返回的 copies
+    #    是订单级的单值，一批里份数不同时它代表不了全批）。
+    signature = {(resolved.get('price_item_id'), resolved.get('duplex'),
+                  resolved.get('copies')) for _item, resolved in resolved_files}
+    summary = {
+        'file_count': len(resolved_files),
+        'copies': sum(int(resolved.get('copies') or 1)
+                      for _item, resolved in resolved_files),
+        'mixed': len(signature) > 1,
+        'label': resolved_files[0][1].get('label') or '',
+        'duplex': resolved_files[0][1].get('duplex'),
+    }
+
+    tokens = []
+    problem = None
+    for item, _resolved in resolved_files:
+        try:
+            with open(item['path'], 'rb') as fh:
+                blob = fh.read()
+            resp = api.upload_prepare(qq, item['name'], blob)
+        except (api.ApiError, OSError) as exc:
+            problem = str(exc)
+            break
+        if resp.get('code') != 0:
+            problem = resp.get('msg') or '文件没能传上去'
+            break
+        tokens.append({'file_token': resp.get('file_token'), 'filename': item['name']})
+
+    created = []
+    failed = []
+    note = None
+    if problem is not None:
+        #    中途有一份传不上去：还没走到建单。先退掉手里那些令牌 ——
+        #    不退的话它们一直占着「每账号最多几份」的在途额度，而学生在 QQ 里
+        #    没有任何手段处理（额度只能在网页端看和清）。
+        _discard_tokens(qq, tokens)
+        failed.append(_upload_problem_text(problem))
     else:
+        payload = [{
+            'file_token': token['file_token'],
+            'filename': token['filename'],
+            'price_item_id': resolved.get('price_item_id'),
+            'copies': resolved.get('copies'),
+            'duplex': resolved.get('duplex'),
+        } for token, (_item, resolved) in zip(tokens, resolved_files)]
+        resp = None
+        try:
+            resp = api.order_prepared(qq, [{
+                'files': payload,
+                #    备注是**整批**的（学生只写一句），所以留在组上。
+                'remark': entry.get('remark') or '',
+            }])
+        except api.ApiError as exc:
+            #    建单这类请求**不重试**（见 api.py 的模块注释）：响应丢了不等于
+            #    没建成。所以既不重发、也**不丢弃令牌** —— 万一单已经建好，
+            #    丢令牌会把订单指着的文件删掉。让学生发「订单」自己看一眼。
+            client.send_private_msg(
+                qq, '%s\n这一单可能已经建好了，发「订单」可以核对；'
+                    '没有的话回「好」再试一次。' % exc)
+            failed.append('连不上服务器')
+        if resp is not None:
+            if resp.get('code') != 0:
+                #    服务端明确回了错（不是连接层）：这批确定没建成，
+                #    把已经传上去的预上传令牌收回来，别占着那份额度。
+                _discard_tokens(qq, tokens)
+                created = resp.get('orders') or []
+                if created:
+                    #    极端情形：服务端建到一半才 500，响应里仍带着已经形成的单。
+                    #    这时候说「没下成」是撒谎、说「下成了」也是撒谎，
+                    #    而且**绝不能**引导他回「好」重试（那就是重复下单）。
+                    #    唯一的正确答案是让他自己发「订单」核对。
+                    note = ('服务端报了错，但这一单可能已经下成了：'
+                            '先发「订单」核对，别急着回「好」重试。')
+                else:
+                    failed.append(_upload_problem_text(resp.get('msg') or '下单失败'))
+            else:
+                created = resp.get('orders') or []
+                for item in files:
+                    _remove_quiet(item['path'])
+
+    if not created and not failed:
+        #    服务端回了 code=0 却一张单都没有：不能当作成功（暂存会被删掉、
+        #    学生却什么都没有），也不能一声不吭地把整批扔掉。
+        failed.append('服务端没有回单号')
+
+    if failed:
+        #    一条单只有两种结局：整批下成，或整批还在我这儿。
+        entry['files'] = list(files)
+        entry['ts'] = time.time()
+        entry['asked_at'] = None
+        entry['reminders'] = 0
+        _pending_set(qq, entry)
+    else:
+        _pending_pop(qq)
+        if note:
+            #    「可能已经下成」那种情形**不给重试**（回「好」就是重复下单），
+            #    所以本地暂存再没人认领，删掉 —— 否则它悄悄占着盘直到下次启动。
+            for item in files:
+                _remove_quiet(item['path'])
+
+    text = _receipt_text(entry, created, failed, summary, note)
+    if text:
+        client.send_private_msg(qq, text)
+
+
+def _submit_preset(client, qq, entry):
+    """预设单的下单（没有文件，参数取自这一批的要求）。"""
+    resolved, error = _resolve_raw(entry, qq, entry.get('raw'))
+    if error:
+        client.send_private_msg(qq, _no_item_text(error, entry.get('items') or []))
+        return
+    asked = (entry.get('raw') or {}).get('copies')
+    if asked and resolved.get('copies') != asked:
+        #    与文件单同一个口径：份数被夹到上限时**先说一句**再下单
+        #    （「打印服务 2 80份」原先会静默变成 50 份）。
+        client.send_private_msg(qq, '份数最多 %d 份：你说的 %s 份按 %d 份下。'
+                                % (config.COPY_MAX, asked, resolved.get('copies')))
+    _pending_pop(qq)
+    try:
+        resp = api.order_preset(qq, entry['preset_id'],
+                                duplex=resolved['duplex'],
+                                copies=resolved['copies'],
+                                price_item_id=resolved['price_item_id'],
+                                remark=entry.get('remark'))
+    except api.ApiError as exc:
+        #    连不上服务器（不是服务端明确拒绝）：**不重试**，也不猜单有没有建成。
+        #    让它去发「订单」核对，是最省事的下一步。
+        client.send_private_msg(qq, '%s\n这一单可能已经建好了，发「订单」可以核对；'
+                                    '没有的话重新发一次「打印服务 %s」就行。'
+                                % (exc, entry.get('preset_content') or entry.get('preset_id')))
+        return
+    if resp.get('code') != 0:
         client.send_private_msg(qq, '没有下成单：%s%s'
                                 % (resp.get('msg', '未知原因'), _site_hint(resp)))
+        return
+    order = {'pickup_code': resp.get('pickup_code'),
+             'price_item_name': resolved.get('label'),
+             'copies': resolved.get('copies'),
+             'duplex': resolved.get('duplex'),
+             'est_price': resp.get('est_price'),
+             'files': []}
+    client.send_private_msg(qq, _receipt_text(entry, [order], []))
 
 
 def reply_orders(client, qq):
@@ -1112,19 +1869,20 @@ def reply_orders(client, qq):
 
 def reply_code(client, qq, argument):
     """查一张单：**单号即句柄**（2026-09-21 起不再有内部编号）。"""
-    if not argument or not argument.isdigit():
+    handle = _digit_arg_text(argument)
+    if handle is None:
         #    别写死位数（升过一次位：4 → 5）：写成例子就够了，
         #    写「4 位」会让拿着 5 位单号的人以为自己的号不对。
         client.send_private_msg(qq, '用法：「单号 25124」（下单时给你的那串数字；'
                                     '忘了就发「订单」看列表）')
         return
-    resp = api.order(qq, argument)
+    resp = api.order(qq, handle)
     if resp.get('code') != 0:
         client.send_private_msg(qq, str(resp.get('msg', '查询失败')) + _site_hint(resp))
         return
     if resp.get('pickup_code') is None:
         client.send_private_msg(qq, '单号 %s：%s'
-                                    % (argument, resp.get('msg') or '这张单已经取件了'))
+                                    % (handle, resp.get('msg') or '这张单已经取件了'))
         return
     client.send_private_msg(qq, '单号 %s：%s%s' % (
         resp.get('pickup_code'), resp.get('status'),
@@ -1141,8 +1899,8 @@ def reply_price(client, qq):
     try:
         resp = api.price_table()
     except api.ApiError as exc:
-        client.send_private_msg(qq, '价目表暂时取不到（%s）。%s'
-                                    % (exc, _site_hint({})))
+        client.send_private_msg(qq, '价目表暂时取不到（%s）。\n稍后再发一次「价目表」；%s'
+                                    % (exc, _site_line()))
         return
     if resp.get('code') != 0:
         client.send_private_msg(qq, str(resp.get('msg', '查询失败')) + _site_hint(resp))
@@ -1189,23 +1947,35 @@ def reply_preset(client, qq, argument):
             lines = ['可用的打印服务（回复「打印服务 编号」下单）：']
             for preset in presets:
                 content = preset.get('content') or ''
-                lines.append('　%s：%s' % (preset.get('preset_id'),
-                                           content[:40] + ('…' if len(content) > 40 else '')))
+                #    列表里要带**价格**：这是学生下单前唯一一次看到钱的机会
+                #    （价目表是另一条命令，不是每个人都会去发）。服务端把
+                #    preset_price（一口价，元/份）和 price_item_label（绑定的档位）
+                #    都给了，两样都显示；两样都没有时才只写服务名。
+                parts = [content[:40] + ('…' if len(content) > 40 else '')]
+                price = preset.get('preset_price')
+                if isinstance(price, (int, float)):
+                    parts.append('%.2f 元/份' % price)
+                elif preset.get('price_item_label'):
+                    parts.append(str(preset['price_item_label']))
+                lines.append('　%s：%s' % (preset.get('preset_id'), ' · '.join(parts)))
             return '\n'.join(lines)
 
         _send_card_or_text(client, qq, 'presets', text)
         return
-    if not argument.isdigit():
+    #    编号后面允许**直接把要求写在同一句里**（「打印服务 2 双面 2份」）：
+    #    与文件单同一套解析，说得全就一次下单，说不全才问一句。
+    parts = argument.split(None, 1)
+    head = parts[0]
+    inline = parts[1].strip() if len(parts) > 1 else ''
+    preset_id = _digit_arg(head)
+    if preset_id is None:
         client.send_private_msg(qq, '用法：「打印服务 编号」，比如「打印服务 2」。'
                                     '先发「打印服务」看看有哪些。')
         return
-    # 选了编号：先确认这条预设还在，然后**进入和文件单一样的参数追问**
-    #（网页端用预设下单时同样能选颜色/单双面/份数/纸张，这里对齐它）。
     resp = api.print_options()
     if resp.get('code') != 0:
         client.send_private_msg(qq, str(resp.get('msg', '查询失败')) + _site_hint(resp))
         return
-    preset_id = int(argument)
     preset = next((p for p in resp.get('presets') or []
                    if p.get('preset_id') == preset_id), None)
     if preset is None:
@@ -1213,23 +1983,28 @@ def reply_preset(client, qq, argument):
         return
     label = (preset.get('content') or '')[:40]
     if _clear_pending(qq):
-        client.send_private_msg(qq, '（上一份待办已作废）')
-    _pending[qq] = {'kind': 'preset', 'preset_id': preset_id, 'path': None,
-                    'name': label, 'intro': '下单：打印服务「%s」。',
-                    'step': 'item', 'price_item_id': None, 'item_label': None,
-                    'item_supports_duplex': False, 'duplex': None, 'copies': None,
-                    'remark': None, 'ts': time.time()}
-    items = _fetch_price_items()
-    entry = _pending[qq]
-    entry['items'] = items
-    if items:
-        client.send_private_msg(qq, _items_menu(items, label, '下单：打印服务「%s」。',
-                                                defaults=_prefs_cache_get(qq)))
-    else:
-        entry['step'] = 'copies'
-        client.send_private_msg(
-            qq, '下单：打印服务「%s」。\n管理员还没配置价目表，这一单先按老规矩提交、'
-                '金额由管理员核定。\n%s' % (label, _COPIES_ASK))
+        client.send_private_msg(qq, '（上一批待办已作废，按这条服务来）')
+    entry = _new_entry('preset', preset)
+    entry['preset_id'] = preset_id
+    entry['preset_content'] = label
+    entry['items'] = resp.get('price_items') or _fetch_price_items()
+    _pending_set(qq, entry)
+    if inline:
+        #    句子里的要求：说得全（比如「双面 2份」）就直接下单 —— 这正是这一轮
+        #    要的「少打几次字」；说不全就走提问那条路，默认档在提问里写清楚。
+        parsed = nlu.parse_requirement(inline)
+        if parsed['empty'] and not parsed['submit']:
+            fallback = llm.extract_requirement(inline, entry['items'])
+            parsed = fallback or parsed
+        if parsed['remark']:
+            entry['remark'] = parsed['remark']
+        if parsed['submit']:
+            _fill_defaults(entry)
+            _after_change(client, qq, entry)
+            return
+        if not nlu.spec_is_empty(parsed['global']):
+            entry['raw'] = dict(parsed['global'])
+    _after_change(client, qq, entry)
 
 
 def reply_withdraw(client, qq, argument):
@@ -1239,22 +2014,24 @@ def reply_withdraw(client, qq, argument):
     网页端也有一个二次确认弹窗。QQ 里没法弹窗，就用「再说一遍完整命令」
     代替 —— 顺手也把订单号再核对一次。
     """
-    if not argument or not argument.isdigit():
+    handle = _digit_arg_text(argument)
+    if handle is None:
         client.send_private_msg(qq, '用法：「撤回 25124」（把例子换成你的单号）。\n'
                                     '只有还没被接单的单能撤回；撤回后订单记录和文件都会删除、'
                                     '不能恢复。发「订单」可以看到自己的单号。')
         return
     client.send_private_msg(qq, '撤回后不能恢复（订单记录和文件一并删除）。\n'
-                                '确实要撤回单号 %s，请回复：确认撤回 %s' % (argument, argument))
+                                '确实要撤回单号 %s，请回复：确认撤回 %s' % (handle, handle))
 
 
 def reply_withdraw_confirm(client, qq, argument):
-    if not argument or not argument.isdigit():
-        client.send_private_msg(qq, '用法：「确认撤回 单号」')
+    handle = _digit_arg_text(argument)
+    if handle is None:
+        client.send_private_msg(qq, '用法：「确认撤回 单号」，单号发「订单」能看到。')
         return
-    resp = api.withdraw_order(qq, argument)
+    resp = api.withdraw_order(qq, handle)
     if resp.get('code') == 0:
-        client.send_private_msg(qq, '单号 %s 已撤回。' % argument)
+        client.send_private_msg(qq, '单号 %s 已撤回。' % handle)
     else:
         client.send_private_msg(qq, '撤回失败：%s%s'
                                 % (resp.get('msg', '未知原因'), _site_hint(resp)))
@@ -1263,7 +2040,8 @@ def reply_withdraw_confirm(client, qq, argument):
 def reply_announcement(client, qq):
     resp = api.announcement()
     if resp.get('code') != 0:
-        client.send_private_msg(qq, str(resp.get('msg', '查询失败')))
+        client.send_private_msg(qq, '公告暂时取不到：%s\n稍后再发一次「公告」；%s'
+                                    % (resp.get('msg', '查询失败'), _site_line()))
         return
     ann = resp.get('announcement')
     if not ann:
@@ -1375,13 +2153,14 @@ def reply_tickets(client, qq):
 
 def reply_ticket_reply(client, qq, argument):
     parts = (argument or '').split(None, 1)
-    if len(parts) < 2 or not parts[0].isdigit():
+    ticket_id = _digit_arg(parts[0]) if parts else None
+    if ticket_id is None or len(parts) < 2:
         client.send_private_msg(qq, '用法：「回复工单 单号 内容」，比如「回复工单 3 已经取到了」。\n'
                                     '单号发「工单」能看到。')
         return
-    resp = api.ticket_reply(qq, int(parts[0]), parts[1].strip()[:1000])
+    resp = api.ticket_reply(qq, ticket_id, parts[1].strip()[:1000])
     if resp.get('code') == 0:
-        client.send_private_msg(qq, '已回复工单 %s，管理员会看到。' % parts[0])
+        client.send_private_msg(qq, '已回复工单 %s，管理员会看到。' % ticket_id)
     else:
         client.send_private_msg(qq, '没能回复：%s%s'
                                 % (resp.get('msg', '未知原因'), _site_hint(resp)))
@@ -1389,22 +2168,13 @@ def reply_ticket_reply(client, qq, argument):
 
 # 像「在回答追问」的短消息：数字、跳过、取消、默认一类。用来把「我这边没有待办」
 # 从「普通聊天」里分出来，好回一句有用的话，而不是甩一整篇帮助。
-_ANSWER_LIKE = ('跳过', '取消', '取消吧', '算了', '默认', '默认值')
+# （批量流程里一个裸数字是**份数**的意思 —— 「打几份」那句提示就是这么写的。）
+_ANSWER_LIKE = ('跳过', '取消', '取消吧', '算了', '默认', '默认值', '好', '好的')
 
 
 def _looks_like_answer(text):
     text = (text or '').strip()
-    return text.isdigit() or text in _ANSWER_LIKE
-
-
-def _pending_mode_step(qq):
-    """这个 QQ 是不是正卡在「选打印方式」那一步。"""
-    entry = _pending.get(str(qq))
-    if not entry:
-        return False
-    if time.time() - (entry.get('ts') or 0) > PENDING_TTL_SECONDS:
-        return False
-    return entry.get('step') == 'mode'
+    return _digit_arg(text) is not None or text in _ANSWER_LIKE
 
 
 def handle_event(client, event):
@@ -1417,32 +2187,57 @@ def handle_event(client, event):
     if qq == client.self_id:
         return  # 自己发出的消息（开了 reportSelfMessage 时会出现），别自问自答
 
-    kind, data = extract_file(event.get('message'))
-    if kind:
-        log.info('收到附件 qq=%s 类型=%s name=%s', qq, kind,
-                 (data.get('file_name') or data.get('file') or '(无文件名)'))
-        handle_file(client, qq, kind, data)
+    attachments = extract_attachments(event.get('message'))
+    if attachments:
+        text = extract_text(event.get('message'))
+        log.info('收到附件 qq=%s 共 %s 个 类型=%s', qq, len(attachments),
+                 ','.join(kind for kind, _data in attachments))
+        #    附件与文字在同一条消息里（「这张彩色」）：文字只作用于这条消息带来的
+        #    那几份，见 handle_attachments / _apply_requirement 的 scope 参数。
+        handle_attachments(client, qq, attachments, text)
         return
 
     text = extract_text(event.get('message'))
-    #    ⚠️ 待办状态里回「默认」要先于命令解析：菜单上写着「或回「默认」」，
-    #    而 `parse_command('默认')` 会把它当成设置默认参数那条命令（命令优先于追问），
-    #    于是用户按提示回「默认」会收到一条用法说明 —— 菜单在教一个走不通的写法
-    #    （对话审计抓到的）。这里只拦**待办处在选打印方式那一步 + 整词是「默认」**，
-    #    其余情况一律照旧走命令。
-    if text.strip() in ('默认', '默认值') and _pending_mode_step(qq):
-        if _consume_pending_answer(client, qq, text.strip()):
-            return
+    reply_id = extract_reply(event.get('message'))
     command, argument = parse_command(text)
     # 留痕：谁、什么时候、用了哪个命令。**不记消息正文**（正文可能有闲聊和隐私），
     # 非命令消息只留一句「非命令」——运维需要的是「这个 QQ 在用机器人」这件事。
-    log.info('私聊消息 qq=%s 命令=%s', qq, command or '(非命令)')
+    log.info('私聊消息 qq=%s 命令=%s%s', qq, command or '(非命令)',
+             '(引用)' if reply_id else '')
 
+    entry = _pending_get(qq)
+    if entry is not None and time.time() - (entry.get('ts') or 0) > config.BATCH_TTL_SECONDS:
+        #    超时：先作废（顺手删暂存文件）再回话。这一步不能交给推送循环 ——
+        #    它每 15 秒才扫一次，中间这几秒进来的一句话会拿着**已经过期的那批**
+        #    去下单，而那些文件的寿命已经到了（清理逻辑随手就会删掉它们）。
+        _clear_pending(qq)
+        client.send_private_msg(qq, _timeout_text(entry))
+        return
     if command is None:
-        # 不是命令：先看是不是「打印参数追问」的回答（选了数字/份数）。
-        if _consume_pending_answer(client, qq, text):
+        # 不是命令：先看是不是对这一批的要求（「黑白 2份」「第 2 份彩色」「好」）。
+        if entry is not None:
+            #    引用里的文件名只取一次（get_msg 是一次动作调用，别为了两个判断
+            #    各问一遍框架）。
+            names, reply_ok = _quoted_names(client, reply_id) if reply_id else ([], True)
+            if reply_id and not reply_ok and len(entry.get('files') or []) > 1:
+                #    引用读不到、而这一批又不止一份文件：**宁可多问一句**。
+                #    引用某一份说要求（「引用 + 彩色」）是最自然的用法，取不到时若照常
+                #    当成「整批的」，学生说的「这一份」就会安到别的文件上 —— 那是实打实的
+                #    误判，而多问一句只是多打几个字。只有一份文件时没有歧义，不拦。
+                client.send_private_msg(
+                    qq, '引用的那条消息没取到。\n'
+                        '直接说文件名或「第 2 份」就行，比如「第 2 份彩色」。')
+                return
+            if _apply_requirement(client, qq, entry, text, target_names=names):
+                return
+            # 有批在等要求，但这句没听懂：明说一句，再把问题和默认档重发一遍
+            # （不清空！学生可能只是没说清楚，重发文件才是真的烦）。
+            # 分成两条消息：前一条只说「我没懂哪个词」，后一条是完整的提问 ——
+            # 挤成一条的话，「没看懂」那句会被后面几行默认配置淹掉。
+            client.send_private_msg(qq, '没看懂「%s」。' % ((text or '').strip()[:20] or '这句'))
+            _after_change(client, qq, entry)
             return
-        # 也不是回答。带斜杠却认不出 = 想执行命令但写错了，明确说「不认识」；
+        # 没有待办时的几条兜底路径。带斜杠却认不出 = 想执行命令但写错了；
         # 不带斜杠的就是普通聊天，只回帮助（让他知道发文件就能下单）。
         if text.strip()[:1] in ('/', '／'):
             reply_help(client, qq, '这个命令我不认识。' + chr(10))
@@ -1451,9 +2246,10 @@ def handle_event(client, event):
             #    **刚重启**（待办存在内存里，重启就没了）。这时甩一整篇帮助等于装傻，
             #    用户只会以为机器人坏了（对话审计抓到的）。
             client.send_private_msg(
-                qq, '我这边没有正在进行的下单了 —— 多半是刚才那份文件过期了'
-                    '（或者我重启过，待办不保留）。\n麻烦把文件重新发一次，'
-                    '我马上再问一遍打印方式和份数。')
+                qq, '我这边没有正在进行的下单了。\n'
+                    '多半是刚才那批文件过期了（或者我重启过，待办不保留）。\n'
+                    '把文件重新发一次就行，要求可以写在同一条消息里，'
+                    '比如「黑白 2份」。')
         else:
             reply_help(client, qq)
         return
@@ -1492,23 +2288,28 @@ def handle_event(client, event):
         elif command == 'pref_size':
             reply_pref_size(client, qq, argument)
         elif command == 'pref_default':
-            reply_pref_default(client, qq, argument)
+            #    「默认」既是那条设置命令的名字，也是「按你的默认参数来」的意思。
+            #    有批在等要求、而学生只发了「默认」两个字时，按后者走 ——
+            #    否则他会收到一条用法说明，而他明明是在回答我们的提问。
+            if entry is not None and not argument.strip() \
+                    and _apply_requirement(client, qq, entry, '好'):
+                pass
+            else:
+                reply_pref_default(client, qq, argument)
         elif command == 'pref_help':
             reply_settings(client, qq)
         elif command == 'cancel':
             # 命令优先于追问，所以「取消」在这里收口：
             # 有没有待办都有一句明确的回答，不让人猜。
-            if _clear_pending(qq):
-                client.send_private_msg(qq, '已取消这份文件的打印。')
-            else:
-                client.send_private_msg(qq, '现在没有正在进行的操作。')
+            _cancel_pending(client, qq)
         else:
             reply_help(client, qq, '这个命令我不认识。' + chr(10))
     except api.ApiError as exc:
         # 命令处理里的网络错误在这里统一兜底：服务器暂时够不着，
         # 也要给人回一句话，而不是让消息掉进没有回应的黑洞。
+        # 「稍后再发一次」是学生唯一能做的事，别让他自己猜。
         try:
-            client.send_private_msg(qq, str(exc))
+            client.send_private_msg(qq, '%s\n稍后再发一次这条命令就好。' % exc)
         except OneBotError:
             log.warning('回话失败（连接不可用）qq=%s', qq)
 
@@ -1545,41 +2346,50 @@ def _notify_loop():
     游标推进规则：**全部推成功才推进**。推到一半连接挂了的话，
     保持旧游标，下一轮从同一批重拉 —— 已推过的那几单靠 notified
     集合去重，不会因为重拉而收到第二条。
+
+    ⚠️ 整轮包在 `except Exception` 里：这条线程原先只捕 OneBotError 与 ApiError，
+    于是服务器哪天回了一个形状不对的 events（`int('abc')` 之类一个 ValueError）
+    就会**把推送线程永久打死** —— 之后所有「可取件」通知都发不出去，
+    而进程还活着、日志里只有一条线程终止的 traceback，谁都不会注意到。
+    循环体出错只该毁掉这一轮，不该毁掉这条线程。
     """
     cursor, notified = _load_state()
     while True:
         time.sleep(config.EVENTS_POLL_SECONDS)
-        client = _current_client
-        if client is None:
-            continue
-        # 顺手巡检「发了文件但一直没选参数」的待办：超时就删文件并提醒本人。
-        # 搭在这条循环上而不是单开线程：都是一分钟级的家务活，省一个线程。
-        _sweep_expired_pending(client)
         try:
-            resp = api.events(cursor)
-        except api.ApiError:
-            continue  # 服务器够不着：下轮再拉，游标不动
-        if not isinstance(resp, dict) or resp.get('code') != 0:
-            continue
-        for ev in resp.get('events') or []:
-            if ev.get('order_id') in notified:
+            client = _current_client
+            if client is None:
                 continue
-            text = ('你的订单「%s」可以取件了！\n单号：%s\n'
-                    '取件时报这个号就行。'
-                    % (ev.get('title') or '打印件', ev.get('pickup_code') or '—'))
+            # 顺手巡检「发了文件但一直没选参数」的待办：超时就删文件并提醒本人。
+            # 搭在这条循环上而不是单开线程：都是一分钟级的家务活，省一个线程。
+            _sweep_expired_pending(client)
             try:
-                client.send_private_msg(str(ev.get('qq')), text)
-            except OneBotError:
-                log.warning('推送中断（连接不可用），游标保持 %s', cursor)
-                break
-            log.info('已推送「可取件」通知：订单 #%s → qq=%s', ev.get('order_id'), ev.get('qq'))
-            notified.add(ev.get('order_id'))
-        else:
-            # for 没被 break 才走这里：这一批全推完了，游标才推进。
-            cursor = int(resp.get('cursor', cursor))
-        if len(notified) > _NOTIFIED_CAP:
-            notified = set(sorted(notified)[-_NOTIFIED_CAP // 2:])
-        _save_state(cursor, notified)
+                resp = api.events(cursor)
+            except api.ApiError:
+                continue  # 服务器够不着：下轮再拉，游标不动
+            if not isinstance(resp, dict) or resp.get('code') != 0:
+                continue
+            for ev in resp.get('events') or []:
+                if ev.get('order_id') in notified:
+                    continue
+                text = ('你的订单「%s」可以取件了！\n单号：%s\n'
+                        '取件时报这个号就行。'
+                        % (ev.get('title') or '打印件', ev.get('pickup_code') or '—'))
+                try:
+                    client.send_private_msg(str(ev.get('qq')), text)
+                except OneBotError:
+                    log.warning('推送中断（连接不可用），游标保持 %s', cursor)
+                    break
+                log.info('已推送「可取件」通知：订单 #%s → qq=%s', ev.get('order_id'), ev.get('qq'))
+                notified.add(ev.get('order_id'))
+            else:
+                # for 没被 break 才走这里：这一批全推完了，游标才推进。
+                cursor = int(resp.get('cursor', cursor))
+            if len(notified) > _NOTIFIED_CAP:
+                notified = set(sorted(notified)[-_NOTIFIED_CAP // 2:])
+            _save_state(cursor, notified)
+        except Exception:  # noqa: BLE001 —— 这一轮报废，线程必须活下去
+            log.exception('推送循环这一轮出错（已吞掉，下一轮继续；游标保持 %s）', cursor)
 
 
 def run():
@@ -1626,6 +2436,19 @@ def run():
             time.sleep(backoff)
             backoff = min(backoff * 2, 60)
             continue
+        except Exception as exc:  # noqa: BLE001
+            #    **token 不对时抛的不是 OSError**：websocket-client 在握手阶段
+            #    收到 401/403 会抛 WebSocketBadStatusException（WebSocketException
+            #    的一条分支），它从 onebot.connect() 里原样冒出来。原先这里只 catch
+            #    OneBotError，于是「token 填错」直接让整个进程退出 ——
+            #    而部署形态是放养式，没人守着控制台。
+            log.error('连接 OneBot 失败（%s：%s）。请检查 printbot/.env 里的 '
+                      'ONEBOT_ACCESS_TOKEN 是否与 LLBot 那条「正向 WS 服务」连接里的 '
+                      'token 一字不差（也要确认 ONEBOT_WS 的端口和它一致）；'
+                      '%s 秒后重试', type(exc).__name__, exc, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
 
         _current_client = client
         log.info('已连接 OneBot：%s，等待私聊消息', config.ONEBOT_WS)
@@ -1634,6 +2457,12 @@ def run():
             client.recv_forever()
         except OneBotError as exc:
             log.warning('连接结束：%s；%s 秒后重连', exc, backoff)
+        except Exception as exc:  # noqa: BLE001
+            #    收帧线程里任何一条没被 OneBotError 包住的异常（比如框架把 message
+            #    换成一种怪形状）都会冒到这里。宁可当成「这条连接废了、重连」，
+            #    也不要让主循环带着进程一起退出。
+            log.exception('收帧循环异常退出（%s：%s）；%s 秒后重连',
+                          type(exc).__name__, exc, backoff)
         finally:
             client.close()
             if _current_client is client:

@@ -420,6 +420,166 @@ def estimate_for_order(conn, pages, copies, duplex, item):
         return None, '估算时出错'
 
 
+def _clamp_copies(value):
+    """份数夹到合法区间。读不出来（None / 非数字）按**最少份**算。
+
+    与 estimate() 里内联的那一段同一个口径；单独摘出来只是因为
+    estimate_for_files 要逐份做一次，抄一遍就有两处会各自漂移。
+    """
+    try:
+        copies = int(value)
+    except (TypeError, ValueError):
+        copies = COPIES_MIN
+    return max(COPIES_MIN, min(COPIES_MAX, copies))
+
+
+# 明细里「这一份为什么算不出价」的几种原因，与 estimate() 的文案保持一致 ——
+# 两份说法不同的话，同一个毛病在单文件页和多文件页上会显示成两句话，
+# 而 routes/estimate.py 的 _hint_for 是按关键词认的，多一句认不出来就变成
+# 那句中性的「暂时算不出预估」。
+_FILES_NO_ITEM = '这一份没选价目项'
+_FILES_NO_PAGES = '读不出这份文件的页数'
+_FILES_ZERO_PRICE = '按这一项的单价算出来是 0 元（检查价目表里的单价）'
+
+
+def estimate_for_files(conn, items):
+    """按份算整单预估价 —— **一份文件一套参数**时的唯一入口。
+
+    输入 items = [{'pages': int|None, 'copies': int, 'duplex': 'single'|'double',
+                   'item': 价目项 dict|None, 'note': str（可选）}, ...]，
+    顺序即文件顺序（与学生看到的一致）。
+
+    返回 (总价|None, 每份明细, 说明)：
+      · 每份明细带 pages / copies / duplex / price_item_id / price_item_name /
+        price / reason —— 前端的「逐份小计」直接用它，**不自己乘一遍**；
+      · 说明是给日志与接口调用方看的一句话，不是给学生看的文案。
+
+    三条纪律（与 estimate() / estimate_for_order 同源）：
+
+      ① **合计 = base_fee（只加一次）+ Σ 每份小计**，再取 min_price 与其较大值。
+         基础费是「每单」的钱，一单五份也只收一次；把它按份加进去，
+         学生一次交五份作业就会莫名其妙多付四笔基础费。
+
+      ② **任一份算不出来 → 整单总价就是 None**。这一点比「尽量给个数」重要：
+         少了三份的合计会显示成一个**偏低**的数字，学生照着它备钱、
+         到柜台发现不是这个数 —— 那比「暂时算不出」糟得多。
+         所以每份的 price 各自为 None，合计也 None，让界面如实说算不出。
+
+      ③ **绝不抛异常**（与 estimate_for_order 同一条）：它跑在下单接口里，
+         为一份坏文件抛一次异常就等于「上传成功、下单 500」。
+
+    页数夹断（EST_PAGES_MAX）与金额上限（PRICE_MAX_YUAN）沿用 estimate()：
+    页数来自用户上传的文件，不夹就是一个可伪造的乘数；超上限的预估不给，
+    因为那个数连管理员都填不进最终价。
+    """
+    try:
+        rules = get_rules(conn)
+    except Exception:
+        #    get_rules 自己已经兜了一层异常，这里是第二道 —— 预估价这块的
+        #    每一层都不许把异常漏进下单流程（见模块注释第①条）。
+        logger.exception('读取计价规则失败，这一单不带预估价')
+        return None, [], '读取计价规则失败'
+
+    entries = items if isinstance(items, list) else []
+    details = []
+    enabled = bool(rules.get('enabled'))
+
+    subtotal = 0.0
+    pages_total = 0
+    counted = 0
+    blocked = ''            # 第一份算不出来的原因（决定整单为什么没价）
+    clamped = False
+
+    for index, raw in enumerate(entries, start=1):
+        entry = raw if isinstance(raw, dict) else {}
+        item = entry.get('item')
+        copies = _clamp_copies(entry.get('copies'))
+        duplex = normalize_duplex(entry.get('duplex'))
+        #    这一档不支持双面却传了 double：按单面算并把 duplex 归正 ——
+        #    与 resolve_price_item 同一个判据，落库的 duplex 必须与计价那一档一致，
+        #    否则账单上写着「双面」、钱按单面收。
+        #    **没选档（item 为 None）时不动它**：没有档位就没有「支不支持双面」
+        #    可问，硬降成单面会让明细显示一个调用方没选的参数。
+        if duplex == 'double' and item and not supports_duplex(item):
+            duplex = 'single'
+
+        detail = {
+            'index': index,
+            'pages': None,
+            'copies': copies,
+            'duplex': duplex,
+            'price_item_id': (item['id'] if item else None),
+            'price_item_name': format_item_label(item),
+            'price': None,
+            'reason': '',
+        }
+
+        pages = entry.get('pages')
+        try:
+            pages = int(pages) if pages is not None else None
+        except (TypeError, ValueError):
+            pages = None
+
+        #    页数是**文件本身的事实**，与「选没选档位」「估不估得出价」无关。
+        #    所以先把能数的页数记进明细，再走后面的分支：
+        #    没选档时学生仍然要能看到「这一份 2 页、整单 3 页」——
+        #    拿不到页数他会分不清「这单真的没页数」和「只是还没选档」，
+        #    而前者该找管理员、后者该自己点一下。
+        #    注意夹断（EST_PAGES_MAX）要在这里做，后面算钱用的必须是夹断后的值。
+        if pages is not None and pages > 0:
+            if pages > EST_PAGES_MAX:
+                pages = EST_PAGES_MAX
+                clamped = True
+            detail['pages'] = pages
+
+        #    调用方可以带一句更具体的 note（比如「这一档已经停用了」）：
+        #    它比通用的「没选价目项」准确，而明细里那句话是给人看的。
+        note = str(entry.get('note') or '')
+        if not enabled:
+            detail['reason'] = '自动估价未启用'
+        elif not item:
+            detail['reason'] = note or _FILES_NO_ITEM
+        elif not pages or pages < 1:
+            detail['reason'] = note or _FILES_NO_PAGES
+        else:
+            amount = round(pages * copies * item_unit_price(item, duplex), 2)
+            if amount <= 0:
+                detail['reason'] = _FILES_ZERO_PRICE
+            else:
+                detail['price'] = amount
+                subtotal += amount
+                pages_total += pages
+                counted += 1
+        if detail['price'] is None and not blocked:
+            blocked = '第 %d 份：%s' % (index, detail['reason'])
+        details.append(detail)
+
+    if not details:
+        return None, [], '没有要估的文件'
+    if blocked:
+        #    只要有一份说不出价，整单就如实说「算不出」（见上面第②条）。
+        return None, details, blocked
+
+    try:
+        total = float(rules.get('base_fee', 0.0)) + subtotal
+        total = max(total, float(rules.get('min_price', 0.0)))
+        total = round(total, 2)
+    except (TypeError, ValueError):
+        logger.warning('计价规则里的系数不是数字，这次不给预估价')
+        return None, details, '计价规则里的系数不合法'
+    if total <= 0:
+        return None, details, '按当前价目表算出来是 0 元（检查价目表里的单价）'
+    #    与 estimate() 同一条边界：超出计费上限的预估不给 —— 那个数连管理员
+    #    都填不进最终价（utils.parse_price 会拒），摆在屏幕上只会让人以为系统坏了。
+    if total > PRICE_MAX_YUAN:
+        return None, details, '按当前价目表算出来的价格超出金额上限'
+
+    note = '%d 份文件，共 %d 页' % (counted, pages_total)
+    if clamped:
+        note += '；' + PAGES_CLAMP_NOTE
+    return total, details, note
+
+
 
 def estimate_for_preset(conn, pages, copies, duplex, item, preset_price):
     """预设打印服务的预估价，返回 (金额, 说明)。**预设价优先**。
@@ -470,12 +630,25 @@ def estimate_for_preset(conn, pages, copies, duplex, item, preset_price):
 # PDF：页对象就是 `/Type /Page`（后面不能跟 s，那是页树节点 /Pages）。
 # 写成 `\s*` 是为了同时吃下 `/Type/Page` 与 `/Type /Page` 两种排法。
 _PDF_PAGE_OBJ = re.compile(rb'/Type\s*/Page(?![s])')
-# 页树节点的页数汇总。只在数不出页对象时才用它（压缩过的页树里页对象看不到，
-# 但顶层 /Count 有时还留在明文里）。取所有候选里最大的那个。
+# 页树节点的页数汇总。它只当「下界校正」用：只有它比「明文页对象 + 对象流里的页对象」
+# 还大时才采信它。**不能**直接返回它 —— 增量更新的 PDF、或者由多棵子树拼起来的文档里，
+# /Count 只统计了其中一棵子树，单看它会少数；反过来某些修复过的文件里它又会残留一个大数，
+# 所以下面还把它夹进 _PDF_COUNT_MAX。
 _PDF_COUNT = re.compile(rb'/Count\s+(\d{1,7})')
+# /Count 的合理区间。上限定 10000 是防「畸形或恶意文件里写个 9999999」：
+# 页数读出来就直接进公式，而 EST_PAGES_MAX 那道夹断是给**预估价**兜底的，
+# 不该让解析器自己连「这是不是一个可能的页数」都不问。
+_PDF_COUNT_MAX = 10000
 # 对象流（PDF 1.5+ 把对象压进 /Type /ObjStm 里）。页对象常常就住在里面。
 _PDF_OBJSTM = re.compile(rb'/Type\s*/ObjStm')
 _PDF_STREAM = re.compile(rb'stream\r?\n')
+# 单个对象流的两道体积上限：
+#   · 压缩数据本身不超过 4MB（畸形文件里 endstream 可能在很远处，读进来白占内存）；
+#   · 解压后的输出不超过 16MB —— 4MB 的 deflate 可以膨胀到几百 MB（解压炸弹），
+#     而真实的 /ObjStm 一般就几十 KB。用 decompressobj 的 max_length 硬顶，
+#     超出的部分直接丢掉：数页数不需要完整的对象流。
+_PDF_OBJSTM_RAW_MAX = 4 * 1024 * 1024
+_PDF_OBJSTM_OUT_MAX = 16 * 1024 * 1024
 
 
 def _pdf_pages_in(blob):
@@ -484,15 +657,24 @@ def _pdf_pages_in(blob):
 
 
 def _count_pdf(blob):
-    """PDF 页数：先数页对象，再（数不出来时）试着解压对象流，最后看 /Count。
+    """PDF 页数：明文页对象 + 对象流里的页对象**相加**，再用 /Count 校正下界。
+
+    为什么必须相加（这是修掉的一个真 bug）：混合型 PDF 很常见 —— 前几页是未压缩
+    的对象，其余页被 PDF 1.5 压进 `/ObjStm` 对象流。旧写法「明文里数到 ≥1 就直接
+    `return pages`」会让这种文件只数出 1~2 页，预估价明显偏低：学生看到的是假低价，
+    而管理员照最终价收钱，差额全落在「预估和实际差多少」这种解释不清的地方。
+
+    为什么也不能直接返回 /Count：它只是页树节点的汇总，上面那段注释讲了两种会错的情形。
+    所以最终取的是「相加值」与「/Count 最大值」中的**大者** —— 两边都可能少数，
+    但都少数到同一处的情形很少；真数不出来时仍回 None，交回给管理员自己看。
 
     三层都不成时返回 None —— 扫描件、加密的、页面全在压缩流里的都有可能走到这里，
     那种文件交回给管理员自己看页数，比报一个错数强。
     """
-    pages = _pdf_pages_in(blob)
-    if pages:
-        return pages, 'PDF 页对象数'
+    plain = _pdf_pages_in(blob)
+    packed = 0
     # 对象流：找到 /Type /ObjStm，再找它后面最近的 stream…endstream，解压出来数一遍。
+    # 这里**不跳过**「明文已经数到页」的情形 —— 跳过正是上面那个 bug。
     for match in _PDF_OBJSTM.finditer(blob):
         stream_at = _PDF_STREAM.search(blob, match.end(), match.end() + 2048)
         if stream_at is None:
@@ -500,56 +682,144 @@ def _count_pdf(blob):
         end = blob.find(b'endstream', stream_at.end())
         if end < 0:
             continue
-        try:
-            #    单个对象流不该很大；给个上限免得遇到畸形文件时解压出个几百兆的东西。
-            if end - stream_at.end() > 4 * 1024 * 1024:
-                continue
-            pages += _pdf_pages_in(zlib.decompress(blob[stream_at.end():end]))
-        except zlib.error:
+        start = stream_at.end()
+        if end - start > _PDF_OBJSTM_RAW_MAX:
             continue
-    if pages:
-        return pages, 'PDF 对象流里的页对象数'
-    counts = [int(value) for value in _PDF_COUNT.findall(blob)]
-    if counts:
-        return max(counts), 'PDF 页树的 /Count'
-    return None, 'PDF 里数不出页数'
+        try:
+            #    max_length 顶住解压炸弹：解出来的东西超过上限就只要前一段。
+            unpacker = zlib.decompressobj()
+            raw = unpacker.decompress(blob[start:end], _PDF_OBJSTM_OUT_MAX)
+        except zlib.error:
+            #    坏流（不是 zlib、或者被截断）就当这一条不存在，继续看下一条 ——
+            #    抛出去就等于「一个坏对象流让整份文件的页数都没了」。
+            continue
+        packed += _pdf_pages_in(raw)
+    total = plain + packed
+    # /Count 的候选：只要合理区间内的（越界的当一个坏数丢掉，不参与取大）。
+    declared = 0
+    for value in _PDF_COUNT.findall(blob):
+        try:
+            number = int(value)
+        except ValueError:                          # 正则限定了 \d，理论上到不了这里
+            continue
+        if 1 <= number <= _PDF_COUNT_MAX and number > declared:
+            declared = number
+    if declared > total:
+        return declared, 'PDF：按页树汇总的页数（/Count），共 %s 页' % declared
+    if not total:
+        return None, 'PDF：数不出页数'
+    if packed and plain:
+        return total, 'PDF：明文页对象 + 压缩流里的页对象，共 %s 页' % total
+    if packed:
+        return total, 'PDF：页面在压缩流里，解压后统计到 %s 页' % total
+    return total, 'PDF：按页面对象统计，共 %s 页' % total
 
 
 _DOCX_PAGES = re.compile(rb'<Pages>(\d{1,6})</Pages>')
 _DOCX_BREAK = re.compile(rb'<w:lastRenderedPageBreak')
+# 手工分页符：<w:br w:type="page"/>（Ctrl+Enter 敲下去的那个）。
+# 必须单独数：WPS 存出来的 docx 往往**只**写这个、不写 lastRenderedPageBreak，
+# 而学生交的作业一大半是 WPS 存的 —— 这正是「WPS 文档页数不准」的来源。
+# [^>]* 把属性顺序不同的写法（w:type 在后面、中间夹别的属性）一并吃掉。
+_DOCX_PAGE_BREAK = re.compile(rb'<w:br\b[^>]{0,200}?w:type\s*=\s*"page"')
+# 节属性 <w:sectPr>。多节文档（分节符、横向页、双栏）通常一节一页起，
+# 所以它只能当**下界**：一节可能有好几页，绝不可能少于节数。
+_DOCX_SECT = re.compile(rb'<w:sectPr[\s/>]')
 _DOCX_PARA = re.compile(rb'<w:p[ >]')
-
-# 一页按多少行算（拿段落数折算页数时用）。中文课程作业一页 40 行上下，
-# 段落之间还有空行，所以按 35 行/页稍保守一点。
+# 正文可见文本：<w:t ...>文字</w:t>（xml:space="preserve" 这类属性要先吃掉）。
+_DOCX_TEXT = re.compile(rb'<w:t\b[^>]*>(.*?)</w:t>', re.S)
+# w:t 里理论上没有子标签（'<' 会被 XML 转义），但转换工具生成的畸形文件里会出现，
+# 去一遍标签再数字，成本几乎为零。
+_DOCX_TAG = re.compile(rb'<[^>]{0,400}>')
+# 字数折算用：一页 A4 正文（小四、单倍行距）中文约 1200 字，同样的版面换成英文约 500 词。
+# 中英混排时两种都要计入，见 _docx_pages_by_text。
+_CHARS_PER_PAGE_CJK = 1200
+_WORDS_PER_PAGE_LATIN = 500
+_CJK_CHAR = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
+_LATIN_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'\-]*")
+# 一页按多少行算（段落数折算页数时用）。中文课程作业一页 40 行上下，
+# 段落之间还有空行，所以按 35 行/页稍保守一点。这一档只在正文里取不到文字时用。
 _PARAS_PER_PAGE = 35
+# 单个 zip 成员的解压后体积上限。zipfile.read() 会把整个成员解压进内存，
+# 而 20MB 的 docx 里 document.xml 声明成几百 MB 就是一颗解压炸弹 ——
+# 先看 header 里那个 file_size，超标就不解压。app.xml 正常只有几 KB，给 1MB 足够。
+_DOCX_MAX_PART_BYTES = 64 * 1024 * 1024
+_DOCX_MAX_META_BYTES = 1024 * 1024
+
+
+def _docx_text_units(body):
+    """正文里「可见文本」的量：返回 (中文字符数, 英文词数)。
+
+    汉字按**字**算、拉丁按**词**算，因为一页的容量本来就是两种单位：
+    1200 字 / 500 词。混排文档各占一部分版面，所以两种都要数出来。
+    只数 <w:t> 里的东西 —— 页眉页脚、批注、样式表都不在 document.xml 的 w:t 里，
+    或者虽是 w:t 但属于已经删掉的内容（<w:del>），那种量很小，不值得为它做结构解析。
+    """
+    raw = b''.join(_DOCX_TEXT.findall(body))
+    if not raw:
+        return 0, 0
+    text = _DOCX_TAG.sub(b'', raw).decode('utf-8', 'ignore')
+    return len(_CJK_CHAR.findall(text)), len(_LATIN_WORD.findall(text))
+
+
+def _docx_pages_by_text(cjk, words):
+    """按字数折算页数：ceil(cjk/1200 + words/500)，至少 1 页。
+
+    用整数算而不是浮点：`-(-a // b)` 就是向上取整，没有 0.30000000000000004
+    这类残渣影响页数（页数差一，预估价就差几毛钱，管理员解释不清）。
+    """
+    weighted = cjk * _WORDS_PER_PAGE_LATIN + words * _CHARS_PER_PAGE_CJK
+    per_page = _CHARS_PER_PAGE_CJK * _WORDS_PER_PAGE_LATIN
+    return max(1, -(-weighted // per_page))
 
 
 def _count_docx(blob):
-    """docx 页数：优先读 Word 自己写下的元数据，其次数分页符，最后按段落折算。
+    """docx 页数：文档属性 > 分页符/节数 > 字数折算 > 段落兜底。
 
-    `docProps/app.xml` 里的 <Pages> 是 Word/WPS 保存时算好的真实页数，最准；
-    它只在文档被这两个软件保存过时才有。都没有时按段落折算 —— 那是**估**，
-    所以说明里写的是「按段落估算」。
+    优先级为什么这样排：
+      · `docProps/app.xml` 里的 <Pages> 是 Word/WPS 保存时算好的**真实页数**，最准；
+        缺点是 WPS 常常不写、转换工具生成的也可能缺这一项；
+      · 分页符（渲染分页 + 手工分页）是文档自己记下的换页事实，没有元数据时最可信；
+        多节文档一节一页起，只能当下界；
+      · 字数折算比段落数靠谱得多：中文段落短、段间还有空行，按「段落数 ÷ 35」
+        折算会系统性低估（4000 字、80 段的作业会被算成 3 页，实际 4 页）；
+      · 段落兜底只在正文里取不到文字时用。
+
+    两种「不知道」都返回 None：正文太大没解压、以及一份 zip 里根本没有正文。
     """
     #    zipfile 要一个能 seek 的对象，直接喂 bytes 不行（它会当成路径去打开）。
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         names = set(zf.namelist())
         if 'docProps/app.xml' in names:
-            found = _DOCX_PAGES.search(zf.read('docProps/app.xml'))
-            if found:
-                pages = int(found.group(1))
-                if pages > 0:
-                    return pages, 'docx 文档属性里的页数'
+            if zf.getinfo('docProps/app.xml').file_size <= _DOCX_MAX_META_BYTES:
+                found = _DOCX_PAGES.search(zf.read('docProps/app.xml'))
+                if found:
+                    pages = int(found.group(1))
+                    if pages > 0:
+                        return pages, 'Word：文档属性里的页数（最准），共 %s 页' % pages
         if 'word/document.xml' not in names:
-            return None, 'docx 里没有正文'
+            return None, 'Word：文档里没有正文'
+        if zf.getinfo('word/document.xml').file_size > _DOCX_MAX_PART_BYTES:
+            #    这里连读都不读：解压炸弹的代价不是「算错页数」，是进程被打爆。
+            return None, 'Word：正文太大，没有做页数统计'
         body = zf.read('word/document.xml')
-    breaks = len(_DOCX_BREAK.findall(body))
+    breaks = len(_DOCX_BREAK.findall(body)) + len(_DOCX_PAGE_BREAK.findall(body))
     if breaks:
-        return breaks + 1, 'docx 分页符数'
+        #    分页符数的是「换页动作」，页数 = 换页次数 + 1（第一页也是页）。
+        return breaks + 1, 'Word：按分页符统计，共 %s 页' % (breaks + 1)
+    sections = len(_DOCX_SECT.findall(body))
+    if sections > 1:
+        #    只说「至少」：一节到底打几页，只有真正排版才知道。
+        return sections, 'Word：按节数估算（至少 %s 页）' % sections
+    cjk, words = _docx_text_units(body)
+    if cjk or words:
+        pages = _docx_pages_by_text(cjk, words)
+        return pages, 'Word：按字数估算（可能不准），共 %s 页' % pages
     paras = len(_DOCX_PARA.findall(body))
     if paras:
-        return max(1, (paras + _PARAS_PER_PAGE - 1) // _PARAS_PER_PAGE), '按 docx 段落数估算'
-    return None, 'docx 里没有可数的内容'
+        pages = max(1, (paras + _PARAS_PER_PAGE - 1) // _PARAS_PER_PAGE)
+        return pages, 'Word：按段落数估算（可能不准），共 %s 页' % pages
+    return None, 'Word：文档里没有可数的内容'
 
 
 # ---- .doc（OLE2 复合文档）---------------------------------------------------
@@ -564,6 +834,20 @@ _OLE_FREESECT = 0xFFFFFFFF
 _OLE_MINI_CUTOFF = 4096          # 小于这个大小的流住在 mini 流里
 _PIDSI_PAGECOUNT = 14
 _PIDSI_CHARCOUNT = 16
+# 正文流里的换页符（Ctrl+Enter，8 位存储下就是单字节 0x0c；UTF-16LE 存储下是
+# 「0x0c 0x00」，低字节照样落在流里，所以单字节计数两种存法都数得到）。
+_DOC_PAGE_BREAK = b'\x0c'
+# 只读正文流的前 8MB：页数不可能靠更长的正文改变量级，而 _ole_stream 会把
+# 整条扇区链拼出来（文件上限 20MB，多读一遍就多一次几百毫秒的拷贝）。
+_DOC_WORD_STREAM_MAX = 8 * 1024 * 1024
+# 「这条流里确实装着正文」的判据用到的字节集合：正常正文（8 位代码页或 UTF-16LE）
+# 里出现的字节几乎都在这里，剩下的控制字符就是二进制垃圾。
+_DOC_GOOD_BYTES = bytes(range(0x20, 0x100)) + b'\x00\x09\x0a\x0c\x0d'
+# 换页符那一档的上限护栏：一页 A4 正文最少也有几十个字符，所以「页数 × 50」
+# 不该超过正文字数。这个数是**实测逼出来的** —— 仓库里那份 5 页的 .doc 在
+# WordDocument 流里能数出 59 个 0x0c（压缩的图形/表格数据里也有这个字节），
+# 60 页 vs 实际 5 页，预估价会直接抬到学生的 12 倍。多一道护栏，宁可说数不出来。
+_DOC_MIN_CHARS_PER_PAGE = 50
 
 
 def _ole_fat(blob, sector_size):
@@ -699,26 +983,87 @@ def _ole_properties(blob):
     return props
 
 
-def _count_doc(blob):
-    """.doc 页数：读 SummaryInformation 里的页数，其次按字数折算。
+def _doc_looks_textual(raw):
+    """正文流里有没有成片的人类文本（决定采不采信换页符计数）。
 
-    字数折算：一页中文 A4 正文约 1200-1500 字（小四、单倍行距），
-    取 1400 当分母。这是**估算**，说明里写清楚。
+    这只是个**密度**判据，不解析 piece table：要回答的问题只有「这条流像不像正文」，
+    而不是「第几个字符对应文档里的哪一页」。正常正文（8 位代码页、UTF-16LE 两种存法）
+    的字节几乎都落在 _DOC_GOOD_BYTES 里，剩下的控制字符占比很低；
+    而一条填充了随机字节/全 0x01 的垃圾流会立刻超标。
+
+    写这么糙是有代价的：判真之后我们只说「按换页符估算（近似）」，不假装这是准确页数。
+    """
+    if not raw:
+        return False
+    # translate(None, delete) 是「把 delete 里的字节删掉、剩下的照原样留下」，
+    # 所以结果长度就是「不在正常文本字节集里的那些字节」的数量。
+    junk = len(raw.translate(None, _DOC_GOOD_BYTES))
+    return junk * 5 <= len(raw)
+
+
+def _doc_ccp_text(raw):
+    """从 FIB 里读正文字符数（ccpText，fibRgLw97 第一段，偏移 0x4C）。
+
+    这是 Word 自己写下的字段（它决定正文在流里有多长），摘要信息缺失时它就是
+    「这份文档大概有多少字」最可靠的来源 —— 也正因为它可靠，才拿它给换页符计数做护栏。
+    流太短、或者开头不是 Word 的标识（wIdent = 0xA5EC）就返回 0：读不出来不是异常。
+    """
+    if len(raw) < 0x50:
+        return 0
+    if struct.unpack_from('<H', raw, 0)[0] != 0xA5EC:
+        return 0
+    value = struct.unpack_from('<i', raw, 0x4C)[0]
+    return value if 0 < value <= 100 * 1000 * 1000 else 0
+
+
+def _count_doc(blob):
+    """.doc 页数：摘要信息的页数 > 摘要信息的字数折算 > 正文里的换页符（近似）。
+
+    前两档读的是 SummaryInformation（Word 保存时自己写的），最可信。
+    第三档是兜底：有些 .doc（另存/转换工具生成、被别的软件改过的）没有摘要信息，
+    但 WordDocument 流里还留着正文 —— 数换页符就能给一个页数量级。
+
+    为什么第三档放在最后、还要加护栏：换页符是**近似**。它不解析 piece table，
+    不知道每段用了多大字号/行距、哪些页是图表撑出来的；更要紧的是 0x0c 在流里
+    不只有换页符一个角色 —— 压缩的图形/表格数据里也会出现，实测能让 5 页的文件
+    数出 60 页。所以这里用 FIB 的 ccpText（正文字符数）给结果封顶：
+    超了就认为这一档被噪声骗了，宁可回 None 让管理员自己看，也不报一个几倍高估的数。
+
+    字数折算的分母 1400：一页中文 A4 正文约 1200-1500 字（小四、单倍行距），取中值。
     """
     props = _ole_properties(_ole_stream(blob, 'SummaryInformation') or b'')
     pages = props.get(_PIDSI_PAGECOUNT)
     if isinstance(pages, int) and pages > 0:
-        return pages, '.doc 摘要信息里的页数'
+        return pages, 'Word：文档属性里的页数（最准），共 %s 页' % pages
     chars = props.get(_PIDSI_CHARCOUNT)
     if isinstance(chars, int) and chars > 0:
-        return max(1, (chars + 1399) // 1400), '按 .doc 字数估算'
-    return None, '.doc 里没有页数信息'
+        pages = max(1, (chars + 1399) // 1400)
+        return pages, 'Word：按字数估算（可能不准），共 %s 页' % pages
+    # 摘要信息缺失时的兜底：正文流里数换页符。
+    raw = (_ole_stream(blob, 'WordDocument') or b'')[:_DOC_WORD_STREAM_MAX]
+    page_breaks = raw.count(_DOC_PAGE_BREAK)
+    if page_breaks and _doc_looks_textual(raw):
+        pages = page_breaks + 1
+        ccp = _doc_ccp_text(raw)
+        #    护栏的说明见 _DOC_MIN_CHARS_PER_PAGE 上面那段：它不是「更准的算法」，
+        #    只是一道「这个数看起来不可能」的检查。ccp 读不出来时只能信换页符。
+        if not ccp or pages * _DOC_MIN_CHARS_PER_PAGE <= ccp:
+            return pages, 'Word：按换页符数估算（近似），共 %s 页' % pages
+        logger.warning('.doc 的换页符数与正文字数不符（%s 个换页符 / %s 字），这次不给页数',
+                       page_breaks, ccp)
+    return None, 'Word：文档里没有页数信息'
 
 
 # ---- 对外入口 ---------------------------------------------------------------
 
-# 后缀 -> 解析器。图片固定一页（一张图就是一张纸），所以单列一类。
-_IMAGE_EXTS = ('jpg', 'jpeg', 'png')
+# 后缀 -> 单页。图片**不解析内容**：一张图默认一页，所以这里只是「认不认得这个后缀」。
+# 多页 TIFF（传真件、扫描仪一次扫多页）属于少数，而且真要数它就得解析 IFD，
+# 成本远高于收益 —— 一张图先按 1 页算，页数由管理员在计费弹窗里确认
+# （那边本来就要打开文件看一遍）。
+# 注意：这份名单**不是上传白名单**（那是 config.ALLOWED_EXTENSIONS，管的是能不能传）。
+# 名单里多认几种后缀，是为了「历史文件、别的入口传进来的文件、以及以后放开白名单时」
+# 不会因为这里不认就丢掉预估价。
+_IMAGE_EXTS = ('jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'tif', 'tiff')
 
 
 def count_pages(path, filename=None):
@@ -730,21 +1075,21 @@ def count_pages(path, filename=None):
     name = filename or path
     ext = os.path.splitext(name)[1].lstrip('.').lower()
     if ext in _IMAGE_EXTS:
-        return 1, '图片按 1 页'
+        return 1, '图片：按 1 页'
     try:
         size = os.path.getsize(path)
     except OSError:
-        return None, '文件读不到'
+        return None, '文件读不到，没有页数'
     if size <= 0:
-        return None, '空文件'
+        return None, '空文件，没有页数'
     if size > EST_SCAN_MAX_BYTES:
         #    读一遍大文件会给上传接口平白加几百毫秒，而预估只是给学生一个参考。
-        return None, '文件超过 %sMB，不做页数扫描' % (EST_SCAN_MAX_BYTES // (1024 * 1024))
+        return None, '文件超过 %sMB，没有做页数统计' % (EST_SCAN_MAX_BYTES // (1024 * 1024))
     try:
         with open(path, 'rb') as fh:
             blob = fh.read()
     except OSError:
-        return None, '文件读不到'
+        return None, '文件读不到，没有页数'
     try:
         if ext == 'pdf':
             return _count_pdf(blob)
@@ -752,7 +1097,7 @@ def count_pages(path, filename=None):
             return _count_docx(blob)
         if ext == 'doc':
             return _count_doc(blob)
-        return None, '不认识的格式（%s）' % (ext or '无后缀')
+        return None, '不认识的格式（%s），没有页数' % (ext or '无后缀')
     except Exception as exc:                       # noqa: BLE001 —— 见 docstring
         logger.warning('解析页数失败（%s，%s 字节）：%s', name, size, exc)
-        return None, '解析失败'
+        return None, '解析页数时出错，这一单没有页数'

@@ -85,6 +85,15 @@ def api_tickets():
                 ORDER BY t.update_time DESC, t.id DESC
             '''.format(where=where), params).fetchall()
         else:
+            # 学生分支也支持 status：前端 TicketPanel 对普通用户同样渲染筛选器，
+            # 之前只有 staff 分支读了这个参数，于是学生点了筛选毫无反应 ——
+            # 请求成功（200）、列表照旧全量，界面上看不出任何错。
+            # 筛选只作用在**自己的**工单里（WHERE 里那条 user_id 不动），
+            # 所以它不改变数据边界，只改变显示范围。
+            where, params = 'WHERE t.user_id = ?', [g.user['id']]
+            if status in TICKET_STATUSES:
+                where += ' AND t.status = ?'
+                params.append(status)
             rows = conn.execute('''
                 SELECT t.id, t.subject, t.status,
                        datetime(t.create_time, 'localtime') AS create_time,
@@ -96,9 +105,9 @@ def api_tickets():
                        (SELECT m.body FROM ticket_messages m WHERE m.ticket_id = t.id
                          ORDER BY m.id DESC LIMIT 1) AS last_body
                 FROM tickets t
-                WHERE t.user_id = ?
+                {where}
                 ORDER BY t.update_time DESC, t.id DESC
-            ''', (g.user['id'],)).fetchall()
+            '''.format(where=where), params).fetchall()
 
     tickets = [dict(r) for r in rows]
     # 管理端的列表里才有 owner_nickname（用户看的是自己的工单，没必要显示是谁的）。

@@ -5,6 +5,7 @@ import { del, download, get, getBinary, post, put, putRaw, upload } from './clie
 import type {
   AdminUsersResponse,
   BotHint,
+  BotHintState,
   AnnounceFont,
   AnnouncementListResponse,
   AnnouncementResponse,
@@ -16,6 +17,7 @@ import type {
   DashboardStats,
   Duplex,
   EstimateResponse,
+  EstimateFilesRequest,
   MeOverviewResponse,
   MeResponse,
   OrderLogListResponse,
@@ -54,6 +56,23 @@ import type {
 } from './types'
 
 /* 账号 */
+  /** 密码找回（QQ 邮箱验证码）。
+   *
+   *  两个接口都是公开的（没登录才需要找回密码），所以：
+   *   · 请求仍然要带 CSRF 令牌 —— 前端从页面入口或 /api/me 拿；
+   *   · 服务端对「学号存不存在」一律回同一句话，前端**不要**根据响应判断账号是否存在；
+   *   · 发码与验码都有按 IP + 按学号的限流，命中时是 429，
+   *     界面要说「稍后再试」而不是「学号不对」。
+   */
+  export const passwordApi = {
+    /** 发验证码到 <QQ号>@qq.com。响应永远是同一句话。 */
+    forgot: (studentId: string) =>
+      post<{ code: number; msg: string }>('/api/password/forgot', { student_id: studentId }),
+    /** 用验证码换新密码。成功后服务端会让所有旧会话失效，所以要回登录页重新登录。 */
+    reset: (payload: { student_id: string; code: string; password: string }) =>
+      post<{ code: number; msg: string }>('/api/password/reset', payload),
+  }
+
 export const authApi = {
   /** 应用启动时的握手：拿当前登录用户，顺便领一张 CSRF 令牌。未登录时返回 401。 */
   me: () => get<MeResponse>('/api/me'),
@@ -163,19 +182,35 @@ export const orderApi = {
   /** 实时试算。**公式在服务端**（pricing.py），前端不镜像 ——
    *  镜像必然漂移，而漂了不报错，只是页面上的数字开始说谎。
    *
-   *  两种来源二选一：`file_token`（文件单，页数由服务端数）
-   *  或 `preset_id`（打印服务，价与纸取自那条服务）。 */
+   *  三种来源：`file_token`（单份文件，老形状）、`file_tokens`（**一组**多份
+   *  文件，页数按份求和 —— 老前端按参数分组之后对每组调一次）、
+   *  `preset_id`（打印服务，价与纸取自那条服务）。
+   *
+   *  v24 起还有第四种：`files` —— 每份文件带自己的档位 / 份数 / 单双面，
+   *  一次算完整单，响应里的 `files` 给逐份小计、顶层 `price` 是合计。
+   *  「一次提交多份、只拿一个单号」走的就是这条路，**不要再按参数分组**：
+   *  分组会把学生的 5 份文件拆成两个单号，那正是这一版要消掉的事。 */
   estimate: (payload: {
     file_token?: string
+    file_tokens?: string[]
+    files?: EstimateFilesRequest['files']
     preset_id?: number
     price_item_id?: number | null
-    copies: number
-    duplex: Duplex
+    copies?: number
+    duplex?: Duplex
   }) => post<EstimateResponse>('/api/estimate', payload),
 
-  /** 用预上传好的文件建单 —— 「先上传、后下单」那条链的最后一步。 */
+  /** 用预上传好的文件建单 —— 「先上传、后下单」那条链的最后一步。
+   *  批量之后请求体是 `{groups: [...]}`：**一个 group = 一张订单 = 一个单号**，
+   *  组内每份文件可以带自己的参数（v24）。只提交一个 group 就是「多份一个单号」。 */
   createFromPrepared: (payload: PreparedOrderRequest) =>
     post<UploadResponse>('/api/order/prepared', payload),
+
+  /** 丢弃还没下单的预上传文件（占着「每账号最多几份」的额度时用得上）。 */
+  discardPrepared: (fileTokens: string[]) =>
+    post<{ code: number; msg: string; removed: number }>('/api/upload/discard', {
+      file_tokens: fileTokens,
+    }),
 
   /** 用预设打印服务下单 —— 这一单**没有文件**。
    *  单独一个接口而不是给 upload 传「文件为空」：那样这个函数就有两种
@@ -274,9 +309,15 @@ export const staffOrderApi = {
    *  首次计费会顺带把单从「待计费」推到「待打印」（后端一个原子 UPDATE 完成）。 */
   price: (id: number, price: string) =>
     post<{ code: number; msg: string; price: number }>(`/api/order/${id}/price`, { price }),
-  /** 下载订单文件。sizeBytes 用于计算超时：大文件在慢链路上 30 秒会被掐断。 */
-  download: (id: number, filename: string, sizeBytes?: number) =>
-    download(`/api/order/${id}/download`, filename, sizeBytes),
+  /** 下载订单文件。sizeBytes 用于计算超时：大文件在慢链路上 30 秒会被掐断。
+   *  fileId 是**这一单里的哪一份**（一单多文件时必传；不传就是第一份 ——
+   *  那是老链接的兼容口径，新的界面一律带着 fileId 下）。 */
+  download: (id: number, filename: string, sizeBytes?: number, fileId?: number) =>
+    download(
+      `/api/order/${id}/download${fileId == null ? '' : `?file_id=${fileId}`}`,
+      filename,
+      sizeBytes,
+    ),
 
   /* ---- 凭单号核对取件（柜台那一步）----
    *
@@ -514,10 +555,11 @@ export const auditApi = {
 export const botHintApi = {
   /** 该不该显示、点过几次、有没有二维码 */
   get: () => get<BotHint & { code: number }>('/api/bot-hint'),
-  /** 点一次「关闭」：计数 +1（次数只能由服务端加） */
-  dismiss: () => post<BotHint & { code: number }>('/api/bot-hint/dismiss'),
-  /** 设置页的「重新显示引导」：计数归零 */
-  reset: () => post<BotHint & { code: number }>('/api/bot-hint/reset'),
+  /** 点一次「关闭」：计数 +1（次数只能由服务端加）。
+   *  回的是 BotHintState，不是 BotHint —— 这条接口不给 max_clicks / has_qr。 */
+  dismiss: () => post<BotHintState & { code: number }>('/api/bot-hint/dismiss'),
+  /** 设置页的「重新显示引导」：计数归零。同样只回计数与收起状态。 */
+  reset: () => post<BotHintState & { code: number }>('/api/bot-hint/reset'),
   /** 上传机器人二维码（超管）。换码之后 /api/bot-qr 立刻生效。 */
   uploadQr: (file: File) => {
     const form = new FormData()

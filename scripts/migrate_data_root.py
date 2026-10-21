@@ -73,23 +73,61 @@ def plan_moves(old_dir: Path, new_dir: Path):
     return moves, clashes
 
 
+def exists_order_files(conn: sqlite3.Connection) -> bool:
+    """库里有 order_files 这张表吗。
+
+    它在 v23（一单多文件）才出现，而本脚本的典型用法是「换机器：
+    搬数据 → 起服务」，那时老库还没被新版服务升级过，表确实不存在。
+    直接 SELECT 会抛 `no such table: order_files`，把一个本来很单纯的搬库
+    变成一场「到底是数据坏了还是脚本坏了」的排查。
+    """
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'order_files'"
+    ).fetchone() is not None
+
+
 def rows_to_fix(conn: sqlite3.Connection, old_dir: Path, new_dir: Path):
-    """找出 file_path 落在旧目录里的订单，算出它们的新路径。"""
+    """找出 file_path 落在旧目录里的订单与**订单文件行**，算出它们的新路径。
+
+    返回 (orders_fix, files_fix)：
+      · orders_fix —— [(订单 id, 单号, 旧路径, 新路径)]，改 orders.file_path；
+      · files_fix  —— [(order_files.id, 所属订单 id, 旧路径, 新路径)]，改 order_files.file_path。
+
+    一单多文件之后**两张表都要改**：orders.file_path 只是第一份的快照，
+    真正的清单在 order_files 里。只改前者的话，迁移看起来「复核通过」
+    （orders 的每条路径都在），而管理员点开详情、或学生点下载第 2 份时
+    全部 404 —— 那时离迁库已经过去很久，没人会联想到是这一步漏了。
+    """
     conn.row_factory = sqlite3.Row
+
+    def inside_old(raw):
+        p = Path(raw)
+        try:
+            return p.resolve().is_relative_to(old_dir.resolve())   # py3.9+ 才有的写法见下
+        except AttributeError:                                       # 兼容老解释器
+            return str(p.resolve()).startswith(str(old_dir.resolve()))
+
     fixed = []
     for row in conn.execute(
             "SELECT id, pickup_code, file_path FROM orders "
             "WHERE file_path IS NOT NULL AND file_path <> ''"):
-        p = Path(row['file_path'])
-        try:
-            inside = p.resolve().is_relative_to(old_dir.resolve())   # py3.9+ 才有的写法见下
-        except AttributeError:                                       # 兼容老解释器
-            inside = str(p.resolve()).startswith(str(old_dir.resolve()))
-        if not inside:
+        if not inside_old(row['file_path']):
             continue
         fixed.append((row['id'], row['pickup_code'], row['file_path'],
-                      str(new_dir / p.name)))
-    return fixed
+                      str(new_dir / Path(row['file_path']).name)))
+
+    #    order_files 这张表是 v23 才有的：老库（还没启动过新版服务）里
+    #    它根本不存在，这里必须先问一句（见 exists_order_files 的说明）。
+    files_fixed = []
+    if exists_order_files(conn):
+        for row in conn.execute(
+                "SELECT id, order_id, file_path FROM order_files "
+                "WHERE file_path IS NOT NULL AND file_path <> ''"):
+            if not inside_old(row['file_path']):
+                continue
+            files_fixed.append((row['id'], row['order_id'], row['file_path'],
+                                str(new_dir / Path(row['file_path']).name)))
+    return fixed, files_fixed
 
 
 def main() -> int:
@@ -116,7 +154,7 @@ def main() -> int:
     moves, clashes = plan_moves(old_dir, new_dir)
     conn = sqlite3.connect(db_path)
     try:
-        fix = rows_to_fix(conn, old_dir, new_dir)
+        fix, files_fix = rows_to_fix(conn, old_dir, new_dir)
 
         print('要移动的文件：%d 个（合计 %.1f MB）'
               % (len(moves), sum(s.stat().st_size for s, _ in moves) / 1048576))
@@ -136,6 +174,8 @@ def main() -> int:
             print('    单号 %-6s %s → %s' % (code, before, after))
         if len(fix) > 5:
             print('    … 另有 %d 条' % (len(fix) - 5))
+        if files_fix:
+            print('要改的订单文件行：%d 条（order_files，一单多文件的那张表）' % len(files_fix))
 
         if not args.apply:
             print()
@@ -161,16 +201,28 @@ def main() -> int:
 
         for oid, code, before, after in fix:
             conn.execute('UPDATE orders SET file_path = ? WHERE id = ?', (after, oid))
+        for fid, oid, before, after in files_fix:
+            conn.execute('UPDATE order_files SET file_path = ? WHERE id = ?', (after, fid))
         conn.commit()
-        print('已更新 %d 条订单的文件路径' % len(fix))
+        print('已更新 %d 条订单的文件路径（另有 %d 条 order_files 行）'
+              % (len(fix), len(files_fix)))
 
-        # 复核：库里每一条 file_path 都要真的落在文件系统上
+        # 复核：库里**每一条**文件路径都要真的落在文件系统上。
+        # 两张表都查 —— order_files 是清单一律以它为准的那张，
+        # 只复核 orders 就等于把「第 2 份文件全丢了」这种事故放过去。
         missing = []
         for row in conn.execute(
                 "SELECT id, pickup_code, file_path FROM orders "
                 "WHERE file_path IS NOT NULL AND file_path <> ''"):
             if not Path(row['file_path']).exists():
                 missing.append((row['pickup_code'], row['file_path']))
+        if exists_order_files(conn):
+            for row in conn.execute(
+                    "SELECT order_id, filename, file_path FROM order_files "
+                    "WHERE file_path IS NOT NULL AND file_path <> ''"):
+                if not Path(row['file_path']).exists():
+                    missing.append(('订单 #%s 的「%s」' % (row['order_id'], row['filename']),
+                                    row['file_path']))
         print()
         if missing:
             print('!! 复核失败：还有 %d 条订单的文件找不到' % len(missing))

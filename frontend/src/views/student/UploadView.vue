@@ -63,7 +63,13 @@ import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showReceipt } from '@/composables/transition-receipt'
 import { chunkApi, orderApi, printOptionsApi, authApi } from '@/api/endpoints'
-import type { ChunkSession, EstimateResponse, PriceItem, PrintPreset } from '@/api/types'
+import type {
+  ChunkSession,
+  EstimateFileQuote,
+  EstimateResponse,
+  PriceItem,
+  PrintPreset,
+} from '@/api/types'
 import { pendingUploads, prettySize, prepareUpload } from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
 import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
@@ -89,13 +95,8 @@ const priceItemId = ref<number | null>(null)
 const presetId = ref<number | null>(null)
 const router = useRouter()
 const submitting = ref(false)
-/** 已经传上去的字节数与总量 —— 进度条用（预上传那一次，不是提交）。 */
-const uploadedBytes = ref(0)
-const totalBytes = ref(0)
 /** 服务端还留着的未完成上传，进页面时提醒一句 */
 const pending = ref<ChunkSession[]>([])
-/** 当前分片会话的 upload_id，组件卸载时若会话仍未完成就调 cancel 释放额度 */
-const activeChunkUploadId = ref<string | null>(null)
 /** 服务端给的启用中预设与纸张 */
 const presets = ref<PrintPreset[]>([])
 const priceItems = ref<PriceItem[]>([])
@@ -104,34 +105,78 @@ const priceItems = ref<PriceItem[]>([])
  *  一个是「网络出问题了」。不给提示的话，学生只会以为这功能不存在。 */
 const optionsError = ref('')
 const optionsLoading = ref(true)
-/** 下单成功后的回执（类型与 announceOrder 的入参是同一个 —— 两处各写一份，
+/** 下单成功后的回执（类型与 announceOrders 的入参是同一个 —— 两处各写一份，
  *  加一个字段时必然会漏掉一处，而漏掉的那处不报错，只是那一格不显示）。 */
-const receipt = ref<OrderInfo | null>(null)
+const receipt = ref<ReceiptOrder[] | null>(null)
 
 /* ---------- 实时预估（见文件开头那段「上传与下单是两步」）----------
  *
- *  三个状态分开表达，因为它们在界面上是三句话：
- *    · prepareState —— 文件传上去了没有（传的过程中显示进度条）；
- *    · fileToken    —— 传上去了才有，之后每次试算都要带上它；
- *    · quote        —— 服务端最后一次算出来的价（可能算不出，hint 里写着为什么）。
+ *  quote 是**整单**的报价：一次请求把这一批文件全带上（每份带自己的档位 /
+ *  份数 / 单双面），服务端回的 `files` 是逐份明细（每份自己的小计），
+ *  顶层 `price` 是这**一张单**的合计。
+ *
+ *  ⚠️ 不再按参数分组试算，也不再一份一次请求 —— 一张单里的每一份参数可以不同，
+ *  那正是 v24 要表达的「多份一个号」；分组是上一版（多份多个号）的遗留。
  */
-type PrepareState = 'idle' | 'uploading' | 'ready' | 'failed'
-const prepareState = ref<PrepareState>('idle')
-/** 预上传返回的凭据。**文件单提交时用它，不用再把文件传一遍。** */
-const fileToken = ref<string | null>(null)
-const preparedPages = ref<number | null>(null)
-const prepareError = ref('')
-/** 预上传期间的进度（它独立于「提交」那一次上传的进度）。 */
-const preparePercent = ref(0)
-const uploading = computed(() => prepareState.value === 'uploading')
+
+/* ---------- 选中的文件：**一批**（2026-09-28 起支持一次选多份）----------
+ *
+ *  每一份文件带**自己的一套打印选项**（档位 / 份数 / 单双面）和自己的预上传状态 ——
+ *  学生要的就是「一次传几份，各打各的」。
+ *
+ *  提交时**不再按参数分组**：这一批只发一个 group，也就是**一张订单、一个单号**；
+ *  每份自己的参数随它一起提交，服务端按份记录（见 PreparedOrderFile）。
+ *  上一版把不同参数拆成几张单，学生要跑几趟取件 —— 那是这一版要消掉的事。
+ *
+ *  NUpload 只管「选了哪些文件」（fileList），打印参数与上传状态都在 rows 上：
+ *  两边各存一份参数的话，删掉一份文件时总有一边不知道。
+ */
+type FileRow = {
+  /** NUpload 的文件 id（字符串形式）——两边的唯一纽带 */
+  key: string
+  file: File
+  name: string
+  size: number
+  status: 'uploading' | 'ready' | 'failed'
+  /** 预上传换回来的凭据。**提交时用它，不用再把文件传一遍**。 */
+  token: string | null
+  pages: number | null
+  percent: number
+  error: string
+  /** 分片会话 id（大文件才有）—— 组件卸载时要能取消它，别占着额度 */
+  uploadId?: string | null
+  priceItemId: number | null
+  copies: number
+  duplex: 'single' | 'double'
+  /** 这一份在**传完之前**就被学生移除了。
+   *
+   *  为什么需要这个标记：`rows` 只是数组，移除就是把它摘掉，而预上传的
+   *  Promise 闭包里仍握着这个对象 —— token 可能几百毫秒后才回来。
+   *  不标记的话那份 token 永远没人认领，服务端的 `.pending` 文件一直占着
+   *  「每账号最多几份」的额度，而学生以为他已经把这份删掉了。 */
+  removed?: boolean
+}
+const rows = ref<FileRow[]>([])
+/** 正在上传的那一份。上传是串行的，所以同一时间只有一份在动。 */
+const activeRowKey = ref<string | null>(null)
+
+/** 一次最多几份：**用服务端给的那个数**（/api/print-options 的 batch_max_files），
+ *  不在前端写死 —— 服务端配成 5 而这里写 10 的话，学生会选满 10 份、传完，
+ *  在最后一步才被拒。拉不到清单时退回 1（保守：宁可他一份份传）。 */
+const batchMax = ref(1)
+
+const uploading = computed(() => rows.value.some((item) => item.status === 'uploading'))
+const readyRows = computed(() => rows.value.filter((item) => item.status === 'ready' && item.token))
 
 const quote = ref<EstimateResponse | null>(null)
 const quoting = ref(false)
 /** 防抖用的定时器：份数是输入框，连着按上下箭头会一秒打出七八次请求。 */
 let quoteTimer: number | null = null
-
-const selected = computed(() => fileList.value[0] ?? null)
-const selectedFile = computed(() => selected.value?.file ?? null)
+/** 试算的请求序号闸门（口径同 OrdersView / MyOrdersView 的 requestSeq）。
+ *  350ms 防抖挡不住「改完档位立刻改份数」这类组合：两个请求都在飞，
+ *  先发的那个若后到，就会把 quote / quotes 整体盖回旧参数的值 ——
+ *  学生看到的是「我把份数从 1 改成 3，价格反而退回去了」。 */
+let quoteSeq = 0
 
 const usingPreset = computed(() => mode.value === 'preset')
 const selectedPreset = computed(
@@ -154,10 +199,14 @@ const priceItemOptions = computed(() =>
   }),
 )
 
-/** 选中的那一档。决定「双面能不能选」，也决定提交时要不要带 price_item_id。 */
-const selectedItem = computed(
-  () => priceItems.value.find((item) => item.id === priceItemId.value) ?? null,
-)
+/** 某一档支不支持双面（按行问：每份文件可能选的是不同的档）。 */
+function duplexAllowedFor(itemId: number | null): boolean {
+  if (itemId === null) return true
+  const item = priceItems.value.find((entry) => entry.id === itemId)
+  // 找不到那一档（被停用了）时**不禁用**：服务端会在试算里把 duplex 归正成
+  // single 并回给前端，界面跟着它改 —— 那一条路比在这里猜要准。
+  return item ? item.price_double !== null : true
+}
 
 /** 预设模式下、且那条服务**绑了**档位 → 这一格变成只读。
  *
@@ -178,25 +227,31 @@ const duplexAllowed = computed(() => {
     const bound = priceItems.value.find((item) => item.id === presetBoundItem.value?.price_item_id)
     return bound ? bound.price_double !== null : true
   }
-  return selectedItem.value?.price_double !== null
+  return duplexAllowedFor(priceItemId.value)
 })
 
-/** 只有大文件才会走分片，提前告诉用户「会分几片」，免得他以为卡住了。 */
-const chunkCount = computed(() => {
-  const size = selectedFile.value?.size ?? 0
-  return size > 8 * 1024 * 1024 ? Math.ceil(size / (8 * 1024 * 1024)) : 0
-})
+/** 分片阈值：**必须与 utils/chunkedUpload.ts 的 CHUNK_THRESHOLD 是同一个数**
+ *  （那里决定真的走不走分片，这里只负责念「会分几片」）。
+ *
+ *  本来该 import 那个常量，但它没有 export，而那个文件不在这次改动的白名单里，
+ *  所以只能在这里再写一份。两个数一分叉，界面就会说一套、上传做另一套，
+ *  而且两边都不报错 —— 改阈值时这两处要一起改。 */
+const CHUNK_THRESHOLD = 8 * 1024 * 1024
 
-const progressHint = computed(() => {
-  if (preparePercent.value >= 99) return '正在解析文件 · 请稍候'
-  return '上传中 · 勿关闭页面 / 勿断网'
-})
+/** 大文件才会走分片：把这一批里所有要走分片的文件加起来，告诉学生「会分几片」，
+ *  免得他以为卡住了。 */
+const chunkCount = computed(() =>
+  rows.value.reduce((total, row) => {
+    if (row.size <= CHUNK_THRESHOLD) return total
+    return total + Math.ceil(row.size / CHUNK_THRESHOLD)
+  }, 0),
+)
 
 /** 能不能提交。分两种模式各算一次，别合成一个布尔表达式 ——
  *  按钮上要显示的「为什么按不动」是两套完全不同的话。
  *
- *  文件模式多一道「文件必须已经传完」：预上传现在是**自动**跑的（选完文件就传），
- *  所以学生完全有可能在传完之前就点了提交 —— 那时 file_token 还不存在，
+ *  文件模式多一道「文件必须已经传完」：预上传是**自动**跑的（选完文件就传），
+ *  所以学生完全有可能在传完之前就点了提交 —— 那时 token 还不存在，
  *  建单接口会顶回来。在这一句里挡掉，比让他点一次、再看到一屏报错要好。 */
 const blockReason = computed<string | null>(() => {
   if (submitting.value) return null
@@ -205,9 +260,10 @@ const blockReason = computed<string | null>(() => {
     if (presetId.value === null) return '尚未选择预设打印服务'
     return null
   }
-  if (!selected.value) return '尚未选择文件'
+  if (!rows.value.length) return '尚未选择文件'
   if (uploading.value) return '文件上传中 · 传完即可提交'
-  if (prepareState.value !== 'ready') return '文件还没传完 · 重新选择一次'
+  if (rows.value.some((item) => item.status === 'failed')) return '有文件没传完 · 移除后重选'
+  if (!readyRows.value.length) return '文件还没传完 · 重新选择一次'
   return null
 })
 
@@ -218,6 +274,11 @@ async function loadOptions(): Promise<void> {
     const data = await printOptionsApi.load()
     presets.value = data.presets ?? []
     priceItems.value = data.price_items ?? []
+    // 一次最多几份**由服务端给**（见 PrintOptionsResponse.batch_max_files）：
+    // 前端不写死，否则服务端调小了这里还在放行。
+    if (typeof data.batch_max_files === 'number' && data.batch_max_files > 0) {
+      batchMax.value = data.batch_max_files
+    }
   } catch (error) {
     optionsError.value = error instanceof ApiError ? error.message : '打印选项读取失败'
   } finally {
@@ -233,7 +294,8 @@ async function refreshPending(): Promise<void> {
 async function cancelSession(uploadId: string): Promise<void> {
   try {
     await chunkApi.cancel(uploadId)
-    if (activeChunkUploadId.value === uploadId) activeChunkUploadId.value = null
+    const row = rows.value.find((item) => item.uploadId === uploadId)
+    if (row) row.uploadId = null
     message.success('上传已终止 · 额度已释放')
     await refreshPending()
   } catch (error) {
@@ -241,10 +303,16 @@ async function cancelSession(uploadId: string): Promise<void> {
   }
 }
 
-/** 组件卸载时：若分片会话仍在进行就取消它，避免残留占用额度 */
+/** 组件卸载时：把还在进行的分片会话都取消、把已经拿到手的 token 都丢掉，
+ *  避免残留占用额度。 */
 onBeforeUnmount(() => {
-  if (activeChunkUploadId.value) {
-    void chunkApi.cancel(activeChunkUploadId.value).catch(() => {})
+  for (const row of rows.value) {
+    if (row.uploadId) void chunkApi.cancel(row.uploadId).catch(() => {})
+    // 这一页已经离开，不会有人再为这些 token 建单了：不丢弃的话，服务端那几份
+    // `.pending` 文件要一直占着「每账号最多几份」的额度，直到惰性清理把 TTL 到期
+    // 的扫掉 —— 而学生只是「返回上一步改了个参数」。
+    // 发完即走（不 await、失败吞掉）：卸载钩子里等网络返回会把路由跳转拖住。
+    if (row.token) void orderApi.discardPrepared([row.token]).catch(() => {})
   }
   // 防抖定时器也要停掉：组件都没了还去打一次试算，纯属白跑一趟。
   if (quoteTimer !== null) window.clearTimeout(quoteTimer)
@@ -252,19 +320,11 @@ onBeforeUnmount(() => {
 
 function reset(): void {
   fileList.value = []
+  rows.value = []
+  quotes.value = []
   remark.value = ''
   presetId.value = null
   mode.value = 'file'
-  uploadedBytes.value = 0
-  totalBytes.value = 0
-  // 预上传与报价的那一份状态：清干净，下一单从头来。
-  // （fileList 置空本身会触发 watcher 把 prepareState 打回 idle，
-  //   但 token / 报价不会跟着走 —— 它们是「上一条文件」的东西，必须显式清。）
-  fileToken.value = null
-  preparedPages.value = null
-  prepareState.value = 'idle'
-  preparePercent.value = 0
-  prepareError.value = ''
   quote.value = null
   presetDocOpen.value = false
   // 打印参数回到**偏好里的默认值**（而不是写死的黑白/单面/1 份）：
@@ -353,115 +413,278 @@ function scheduleQuote(): void {
   }, 350)
 }
 
+/** 逐份报价明细（服务端 EstimateResponse.files）。
+ *  一份一条，带它自己的页数、小计与归正后的参数 —— 页面上每份小计就从这里取。
+ *  **不是「一组一条」**：整单只有一张，明细按份给。 */
+const quotes = ref<EstimateFileQuote[]>([])
+
 async function refreshQuote(): Promise<void> {
-  // 预设模式还没选服务、文件模式还没有 token —— 都没什么可算的。
-  let payload: { preset_id: number } | { file_token: string } | null = null
+  // 先领一个序号：回来时若不是最新那一次，连同 loading 与失败提示一起丢掉。
+  const mySeq = ++quoteSeq
+  // 预设模式：一条服务一次报价（没有文件，也就没有分组这回事）。
   if (usingPreset.value) {
-    if (presetId.value !== null) payload = { preset_id: presetId.value }
-  } else if (fileToken.value) {
-    payload = { file_token: fileToken.value }
+    quotes.value = []
+    if (presetId.value === null) {
+      quote.value = null
+      return
+    }
+    quoting.value = true
+    try {
+      const data = await orderApi.estimate({
+        preset_id: presetId.value,
+        copies: copies.value ?? COPIES_DEFAULT,
+        duplex: duplex.value,
+        price_item_id: priceItemId.value,
+      })
+      if (mySeq !== quoteSeq) return
+      quote.value = data
+      //    服务端归正过的单双面要跟着改回来：这一档不支持双面时它会回 single，
+      //    而屏幕上还写着「双面」的话，学生看到的选项和计价就不是一回事了。
+      //    预设单只有一份，'mixed' 在语义上不会出现；但类型上是宽的那个联合
+      //    （OrderDuplex），所以只认 single / double，其余一律不动 —— 不猜。
+      if (data.duplex === 'single' || data.duplex === 'double') {
+        if (data.duplex !== duplex.value) duplex.value = data.duplex
+      }
+    } catch {
+      //    试算失败**不报错**：它是锦上添花的东西，为它弹一个红条会让下单页看着像坏了。
+      //    界面上那句「暂时算不出预估」已经把状态说清楚了。
+      //    旧请求的失败更是不能盖在新结果上（同一条序号闸门）。
+      if (mySeq === quoteSeq) quote.value = null
+    } finally {
+      //    转圈也只由最后一次请求收尾：被丢弃的旧响应提前灭掉它，
+      //    估算中的读数会在新数据到达前先「亮一下」。
+      if (mySeq === quoteSeq) quoting.value = false
+    }
+    return
   }
-  if (!payload) {
-    quote.value = null
+
+  // 文件单：**一次请求把这一批全带上**，每份带自己的档位 / 份数 / 单双面。
+  // 服务端回的 `files` 是逐份小计，顶层 `price` 是这**一张单**的合计。
+  // 这里原先按参数分组、一组一次请求 —— 那套对应「多份拆成多个单号」，
+  // 而这一版一次提交只建一张单，分组在服务端也已经不再做。
+  quote.value = null
+  if (!readyRows.value.length) {
+    quotes.value = []
     return
   }
   quoting.value = true
   try {
     const data = await orderApi.estimate({
-      ...payload,
-      copies: copies.value ?? COPIES_DEFAULT,
-      duplex: duplex.value,
-      price_item_id: priceItemId.value,
+      files: readyRows.value.map((row) => ({
+        file_token: row.token as string,
+        price_item_id: row.priceItemId,
+        copies: row.copies,
+        duplex: row.duplex,
+      })),
     })
+    if (mySeq !== quoteSeq) return
     quote.value = data
-    //    服务端归正过的单双面要跟着改回来：这一档不支持双面时它会回 single，
-    //    而屏幕上还写着「双面」的话，学生看到的选项和计价就不是一回事了。
-    if (data.duplex !== duplex.value) duplex.value = data.duplex
+    quotes.value = data.files ?? []
+    // 归正过的单双面要写回**那一份**（这一档不支持双面时服务端会给回 single）。
+    // 按 file_token 对号，不能拿顶层 duplex 一把刷：多份时顶层可能是 'mixed'，
+    // 而每份自己的 duplex 只会是 single / double。
+    for (const row of readyRows.value) {
+      const one = quotes.value.find((item) => item.file_token === row.token)
+      if (one && one.duplex !== row.duplex) row.duplex = one.duplex
+    }
   } catch {
-    //    试算失败**不报错**：它是锦上添花的东西，为它弹一个红条会让下单页看着像坏了。
-    //    界面上那句「暂时算不出预估」已经把状态说清楚了。
-    quote.value = null
+    if (mySeq === quoteSeq) quotes.value = []
   } finally {
-    quoting.value = false
+    if (mySeq === quoteSeq) quoting.value = false
   }
 }
 
+/** 整单的预估合计。**直接用服务端给的顶层 price**，不在前端把各份小计相加 ——
+ *  有一份算不出时服务端那个和就是 null，前端自己相加只会得出一个漏算了某几份、
+ *  却看着很像真的总数（与「est_price 不是价格」同一条纪律：一个自己拼出来的
+ *  数字，没人能说清它是怎么来的）。 */
+const quoteTotal = computed<number | null>(() => quote.value?.price ?? null)
+
 const quoteText = computed(() => {
+  // 「估算中」只在**一次响应都还没有**时出现：改一个参数就闪一下「估算中」，
+  // 已经显示的合计会跟着闪，读起来像价格在乱跳。
   if (quoting.value && !quote.value) return '估算中'
-  if (!quote.value || quote.value.price === null) return '暂时算不出预估'
-  return `预估 ¥${quote.value.price.toFixed(2)}`
+  const total = quoteTotal.value
+  if (total === null) return quote.value ? '合计暂不显示' : '暂时算不出预估'
+  return `预估 ¥${total.toFixed(2)}`
 })
 
 const quoteHint = computed(() => {
   const data = quote.value
   if (!data) return ''
-  if (data.price === null) return data.hint || '以管理员核定为准'
-  const parts = ['以管理员核定为准']
-  if (data.pages !== null) parts.unshift(`按 ${data.pages} 页`)
+  // 有哪一份算不出价时，合计一律不显示（见 quoteText），这里把原因说到底：
+  // 一句「合计暂不显示」比一个少算了几份的数字安全得多，后者会被当真。
+  // 逐份的原因与「这一份暂时算不出」在各自那一行（见 rowQuoteText）。
+  if (data.price === null) {
+    const parts = ['部分文件算不出，合计暂不显示']
+    const failing = quotes.value.find((item) => item.price === null)
+    if (failing?.hint) parts.push(failing.hint)
+    parts.push('以管理员核定为准')
+    return parts.join(' · ')
+  }
+  const parts: string[] = []
+  if (data.pages !== null) {
+    // 顶层页数是**整单各份页数之和**（每份的份数不乘进页数），所以措辞不能写
+    // 「按 N 页」—— 多份时那句话会被读成「这一单只有 N 页」。
+    const portions = usingPreset.value ? 1 : readyRows.value.length
+    parts.push(portions > 1 ? `各份合计 ${data.pages} 页` : `共 ${data.pages} 页`)
+  }
+  // 逐份小计写在每一份自己那一行下面（见 rowQuoteText），这里不再重复：
+  // 同一批数字出现两处，改参数时两处一起跳，反而更难读。
+  parts.push('以管理员核定为准')
   return parts.join(' · ')
 })
 
-/** 选完文件立刻预上传。**它不下单** —— 只是把文件交上去换一个 token，
+/** 某一份的报价。按 file_token 对号 —— 行与 quotes 之间没有别的稳定 id
+ *  （行的 key 是 NUpload 给的，服务端不认识它）。 */
+function rowQuote(row: FileRow): EstimateFileQuote | null {
+  if (!row.token) return null
+  return quotes.value.find((item) => item.file_token === row.token) ?? null
+}
+
+/** 这一份的小计文案。算不出就说「算不出」—— 既不显示一个数，也不留白：
+ *  留白会被读成「还没轮到这一份算」。 */
+function rowQuoteText(row: FileRow): string {
+  if (quoting.value && !quotes.value.length) return '估算中'
+  const one = rowQuote(row)
+  if (!one) return ''
+  if (one.price === null) return '这一份暂时算不出'
+  return `小计 ¥${one.price.toFixed(2)}`
+}
+
+/** 这一批**只生成一张单**（一个单号），所以这里不再有「分组」这一步。
+ *
+ *  上一版有一个 groupReadyRows()，按（档位 + 份数 + 单双面）把文件分进几个组、
+ *  一组一张单 —— 后果是学生一次传 5 份却拿到两三个单号，要跑几趟取件。
+ *  现在每份参数随那一份提交（PreparedOrderFile），整批就是一个 group。
+ *  这也是「一组 = 一张订单」这句话唯一还成立的地方。
+ */
+
+/** 把一份文件传上去换 token。**它不下单** ——
  *  服务端据此数出页数（页数只能在服务端数：客户端报上来的数直接进公式，不可信）。 */
-async function prepareSelectedFile(): Promise<void> {
-  const file = selectedFile.value
-  if (!file) {
-    prepareState.value = 'idle'
-    fileToken.value = null
-    preparedPages.value = null
-    return
-  }
-  prepareState.value = 'uploading'
-  prepareError.value = ''
-  fileToken.value = null
-  preparedPages.value = null
-  preparePercent.value = 0
-  totalBytes.value = file.size
+async function prepareRow(row: FileRow): Promise<void> {
+  row.status = 'uploading'
+  row.error = ''
+  row.percent = 0
+  row.token = null
+  row.pages = null
+  activeRowKey.value = row.key
   try {
     const data = await prepareUpload(
-      file,
+      row.file,
       (state) => {
-        preparePercent.value = state.percent
-        uploadedBytes.value = state.uploaded
+        row.percent = state.percent
       },
       (uploadId) => {
-        activeChunkUploadId.value = uploadId
+        row.uploadId = uploadId
       },
     )
-    activeChunkUploadId.value = null
-    fileToken.value = data.file_token
-    preparedPages.value = data.pages
-    prepareState.value = 'ready'
-    uploadedBytes.value = file.size
-    void refreshQuote()
+    row.uploadId = null
+    row.token = data.file_token
+    row.pages = data.pages
+    row.status = 'ready'
+    // 传完之前这一份就被移除了（removeRow 打的标记）：这一页不会再为它下单，
+    // token 立刻丢掉，否则服务端那份 `.pending` 文件一直占着额度。
+    if (row.removed) void orderApi.discardPrepared([row.token]).catch(() => {})
   } catch (error) {
-    activeChunkUploadId.value = null
-    prepareState.value = 'failed'
-    prepareError.value = error instanceof ApiError ? error.message : '文件上传未完成'
+    row.uploadId = null
+    row.status = 'failed'
+    row.error = error instanceof ApiError ? error.message : '文件上传未完成'
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
       void refreshPending()
     }
   } finally {
-    void refreshPending()
+    activeRowKey.value = null
   }
 }
 
-/** 换文件 → 重新预上传（顺带把上一条的报价清掉，免得旧价留在屏幕上）。 */
-watch(selectedFile, () => {
+/** 串行上传这一批（一次只有一份在动：并行传几份大文件会把上行带宽分光，
+ *  而进度条也就看不出哪一份在走了）。 */
+async function prepareRows(keys: string[]): Promise<void> {
+  for (const key of keys) {
+    const row = rows.value.find((item) => item.key === key)
+    if (row && row.status !== 'ready') await prepareRow(row)
+  }
+  void refreshPending()
+  scheduleQuote()
+}
+
+/** 选完文件（多选就是一次进来好几份）：建行 + 预上传 + 按偏好预填参数。 */
+function onFileChange(options: {
+  file: Required<UploadFileInfo>
+  fileList: Required<UploadFileInfo>[]
+  event?: Event | ProgressEvent
+}): void {
+  const id = String(options.file.id)
+  //    Naive 的 event 是 DOM 事件或 'remove' 这类**字符串动作**（类型上写的是 Event，
+  //    实际回调时会塞动作名进来）。这里只关心「这一份是不是被移除了」，
+  //    所以按字符串比 —— 与 Naive 自己的文档口径一致。
+  if (String(options.event) === 'remove') {
+    removeRow(id)
+    return
+  }
+  if (rows.value.some((row) => row.key === id)) return
+  const file = options.file.file
+  if (!file) return
+  rows.value.push({
+    key: id,
+    file,
+    name: file.name,
+    size: file.size,
+    status: 'uploading',
+    token: null,
+    pages: null,
+    percent: 0,
+    error: '',
+    uploadId: null,
+    priceItemId: formDefaults.value.priceItemId,
+    copies: formDefaults.value.copies,
+    duplex: formDefaults.value.duplex ?? 'single',
+  })
+  void prepareRows([id])
+}
+
+/** 从这一批里拿掉一份：内存、NUpload 的列表、以及**服务端那份没下单的预上传文件**
+ *  一起清掉。最后一件不能省 —— 它一直占着「每账号最多几份」的额度，
+ *  而学生以为他已经把这份删了。 */
+function removeRow(key: string): void {
+  const row = rows.value.find((item) => item.key === key)
+  // 先打标记、再把它从数组里摘掉：预上传的 Promise 闭包里仍握着这个对象，
+  // token 可能几百毫秒后才回来（直传途中被移除就是这种情形）。
+  // 只按「token 已存在」去丢弃，那一份的 token 就成了没人认领的孤儿。
+  if (row) row.removed = true
+  rows.value = rows.value.filter((item) => item.key !== key)
+  fileList.value = fileList.value.filter((item) => String(item.id) !== key)
+  // 已经拿到 token 的：立刻还回额度；token 还没回来的交给 prepareRow 里那句 removed 判定。
+  if (row?.token) void orderApi.discardPrepared([row.token]).catch(() => {})
+  if (row?.uploadId) void chunkApi.cancel(row.uploadId).catch(() => {})
   quote.value = null
-  if (usingPreset.value) return
-  void prepareSelectedFile()
-})
+  scheduleQuote()
+}
+
+/** 把某一行的打印参数套到这一批的所有文件上。
+ *  一次选 5 份、参数都一样时，这是学生唯一需要按的那一下。 */
+function applyRowToAll(row: FileRow): void {
+  for (const item of rows.value) {
+    item.priceItemId = row.priceItemId
+    item.copies = row.copies
+    item.duplex = duplexAllowedFor(row.priceItemId) ? row.duplex : 'single'
+  }
+  message.success('已应用到全部 %d 份'.replace('%d', String(rows.value.length)))
+  scheduleQuote()
+}
 
 /** 换路径（文件 ↔ 预设）：两边都清一次。 */
 watch(mode, () => {
   quote.value = null
+  quotes.value = []
   if (usingPreset.value) {
     if (presetId.value !== null) scheduleQuote()
-  } else if (selectedFile.value) {
-    if (fileToken.value) scheduleQuote()
-    else void prepareSelectedFile()
+  } else if (rows.value.some((item) => item.status !== 'ready')) {
+    void prepareRows(rows.value.filter((item) => item.status !== 'ready').map((item) => item.key))
+  } else if (rows.value.length) {
+    scheduleQuote()
   }
 })
 
@@ -471,19 +694,15 @@ watch(presetId, () => {
   if (usingPreset.value) scheduleQuote()
 })
 
-/** 价目项 / 份数 / 单双面：这三个是「改一下就要重算」的那一组。 */
+/** 预设单的那一套参数（文件单选的是**每份自己的**那一套，见 FileRow）。 */
 watch([priceItemId, copies, duplex], () => scheduleQuote())
 
-/** 下单成功的回执信息。
- *
- *  estPrice 是**预估价**（服务端按下单时的文件页数算的），null = 没估出来。
- *  它只出现在两句「下次看不到」的地方：这条回执、以及成功面板 ——
- *  学生下单后最想知道的两件事就是「单号是多少」和「大概多少钱」，
- *  而后者在这一刻之后要翻到我的订单页才有（那边也有一份，口径相同）。 */
-type OrderInfo = {
-  orderId: number
+/** 一条回执：一张订单 + 它挂着哪几份文件。 */
+type ReceiptOrder = {
   code: string
-  filename: string
+  /** 档位名快照（「A4 70g · 黑白」），没选档时是空串 */
+  label: string
+  files: string[]
   estPrice: number | null
 }
 
@@ -496,16 +715,25 @@ type OrderInfo = {
  *  单号写在回执的补充行上，而不是只留在这一页的成功面板里 ——
  *  面板会跟着跳转一起消失，而回执**跨过换场还在**，学生至少多一秒看清它。
  *  目标页名从路由表取，和守卫算的是同一份事实来源（与 LoginView 一致）。 */
-function announceOrder(info: OrderInfo): void {
-  // 预估价只在这一行里带一下（「预估」两个字不能省，它还不是最终价）：
+function announceOrders(orders: ReceiptOrder[]): void {
+  const first = orders[0]
+  // 预估价在这两行里带一下（「预估」两个字不能省，它还不是最终价）：
   // 回执是学生下单后唯一会认真看的一屏，而金额正是他此刻最想知道的数字之一。
-  const estimate = info.estPrice === null
-    ? ''
-    : ` · 预估 ¥${info.estPrice.toFixed(2)}`
+  // 多张单时给**合计**：他这一批一共大概要花多少，比逐张念更贴近他想知道的事。
+  const prices = orders.map((order) => order.estPrice).filter((value): value is number => value !== null)
+  const estimate = prices.length
+    ? ` · 预估 ¥${prices.reduce((sum, value) => sum + value, 0).toFixed(2)}${orders.length > 1 ? '（合计）' : ''}`
+    : ''
+  // 一次提交只出一张单（一个单号）。回执第一句就要把「几份、一个号」说清 ——
+  // 学生最怕的正是「我传了 5 份，是不是要跑 5 趟」。
+  const portions = first.files.length || 1
+  const detail = orders.length === 1
+    ? `一张单 · ${portions} 份文件 · 单号 ${pickupCodeLabel(first.code)}${estimate}`
+    : `${orders.length} 张订单 · 单号 ${pickupCodeLabel(first.code)} 等${estimate}`
   showReceipt({
     code: 'ORDER SUBMITTED',
-    title: '订单已提交',
-    detail: `单号 ${pickupCodeLabel(info.code)} · ${info.filename}${estimate}`,
+    title: orders.length === 1 ? '订单已提交' : `已提交 ${orders.length} 张订单`,
+    detail,
     target: (router.resolve('/my-orders').meta.title as string | undefined) ?? '我的订单',
   })
   // **不 await**：路由守卫要是抛出来，会被下面那个 catch 逮成"提交失败，请稍后重试" ——
@@ -520,52 +748,66 @@ async function submit(): Promise<void> {
   }
   submitting.value = true
   try {
-    // 份数已经是 number（NInputNumber），这里原样传 —— 不做字符串拼装、不做算术。
-    // 顺着后端的口径走：份数只认整数，范围由服务端最终裁定。
-    const common = {
-      duplex: duplex.value,
-      remark: remark.value.trim(),
-      copies: copies.value ?? COPIES_DEFAULT,
-      price_item_id: priceItemId.value,
-    }
-
     if (usingPreset.value) {
       const preset = selectedPreset.value
       if (!preset) return
-      const data = await orderApi.createPresetOrder({ preset_id: preset.id, ...common })
-      const info = {
-        orderId: data.order_id,
+      // 预设单是**一条服务一套参数**（没有文件，所以没有分组这回事）。
+      const data = await orderApi.createPresetOrder({
+        preset_id: preset.id,
+        duplex: duplex.value,
+        remark: remark.value.trim(),
+        copies: copies.value ?? COPIES_DEFAULT,
+        price_item_id: priceItemId.value,
+      })
+      const orders: ReceiptOrder[] = [{
         code: data.pickup_code,
-        filename: preset.content,
+        label: preset.content,
+        files: [],
         // v22 起预设单也可能有预估价（预设价 × 份数，或按附带文档的页数算）；
         // 都没有时仍是 null。
         estPrice: data.est_price,
-      }
-      receipt.value = info
+      }]
+      receipt.value = orders
       reset()
-      announceOrder(info)
+      announceOrders(orders)
       return
     }
 
-    //    文件单：文件**早就传上去了**（选完文件就自动预上传），这里只是拿那个
-    //    token 去建单 —— 所以这一下几乎不花时间，进度条那块也不会再出现。
-    const file = selectedFile.value
-    const token = fileToken.value
-    if (!file || !token) return
+    //    文件单：文件**早就传上去了**（选完文件就自动预上传），这里只是拿那几个
+    //    token 去建单 —— 所以这一下几乎不花时间。
+    //    **一次提交只发一个 group = 一张单 = 一个单号**：每份文件带自己的
+    //    档位 / 份数 / 单双面（PreparedOrderFile），服务端按份记录。
+    //    上一版把参数相同的合并、不同的拆成几张单，那种「多份多个号」已经废掉了。
+    if (!readyRows.value.length) return
+    const submittedFiles = readyRows.value.map((row) => ({
+      file_token: row.token as string,
+      filename: row.name,
+      price_item_id: row.priceItemId,
+      copies: row.copies,
+      duplex: row.duplex,
+    }))
     const data = await orderApi.createFromPrepared({
-      file_token: token,
-      filename: file.name,
-      ...common,
+      groups: [{
+        files: submittedFiles,
+        // group 级的那几项是**兜底值**（某一份没带自己的值时才用到）。
+        // 类型上 duplex 是必填，所以给第一份的值；它不会盖掉上面逐份的参数。
+        duplex: readyRows.value[0]?.duplex ?? 'single',
+        remark: remark.value.trim(),
+      }],
     })
-    const info = {
-      orderId: data.order_id,
-      code: data.pickup_code,
-      filename: file.name,
-      estPrice: data.est_price,
-    }
-    receipt.value = info
+    //    服务端回的 orders 才是权威（单号、档位名、预估价都是它算的）。
+    //    它没给 orders（老服务端）时退回单条那一套 —— 缓存里的旧页面场景。
+    //    `data.orders` 仍然按数组读：兼容的那一侧还在，只是这一版只会有一张。
+    const first = data.orders?.[0]
+    const orders: ReceiptOrder[] = [{
+      code: first?.pickup_code ?? data.pickup_code,
+      label: first?.price_item_name ?? '',
+      files: first?.files ?? submittedFiles.map((item) => item.filename),
+      estPrice: first ? first.est_price : data.est_price,
+    }]
+    receipt.value = orders
     reset()
-    announceOrder(info)
+    announceOrders(orders)
   } catch (error) {
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
@@ -581,6 +823,14 @@ async function submit(): Promise<void> {
     void refreshPending()
   }
 }
+
+/** 回执上的预估合计（有一张算不出价就不显示总数 —— 报一个漏算的数字比不报更糟）。 */
+const receiptEstimate = computed<number | null>(() => {
+  const orders = receipt.value
+  if (!orders?.length) return null
+  if (orders.some((order) => order.estPrice === null)) return null
+  return orders.reduce((sum, order) => sum + (order.estPrice ?? 0), 0)
+})
 
 onMounted(async () => {
   await Promise.all([refreshPending(), loadOptions(), loadPrefs()])
@@ -623,25 +873,54 @@ onMounted(async () => {
             <CircleCheck :size="17" />
           </span>
           <div class="min-w-0 flex-1">
-            <p class="font-heading text-base font-bold">订单已提交</p>
+            <p class="font-heading text-base font-bold">
+              {{ receipt.length === 1 ? '订单已提交' : `已提交 ${receipt.length} 张订单` }}
+            </p>
             <!-- 不显示内部订单 id：学生面前只有单号（下面那块就是）。
                  这里原先写「订单 #12」，而 12 是数据库主键 —— 学生照着它
-                 跟打印员对不上任何东西。 -->
-            <p class="mt-0.5 truncate text-sm text-ink-3">
-              {{ receipt.filename || '已提交' }}
+                 跟打印员对不上任何东西。
+
+                 多张订单（批量里混杂着黑白和彩色）时**每一张一行**：
+                 单号是取件时唯一的凭证，少写一个他就得去订单页翻。 -->
+            <ul v-if="receipt.length > 1" class="mt-1.5 space-y-1">
+              <li v-for="order in receipt" :key="order.code" class="text-xs text-ink-2">
+                <span class="tnum font-semibold">{{ pickupCodeLabel(order.code) }}</span>
+                <span class="text-ink-3">
+                  · {{ order.label || '未选档' }}
+                  <template v-if="order.files.length"> · {{ order.files.join(' / ') }}</template>
+                </span>
+              </li>
+            </ul>
+            <!-- 一张单：把「几份、一个号」写在同一句里。单号下面还有一块大字，
+                 这里重复一次是有意的 —— 这一行是页面跳走之前扫一眼就记住的那句。 -->
+            <p v-else class="mt-0.5 text-sm text-ink-3">
+              一张单 · {{ receipt[0].files.length || 1 }} 份文件 · 单号
+              <span class="tnum font-semibold">{{ pickupCodeLabel(receipt[0].code) }}</span>
+              <template v-if="receipt[0].label"> · {{ receipt[0].label }}</template>
+            </p>
+            <!-- 文件名仍然列出来（一行、超长省略）：学生要能核对「我传的确实是这几份」。 -->
+            <p
+              v-if="receipt.length === 1 && receipt[0].files.length"
+              class="mt-0.5 truncate text-xs text-ink-3"
+              :title="receipt[0].files.join(' / ')"
+            >
+              {{ receipt[0].files.join(' / ') }}
             </p>
             <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-2">
               <!-- 单号是学生端唯一的"情绪峰值"：整页最该被记住的一件东西。
                    给它长臂角标框 + 底下一整条刻度尺 —— 像一张被框起来的凭证。
                    下单成功后这一页会立刻跳去我的订单（回执跨换场留着），所以这块面板平时
-                   只是"跳转失败时还在原地"的兜底；单号另外写进了那条回执的补充行。 -->
+                   只是"跳转失败时还在原地"的兜底；单号另外写进了那条回执的补充行。
+                   多张订单时这里放最大号的那个「第一个单号」，其余在上面逐行列出。 -->
               <div class="bracket-lg px-4 py-3" style="--bracket-arm: 26px">
-                <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">单号</div>
+                <div class="tech-label mb-1.5 text-ink-3 tech-label--cn text-xs">
+                  单号{{ receipt.length > 1 ? ' · 共 ' + receipt.length + ' 张单' : '' }}
+                </div>
                 <div
                   class="tnum font-heading text-[34px] leading-none font-bold tracking-[0.12em]"
                   style="color: var(--accent-text)"
                 >
-                  {{ pickupCodeLabel(receipt.code) }}
+                  {{ pickupCodeLabel(receipt[0].code) }}
                 </div>
                 <span class="ticks mt-2.5 block w-full" aria-hidden="true" />
               </div>
@@ -649,13 +928,17 @@ onMounted(async () => {
             </div>
             <!-- 预估价：跟单号并排，因为这两个数是学生下单后立刻要记住的。
                  「预估」两个字**必须留着** —— 它按提交的文件页数算的，
-                 最终金额由管理员看过文件之后核定。 -->
+                 最终金额由管理员看过文件之后核定。
+                 多张订单时显示**合计**（逐张的金额在回执行里没有，学生要看明细
+                 可以去我的订单 —— 那里有每一单自己的预估价）。 -->
             <p
-              v-if="receipt.estPrice !== null"
+              v-if="receiptEstimate !== null"
               class="tnum mt-2 text-sm text-ink-2"
             >
-              预估 <span class="font-semibold">¥{{ receipt.estPrice.toFixed(2) }}</span>
-              <span class="text-xs text-ink-3">· 以管理员核定为准</span>
+              预估 <span class="font-semibold">¥{{ receiptEstimate.toFixed(2) }}</span>
+              <span class="text-xs text-ink-3">
+                · {{ receipt.length > 1 ? '合计 · ' : '' }}以管理员核定为准
+              </span>
             </p>
             <p class="mt-3 text-xs text-ink-3">
               管理员接单打印后，凭单号到打印点取件。
@@ -802,14 +1085,21 @@ onMounted(async () => {
         </div>
       </template>
 
+      <!-- 关掉 Naive 自带的文件列表：下面那块「已选文件」才是真正的列表
+           （每份带自己的打印参数与上传状态）。不关的话 Naive 会再画一份，
+           于是每份文件在屏幕上出现两行 —— 多出来的那一行既没有参数，
+           点它的删除也只会删掉同一份的另一半。 -->
       <NUpload
         v-else
         v-model:file-list="fileList"
         :default-upload="false"
-        :max="1"
+        :multiple="true"
+        :max="batchMax"
         :accept="ACCEPT"
+        :show-file-list="false"
         class="block"
         :disabled="submitting"
+        @change="onFileChange"
       >
         <NUploadDragger>
           <div class="flex flex-col items-center gap-2 py-5">
@@ -825,81 +1115,172 @@ onMounted(async () => {
               <Upload :size="20" />
             </span>
             <p class="text-base font-semibold">点击选择文件 · 或将文件拖入此处</p>
-            <p class="tech-label text-ink-3 text-2xs">PDF · JPG · PNG · DOC · DOCX</p>
+            <p class="tech-label text-ink-3 text-2xs">
+              PDF · JPG · PNG · DOC · DOCX · 一次最多 {{ batchMax }} 份
+            </p>
           </div>
         </NUploadDragger>
       </NUpload>
 
-      <!-- 已选文件。选完就**自动预上传**（还没下单）—— 所以这里同时是那一次
-           上传的进度面板：传完了显示页数，失败了给「重试上传」。
-           学生不必知道后面那一步叫什么，他只需要看到「文件传上去了没有」。 -->
+      <!-- 已选文件：**每份一行**，各自带一套打印参数与自己那份的上传状态。
+           选完就自动预上传（还没下单）—— 学生不必知道后面那一步叫什么，
+           他只需要看到「文件传上去了没有」。 -->
       <div
-        v-if="!usingPreset && selected"
-        class="mt-3 border p-3"
-        style="border-color: var(--border)"
+        v-if="!usingPreset && rows.length"
+        class="mt-3 space-y-2"
       >
-        <div class="flex items-center gap-3">
-          <span
-            class="grid size-9 shrink-0 place-items-center"
-            style="background-color: var(--muted); color: var(--secondary)"
-            aria-hidden="true"
-          >
-            <FileText :size="17" />
-          </span>
-          <div class="min-w-0 flex-1">
-            <p class="truncate text-sm font-semibold">{{ selected.name }}</p>
-            <p class="tnum text-2xs text-ink-3">
-              {{ selectedFile ? prettySize(selectedFile.size) : '' }}
-              <template v-if="uploading"> · 上传中 {{ preparePercent }}%</template>
-              <template v-else-if="prepareState === 'ready'">
-                <template v-if="preparedPages"> · 共 {{ preparedPages }} 页</template>
-                <template v-else> · 页数读不出</template>
-              </template>
-            </p>
-          </div>
-          <NButton
-            quaternary
-            class="!h-8 !w-8 !p-0"
-            size="small"
-            aria-label="移除已选文件"
-            :disabled="submitting"
-            @click="fileList = []"
-          >
-            <template #icon><X :size="15" /></template>
-          </NButton>
-        </div>
-
-        <NProgress
-          v-if="uploading"
-          type="line"
-          :percentage="preparePercent"
-          :height="4"
-          :border-radius="0"
-          :show-indicator="false"
-          class="mt-2.5"
-        />
-        <p v-if="uploading" class="mt-1 flex flex-wrap justify-between gap-2 text-2xs text-ink-3">
-          <span>{{ progressHint }}</span>
-          <span class="tnum">{{ prettySize(uploadedBytes) }} / {{ prettySize(totalBytes) }}</span>
-        </p>
-
         <div
-          v-else-if="prepareState === 'failed'"
-          class="mt-2 flex flex-wrap items-center gap-2 text-xs"
-          style="color: var(--warn)"
+          v-for="row in rows"
+          :key="row.key"
+          class="border p-3"
+          style="border-color: var(--border)"
         >
-          <TriangleAlert :size="13" aria-hidden="true" />
-          <span>{{ prepareError }}</span>
-          <NButton size="tiny" quaternary :disabled="submitting" @click="prepareSelectedFile">
-            重试上传
-          </NButton>
+          <div class="flex items-center gap-3">
+            <span
+              class="grid size-9 shrink-0 place-items-center"
+              style="background-color: var(--muted); color: var(--secondary)"
+              aria-hidden="true"
+            >
+              <FileText :size="17" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-semibold">{{ row.name }}</p>
+              <p class="tnum text-2xs text-ink-3">
+                {{ prettySize(row.size) }}
+                <template v-if="row.status === 'uploading'">
+                  · 上传中 {{ row.percent }}%
+                </template>
+                <template v-else-if="row.status === 'ready'">
+                  <template v-if="row.pages"> · 共 {{ row.pages }} 页</template>
+                  <template v-else> · 页数读不出</template>
+                </template>
+              </p>
+            </div>
+            <NButton
+              size="tiny"
+              quaternary
+              :disabled="submitting || rows.length < 2"
+              title="把这一份的打印参数套到全部文件上"
+              @click="applyRowToAll(row)"
+            >
+              应用到全部
+            </NButton>
+            <NButton
+              quaternary
+              class="!h-8 !w-8 !p-0"
+              size="small"
+              :aria-label="`移除 ${row.name}`"
+              :disabled="submitting"
+              @click="removeRow(row.key)"
+            >
+              <template #icon><X :size="15" /></template>
+            </NButton>
+          </div>
+
+          <NProgress
+            v-if="row.status === 'uploading'"
+            type="line"
+            :percentage="row.percent"
+            :height="4"
+            :border-radius="0"
+            :show-indicator="false"
+            class="mt-2.5"
+          />
+
+          <div
+            v-else-if="row.status === 'failed'"
+            class="mt-2 flex flex-wrap items-center gap-2 text-xs"
+            style="color: var(--warn)"
+          >
+            <TriangleAlert :size="13" aria-hidden="true" />
+            <span>{{ row.error }}</span>
+            <NButton size="tiny" quaternary :disabled="submitting" @click="prepareRows([row.key])">
+              重试上传
+            </NButton>
+          </div>
+
+          <!-- 这一份的打印参数。**每份各一套**（2026-09-28 起）：
+               「第一份黑白 2 份、第二份彩色 1 份」这种事，一次选完就能一次下掉。 -->
+          <div class="mt-2.5 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <NSelect
+              v-model:value="row.priceItemId"
+              :options="priceItemOptions"
+              :loading="optionsLoading"
+              :disabled="submitting || optionsLoading || row.status !== 'ready'"
+              size="small"
+              placeholder="选择档位 · 含纸张与单价"
+              @update:value="() => { if (!duplexAllowedFor(row.priceItemId)) row.duplex = 'single'; scheduleQuote() }"
+            />
+            <NRadioGroup
+              v-model:value="row.duplex"
+              size="small"
+              :disabled="submitting || row.status !== 'ready'"
+              @update:value="scheduleQuote()"
+            >
+              <NRadioButton value="single">单面</NRadioButton>
+              <NRadioButton value="double" :disabled="!duplexAllowedFor(row.priceItemId)">双面</NRadioButton>
+            </NRadioGroup>
+            <NInputNumber
+              v-model:value="row.copies"
+              size="small"
+              :min="COPIES_MIN"
+              :max="COPIES_MAX"
+              :precision="0"
+              :step="1"
+              :disabled="submitting || row.status !== 'ready'"
+              class="w-[104px]"
+              placeholder="份数"
+              @update:value="scheduleQuote()"
+            />
+          </div>
+
+          <!-- 这一份自己的小计。**逐份给**是这次改动的重点之一：
+               一次提交只有一张单、一个总价，学生要能看出「钱是花在哪一份上的」。
+               算不出价时这一行明说「这一份暂时算不出」，而不是留空。 -->
+          <p
+            v-if="rowQuoteText(row)"
+            class="mt-1.5 tnum text-2xs"
+            :style="
+              rowQuote(row)?.price === null
+                ? 'color: var(--warn)'
+                : 'color: var(--text-tertiary)'
+            "
+          >
+            {{ rowQuoteText(row) }}
+          </p>
         </div>
+
+        <!-- 一次提交 = 一张单：这句贴在文件列表下方，因为「多选会不会多出几个单号」
+             正是刚选完文件的这一刻最容易被误解的事（上一版确实会拆成几个单号）。
+             份数范围也写在这儿：每行的输入框本来就夹着 1-50，但一屏小字里
+             不写出来的话，学生只会在按到边界时才撞上。 -->
+        <p v-if="rows.length" class="text-xs text-ink-3">
+          <template v-if="rows.length > 1">
+            共 {{ rows.length }} 份文件 · 会合成
+            <strong class="text-ink-2">一张单、一个单号</strong>；
+            每份的档位 / 份数 / 面数在单子里各自记录。
+          </template>
+          每份份数 {{ COPIES_MIN }}–{{ COPIES_MAX }}。
+        </p>
       </div>
 
       <!-- ② 打印参数 -->
-      <StageHead code="02" title="打印参数" step="STEP 2/3" class="mt-6 mb-3" />
+      <StageHead
+        code="02"
+        title="打印参数"
+        step="STEP 2/3"
+        class="mt-6 mb-3"
+      />
 
-      <div class="grid gap-4 sm:grid-cols-2">
+      <!-- 文件模式：参数**挂在每份文件上**（上面那几行各有一套）——
+           这里只留一句说明，不再放一套会让人误以为「整批共用」的表单。
+           一次选 5 份、参数都一样时，用某一行上的「应用到全部」一下搞定。 -->
+      <p v-if="!usingPreset && rows.length > 1" class="text-xs text-ink-3">
+        每份文件的档位 / 面数 / 份数都在上面那一行里改；
+        这 {{ rows.length }} 份合成一张单（只给一个单号），参数不同的份在单子里各自记录。
+      </p>
+
+      <div v-if="usingPreset" class="grid gap-4 sm:grid-cols-2">
         <!-- 价目项：纸张 + 类型 + 单价都在这一条里（v20 起取代了"颜色 + 纸张"两个下拉）。
              颜色由它决定，所以这一屏不再有「打印颜色」那一项 —— 让学生再选一次颜色，
              就会出现「选了彩色、价目项却是黑白」这种自相矛盾的组合。
@@ -972,9 +1353,9 @@ onMounted(async () => {
           />
         </NFormItem>
       </div>
-      <p class="mt-2 text-xs text-ink-3">
+      <p v-if="usingPreset" class="mt-2 text-xs text-ink-3">
         份数 {{ COPIES_MIN }}-{{ COPIES_MAX }}。
-        <template v-if="(selectedItem || presetBoundItem) && !duplexAllowed">
+        <template v-if="(presetBoundItem) && !duplexAllowed">
           本档<strong>不支持双面</strong>，按单面计。
         </template>
         <template v-if="!priceItemOptions.length && !optionsLoading">
@@ -993,7 +1374,7 @@ onMounted(async () => {
            「预估」三个字必须留着：最终金额由管理员看过文件之后核定，
            这个数只是让学生在按下提交之前心里有数。 -->
       <div
-        v-if="quote || quoting"
+        v-if="quote || quotes.length || quoting"
         class="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 border px-3 py-2.5"
         style="
           border-color: var(--accent-tint-border);
@@ -1041,6 +1422,12 @@ onMounted(async () => {
              学生只会看到一颗按不动的按钮，还以为是自己点得不对。 -->
         <p v-if="blockReason" class="basis-full text-xs font-semibold" style="color: var(--warn)">
           {{ blockReason }}
+        </p>
+        <!-- **本次功能的关键提示，必须一直可见**（不是 title、不是帮助里的一句话）：
+             「多选多单」是学生最容易误解的一条，误解的代价是他以为要跑几趟取件。
+             参数不同的份不拆分，而是各自记在同一张单里。 -->
+        <p v-if="!usingPreset && rows.length" class="basis-full text-xs leading-5 text-ink-2">
+          这 {{ rows.length }} 份会合成一张单，只给一个单号；参数不同的份在单子里各自记录。
         </p>
         <NButton
           type="primary"

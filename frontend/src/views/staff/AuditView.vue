@@ -48,6 +48,20 @@ const STATUS_META: Record<AuditStatus, { label: string; color: string; bg: strin
   rejected: { label: '已驳回', color: 'var(--err)', bg: 'var(--err-bg)' },
 }
 
+/** 未知状态的中性样式：文案留空（由调用方回落到原始文本），颜色走三级文字色。 */
+const NEUTRAL_STATUS_META = { label: '', color: 'var(--text-tertiary)', bg: 'transparent' }
+
+/** 状态 → 文案与配色，**带兜底**。
+ *
+ *  原先这里是 `STATUS_META[item.status]` 直取。库里出现一个前端还不认识的状态值
+ *  （后端加了新状态、产物还没更新，或有人手改过库）时它取到 undefined，
+ *  紧接着 `.color` 就在渲染函数里抛 TypeError —— 整块列表跟着空白，
+ *  而且看不出是「这一行的状态不对」还是「整页都坏了」。
+ *  未知值给中性样式 + 原始状态文本，问题留在眼前而不是消失。 */
+function statusMeta(value: string): { label: string; color: string; bg: string } {
+  return STATUS_META[value as AuditStatus] ?? NEUTRAL_STATUS_META
+}
+
 /** 待审核 0 条时给一句解释，否则管理员会以为是页面坏了 */
 const emptyHint = computed(() =>
   status.value === 'pending'
@@ -140,8 +154,8 @@ onMounted(load)
               :style="{
                 // 计数为 0 时刻意弱化（标签名本身已经说明了这一栏是什么），走四级文字色。
                 // 原先的 var(--ink-4) 不存在，静默失效 —— 0 会显示成和计数非 0 一样的颜色。
-                color: counts[tab.key] ? STATUS_META[tab.key].color : 'var(--text-quaternary)',
-                backgroundColor: counts[tab.key] ? STATUS_META[tab.key].bg : 'transparent',
+                color: counts[tab.key] ? statusMeta(tab.key).color : 'var(--text-quaternary)',
+                backgroundColor: counts[tab.key] ? statusMeta(tab.key).bg : 'transparent',
               }"
             >
               {{ counts[tab.key] }}
@@ -167,11 +181,11 @@ onMounted(load)
                   <span
                     class="px-2 py-0.5 text-xs font-bold"
                     :style="{
-                      color: STATUS_META[item.status].color,
-                      backgroundColor: STATUS_META[item.status].bg,
+                      color: statusMeta(item.status).color,
+                      backgroundColor: statusMeta(item.status).bg,
                     }"
                   >
-                    {{ item.status_label ?? STATUS_META[item.status].label }}
+                    {{ item.status_label ?? (statusMeta(item.status).label || item.status) }}
                   </span>
                   <span v-if="item.reviewer_nickname" class="tech-label text-ink-3 tech-label--cn text-xs">
                     由 {{ item.reviewer_nickname }} 处理

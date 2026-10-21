@@ -47,7 +47,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PresetDocViewer from '@/components/PresetDocViewer.vue'
 import { confirmAction } from '@/composables/feedback'
-import { shortTime } from '@/utils/format'
+import { normalizePrice, shortTime } from '@/utils/format'
 import { PRESET_CONTENT_MAX } from '@/utils/validators'
 
 const message = useMessage()
@@ -69,16 +69,45 @@ const presetForm = reactive({
   presetPrice: '',
 })
 
+/** 能不能提交。除了「服务说明非空」，定价也得是合法金额（选填，填了才算）：
+ *  光判非空的话，`12元`、`1.2.3` 都能让按钮亮起来、再被后端 400 顶回来。
+ *  normalizePrice 与后端 config.PRICE_RE 同一个口径（价目表那边也用它）。 */
 const canSubmitPreset = computed(
-  () => presetForm.content.trim().length > 0 && !saving.value,
+  () => presetForm.content.trim().length > 0
+    && (presetForm.presetPrice.trim() === '' || normalizePrice(presetForm.presetPrice) !== null)
+    && !saving.value,
 )
 
-const priceItemOptions = computed(() =>
-  priceItems.value.map((item) => ({
+/** 正在编辑的那条预设（列表里的原始行）。用来取服务端拼好的 `price_item_label` ——
+ *  绑定的那一档可能已经停用，而停用的项不在 `price_items` 里。 */
+const editingPreset = computed(() =>
+  editingPresetId.value === null
+    ? null
+    : presets.value.find((item) => item.id === editingPresetId.value) ?? null,
+)
+
+/** 价目下拉。**只靠 priceItems 是不够的**：那个接口只回启用中的项，
+ *  编辑一条「绑了已停用档位」的旧预设时，NSelect 找不到匹配项，
+ *  会把这个裸 id 当成标签画出来（界面上就是一个「7」）。
+ *  服务端已经在预设列表里给好了 `price_item_label`（「A4 70g · 黑白」），
+ *  用它补一条兜底选项，显示词与列表那行保持一致。 */
+const priceItemOptions = computed(() => {
+  const options = priceItems.value.map((item) => ({
     label: `${item.paper} · ${item.kind}`,
     value: item.id,
-  })),
-)
+  }))
+  const bound = presetForm.priceItemId
+  if (bound !== null && !options.some((option) => option.value === bound)) {
+    const label = editingPreset.value?.price_item_label
+    // 服务端连 label 都没给（那一档连快照都不在了）时只能留在原样：
+    // 补一个编出来的名字比显示 id 更容易误导人。
+    if (label) {
+      const stopped = editingPreset.value?.price_item_stopped
+      options.push({ label: stopped ? `${label}（已停用）` : label, value: bound })
+    }
+  }
+  return options
+})
 
 function resetPresetForm(): void {
   editingPresetId.value = null

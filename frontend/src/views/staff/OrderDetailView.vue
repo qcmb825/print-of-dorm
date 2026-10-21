@@ -16,7 +16,14 @@ import { ArrowLeft, Download, FileWarning, RefreshCw } from '@lucide/vue'
 import { NAlert, NButton, NSkeleton, NTimeline, NTimelineItem, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
-import { ORDER_SOURCE_LABELS, type OrderDetail, type OrderLog, type OrderSource } from '@/api/types'
+import {
+  DUPLEX_LABELS,
+  ORDER_SOURCE_LABELS,
+  type OrderDetail,
+  type OrderDetailFile,
+  type OrderLog,
+  type OrderSource,
+} from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import RoleTag from '@/components/RoleTag.vue'
@@ -24,8 +31,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   COLOR_TYPE_LABEL,
-  DUPLEX_LABEL,
   LOG_ACTION_COLOR,
+  contactLabel,
   copiesLabel,
   formatBytes,
   fullTime,
@@ -53,7 +60,8 @@ const orderId = computed(() => {
 const order = ref<OrderDetail | null>(null)
 const logs = ref<OrderLog[]>([])
 const loading = ref(false)
-const downloading = ref(false)
+/** 正在下载的那一份文件 id（一单多文件时要能看出是哪一个在转圈）。 */
+const downloadingId = ref<number | null>(null)
 
 const currentUserId = computed(() => auth.user?.id ?? 0)
 
@@ -98,7 +106,9 @@ const specFields = computed<Field[]>(() => {
     {
       label: '规格',
       value: `${item.color_type ? COLOR_TYPE_LABEL[item.color_type] : '黑白'} / ${
-        item.duplex ? DUPLEX_LABEL[item.duplex] : '单面'
+        // DUPLEX_LABELS 里才有 'mixed'（各份不同）。混合单显示「混合」而不是空白，
+        // 也不能拿「双面」顶上 —— 那是在替这一单猜一个它不成立的参数。
+        item.duplex ? DUPLEX_LABELS[item.duplex] : '单面'
       }`,
     },
     // 份数与纸张用 copiesLabel / paperLabel：份数为 null 是「未记录」而不是 1 份
@@ -116,6 +126,36 @@ const specFields = computed<Field[]>(() => {
   return fields
 })
 
+/** 一份文件自己的打印参数，**本行为空就回落到订单级**。
+ *
+ *  这是老单兼容的关键：v24 之前 `order_files` 里 color_type / duplex / copies /
+ *  price_item_name / paper_name 全是 null —— 那时参数只记在订单上，文件行
+ *  本来就没有「自己的参数」。所以回落不是兜底猜测，而是那些行的真实含义；
+ *  两边都为空才显示「—」（与这一页其它格子同一个口径）。
+ *
+ *  档位名（price_item_name）自带纸张与类型（「A4 70g · 黑白」），有它就不再
+ *  重复念一遍纸名与颜色 —— 否则一行里会出现两次「黑白」。 */
+function fileParamLine(file: OrderDetailFile): string {
+  const item = order.value
+  const itemName = file.price_item_name ?? item?.price_item_name ?? null
+  const paper = file.paper_name ?? item?.paper_name ?? null
+  const color = file.color_type ?? item?.color_type ?? null
+  const duplex = file.duplex ?? item?.duplex ?? null
+  const copies = file.copies ?? item?.copies ?? null
+  const bits: string[] = []
+  if (itemName) {
+    bits.push(itemName)
+  } else {
+    bits.push(paper ?? '—')
+    bits.push(color ? COLOR_TYPE_LABEL[color] : '—')
+  }
+  // 订单级可能是 'mixed'（各份不同）：单份自己的 duplex 只会是 single / double，
+  // 这里只用来展示，不拿它去查价格。
+  bits.push(duplex ? DUPLEX_LABELS[duplex] : '—')
+  bits.push(copies === null || copies === undefined ? '—' : copiesLabel(copies))
+  return bits.join(' · ')
+}
+
 const ownerFields = computed<Field[]>(() => {
   const item = order.value
   if (!item) return []
@@ -125,6 +165,11 @@ const ownerFields = computed<Field[]>(() => {
     { label: '姓名', value: item.owner_real_name },
     { label: '学号', value: item.owner_student_id },
     { label: '宿舍', value: item.owner_dorm },
+    // 联系方式：后端 detail 一直回着 owner_contact_type / owner_contact，而这一块
+    // 原先把它们丢了。管理员点进详情，多半**就是**为了联系这个学生 ——
+    // 让他退回去翻列表等于白点一次（文案走 contactLabel，与订单台同一份口径：
+    // 按类型给出「微信 / QQ / 邮箱」标签，空值给「—」）。
+    { label: '联系方式', value: contactLabel(item.owner_contact_type, item.owner_contact) },
   ]
 })
 
@@ -169,20 +214,30 @@ async function load(): Promise<void> {
   }
 }
 
-async function download(): Promise<void> {
+/** 下载**这一单里的某一份**。
+ *
+ *  一单可以有几份文件（2026-09-28 起的批量打印），所以这里带上 file_id ——
+ *  不带的话后端给的是第一份（老链接的兼容口径），而管理员点的可能是第三份。
+ *  只按「第一份」去下载：传 **0** 会被后端当成 `?file_id=0`（没有这一份）直接 400。
+ *  所以「整单」这一路传 null —— 端点那边 `fileId == null` 时不带 file_id 参数，
+ *  拿到的正是后端按老口径给的第一份。
+ *
+ *  下载本身也会写一条留痕，所以拉一遍让时间线跟上 ——
+ *  否则「我刚下载过」这件事要刷新才看得到，像没记上。 */
+async function download(fileId: number | null, filename: string, sizeBytes?: number): Promise<void> {
   const item = order.value
   if (!item) return
-  downloading.value = true
+  // 0 只是**本地**的「整单」哨兵（真实 id 从 1 起），从不发给后端；
+  // 它让下面那颗回退按钮也能照常转圈（模板里判的是 downloadingId !== null）。
+  downloadingId.value = fileId ?? 0
   try {
-    // 同订单台：带上文件大小，让下载超时按文件估（预设单为 null，交给下游兜底）。
-    await staffOrderApi.download(item.id, orderFileLabel(item), item.file_size ?? undefined)
-    // 下载本身也会写一条留痕，所以拉一遍让时间线跟上 ——
-    // 否则「我刚下载过」这件事要刷新才看得到，像没记上。
+    // 带上文件大小，让下载超时按文件估（预设单为 null，交给下游兜底）。
+    await staffOrderApi.download(item.id, filename, sizeBytes, fileId ?? undefined)
     await load()
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
   } finally {
-    downloading.value = false
+    downloadingId.value = null
   }
 }
 
@@ -309,6 +364,13 @@ onMounted(load)
             </div>
           </dl>
 
+          <!-- 订单级单双面是「混合」时，上面那一格只会写「混合」两个字。
+               不补一句解释的话，读的人分不清是「各份不一样」还是「没记录」——
+               而这两种情况的处理完全不同（前者逐份看清单，后者要问下单人）。 -->
+          <p v-if="order.duplex === 'mixed'" class="mt-1.5 text-xs text-ink-3">
+            各份不同，见下方清单。
+          </p>
+
           <!-- 备注单独一块、不截断：它是学生自己写的原话，
                截一半反而更容易看错（「只打第 1 页」和「只打第 1 页到第 3 页」）。 -->
           <p class="mt-2 text-xs text-ink-3">备注</p>
@@ -356,13 +418,63 @@ onMounted(load)
               </div>
             </dl>
 
+            <!-- 文件清单：**一份一行**（一单可以有几份 —— 批量打印）。
+                 每份各给一颗下载按钮，而不是整单一颗「下载文件」：
+                 管理员要打印时手里对着的就是某一份，一次下一份最省事。
+                 哪一份不在盘上也在这里逐份标出来（上面那条警告给的是整体口径，
+                 混在一起说会让人以为是「文件全没了」）。 -->
+            <ul
+              v-if="canDownload && order.files?.length"
+              class="mt-3 space-y-1.5"
+            >
+              <li
+                v-for="(file, index) in order.files"
+                :key="file.id"
+                class="flex items-center gap-2"
+              >
+                <span class="tnum shrink-0 text-2xs text-ink-3">{{ index + 1 }}.</span>
+                <!-- 文件名 + **这一份自己的参数**，两行：参数是打印员对着实物核对时
+                     真正要读的东西（「第 2 份是彩色」看漏了就是打错纸）。
+                     本行参数为空时 fileParamLine 会回落到订单级，老单照样有得看。 -->
+                <span class="min-w-0 flex-1">
+                  <span
+                    class="block truncate text-xs"
+                    :title="file.filename"
+                    :style="file.exists ? '' : 'color: var(--warn)'"
+                  >
+                    {{ file.filename }}
+                    <span v-if="!file.exists">· 不在服务器上了</span>
+                  </span>
+                  <span
+                    class="block truncate text-2xs text-ink-3"
+                    :title="fileParamLine(file)"
+                  >
+                    {{ fileParamLine(file) }}
+                  </span>
+                </span>
+                <span class="tnum shrink-0 text-2xs text-ink-3">
+                  {{ file.size === null ? '' : formatBytes(file.size) }}
+                </span>
+                <NButton
+                  v-if="file.exists"
+                  size="tiny"
+                  quaternary
+                  :loading="downloadingId === file.id"
+                  :title="`下载「${file.filename}」`"
+                  @click="download(file.id, file.filename, file.size ?? undefined)"
+                >
+                  <template #icon><Download :size="13" /></template>
+                </NButton>
+              </li>
+            </ul>
             <NButton
-              v-if="canDownload"
+              v-else-if="canDownload"
               size="small"
               block
               class="mt-3"
-              :loading="downloading"
-              @click="download"
+              :loading="downloadingId !== null"
+              @click="download(order.files?.[0]?.id ?? null, orderFileLabel(order),
+                        order.files?.[0]?.size ?? order.file_size ?? undefined)"
             >
               <template #icon><Download :size="14" /></template>
               下载文件（{{ formatBytes(order.file_size) }}）

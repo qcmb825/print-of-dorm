@@ -7,8 +7,6 @@ declare module 'vue-router' {
     auth?: boolean
     /** 需要管理员 */
     staff?: boolean
-    /** 只对默认管理员开放的页面 */
-    super?: boolean
     /** 未登录才能进（登录页） */
     guest?: boolean
     title?: string
@@ -125,7 +123,7 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '公告管理', code: '05' },
       },
       {
-        // 打印选项对所有管理员开放，**不是** `super: true`：
+        // 打印选项对所有管理员开放（**不按角色收窄**）：
         // 「楼里现在有哪种纸」是打印员自己最清楚的事。这条与后端
         // routes/order_options.py 里那几个 ROLE_ADMIN 写接口一一对应 ——
         // 路由放开而接口收着（或反过来）都会变成「能点，点了 403」。
@@ -183,8 +181,10 @@ router.beforeEach(async (to) => {
   if (to.meta.auth && !auth.isLoggedIn) {
     return { name: 'login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } }
   }
-  // 学生进不了管理端；管理端里那几页只对默认管理员开放的也一并拦掉
+  // 学生进不了管理端。管理端**内部不再按角色细分路由**：账号管理、打印选项、
+  // 价目表这几页所有管理员都能进，真正的门槛在服务端写接口上（roles_required）。
+  // 原先这里还留着一条 `meta.super` 的分支，而路由表里没有任何一条声明过它 ——
+  // 那句话永远不执行，只会让人以为「这里还有一道按角色的闸门」。
   if (to.meta.staff && !auth.isStaff) return '/upload'
-  if (to.meta.super && !auth.advancedAllowed) return '/staff/orders'
   return true
 })

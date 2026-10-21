@@ -5,6 +5,10 @@
 """
 from . import (account, admin, announcements, bot, bot_hint, history, order_options, orders,
                price_table, tickets)
+# password_reset 是「忘记密码」（学号 -> QQ 邮箱验证码 -> 换新密码）。
+# 它和 account 是两条独立的链（这条路不需要登录），所以单独一个模块，
+# 只在 BLUEPRINTS 里排在 account 之后，见 routes/password_reset.py 开头那段。
+from . import password_reset
 # estimate 依赖 orders（建单、落盘校验），order_options 依赖它读预设 —— 都写在上面那行之后。
 # 它管的是「先上传、后下单」那条链：预上传 + 实时试算 + 用预上传的文件建单，
 # 见 routes/estimate.py 开头那段。
@@ -20,6 +24,8 @@ from . import pay_qr
 
 BLUEPRINTS = (
     account.bp,
+    # password_reset 是「忘记密码」：发码 / 验码两条公开接口，路径 /api/password/*。
+    password_reset.bp,
     bot.bp,
     orders.bp,
     estimate.bp,

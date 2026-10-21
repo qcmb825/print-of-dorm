@@ -38,7 +38,7 @@ import time
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
-from config import ST_PRINTING, ST_READY, logger
+from config import DUPLEX_LABELS, DUPLEX_MIXED, ST_PRINTING, ST_READY, logger
 
 # ---- 原始色（镜像 tokens.css 深色一套 + 官方站实测值）----------------------
 VOID = (16, 17, 16)          # #101110 底（带绿倾向，不是死黑）
@@ -685,7 +685,19 @@ def _rows_orders(draw, y, x0, x1, payload):
         else:
             money = '未计费'
         bits = [('%s 份' % item['copies']) if item.get('copies') else '份数未记录', money]
-        draw.text((x0 + chip_w + 16, y + 52), ' · '.join(bits),
+        #    v24：几份文件的单双面不一样时，订单级那一列是 config.DUPLEX_MIXED。
+        #    卡片上必须说出来，而且**走 DUPLEX_LABELS**（不硬编码中文）：
+        #    订单台、邮件、卡片说的是同一个词，改文案时才不会只改到一处。
+        #    不说的话，学生手里只有「5 份 · 预估 x 元」，而他这一单要单双面
+        #    混着打 —— 那正是柜台最容易被追问的一句。
+        if item.get('duplex') == DUPLEX_MIXED:
+            bits.append(DUPLEX_LABELS[DUPLEX_MIXED])
+        #    这一行右边还有提交时间，所以先按可用宽度截断再画：
+        #    加了「混合」之后最长的组合会顶到时间戳上（压字不会报错，只是看不清）。
+        meta = ' · '.join(bits)
+        draw.text((x0 + chip_w + 16, y + 52),
+                  _truncate(draw, meta, _font('cjk', T_META),
+                            max(160, x1 - (x0 + chip_w + 16) - 104)),
                   font=_font('cjk', T_META), fill=INK_3)
         draw.text((x1, y + 52), (item.get('create_time') or '')[5:16],
                   font=_font('mono', T_META, 400), fill=INK_4, anchor='ra')

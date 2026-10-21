@@ -7,16 +7,16 @@ import { Clock, Inbox, RefreshCw, Trash2 } from '@lucide/vue'
 import { NButton, NSkeleton, NSwitch } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { authApi, orderApi } from '@/api/endpoints'
-import type { Order } from '@/api/types'
+import { DUPLEX_LABELS, type Order } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import {
   COLOR_TYPE_LABEL,
-  DUPLEX_LABEL,
   STATUS_COLOR_VAR,
   copiesLabel,
   fullTime,
   orderFileLabel,
+  orderFileNames,
   paperLabel,
   pickupCodeLabel,
   priceLabel,
@@ -144,6 +144,17 @@ onMounted(async () => {
   resume()
 })
 
+/** 整单的总份数。有几份文件时是**各份份数之和**（一张单里每一份可以不一样，
+ *  这里要的是「一共出多少份纸」）；老单没有逐份记录（order_files 的 copies
+ *  是 null）时用订单级那个数 —— 两边都没有才显示「未记录」（copiesLabel 的口径，
+ *  不写 `?? 1`：那等于替这一单编一个没人记得的份数）。 */
+function orderTotalCopies(order: Order): string {
+  const files = order.files ?? []
+  const sum = files.reduce((total, file) => total + (file.copies ?? 0), 0)
+  if (files.length && sum > 0) return `${sum} 份`
+  return copiesLabel(order.copies)
+}
+
 /* ---------- 撤回 ----------
  *  传错文件、参数选错，在「还没人接单」之前都是无害的，让本人自己收起
  *  比找管理员删更省事。一旦有人接了，这单就在别人的工作里了（可能已经下载、
@@ -211,11 +222,12 @@ async function withdraw(order: Order): Promise<void> {
       <template #actions>
         <!-- 「隐藏已取件」是个**偏好**（存在服务端），所以这里是个开关而不是页内筛选：
              点完就落库，下次进来还是这个状态，机器人「订单」也跟着变。 -->
-        <!-- 整行可点：Naive 的 NSwitch 不渲染原生 input，包在 <label> 里点文字没反应 -->
-        <div
-          class="mr-1 flex cursor-pointer items-center gap-1.5 text-xs text-ink-3"
-          @click="toggleHideDone(!hideDone)"
-        >
+        <!-- 点击处理挂在**文字**上，不挂这一圈 div。
+             挂外层的话点开关会走两遍：NSwitch 先发 update:value、紧接着 click 冒泡
+             到外层再调一次 —— 现在只是靠 savingHideDone 的重入锁挡掉第二次，
+             锁一旦被撤（或改成不 await 的写法）立刻变成双重请求。
+             口径与 OrdersView 筛选栏那颗「隐藏已取件」一致。 -->
+        <div class="mr-1 flex items-center gap-1.5 text-xs text-ink-3">
           <NSwitch
             :value="hideDone"
             size="small"
@@ -223,7 +235,7 @@ async function withdraw(order: Order): Promise<void> {
             aria-label="隐藏已取件"
             @update:value="toggleHideDone"
           />
-          隐藏已取件
+          <span class="cursor-pointer" @click="toggleHideDone(!hideDone)">隐藏已取件</span>
         </div>
         <NButton size="small" quaternary :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="15" /></template>
@@ -362,6 +374,18 @@ async function withdraw(order: Order): Promise<void> {
               {{ orderFileLabel(order) }}
             </p>
 
+            <!-- 一单多文件（批量打印）：学生端列表要**紧凑**，所以只给一行「N 份」，
+                 名字都在 title 里（悬停 / 手机上长按可看全）。
+                 逐份各占一行的话，一条订单会吃掉三四行，一屏看不到几单 ——
+                 而学生进这一页是为了看单号与状态，核对每份文件去详情里更合适。 -->
+            <p
+              v-if="(order.file_count ?? 0) > 1"
+              class="mt-1 truncate text-xs text-ink-3"
+              :title="orderFileNames(order).join(' / ')"
+            >
+              {{ order.file_count }} 份 · {{ orderFileNames(order).join(' / ') }}
+            </p>
+
             <!-- ② 规格标签：左强调边的小条，不是药丸。它们说的是"这份文件怎么打"，
                  所以紧跟在文件名下面。 -->
             <div class="mt-2 flex flex-wrap gap-1.5">
@@ -369,12 +393,13 @@ async function withdraw(order: Order): Promise<void> {
                 {{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}
               </span>
               <span class="spec tech-label tech-label--cn text-xs">
-                {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
+                {{ order.duplex ? DUPLEX_LABELS[order.duplex] : '单面' }}
               </span>
               <!-- 份数一定要显示：它直接决定交多少钱，学生看不出来就会反复问管理员。
+                   多份的单显示**整单总份数**（各份之和），不是第一份的份数 ——
                    null 是「未记录」（本次升级前的老订单）而不是 1 份，走 copiesLabel。 -->
               <span class="spec tech-label tech-label--cn tnum text-xs">
-                {{ copiesLabel(order.copies) }}
+                {{ orderTotalCopies(order) }}
               </span>
               <span
                 v-if="order.paper_name"

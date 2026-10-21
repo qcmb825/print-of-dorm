@@ -12,6 +12,7 @@ from pathlib import Path
 from auth import login_required, roles_required
 from config import (
     ALLOWED_EXTENSIONS,
+    DUPLEX_MIXED,
     ORDER_LOG_CLAIM,
     ORDER_LOG_CREATE,
     ORDER_LOG_DOWNLOAD,
@@ -43,7 +44,8 @@ from config import (
     public_role,
     public_role_label,
 )
-from db import (db_conn, find_preset, get_db, insert_order_row, log_order_event)
+from db import (db_conn, files_for_orders, find_preset, get_db,
+                insert_order_row, log_order_event)
 from mail import user_mailbox
 import pricing
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
@@ -57,12 +59,17 @@ bp = Blueprint('orders', __name__)
 # 唯一会往磁盘写文件的接口，被刷起来磁盘和打印队列都会被填满。
 # 数字给得比较宽松，正常一口气传十几份材料也碰不到它。
 UPLOAD_WINDOW_SECONDS = 60
-UPLOAD_MAX_IN_WINDOW = 20
+# 40 次而不是 20 次：一张 10 份文件的批量单要走 10 次 prepare + 1 次 prepared
+# （= 11 次，全部打在同一把 'upload:<uid>' 计数器上），20 次只够一轮多一点 ——
+# 学生同一分钟内传第二批、或者按提示重试一轮，就会被 429「上传太频繁」顶回来，
+# 而他其实什么都没做错。给到 40 是留出两轮重试的余量，同时仍然挡得住刷盘
+# （真正的墙是下面 QUOTA_MAX_BYTES 的**在盘总量**，速率限制只是第一道）。
+UPLOAD_MAX_IN_WINDOW = 40
 
 # 每账号「在盘总量」上限：还没被接单的订单文件 + 未完成分片会话已占的字节，合计不得超过它。
 #
 # 为什么频控之外还要这一个 —— 频控限的是「多快」，不限制「一共写进去了多少」：
-# 20 次/分钟 × 单文件上限 50MB，就是 1GB/分钟的持续写入量，挂一晚上足够写满一块盘；
+# 40 次/分钟 × 单文件上限 50MB，就是 2GB/分钟的持续写入量，挂一晚上足够写满一块盘；
 # 而盘满的后果不只是上传失败，SQLite 连写日志都写不下去，全站跟着不可用。
 # 换成按「还没处理掉的量」设限之后，这个数就直接等于「一个人最坏能占住多少盘」，
 # 运维可以拿它算容量；用户那边也有明确的解法（等接单 / 撤单 / 放弃上传），
@@ -117,19 +124,29 @@ def _pending_orders_bytes(user_id):
     文件已经不在盘上的（运维清理、误删）按 0 字节算：它本来就不占空间，
     不能因为库里还留着一条记录就把人挡在门外。单数照旧计进去 ——
     那条记录确实还在占着「未接单」这个位置，撤回入口也要能看到它。
+
+    ⚠️ 一单多文件之后，占用要按 **order_files 里的每一份**累加：
+    只算 orders.file_path（= 第一份）的话，一次传 5 份文件的单会按 1 份计费，
+    配额那堵墙当场矮成五分之一 —— 而它正是为「一个人最坏能占住多少盘」设的。
     """
     with db_conn() as conn:
         rows = conn.execute(
-            'SELECT file_path FROM orders WHERE user_id = ? AND claimed_by IS NULL AND status <> ?',
+            'SELECT id, file_path FROM orders '
+            'WHERE user_id = ? AND claimed_by IS NULL AND status <> ?',
             (user_id, ST_DONE)).fetchall()
+        grouped = files_for_orders(conn, [row['id'] for row in rows])
     total = 0
     for row in rows:
-        if not row['file_path']:
-            continue  # 预设服务下的单没有文件（file_path 是空串）
-        try:
-            total += os.path.getsize(row['file_path'])
-        except OSError:
-            continue
+        paths = [item['file_path'] for item in grouped.get(row['id']) or [] if item['file_path']]
+        if not paths and row['file_path']:
+            # 兜底：某条下单路忘了登记 order_files 时，至少别让这一单白占盘。
+            # 正常路径上走不到这里（所有建单都过 create_order_from_saved_files）。
+            paths = [row['file_path']]
+        for path in paths:
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
     return total, len(rows)
 
 
@@ -316,14 +333,38 @@ _ORDER_SELECT = '''
 '''
 
 
-def decorate_orders(rows, my_id, is_super):
-    """把若干行订单补成响应体（列表和按码核对共用同一份填充逻辑）。"""
+def decorate_orders(rows, my_id, is_super, files_by_order=None):
+    """把若干行订单补成响应体（列表和按码核对共用同一份填充逻辑）。
+
+    files_by_order 是 {order_id: [order_files 行, ...]}（见 db.files_for_orders）。
+    给的是**整批**的文件清单，一次查回来 —— 列表一页 20 条各查一次就是 N+1，
+    而这个接口每次开台都要跑。默认 None 时按「没有文件」处理（预设单本来就没有）。
+
+    响应里给 files 而不是只给第一份：订单台要能一眼看到这一单有几份文件、
+    分别叫什么（用户实测提的需求：多文件合到同一个单里要能看全）。
+    `filename` 仍然照给 —— 它是「第一份 / 等 N 份」那句话，两套前端里
+    还有不少地方（以及邮件、数据卡、老书签）在读它，不能一夜之间拿掉。
+    """
     orders = []
     for row in rows:
         item = dict(row)
         item['is_mine'] = item['claimed_by'] == my_id
         # 能不能改状态由服务端按角色判定，这里只负责把结果算成一个布尔值
         item['can_manage'] = is_super or item['is_mine']
+        # 这一单的文件清单。**绝对路径不出库**（与详情页同一条纪律）：
+        # 前端要的只是「叫什么、哪一份」，下载走带 file_id 的那条接口。
+        #
+        # v24 起每份还带自己的参数（color_type / duplex / copies / 价目项 / 纸张）。
+        # **本行为 NULL 表示「沿用订单级」**，前端就是按这个读的 ——
+        # 所以这里原样给 NULL，不要替老单补一个猜测值（见 files_with_options）。
+        item['files'] = [
+            dict({'id': entry['id'], 'filename': entry['filename'],
+                  'size': entry['size'], 'pages': entry['pages']},
+                 **{column: _row_field(entry, column)
+                    for column in ORDER_FILE_OPTION_COLUMNS})
+            for entry in (files_by_order or {}).get(item['id'], [])
+        ]
+        item['file_count'] = len(item['files'])
         # 已注销的账号在名字后面标一下。订单是按 user_id 关联的，关联本身没变，
         # 但注销会把昵称释放出去、可能被新人顶用，不标就分不清这单是谁下的。
         # owner_status 是「算这个标记用的原料」，拼完就 pop 掉，不让它混进响应体 ——
@@ -464,21 +505,141 @@ def _estimate_note(est_price):
     return '（下单时预估 %.2f 元）' % est_price
 
 
-def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies,
-                                item=None, source=ORDER_SOURCE_WEB):
-    """把一份已经完整落盘的文件登记成订单，返回 (order_id, pickup_code, est_price)。
+# v24：order_files 里「这一份怎么打」的那几列。列名只在这里写一次 ——
+# files_with_options 的 SELECT、以及 decorate_orders / 详情页的取值都对着它来，
+# 少一列的症状是「那一格永远是空的」，而且不报错。
+ORDER_FILE_OPTION_COLUMNS = ('color_type', 'duplex', 'copies', 'price_item_id',
+                             'price_item_name', 'paper_name', 'paper_remark')
 
-    单片直传（/api/upload）和分片上传合并完成之后都走这里，
-    写库失败回滚、删孤儿文件的动作就只有一份。复制成两份的话，
-    哪天改了其中一处，症状会是「直传的订单正常，分片传的订单缺字段」，
-    而这种差异光看页面很难发现。
+
+def _row_field(row, name, default=None):
+    """从 sqlite3.Row 或 dict 里取一个字段，没有就返回 default。
+
+    为什么需要它：读订单文件清单有两个数据源 —— 本模块的 `files_with_options`
+    （带 v24 的新列）与 `db.files_for_orders`（只有文件清单本身那几列）。
+    对 Row 取一个不存在的键抛的是 **IndexError**（不是 KeyError），
+    而它会被当成「这张单坏了」。取不到就当「这一版没给这几个字段」，
+    展示层按「本行为空再回落订单级」读，老单照旧正常。
+    """
+    try:
+        keys = row.keys()
+    except AttributeError:
+        keys = None
+    if keys is not None and name not in keys:
+        return default
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def files_with_options(conn, order_ids):
+    """按订单取文件清单，**带 v24 的逐份参数快照**，返回 {order_id: [行, ...]}。
+
+    与 `db.files_for_orders` 的唯一区别：这里把 color_type / duplex / copies /
+    price_item_id / price_item_name / paper_name / paper_remark 也取出来。
+    为什么另写一个而不是把 db 那个改宽：新列回答的是「这一份怎么打」，
+    读它的只有三处展示（订单台列表、详情页、我的订单）；下载 / 撤回 / 配额
+    只需要文件路径 —— 两拨需求分开取，谁都不会被对方的改动牵着走。
+    逐份参数漏掉的症状是**静默回落订单级**：一单里两份彩色三份黑白会显示成
+    整单同一个参数，没有任何报错。
+
+    NULL 是有意义的（v24 之前的老单、以及整单一套参数的新单）：**原样给 NULL**，
+    不要在这里替它填订单级的值 —— 填了就再也分不清「这一份真的是单面」
+    和「这一份没有自己的参数」，详情页也就没法如实标出「沿用订单级」。
+    """
+    grouped = {}
+    ids = [int(value) for value in order_ids if value is not None]
+    if not ids:
+        return grouped
+    # 分批拼 IN：与 db.files_for_orders 同一个理由（SQLite 的参数个数上限）。
+    for start in range(0, len(ids), 400):
+        chunk = ids[start:start + 400]
+        placeholders = ','.join('?' * len(chunk))
+        rows = conn.execute(
+            'SELECT id, order_id, filename, file_path, size, pages, sort_order, '
+            + ', '.join(ORDER_FILE_OPTION_COLUMNS)
+            + ' FROM order_files WHERE order_id IN (%s) ORDER BY order_id, sort_order, id'
+            % placeholders, chunk).fetchall()
+        for row in rows:
+            grouped.setdefault(row['order_id'], []).append(row)
+    return grouped
+
+
+def batch_order_filename(entries):
+    """一单多文件时写进 orders.filename 的那一句话。
+
+    单文件就是原文件名（老单、老链接、搜索全都照旧）；多文件写成
+    「第一份 等 N 份文件」—— 这个字符串会出现在订单台、邮件、数据卡、
+    搜索结果里，那些地方都要能一眼看出「这不是一份文件」。
+
+    第一份的名字截到 60 字：它是学生的输入，而这个字段一直是短展示字段。
+    真正的清单在 order_files 里，一个字都不截。
+    """
+    if not entries:
+        return ''
+    if len(entries) == 1:
+        return entries[0]['name']
+    return '%s 等 %d 份文件' % (entries[0]['name'][:60], len(entries))
+
+
+def insert_order_files_with_options(conn, order_id, files):
+    """登记这一单的文件清单，**连每份自己的打印参数一起写**（不 commit，事务归调用方）。
+
+    `db.insert_order_files` 只写文件清单那几列（v23 的形状），v24 加的
+    color_type / duplex / copies / 价目项 / 纸张快照它不认识 —— 用它的话那七列
+    会静默是 NULL，而 NULL 在这里的意思是「沿用订单级」，于是「两份彩色三份黑白」
+    会被读成一整单同一档，一个字都不报。所以这张单的清单在这里一条 INSERT 写完。
+
+    files = [{'filename', 'file_path', 'size', 'pages', 'color_type', 'duplex',
+              'copies', 'price_item_id', 'price_item_name', 'paper_name',
+              'paper_remark'}, ...]，顺序即展示顺序（sort_order 取下标）。
+    后七个是**这一份**的快照：管理员三个月后改价目表，这一单当时用什么纸、
+    按什么名目算钱，不能跟着变。
+    """
+    for index, entry in enumerate(files):
+        conn.execute('''
+            INSERT INTO order_files (order_id, filename, file_path, size, pages, sort_order,
+                                     color_type, duplex, copies, price_item_id,
+                                     price_item_name, paper_name, paper_remark)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (order_id, entry.get('filename') or '', entry.get('file_path') or '',
+              entry.get('size'), entry.get('pages'), index,
+              entry.get('color_type'), entry.get('duplex'), entry.get('copies'),
+              entry.get('price_item_id'), entry.get('price_item_name'),
+              entry.get('paper_name'), entry.get('paper_remark')))
+
+
+def create_order_from_saved_files(entries, color, duplex, remark, copies,
+                                  item=None, source=ORDER_SOURCE_WEB):
+    """把**一组已经完整落盘的文件**登记成一张订单，返回 (order_id, pickup_code, est_price)。
+
+    entries = [{'name': 原始文件名, 'path': 落盘绝对路径, 'size': 字节数,
+                'item': 价目项行（可选）, 'copies': 份数（可选）,
+                'duplex': 单双面（可选）}, ...]，
+    至少一份、顺序即展示顺序。单文件那条路传一个元素的列表，走的是同一段代码 ——
+    批量打印（QQ 一次发几份、网页一次选几份）和单份打印在库里长得一样：
+    一张订单 + 一份或多份 order_files 记录。
+
+    **一次提交 = 一张订单 = 一个单号**（v24）。每份文件可以带自己的档位 / 份数 /
+    单双面（entries 里那三个键），没带就回落到下面那几个参数上 ——
+    直传、分片合并、机器人单文件三条老路只传 name / path / size，
+    所以它们的行为一个字都没变。「参数不同就拆成几张单」是**前端**的旧做法，
+    服务端从来只按「传进来的这一批」建一张单，现在也仍然如此。
+
+    直传（/api/upload）、预上传批量（/api/order/prepared）、分片合并、
+    机器人批量（/api/bot/order/batch）全都走这里 —— 写库失败回滚、删孤儿文件的
+    动作就只有一份。复制成几份的话，哪天改了其中一处，症状会是
+    「直传的订单正常，机器人下的订单缺字段」，而这种差异光看页面很难发现。
 
     调用方负责：扩展名已过白名单、文件已完整落盘、参数已清洗。
-    写库失败时本函数会把 save_path 一起删掉再抛异常 —— 订单没建成，
-    那份文件就是垃圾，留着只会占磁盘、让运维以为它属于某个订单。
+    写库失败时本函数会把**所有**已落盘的文件一起删掉再抛异常 —— 订单没建成，
+    那些文件就是垃圾，留着只会占磁盘、让运维以为它们属于某个订单。
+    ⚠️ 这几份文件必须**同生共死**：只删一半的话，剩下那份没有订单认领，
+    而清理机制扫的是「订单指着的文件」，它永远不会被收走。
 
     初始状态是「待计费」而不是「待打印」：新单要先等管理员看过文件、标好价格，
-    才回到待打印池。直传和分片两条路都走这个函数，所以状态只在这里定一次，
+    才回到待打印池。所有下单路径都走这个函数，所以状态只在这里定一次，
     不会出现「分片传的单能直接接、直传的单卡住」这种一半对一半错的情形。
 
     item 是已校验过的价目项（price_items 的一行），没选就是 None。
@@ -492,79 +653,220 @@ def create_order_from_saved_file(original_name, save_path, color, duplex, remark
     source 是这一单从哪条路下的（网页 / 机器人）。**由调用方声明，不从请求体里读** ——
     让客户端自己填，等于把「这单是机器人下的」变成一句可以让别人代说的话。
 
-    **预估价在这里算**（不是在外面）：三条下单路径（直传 / 分片合并 / 机器人）
-    都走这个函数，写在这里才不会有「机器人下的单没有预估价」这种一半生效的情形。
-    页数读不出来、规则没启用、解析出错都只是「这单没有预估价」，
-    绝不因此让下单失败（见 pricing 模块注释）。
+    **预估价在这里算**（不是在外面）：所有下单路径都走这个函数，
+    写在这里才不会有「机器人下的单没有预估价」这种一半生效的情形。
+    页数是**所有文件页数之和**（打印员按总页数算钱、也按总页数打），
+    每个文件自己的页数另存在 order_files.pages 里。页数读不出来、规则没启用、
+    解析出错都只是「这单没有预估价」，绝不因此让下单失败（见 pricing 模块注释）。
     """
+    entries = list(entries or [])
+    if not entries:
+        raise ValueError('create_order_from_saved_files 至少需要一份文件')
+    # **每一份文件自己的参数**（v24）。判据是 `'item' in entry` 而不是
+    # `entry.get('item')`：显式给 None 的意思是「这一份不选档」，
+    # 与「根本没给这个键、请沿用函数参数」是两件事 —— 后者是三条老路的形状。
+    plans = []
+    for entry in entries:
+        plan_item = entry['item'] if 'item' in entry else item
+        plan_duplex = pricing.normalize_duplex(
+            entry['duplex'] if entry.get('duplex') else duplex)
+        plan_copies = copies if entry.get('copies') is None else entry.get('copies')
+        try:
+            plan_copies = int(plan_copies)
+        except (TypeError, ValueError):
+            plan_copies = 1
+        if plan_copies < 1:
+            plan_copies = 1
+        #    这一档不支持双面却传了 double：按单面算（与 resolve_price_item 同一判据）。
+        #    落库的 duplex 必须与计价那一档一致，否则账单上写着「双面」、钱按单面收。
+        #    **没选档（item 为 None）时不动它**：没有档位就没有「支不支持双面」可问，
+        #    而老前端 / 机器人单文件那条路本来就只靠这个参数（校验在 parse_copies
+        #    与表单那一步做过）—— 在这里降级等于把它们传的 double 悄悄吃掉。
+        if plan_duplex == 'double' and plan_item and not pricing.supports_duplex(plan_item):
+            plan_duplex = 'single'
+        plan_color = entry.get('color')
+        if plan_color not in ('black', 'color'):
+            plan_color = color if color in ('black', 'color') else 'black'
+        plans.append({'item': plan_item, 'copies': plan_copies,
+                      'duplex': plan_duplex, 'color': plan_color})
     conn = None
     try:
         conn = get_db()
-        est_pages, est_note = pricing.count_pages(save_path, original_name)
-        est_price, est_reason = pricing.estimate_for_order(
-            conn, est_pages, copies, duplex, item)
+        total_pages = 0
+        notes = []
+        for entry in entries:
+            pages, note = pricing.count_pages(entry['path'], entry['name'])
+            entry['pages'] = pages
+            notes.append('%s=%s' % (entry['name'],
+                                    pages if pages is not None else note))
+            if pages:
+                total_pages += pages
+            # 缺 size 的在这里补一次 stat：直传、分片合并、机器人单文件这三条老路
+            # 调过来时只带 name + path，于是 order_files.size 一直是 NULL ——
+            # 而批量那条路有值。同一个字段出现三种表现（列表里空着、详情页靠 stat
+            # 兜底、批量单有值），谁也说不清「大小」到底有没有存。
+            # 在**这里**兜底而不是去改那三个调用点：它是一张单所有文件的唯一入口，
+            # 补在入口上，将来任何新路都不可能再漏。
+            if not entry.get('size'):
+                size_path = entry.get('path')
+                try:
+                    entry['size'] = os.path.getsize(size_path) if size_path else None
+                except OSError:
+                    # 文件刚被挪走/删掉（并发清理）时不当成错误：大小只影响展示，
+                    # 而这一单的页数、金额、文件清单都已经有了。
+                    entry['size'] = None
+        # 一份都数不出来就是「没有页数」（而不是 0 页）：0 会一路算出一个
+        # 「0 元」的预估价，而那个数比「算不出」更容易让人当真。
+        pages_for_estimate = total_pages or None
+        #    预估走**按份**那条路（estimate_for_files）：每份的页数 × 份数 × 自己那一档
+        #    的单价，相加之后再只加一次 base_fee。单份时它与 estimate_for_order
+        #    逐项等价（同一个公式），多份时才看得出差别 —— 用整单一个档位去乘
+        #    所有份的页数，就等于替学生把「两份彩色的部分」按黑白算了。
+        est_price, _est_files, est_reason = pricing.estimate_for_files(conn, [
+            {'pages': entry.get('pages'), 'copies': plan['copies'],
+             'duplex': plan['duplex'], 'item': plan['item']}
+            for entry, plan in zip(entries, plans)
+        ])
         if est_price is None:
             # 记一句为什么没估出来就够，别把 note 写进库：
             # 它是给人看的一句话，不是订单的属性，界面上的「预估」两个字已经说明了一切。
-            logger.info('订单预估价为空（%s / %s）：文件=%s', est_note, est_reason, original_name)
+            logger.info('订单预估价为空（%s / %s）：文件=%s', '，'.join(notes), est_reason,
+                        batch_order_filename(entries))
+
+        # ---- 订单级的汇总值（逐份的真相在 order_files 里）----------------------
+        #   这四组值回答的是「整单怎么打」，打印员和订单台只看这一行：
+        #   · duplex：全部相同 → 该值；不同 → config.DUPLEX_MIXED（'mixed'）。
+        #     打印员照这一列准备纸，标错代价很大：一份双面标成单面，会被打成两张。
+        #   · copies：**总份数**（Σ 每份份数）。订单台写「N 份」时，它必须等于
+        #     这一单实际要打出来几份 —— 写第一份的份数会让打印员少打。
+        #   · color_type：**第一份**的颜色（老列一直是「主文件」口径，见下面）。
+        #     颜色混合不影响怎么打（逐份明细里看得见），所以这里不另立一个 mixed。
+        #   · price_item_id / price_item_name / paper_name / paper_remark：
+        #     **第一份**的快照，与 filename / file_path 同一个语义 ——
+        #     邮件、数据卡、看板都在读这几列，它们要的是一句能打印出来的摘要。
+        #     ⚠️ 逐份以 order_files 为准，不要拿这几列去反推每一份。
+        duplexes = {plan['duplex'] for plan in plans}
+        order_duplex = duplexes.pop() if len(duplexes) == 1 else DUPLEX_MIXED
+        total_copies = sum(plan['copies'] for plan in plans)
+        first = plans[0]
+        first_color = pricing.item_color(first['item']) if first['item'] else first['color']
         order_id, pickup_code = insert_order_row(conn, {
             'user_id': g.user['id'],
-            'filename': original_name,
-            'file_path': save_path,
-            'color_type': pricing.item_color(item) if item else color,
-            'duplex': duplex,
+            'filename': batch_order_filename(entries),
+            # 第一份的路径仍然写进老列：老下载链接、老脚本、以及「这一单的主文件」
+            # 这类读法都还认它。清单以 order_files 为准（见 db 的 v23 注释）。
+            'file_path': entries[0]['path'],
+            'color_type': first_color,
+            'duplex': order_duplex,
             'remark': remark,
             'status': ST_UNPRICED,
-            'copies': copies,
+            'copies': total_copies,
             # 纸张三列现在来自价目项（老的 paper_type_id 不再写：纸张已经并进价目表了，
             # 留着它会指向一张与新单无关的表）。备注抄的是价目项的 note ——
             # 那是"这一单的附加要求"（塑封 +2.61 这类），打印员要看到。
+            # v24：这是**第一份**的快照（老列语义），逐份看在 order_files 里。
             'paper_type_id': None,
-            'paper_name': item['paper'] if item else None,
-            'paper_remark': item['note'] if item else None,
-            'price_item_id': item['id'] if item else None,
-            'price_item_name': pricing.format_item_label(item) if item else None,
+            'paper_name': first['item']['paper'] if first['item'] else None,
+            'paper_remark': first['item']['note'] if first['item'] else None,
+            'price_item_id': first['item']['id'] if first['item'] else None,
+            'price_item_name': pricing.format_item_label(first['item']) if first['item'] else None,
             'source': source,
             'est_price': est_price,
             #    页数只在**真的估出价**时才存：存一个「读了 12 页、但算出来是 0」
             #    的孤零零数字，界面上会显示「按 12 页估」却又没有价格，读的人
             #    只会以为价格丢了。
-            'est_pages': est_pages if est_price is not None else None,
+            'est_pages': pages_for_estimate if est_price is not None else None,
         })
+        insert_order_files_with_options(conn, order_id, [
+            {'filename': entry['name'], 'file_path': entry['path'],
+             'size': entry.get('size'), 'pages': entry.get('pages'),
+             #    逐份的参数快照。NULL 在这里是「沿用订单级」的意思 ——
+             #    但新单既然逐份都算出来了，就如实写进去（老单仍然是 NULL）。
+             'color_type': pricing.item_color(plan['item']) if plan['item'] else plan['color'],
+             'duplex': plan['duplex'],
+             'copies': plan['copies'],
+             'price_item_id': plan['item']['id'] if plan['item'] else None,
+             'price_item_name': pricing.format_item_label(plan['item']) if plan['item'] else None,
+             'paper_name': plan['item']['paper'] if plan['item'] else None,
+             'paper_remark': plan['item']['note'] if plan['item'] else None}
+            for entry, plan in zip(entries, plans)
+        ])
         # 留痕和订单在同一个事务里。订单落了库却没有「谁什么时候传的」这一条，
         # 详情页的操作记录就得从半路开始讲 —— 而第一条恰恰是最该有的那条。
+        # 多文件时写明是几份：留痕是事后复查的凭证，「这一单当初交上来几份」
+        # 正是管理员核对实物时要问的第一个问题。
         log_event(order_id, ORDER_LOG_CREATE,
-                  '上传文件「%s」并提交打印%s' % (original_name, describe_print_options(copies, item)),
+                  '上传文件「%s」并提交打印%s'
+                  % (batch_order_filename(entries),
+                     describe_print_options(total_copies, first['item'], plans)),
                   conn=conn)
         conn.commit()
         return order_id, pickup_code, est_price
     except Exception:
         if conn is not None:
             conn.rollback()
-        if save_path and os.path.exists(save_path):
-            try:
-                os.remove(save_path)
-            except OSError:
-                logger.warning('清理孤儿文件失败: %s', save_path)
+        for entry in entries:
+            save_path = entry.get('path')
+            if save_path and os.path.exists(save_path):
+                try:
+                    os.remove(save_path)
+                except OSError:
+                    logger.warning('清理孤儿文件失败: %s', save_path)
         raise
     finally:
         if conn is not None:
             conn.close()
 
 
+def create_order_from_saved_file(original_name, save_path, color, duplex, remark, copies,
+                                item=None, source=ORDER_SOURCE_WEB, size=None):
+    """单文件版的建单入口（入参与返回值与从前完全一致）。
 
-def describe_print_options(copies, item):
+    它只是 create_order_from_saved_files 的一层壳，留着是为了让
+    直传 / 分片 / 机器人单文件那三条老路一个字都不用改 ——
+    改签名就要同时改三处，而其中任何一处漏改，症状是那条路下单直接 500。
+
+    size 是**可选**的尾部参数（不给就由 create_order_from_saved_files 自己 stat）：
+    调用方本来就已经把落盘大小算出来了（save_incoming_file 的返回值、
+    分片 meta 里的 size），顺手传进来省一次 stat；不传也照样能落库。
+    """
+    return create_order_from_saved_files(
+        [{'name': original_name, 'path': save_path, 'size': size}], color, duplex,
+        remark, copies, item, source)
+
+
+
+def describe_print_options(copies, item, plans=None):
     """把打印选项拼成一句给人看的补充说明，给操作留痕用。
 
     留痕是**事后复查的凭证**，所以它必须自洽：当时是几份、按哪一档价目打的，
     读这句话就能知道，不需要再去 JOIN 一张可能已经被改过的价目表。
+
+    v24 起一单里的几份可以各有一套参数，那时**不能**只报订单级那一套：
+    订单级的份数是总份数、单双面可能是 mixed，照原句写会得到
+    「，5 份，价目项「A4 70g · 黑白」」这种把另外四份抹掉的话。多份时按
+    「N 份文件，共 M 份，…」的格式说，并且只分两种情况：
+      · 每份参数全同 → 照实说一遍那一档（它真的就是一套参数）；
+      · 不一样 → 「混合参数（逐份见文件清单）」。
+    故意不写「第 1 份的参数是…」：那会被读成「其余几份不一样」，
+    而实际可能只是同参数的多份。
     """
-    parts = []
-    if copies is not None:
-        parts.append('%s 份' % copies)
-    if item:
-        parts.append('价目项「%s」' % pricing.format_item_label(item))
-    return ('，' + '，'.join(parts)) if parts else ''
+    if not plans or len(plans) <= 1:
+        parts = []
+        if copies is not None:
+            parts.append('%s 份' % copies)
+        if item:
+            parts.append('价目项「%s」' % pricing.format_item_label(item))
+        return ('，' + '，'.join(parts)) if parts else ''
+    signature = {(plan['copies'], plan['duplex'],
+                  plan['item']['id'] if plan['item'] else None) for plan in plans}
+    head = '，%d 份文件，共 %s 份' % (len(plans), copies)
+    if len(signature) > 1:
+        return head + '，混合参数（逐份见文件清单）'
+    only = plans[0]['item']
+    if only:
+        return head + '，每份都是价目项「%s」' % pricing.format_item_label(only)
+    return head + '，没选价目项'
 
 
 
@@ -792,21 +1094,26 @@ def save_incoming_file(file):
     if file_size == 0:
         # 0 字节的文件排出来就是一张白纸。上传成功、下单成功、到手却什么都没有——
         # 这种结果用户只会当成「这系统坏了」，不如在门口就告诉他选错文件了。
-        os.remove(save_path)
+        #
+        # 三处清理都走 discard_upload_file（就是文件末尾那个 910 行附近的函数），
+        # 而不是裸 os.remove：Windows 上文件只要还被谁持有（杀毒刚读完、
+        # 另一个线程正在开），os.remove 会抛 OSError —— 在一个本该回 400 的分支里
+        # 抛出来就是未捕获的 500，用户看到的是「服务器错误」，而那份文件还留在盘上。
+        discard_upload_file(save_path)
         return None, (jsonify({'code': 400, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400)
 
     # 扩展名白名单只约束了文件名，证明不了里面装的是什么 ——
     # 而这份文件接单人一定会打开，改名过来的可执行体不能靠「他没双击」来防。
     content_error = content_signature_error(save_path, ext)
     if content_error is not None:
-        os.remove(save_path)
+        discard_upload_file(save_path)
         security_event('upload_content_mismatch',
                        '文件「%s」的内容与扩展名 %s 不符' % (original_name[:80], ext))
         return None, (jsonify({'code': 400, 'msg': content_error}), 400)
 
     quota_error = quota_rejection(file_size)
     if quota_error is not None:
-        os.remove(save_path)
+        discard_upload_file(save_path)
         return None, quota_error
 
     return {'path': save_path, 'name': original_name, 'ext': ext, 'size': file_size}, None
@@ -866,8 +1173,10 @@ def api_upload():
     save_path, original_name, file_size = info['path'], info['name'], info['size']
 
     try:
+        # size 直接给落盘时量到的字节数（save_incoming_file 刚量过，这里再 stat
+        # 一次纯属重复）。原先没传，order_files.size 于是一直是 NULL。
         order_id, pickup_code, est_price = create_order_from_saved_file(
-            original_name, save_path, color, duplex, remark, copies, item)
+            original_name, save_path, color, duplex, remark, copies, item, size=file_size)
     except Exception:
         # 落盘之后任何一步失败都不能把文件留在盘上：这些文件没有任何订单引用，
         # 也没有哪个清理任务会碰到它们（清理只认订单），只会一直堆着；
@@ -1013,12 +1322,18 @@ def api_orders():
         where.append(
             "(o.pickup_code LIKE ? ESCAPE '\\' OR o.filename LIKE ? ESCAPE '\\'"
             " OR CAST(o.id AS TEXT) = ?"
+            " OR EXISTS (SELECT 1 FROM order_files f WHERE f.order_id = o.id"
+            "            AND f.filename LIKE ? ESCAPE '\\')"
             " OR owner.nickname LIKE ? ESCAPE '\\' OR owner.real_name LIKE ? ESCAPE '\\'"
             " OR owner.student_id = ?"
             " OR owner.dorm LIKE ? ESCAPE '\\' OR owner.qq LIKE ? ESCAPE '\\'"
             " OR owner.contact LIKE ? ESCAPE '\\')"
         )
-        params.extend([like, like, keyword, like, like, keyword, like, like, like])
+        # 文件名要搜两处：orders.filename 是「第一份 等 N 份文件」那句摘要，
+        # 而 order_files 里才是每一份的真实名字。只看摘要的话，
+        # 一份 5 个文件的单里搜第 3 个文件名会搜不到 —— 而柜台手里拿着的
+        # 恰恰可能是那一份。EXISTS 用上了 idx_order_files_order。
+        params.extend([like, like, keyword, like, like, like, keyword, like, like, like])
     # 按打印服务分组筛选：分组键是 COALESCE(preset_group_id, preset_id) ——
     # 下单时选了预设的单天然就是它自己的分组，而管理员另归过类的那几单（比如
     # 没选预设、自己传了同一份表格的同学）按 preset_group_id 落进来，
@@ -1041,8 +1356,11 @@ def api_orders():
         rows = conn.execute(
             _ORDER_SELECT + where_sql + ' ORDER BY o.id DESC LIMIT ? OFFSET ?',
             (*params, size, (page - 1) * size)).fetchall()
+        # 这一页订单的文件清单**一次查回来**（不要每行各查一次：一页 20 条就是
+        # 20 次查询，而这个接口每次开台都要跑）。
+        files_by_order = files_with_options(conn, [row['id'] for row in rows])
 
-    orders = decorate_orders(rows, g.user['id'], g.user['role'] == ROLE_SUPER)
+    orders = decorate_orders(rows, g.user['id'], g.user['role'] == ROLE_SUPER, files_by_order)
     return jsonify({'code': 0, 'total': total, 'page': page, 'size': size, 'orders': orders})
 
 
@@ -1098,20 +1416,39 @@ def api_order_detail(order_id):
         # 所以这里必须先判空。别指望 Path('') 自己会失败：它等于当前目录，
         # stat() 是成功的，于是详情页会给一个没有文件的单显示「文件大小 = 4096 字节」，
         # 既离谱又不像出错，查起来得从渲染追到磁盘。
-        path = Path(detail.pop('file_path'))
-        if detail['filename']:
+        #
+        # 一单多文件之后，**逐份** stat 一遍并把结果放进 files：管理员要按份下载、
+        # 按份核对，也要能看出具体是哪一份丢了（「3 份里有 1 份不在了」和
+        # 「文件全没了」是两件不同的事，只给一个总开关就分不出来）。
+        detail.pop('file_path')
+        detail['files'] = []
+        for entry in files_with_options(conn, [order_id]).get(order_id, []):
+            path = Path(entry['file_path'])
             try:
-                detail['file_size'] = path.stat().st_size
-                detail['file_exists'] = True
+                size = path.stat().st_size
+                exists = True
             except OSError:
                 # 文件被外部清理过是可能的（运维手动清理、误删）。这里不报错：
                 # 「订单还在、文件没了」本身就是要让人看见的一条信息 ——
                 # 详情页会明确标出来，比对着一个下载按钮点半天强。
-                detail['file_size'] = None
-                detail['file_exists'] = False
-        else:
-            detail['file_size'] = None
-            detail['file_exists'] = False
+                size = None
+                exists = False
+            detail['files'].append(dict({
+                'id': entry['id'],
+                'filename': entry['filename'],
+                # 库里记的大小（下单那一刻的）优先，它不会因为文件被换掉而变化；
+                # 没记（老库回填的行）才去问磁盘。
+                'size': entry['size'] if entry['size'] is not None else size,
+                'pages': entry['pages'],
+                'exists': exists,
+            }, **{column: _row_field(entry, column)
+                  for column in ORDER_FILE_OPTION_COLUMNS}))
+        # file_size / file_exists 保留成「这一单整体」的口径：
+        # 老前端（缓存里的页面、以及还在读这两个字段的邮件/脚本）靠它决定
+        # 「要不要给下载按钮」。多文件时大小按**还在盘上的那些**求和。
+        existing = [item['size'] for item in detail['files'] if item['exists']]
+        detail['file_size'] = sum(size for size in existing if size) if existing else None
+        detail['file_exists'] = bool(existing)
 
         # owner_status / claimer_status / pricer_status 是「拼标记用的原料」，
         # 拼完就 pop 掉，不让它们混进响应体 —— 前端要的只是展示用的名字。
@@ -1348,10 +1685,23 @@ def api_release_order(order_id):
                            '订单 #%s 的接单人 uid=%s，操作人试图释放他人订单'
                            % (order_id, row['claimed_by']))
             return jsonify({'code': 403, 'msg': '只能释放自己接取的订单'}), 403
-        conn.execute('''
+        # 条件写进 UPDATE，而不是「读到什么就按什么清」：
+        # 从上面那条 SELECT 到这里，柜台完全可能已经把件交出去了（confirm_pickup 把
+        # 状态改成已取件）。这条窗口原先没有任何保护 —— 清掉 claimed_by 之后，
+        # 一张已经取走的单会留下一条「释放」留痕，接单人是谁也一并消失，
+        # 事后查「这份件是谁打的、谁交的」两头都对不上。
+        #
+        # claimed_by 与 status 都写进 WHERE：前者是这次要清的那一列（别人抢先释放
+        # 或被重新接单时值会变），后者挡的是「窗口内走到了终态」。
+        cursor = conn.execute('''
             UPDATE orders SET claimed_by = NULL, claim_time = NULL, update_time = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (order_id,))
+            WHERE id = ? AND claimed_by = ? AND status <> ?
+        ''', (order_id, row['claimed_by'], ST_DONE))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            logger.info('释放竞争失败：订单 #%s 在读完之后被改过，操作人=%s',
+                        order_id, g.user['nickname'])
+            return jsonify({'code': 409, 'msg': '这单刚被别人改过了，刷新看看'}), 409
         # 默认管理员可以释放别人接的单，这件事必须留痕 ——
         # 「我接的单怎么又回到池子里了」只有这条记录答得上来。
         if row['claimed_by'] == g.user['id']:
@@ -1395,6 +1745,16 @@ def api_withdraw_order(order_id):
             return jsonify({'code': 400, 'msg': '订单已经被接取，无法撤回'}), 400
         if row['status'] == ST_DONE:
             return jsonify({'code': 400, 'msg': '订单已完成，不能撤回'}), 400
+        #    文件清单要在**删库之前**取出来：订单行一删，order_files 就再也
+        #    关联不到了（这张表没有外键，那几行会留下但成了孤儿，
+        #    而按订单号查是查不到它们的）。多文件的单尤其要注意 ——
+        #    只删 first 那一份的话，剩下几份永远没人认领，也永远占着盘。
+        file_paths = [entry['file_path'] for entry in
+                      files_for_orders(conn, [order_id]).get(order_id, [])
+                      if entry['file_path']]
+        if not file_paths and row['file_path']:
+            # 兜底：order_files 里没有记录的老行（回填之前的库）仍按老列删。
+            file_paths = [row['file_path']]
         # 删除语句把刚刚判过的条件又写了一遍，不是重复劳动：
         # 从 SELECT 到这里之间，完全可能有人正好把单接走，上面那句拦不住。
         # rowcount 为 0 就说明条件已经不成立了，那就别再删。
@@ -1404,6 +1764,10 @@ def api_withdraw_order(order_id):
         if cursor.rowcount == 0:
             conn.rollback()
             return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败，刷新看看'}), 409
+        # 文件行跟着订单一起删：订单已经不存在了，留着这几行只会让
+        # 「这一单有哪些文件」这个问题在别处（比如以后的清理脚本）得到一个
+        # 指向空气的答案。
+        conn.execute('DELETE FROM order_files WHERE order_id = ?', (order_id,))
         # 订单行随即被删掉，这条留痕就成了一份「悬空记录」（order_id 已经指不到订单了）。
         # 故意留着：它不参与任何查询（详情页是按订单号查的），
         # 但事后要知道「那天那份文件是被本人自己撤掉的，不是丢了」时，只有它答得上来。
@@ -1411,24 +1775,27 @@ def api_withdraw_order(order_id):
         # 预设下单没有文件（file_path 是空串），文案跟着分开 ——
         # 统一写成「文件已一并删除」的话，这条留痕会让人以为文件被删了，
         # 实际上从来就没有过，事后查「那份文件哪去了」会白查一场。
-        log_event(order_id, ORDER_LOG_WITHDRAW,
-                  '本人撤回订单%s' % ('，文件「%s」已一并删除' % row['filename']
-                                      if row['filename'] else '（预设服务，无文件）'),
-                  conn=conn)
+        if file_paths:
+            note = ('，文件「%s」已一并删除' % row['filename']) if len(file_paths) == 1 \
+                else ('，%d 份文件已一并删除' % len(file_paths))
+        else:
+            note = '（预设服务，无文件）'
+        log_event(order_id, ORDER_LOG_WITHDRAW, '本人撤回订单%s' % note, conn=conn)
         conn.commit()
 
     # 数据库那边确认删掉了才动文件。万一删文件失败，留下的只是一个没人引用的孤儿文件；
     # 反过来先删文件的话，就会出现「订单还在、文件没了」——接单人一点开就是 404。
     # 没文件的单直接跳过这一段：os.remove('') 一定抛 OSError，
     # 白白写一条「删除文件失败」的 warning，把日志留给别的问题。
-    if row['file_path']:
+    for file_path in file_paths:
         try:
-            os.remove(row['file_path'])
+            os.remove(file_path)
         except OSError:
             logger.warning('撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                           order_id, row['file_path'])
-    logger.info('订单 #%s 被 %s 撤回，文件=%s ip=%s',
-                order_id, g.user['nickname'], row['filename'] or '（无文件）', client_ip())
+                           order_id, file_path)
+    logger.info('订单 #%s 被 %s 撤回，文件=%s（%d 份） ip=%s',
+                order_id, g.user['nickname'], row['filename'] or '（无文件）',
+                len(file_paths), client_ip())
     return jsonify({'code': 0, 'msg': '订单已撤回'})
 
 
@@ -1471,9 +1838,21 @@ def api_update_status(order_id):
             # 和允许手动切回「待计费」是同一个破洞，只是从另一头进。
             # 老库遗留的单（金额为空但不是待计费）不受影响，状态照旧走。
             return jsonify({'code': 400, 'msg': '这单还没计费，请先填好金额'}), 400
-        conn.execute('''
-            UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?
-        ''', (new_status, order_id))
+        # 旧状态写进 WHERE：两个人同时改这一单时，后到的那一位原先会直接覆盖，
+        # 而留痕里那句「「旧」→「新」」的「旧」是他读到的那个值 ——
+        # 于是时间线上会出现一次从没存在过的流转（A 把待打印改成打印中，
+        # B 手里还攥着「待打印」，盖掉之后留下一句「待打印 → 可取件」，
+        # 中间那一次「打印中」就这么凭空消失了）。rowcount = 0 说明这中间有人动过，
+        # 让他刷新重看，别替他把别人的操作悄悄改写掉。
+        cursor = conn.execute('''
+            UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = ?
+        ''', (new_status, order_id, row['status']))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            logger.info('改状态竞争失败：订单 #%s 在读完之后被改过，操作人=%s',
+                        order_id, g.user['nickname'])
+            return jsonify({'code': 409, 'msg': '这单刚被别人改过了，刷新看看'}), 409
         # 「从什么改成什么」必须记下来：状态被连着改两次（可取件 → 打印中 → 可取件）之后，
         # 光看最终状态和一个 update_time，谁也说不清中间那一步是谁做的。
         log_event(order_id, ORDER_LOG_STATUS,
@@ -1518,8 +1897,9 @@ def api_lookup_pickup():
         if len(live) > 1:
             return jsonify({'code': 409, 'msg': '这个号对应不止一张还没取的单，'
                                                 '请让同学报完整单号'}), 409
-        order = decorate_orders(rows[:1], g.user['id'], g.user['role'] == ROLE_SUPER)[0] \
-            if rows else None
+        order = decorate_orders(
+            rows[:1], g.user['id'], g.user['role'] == ROLE_SUPER,
+            files_with_options(conn, [rows[0]['id']] if rows else []))[0] if rows else None
         if order is not None:
             # 姓名和学号只在这一条接口上给：柜台要核对的是「来的人是不是这一单的主人」，
             # 而昵称是用户自填的，凭它认不出人。列表那边不给（一页 20 条就等于
@@ -1556,8 +1936,23 @@ def api_confirm_pickup():
         # 然后下面按「已取件」再查就查不到，当场 500 —— 这个坑已经踩过一次。
         cursor = conn.execute(
             'UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP '
-            'WHERE pickup_code IN (%s) AND status = ?' % placeholders,
+            'WHERE pickup_code IN (%s) AND status = ? RETURNING id, claimed_by' % placeholders,
             (ST_DONE, *codes, ST_READY))
+        # RETURNING 让「这次真正改到的那一行」跟着 UPDATE 一起回来。
+        #
+        # 原先的写法是改完再查一遍 `pickup_code IN (...) AND status = '已取件'`
+        # 然后直接 fetchone() —— 那条 SELECT 有两个毛病叠在一起：
+        # ① 单号一年后会回收（config.PICKUP_CODE_COOLDOWN），② _pickup_codes 对
+        # 不足位的号码会同时给出 '1245' 与 '01245' 两个候选。于是库里只要有一张
+        # 历史同码的**已取件**旧单，这条 SELECT 就会命中好几行，而它既没有
+        # ORDER BY、又只取第一行 —— 取到哪一行由 SQLite 的执行计划决定。
+        # 后果不是报错，而是把 log_event 和响应里的 order_id 写到**另一张旧单**上：
+        # 现场只看到「这次取件的留痕记在了一张半年前的订单里」。
+        #
+        # fetchall() 必须在判 rowcount 之前：带 RETURNING 时语句是边走边返回的，
+        # 结果集没被消费完之前 cursor.rowcount 一直是 0（sqlite 3.45 实测），
+        # 先判就会把一个刚改成功的单当成「一行都没改到」。
+        hit = cursor.fetchall()
         if cursor.rowcount != 1:
             conn.rollback()
             # 一次改动不止一行：说明这个输入同时命中了不止一张还在流程里的单
@@ -1572,9 +1967,8 @@ def api_confirm_pickup():
                 }), 409
             return _pickup_conflict_response(conn, codes)
 
-        row = conn.execute(
-            'SELECT id, claimed_by FROM orders WHERE pickup_code IN (%s) AND status = ?'
-            % placeholders, (*codes, ST_DONE)).fetchone()
+        # 只有一行被改到时，这就是那一行本身 —— 不再有「改完再查、查到谁算谁」的空间。
+        row = hit[0]
         # 谁把件交出去的也要写清楚：柜台这人常常不是接单人（接单的人可能在里屋打印）。
         # 留痕里记下「这是代某人交接的」，事后对不上账时才知道去找谁。
         claimer = None
@@ -1642,9 +2036,20 @@ def api_set_order_preset_group(order_id):
             # 时间线上会多出一条和上一模一样的记录，以后翻账时只会让人怀疑中间漏了什么。
             return jsonify({'code': 0, 'msg': '这一单已经在这一组里了', 'preset_group_id': group_id})
 
-        conn.execute(
-            'UPDATE orders SET preset_group_id = ?, update_time = CURRENT_TIMESTAMP WHERE id = ?',
-            (group_id, order_id))
+        # 旧分组写进 WHERE（用 IS 而不是 =，因为 preset_group_id 可以是 NULL，
+        # 而 `= NULL` 永远不成立 —— 那样「从没归过类的单」每次都会被判成竞争失败）。
+        # 两个人同时把这一单归进不同的服务时，后到的那一位原先也会「成功」，
+        # 于是两条留痕各说各的（「归入 A」「归入 B」），而库里只有最后那一次。
+        # rowcount = 0 就说明这中间别人已经改过了，让他刷新重看。
+        cursor = conn.execute(
+            'UPDATE orders SET preset_group_id = ?, update_time = CURRENT_TIMESTAMP '
+            'WHERE id = ? AND preset_group_id IS ?',
+            (group_id, order_id, row['preset_group_id']))
+        if cursor.rowcount == 0:
+            conn.rollback()
+            logger.info('归类竞争失败：订单 #%s 在读完之后被改过，操作人=%s',
+                        order_id, g.user['nickname'])
+            return jsonify({'code': 409, 'msg': '这单刚被别人改过了，刷新看看'}), 409
         old_name = _preset_label(conn, old_key)
         new_name = _preset_label(conn, group_id)
         if group_id is None:
@@ -1685,10 +2090,25 @@ def api_my_orders():
             WHERE o.user_id = ?
             ORDER BY o.id DESC
         ''', (g.user['id'],)).fetchall()
+        files_by_order = files_with_options(conn, [row['id'] for row in rows])
     orders = []
     for row in rows:
         item = dict(row)
         item['claimer_nickname'] = display_name(item['claimer_nickname'], item.pop('claimer_status', None))
+        # 自己的单也要看得到「这一单里有哪几份文件」：批量传了 5 份的人
+        # 只看到「第一份 等 5 份文件」，没有任何地方能确认另外 4 份是不是
+        # 传对了 —— 而他唯一能做的动作（撤回重传）恰恰需要先看到这件事。
+        # 仍然只给文件名与大小，不给服务器路径。
+        # 仍然只给文件名、大小、页数与**这一份自己的参数**，不给服务器路径。
+        # v24 的参数列可能是 NULL（老单）：那是「沿用订单级」，前端按这个读。
+        item['files'] = [
+            dict({'id': entry['id'], 'filename': entry['filename'],
+                  'size': entry['size'], 'pages': entry['pages']},
+                 **{column: _row_field(entry, column)
+                    for column in ORDER_FILE_OPTION_COLUMNS})
+            for entry in files_by_order.get(row['id'], [])
+        ]
+        item['file_count'] = len(item['files'])
         orders.append(item)
     return jsonify({'code': 0, 'orders': orders})
 
@@ -1753,6 +2173,10 @@ def api_my_stats():
         # 老数据里 color_type / duplex 可能是 NULL，按默认值算，
         # 免得统计里冒出一个 "None" 分类
         by_color[r['color_type'] if r['color_type'] in ('black', 'color') else 'black'] += 1
+        # v24 起 duplex 还可能是 config.DUPLEX_MIXED：这一格统计的是**订单数**，
+        # 而混合单没有单一的「单/双面」可归（逐份的答案在 order_files 里）。
+        # 归到 single 而不是新开一个键 —— 前端的图只有两档，多一个键会画不出来，
+        # 而这里只是一条粗略的用量分布，不值得为它改前端契约。
         by_duplex[r['duplex'] if r['duplex'] in ('single', 'double') else 'single'] += 1
         if r['d']:
             counts[r['d']] = counts.get(r['d'], 0) + 1
@@ -1946,6 +2370,10 @@ def api_board():
 
 
 # 下载订单文件，只有接单人和管理端可以下
+#
+# 一单多文件之后多了一个 `?file_id=`：管理员在详情页 / 订单台上按份下载。
+# **不带 file_id 时仍然按老口径给第一份** —— 老前端（缓存页面、脚本、邮件里
+# 那条链接）还在这么调，改成一律 400 的话，那些地方会集体变成「下载失败」。
 @bp.route('/api/order/<int:order_id>/download')
 @login_required
 def api_download(order_id):
@@ -1953,8 +2381,9 @@ def api_download(order_id):
         row = conn.execute(
             'SELECT filename, file_path, claimed_by FROM orders WHERE id = ?', (order_id,)
         ).fetchone()
-    if row is None:
-        return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+        if row is None:
+            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
+        listed = files_for_orders(conn, [order_id]).get(order_id, [])
 
     if g.user['role'] != ROLE_SUPER and row['claimed_by'] != g.user['id']:
         security_event('download_denied',
@@ -1962,29 +2391,49 @@ def api_download(order_id):
                        % (order_id, row['claimed_by']))
         return jsonify({'code': 403, 'msg': '只有接单人可以下载该订单的文件'}), 403
 
+    target = None
+    raw_file_id = (request.args.get('file_id') or '').strip()
+    if raw_file_id:
+        try:
+            wanted = int(raw_file_id)
+        except (TypeError, ValueError):
+            wanted = None
+        # 只在这个订单自己的文件里找。拿别人的 file_id 来查是查不到的 ——
+        # 这条限制和「只给自己目录里的 token」是同一个道理：
+        # 越权不该靠调用方自觉，要让那个 id 在这里根本不存在。
+        target = next((entry for entry in listed if entry['id'] == wanted), None)
+        if target is None:
+            return jsonify({'code': 404, 'msg': '这一单里没有这份文件'}), 404
+    elif listed:
+        target = listed[0]
+    else:
+        # 老库回填之前留下来的行（order_files 里没有记录）仍按老列走。
+        target = {'filename': row['filename'], 'file_path': row['file_path']}
+
     # 预设服务下的单没有文件（file_path 是空串，见 create_preset_order），
     # 必须在这里就挡住。放过去的话，Path('').resolve() 等于当前目录，
     # 会被下面那道路径校验判成「不在上传目录内」——于是一次普通的点错按钮
     # 变成一条 path_traversal_blocked 安全告警，真正被篡改时反而淹在噪声里。
-    if not row['file_path']:
+    if not target['file_path']:
         return jsonify({'code': 400, 'msg': '这一单用的是预设服务，没有文件可下载'}), 400
 
     # 双重校验：解析后的真实路径必须在上传目录内，防止路径穿越
     upload_root = Path(UPLOAD_FOLDER).resolve()
-    file_path = Path(row['file_path']).resolve()
+    file_path = Path(target['file_path']).resolve()
     if upload_root != file_path.parent and upload_root not in file_path.parents:
         # 库里的路径跑到上传目录外面，只有被篡改才可能发生，按安全事件记
         security_event('path_traversal_blocked',
-                       '订单 #%s 的 file_path=%s 不在上传目录内' % (order_id, row['file_path']))
+                       '订单 #%s 的 file_path=%s 不在上传目录内' % (order_id, target['file_path']))
         return jsonify({'code': 400, 'msg': '文件路径不合法'}), 400
     if not file_path.is_file():
-        logger.warning('订单 #%s 的文件已丢失：%s', order_id, row['file_path'])
+        logger.warning('订单 #%s 的文件已丢失：%s', order_id, target['file_path'])
         return jsonify({'code': 404, 'msg': '文件不存在或已被清理'}), 404
 
     logger.info('订单 #%s 的文件「%s」被 %s(%s) 下载 ip=%s',
-                order_id, row['filename'], g.user['nickname'], g.user['role'], client_ip())
+                order_id, target['filename'], g.user['nickname'], g.user['role'], client_ip())
     # 下载也留痕：文件离开服务器这件事，事后要能回答「谁什么时候拿走的」。
     # 这条走独立短连接（见 log_event）—— 只读操作没有事务可搭，
     # 而且留痕失败不该把用户的下载搞失败。
-    log_event(order_id, ORDER_LOG_DOWNLOAD, '下载文件「%s」' % row['filename'])
-    return send_file(file_path, as_attachment=True, download_name=row['filename'])
+    # 多文件时留痕写清楚是哪一份：「他下过文件」和「他下过第 3 份」是两件事。
+    log_event(order_id, ORDER_LOG_DOWNLOAD, '下载文件「%s」' % target['filename'])
+    return send_file(file_path, as_attachment=True, download_name=target['filename'])

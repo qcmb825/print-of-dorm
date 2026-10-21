@@ -45,10 +45,18 @@ const statusOptions = [
 
 const selected = computed(() => tickets.value.find((item) => item.id === selectedId.value) ?? null)
 
+/** 请求序号闸门。30 秒轮询（silent）与「切筛选」会并发：先发的那一轮若后到，
+ *  会把列表盖回旧条件的结果（筛了「已关闭」却看到进行中）；而 loading 由**任意**
+ *  一次响应收尾，还会让列表在新数据到达前先亮一下再暗下去。
+ *  只接受最后一次发起的那份响应，其余整轮丢掉（口径同 OrdersView.load）。 */
+let requestSeq = 0
+
 async function load(silent = false): Promise<void> {
+  const mySeq = ++requestSeq
   if (!silent) loading.value = true
   try {
     const data = await ticketApi.list(statusFilter.value === 'all' ? undefined : statusFilter.value)
+    if (mySeq !== requestSeq) return
     tickets.value = data.tickets
     unreadTotal.value = data.unread_total
     // 选中的工单被筛掉时清掉选中态，避免详情和列表不一致
@@ -56,9 +64,10 @@ async function load(silent = false): Promise<void> {
       selectedId.value = null
     }
   } catch (error) {
-    if (!silent) message.error(error instanceof ApiError ? error.message : '工单读取失败')
+    if (!silent && mySeq === requestSeq)
+      message.error(error instanceof ApiError ? error.message : '工单读取失败')
   } finally {
-    loading.value = false
+    if (mySeq === requestSeq) loading.value = false
   }
 }
 

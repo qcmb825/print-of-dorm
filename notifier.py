@@ -29,7 +29,8 @@ import threading
 import time
 
 from config import (CLAIM_ALERT_ENABLED, CLAIM_ALERT_INTERVAL, CLAIM_ALERT_MAX_AGE_HOURS,
-                    CLAIM_ALERT_MINUTES, CLAIM_ALERT_RETRY_BACKOFF, ST_UNPRICED, logger)
+                    CLAIM_ALERT_MAX_ITEMS, CLAIM_ALERT_MINUTES, CLAIM_ALERT_RETRY_BACKOFF,
+                    ST_UNPRICED, logger)
 from db import db_conn
 from mail import alert_recipients, compose_body, compose_subject, is_configured, send_mail
 
@@ -42,6 +43,15 @@ _started = False
 # 放在内存里是刻意的：它的作用只是「别把日志刷满」，进程重启就重来一遍，
 # 大不了多失败几次 —— 而把它落库又会多出一列状态要维护。
 _next_retry_at = None
+
+# 「一个收件人都没有」这件事只记一次 WARNING。
+# 它和「SMTP 坏了」是两类完全不同的问题：SMTP 坏了要退避重试（会好起来），
+# 而收件人为空是**配置缺了一块**，重试一万次也不会变出地址来。
+# 早先没有这道判断，空收件人会被 send_mail 当成失败 → 撤回凭证 + 退避 300 秒 →
+# 每 5 分钟刷一组「没有解析出任何可用的收件地址」+「本轮 N 笔未能发出」的日志，
+# 而同一条事实本来只需要说一遍（真实日志里连着几十条）。
+# 配好之后（有收件人了）把它复位，下次再缺还能再说一遍。
+_missing_recipients_warned = False
 
 
 def _pending_orders(conn):
@@ -61,6 +71,12 @@ def _pending_orders(conn):
     另外用 created 的下限圈出「最近 CLAIM_ALERT_MAX_AGE_HOURS 小时内」的单 ——
     服务停了三天再起来时，库里所有老单都满足上面四条，不加这道闸会一口气
     炸出几十封早就没人关心的邮件。
+
+    LIMIT 是最后一道闸（P1-5）：服务停几天再起来时，时间窗里仍可能积压着
+    几十笔单，一轮全捞出来就是几十秒的 SMTP 往返，把这条线程占住、也让
+    管理员在几分钟内收到一串邮件。**按 id 升序取最老的 N 笔**（最老的等得最久，
+    最该先催），剩下的下一轮继续 —— 所以 ORDER BY 不能动，它和 LIMIT 是一对：
+    换成正序以外的顺序，被跳过的那些单可能永远轮不到。
     """
     return conn.execute('''
         SELECT o.id, o.pickup_code, o.filename, o.preset_content, o.copies,
@@ -76,9 +92,11 @@ def _pending_orders(conn):
           AND o.create_time <= datetime('now', ?)
           AND o.create_time >= datetime('now', ?)
         ORDER BY o.id
+        LIMIT ?
     ''', (ST_UNPRICED,
           '-%d minutes' % CLAIM_ALERT_MINUTES,
-          '-%d hours' % CLAIM_ALERT_MAX_AGE_HOURS)).fetchall()
+          '-%d hours' % CLAIM_ALERT_MAX_AGE_HOURS,
+          CLAIM_ALERT_MAX_ITEMS)).fetchall()
 
 
 def _claim(conn, order_id):
@@ -126,13 +144,38 @@ def scan_once():
 
     单独抽成函数是为了能被测试直接调用 —— 定时循环本身没什么好测的，
     真正需要钉住的是「什么情况该发、什么情况不该发」。
+
+    两类「没发出去」必须分清楚，它们的善后方式正好相反：
+      · **一个收件人都没有** —— 配置缺了一块（ALERT_MAIL_TO 空、管理员也没留邮箱）。
+        重试不会变出地址来，所以这一轮**不占用任何凭证**（不 claim），
+        也就不会进失败退避那套循环；配好之后下一轮自然接上。日志只记一次。
+      · **有收件人但发信失败** —— SMTP/网络问题，会好起来。照旧撤回凭证 + 退避重试。
     """
-    global _next_retry_at
+    global _next_retry_at, _missing_recipients_warned
 
     with db_conn() as conn:
         rows = _pending_orders(conn)
         if not rows:
             return 0
+
+        # ⚠️ 收件人要在**占凭证之前**判一次。占完再发现没地方寄，就只有两种下场：
+        #    撤回（凭证抖一下，下一轮重来，日志每轮一条）或者留着（这批提醒永久丢）。
+        #    而这件事的真相是「这封信本来就不该发」，所以正确的动作是不占不撤。
+        try:
+            probe_recipients = alert_recipients(conn)
+        except Exception:
+            # 解析失败是另一类问题（库/配置形状），同样不占凭证；连着失败的话日志会说话。
+            logger.exception('未接单提醒：解析收件人失败，本轮跳过（不占用提醒标记）')
+            return 0
+        if not probe_recipients:
+            if not _missing_recipients_warned:
+                _missing_recipients_warned = True
+                logger.warning('未接单提醒：没有任何可用的收件人（ALERT_MAIL_TO 为空，'
+                               '且管理员账号都没留 QQ / 邮箱），本轮跳过、不占用提醒标记。'
+                               '配好之后会自动恢复，这条警告只记一次')
+            return 0
+        _missing_recipients_warned = False
+
         # 先全部占位再发信。占完再发，是为了让「这一批」在数据库里立刻
         # 变成一个整体 —— 发信要几秒到几十秒，期间第二个实例扫过来
         # 看到的是一批已经占好的行，不会再挑中它们。
@@ -147,6 +190,7 @@ def scan_once():
 
     # 收件人在发信这一刻现算：管理员可能刚改了联系方式、刚被停用，
     # 缓存一份名单只会让通知发到一个已经不该收信的地方。
+    # （上面那次只为判空，真正发信用的是这一份。）
     with db_conn() as conn:
         try:
             recipients = alert_recipients(conn)
@@ -154,7 +198,22 @@ def scan_once():
             logger.exception('未接单提醒：解析收件人失败')
             recipients = []
 
-    if send_mail(subject, compose_body(claimed, total), recipients, label='未接单提醒'):
+    try:
+        delivered = send_mail(subject, compose_body(claimed, total), recipients,
+                              label='未接单提醒')
+    except (ValueError, UnicodeError) as exc:
+        # mail/sender.py 只兜 SMTPException / OSError / SSLError：组信这一步
+        # （subject / body 里的换行、控制字符）抛的 ValueError 会一路冒到这里。
+        # 不接住的话异常逃出 scan_once —— 那时凭证已经占了、`_release_claims` 走不到，
+        # 这批提醒就永久发不出去（只能等重启后有人手工改库）。
+        logger.error('未接单提醒：组信时出错（%s），本封不发出，已撤回提醒标记',
+                     exc.__class__.__name__)
+        delivered = False
+    except Exception:
+        logger.exception('未接单提醒：发信时出现未预期的异常，本封不发出，已撤回提醒标记')
+        delivered = False
+
+    if delivered:
         return total
 
     # 没发出去 —— 凭证撤回，并进入退避，避免 SMTP 挂着的时候每轮都捶一次。

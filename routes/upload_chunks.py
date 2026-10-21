@@ -784,19 +784,34 @@ def api_chunk_complete(upload_id):
         logger.info('分片合并已被占用 upload_id=%s ip=%s', upload_id, client_ip())
         return jsonify({'code': 409, 'msg': '这份上传正在处理中，请勿重复提交'}), 409
 
+    # final_path 必须在进 try 之前给一个值。
+    #
+    # 它是 merge_session 的**返回值**，而 merge_session 自己也会抛异常
+    # （写盘 OSError、meta 里某一列类型不对引发的 TypeError/IndexError）。
+    # 原先它只在 try 里被赋值，于是那种时候 except 里第一句
+    # `discard_upload_file(final_path)` 会先抛 UnboundLocalError：
+    # 真正的异常被盖掉（日志里只剩一句「local variable not defined」），
+    # 而且后面的 shutil.rmtree 永远走不到 —— 会话目录和半份合并结果都留在盘上。
+    final_path = None
     try:
         final_path, failure = merge_session(upload_id, session_dir, meta)
         if failure is not None:
             return failure
         # 落库。合并出来的文件和直传落盘的文件在这一点上没有任何区别，
         # 所以走同一个函数——单号重摇、失败清理都只有一份实现。
+        # size 取自 meta（分片会话登记时就算好了），不传的话 order_files.size
+        # 会一直是 NULL，同一字段在批量单里却有值。
         order_id, pickup_code, est_price = create_order_from_saved_file(
-            meta['filename'], final_path, color, duplex, remark, copies, item)
+            meta['filename'], final_path, color, duplex, remark, copies, item,
+            size=meta['size'])
     except Exception:
-        # create_order_from_saved_file 失败时自己删了文件；这里兜住剩下的异常
-        discard_upload_file(final_path)
+        # create_order_from_saved_file 失败时自己删了文件；这里兜住剩下的异常。
+        # 判 None 是上面那段的配套：合并还没成功时根本没有任何文件要删。
+        if final_path is not None:
+            discard_upload_file(final_path)
         logger.exception('分片合并后建单失败 upload_id=%s 文件=%s 用户=%s ip=%s',
-                         upload_id, meta['filename'], g.user['nickname'], client_ip())
+                         upload_id, (meta or {}).get('filename'),
+                         g.user['nickname'], client_ip())
         # 分片仍然清掉：失败的会话本来就已经不可用（分片可能被读坏了），
         # 让用户重传比留个再也合不上的残骸更干净。与改动前同一口径。
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -851,6 +866,12 @@ def api_chunk_prepare(upload_id):
         return jsonify({'code': 400, 'msg': '用了预设服务就不用再传文件了，请重新选择'}), 400
 
     # 份数上限先判：别白合一份出来再告诉人家放不下（与直传预上传同一个数）。
+    #
+    # 与 /api/upload/prepare 一样，这是**软上限**：判 kept 与 store_pending_file
+    # 之间没有锁，并发提交两份就能同时越过它、多进来一两份。有意的取舍 ——
+    # 多出来的那份会在 TTL 到期时被 cleanup_pending 收走，而做原子化的代价
+    # （每账号一把锁、或者收进 .pending 之后再回滚删文件）比这点越界大得多。
+    # 别把它当漏洞重写；真正的硬墙是 orders 那边按在盘总量算的配额。
     cleanup_pending()
     kept = pending_count(g.user['id'])
     if kept >= PENDING_UPLOAD_MAX_FILES:

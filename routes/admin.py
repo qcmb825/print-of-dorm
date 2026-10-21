@@ -240,12 +240,22 @@ def api_admin_set_profile(user_id):
                 # 早就让给别人了，改它只会撞上唯一索引。
                 return jsonify({'code': 403, 'msg': '该账号已注销，如需修改请先恢复'}), 403
 
-            # 昵称和学号是全表仅有的两个「唯一」字段，改之前得先看有没有人占着。
-            # 这里的条件要和数据库里那两条部分唯一索引**一字不差**地对上：
+            # 昵称、学号、QQ 号三个「唯一」字段，改之前都得先看有没有人占着。
+            # 这里的条件要和数据库里那几条部分唯一索引**一字不差**地对上：
             # 只跟「还没注销」的账号比，还要把自己排除掉（不然改谁都撞自己）。
             # 两边口径不一致是最难受的失败形态 —— 代码说能用，改下去却撞索引报 500。
-            for column, label in (('nickname', '昵称'), ('student_id', '学号')):
-                if fields[column] == target[column]:
+            #
+            # QQ 号（idx_users_qq_live）是最容易漏的一个：它不在上面那两句注释
+            # 「只有两个唯一字段」的旧认知里，但 UPDATE 里带着 qq。漏查的后果是
+            # 撞索引 → 走下面那个 except → 回一句「昵称或学号刚被别人占用」，
+            # 而这两个字段明明一点冲突都没有 —— 管理员照着这句话去改名改学号，
+            # 改多少次都修不好。
+            for column, label in (('nickname', '昵称'), ('student_id', '学号'), ('qq', 'QQ 号')):
+                if fields[column] == (target[column] or ''):
+                    continue
+                if column == 'qq' and not fields[column]:
+                    # 空 QQ 不参与 idx_users_qq_live（索引条件里带着 qq <> ''），
+                    # 查它只会把「另一个也没填 QQ 的账号」当成占用者。
                     continue
                 owner = conn.execute(
                     'SELECT id, nickname FROM users'
@@ -271,7 +281,7 @@ def api_admin_set_profile(user_id):
             # 让它撞在这里并回一句人话，比抛 500 强：唯一索引是最后一道防线，不是唯一一道。
             conn.rollback()
             logger.warning('改资料撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
-            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+            return jsonify({'code': 409, 'msg': '昵称、学号或 QQ 号刚被别人占用，请刷新后重试'}), 409
 
     # 审计要记「哪个字段从什么改成了什么」。只列真的变了的字段：
     # 全量列一遍的话日志里九成是没动过的值，真去查「谁把学号改了」反而得一行行看。
@@ -361,11 +371,11 @@ def api_admin_reset_password(user_id):
 @bp.route('/api/admin/user/<int:user_id>/restore', methods=['POST'])
 @roles_required(ROLE_SUPER)
 def api_admin_restore_user(user_id):
-    """恢复已注销账号。昵称或学号被别人占了就整体拒绝，不做任何自动改名。"""
+    """恢复已注销账号。昵称 / 学号 / QQ 号被别人占了就整体拒绝，不做任何自动改名。"""
     with db_conn() as conn:
         try:
             target = conn.execute(
-                'SELECT id, nickname, real_name, student_id, status FROM users WHERE id = ?',
+                'SELECT id, nickname, real_name, student_id, qq, status FROM users WHERE id = ?',
                 (user_id,)).fetchone()
             if target is None:
                 return jsonify({'code': 404, 'msg': '账号不存在'}), 404
@@ -375,20 +385,31 @@ def api_admin_restore_user(user_id):
                 return jsonify({'code': 400, 'msg': '该账号没有注销，无需恢复'}), 400
 
             conflicts = []
-            for column, label in (('nickname', '昵称'), ('student_id', '学号')):
+            # 昵称 / 学号之外还要查 QQ 号。恢复虽然只改 status，但一改回 active，
+            # 这个账号就重新进入 idx_users_qq_live 的管辖范围（索引条件是
+            # qq <> '' AND status <> 'closed'）。漏查的话失败发生在 UPDATE 那一步，
+            # 提示是一句「昵称或学号已被其他账号占用」，conflicts 却是空的 ——
+            # 管理员照着提示去改名改学号，怎么改都没用（撞的是 QQ 索引）。
+            for column, label in (('nickname', '昵称'), ('student_id', '学号'), ('qq', 'QQ 号')):
+                value = target[column]
+                if column == 'qq' and not value:
+                    # 没填 QQ 的老账号不参与那条索引，不会撞，也就不该报冲突。
+                    continue
                 owner = conn.execute(
                     'SELECT id, nickname FROM users WHERE %s = ? AND status != ? LIMIT 1' % column,
-                    (target[column], STATUS_CLOSED)).fetchone()
+                    (value, STATUS_CLOSED)).fetchone()
                 if owner is not None:
-                    conflicts.append({'label': label, 'value': target[column],
+                    conflicts.append({'label': label, 'value': value,
                                       'owner_id': owner['id'],
                                       'owner_nickname': owner['nickname']})
             if conflicts:
                 # 冲突项结构化地回给前端，不拼进 msg 里：前端要逐条列出来，
                 # 还要让操作者能直接点进那个占用的账号去看 —— 都靠这些字段。
+                # 字段名沿用原来那一份（label / value / owner_id / owner_nickname），
+                # 不新增顶层字段：前端的手写类型只认这个形状。
                 return jsonify({
                     'code': 409,
-                    'msg': '昵称或学号已被其他账号占用，无法恢复',
+                    'msg': '昵称、学号或 QQ 号已被其他账号占用，无法恢复',
                     'conflicts': conflicts,
                 }), 409
 
@@ -397,7 +418,7 @@ def api_admin_restore_user(user_id):
         except sqlite3.IntegrityError:
             conn.rollback()
             logger.warning('恢复账号撞唯一索引：目标 #%s ip=%s', user_id, client_ip())
-            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+            return jsonify({'code': 409, 'msg': '昵称、学号或 QQ 号刚被别人占用，请刷新后重试'}), 409
     audit_action('restore_account',
                  '恢复账号 #%s/%s（状态 closed -> active）' % (user_id, target['nickname']))
     logger.info('恢复账号 #%s/%s ip=%s', user_id, target['nickname'], client_ip())

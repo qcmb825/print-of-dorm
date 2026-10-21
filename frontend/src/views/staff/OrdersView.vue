@@ -14,6 +14,7 @@ import {
   Package,
   RefreshCw,
   ScanLine,
+  Search,
   Unlock,
 } from '@lucide/vue'
 import {
@@ -34,12 +35,14 @@ import {
 import { ApiError } from '@/api/client'
 import { staffOrderApi, staffPrintOptionsApi } from '@/api/endpoints'
 import {
+  DUPLEX_LABELS,
   ORDER_PRESET_FILTER_NONE,
   ORDER_SOURCE_BOT,
   ORDER_SOURCE_LABELS,
   ORDER_STATUSES,
   ORDER_STATUSES_MANUAL,
   type Order,
+  type OrderFile,
   type OrderStatus,
   type PrintPreset,
 } from '@/api/types'
@@ -51,11 +54,11 @@ import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   COLOR_TYPE_LABEL,
-  DUPLEX_LABEL,
   contactLabel,
   copiesLabel,
   normalizePrice,
   orderFileLabel,
+  orderFileNames,
   paperLabel,
   pickupCodeLabel,
   priceLabel,
@@ -91,6 +94,44 @@ const NOTIFY_BADGE_STYLE =
 /** 这一单是不是机器人下的（认不出的值一律当网页单，与后端同一个兜底口径）。 */
 function isBotOrder(order: Order): boolean {
   return order.source === ORDER_SOURCE_BOT
+}
+
+/** 一单里**某一份**的打印参数摘要（「第2份 A4 70g · 黑白 · 双面 · 2 份」）。
+ *
+ *  读法是「**本行为空就回落到订单级**」：v24 之前的老单，`order_files` 里那几列
+ *  全是 null，那时它们表达的就是**订单级参数** —— 所以回落不是兜底猜测，
+ *  而是那些行的真实含义。宽屏与窄屏共用这一个函数：各判一次的话，同一单在
+ *  两个屏上迟早显示成两样，而且不报错。
+ *
+ *  档位名（price_item_name）本身已经含纸张与类型（「A4 70g · 黑白」），
+ *  有它就不再重复拼纸张和颜色 —— 否则一行里会出现两遍同一个纸名。 */
+function fileParamLabel(order: Order, file: OrderFile, index: number): string {
+  const bits: string[] = [`第${index + 1}份`]
+  const itemName = file.price_item_name ?? order.price_item_name ?? null
+  const paper = file.paper_name ?? order.paper_name ?? null
+  const color = file.color_type ?? order.color_type ?? null
+  const duplex = file.duplex ?? order.duplex ?? null
+  const copies = file.copies ?? order.copies ?? null
+  if (itemName) {
+    bits.push(itemName)
+  } else {
+    if (paper) bits.push(paper)
+    // 没有档位名时才单独念颜色：档位名里已经带了（「A4 70g · 黑白」）
+    if (color) bits.push(COLOR_TYPE_LABEL[color])
+  }
+  // 订单级可能是 'mixed'（各份不同）—— 单份的 duplex 只会是 single / double，
+  // 这里只作展示，不拿它去查价格。
+  if (duplex) bits.push(DUPLEX_LABELS[duplex])
+  if (copies !== null) bits.push(copiesLabel(copies))
+  return bits.join(' ')
+}
+
+/** 整单的逐份参数摘要（一行，份与份之间用「 / 」隔开）。
+ *  窄屏卡片那一行、以及宽屏的悬停提示都用它。 */
+function orderFileParamSummary(order: Order): string {
+  const files = order.files ?? []
+  if (!files.length) return ''
+  return files.map((file, index) => fileParamLabel(order, file, index)).join(' / ')
 }
 
 /** 订单台那一列里给机器人单用的**短**标签。
@@ -276,8 +317,17 @@ async function load(silent = false): Promise<void> {
       exclude_done: excludeDone.value ? '1' : undefined,
     })
     if (mySeq !== requestSeq) return
-    orders.value = data.orders
     total.value = data.total
+    // 页码夹紧：筛选/删单之后 total 可能缩到当前页之外（第 3 页只剩 1 页的量），
+    // 那时后端按 page=3 查出的是空列表，而分页器仍停在第 3 页 ——
+    // 屏幕上会同时出现「空列表」「停在第 3 页」「空态写着没有订单」三件互相矛盾的事。
+    // 退回最后一页重取一次（pageCount 已按新的 total 算过，所以只会再取一次）。
+    if (page.value > pageCount.value) {
+      page.value = pageCount.value
+      void load(silent)
+      return
+    }
+    orders.value = data.orders
   } catch (error) {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让管理员以为刚刷出来的列表是坏的。
@@ -461,7 +511,23 @@ async function download(order: Order): Promise<void> {
   try {
     // 这里不传文件大小：列表接口的 Order 类型里没有 file_size（只有详情接口才回），
     // 所以走 client 里那条兜底超时；详情页那边才是按真实大小估的。
+    // 也不传 fileId —— 不带它时后端给的是**第一份**（老链接的兼容口径），
+    // 而这一颗按钮只出现在单文件单上（多文件那一种是下拉，见上面的列定义）。
     await staffOrderApi.download(order.id, orderFileLabel(order))
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
+  }
+}
+
+/** 下载某一单里的**指定那一份**（一单多文件时的下拉走这条路）。 */
+async function downloadFile(
+  order: Order,
+  fileId: number,
+  filename: string,
+  sizeBytes?: number,
+): Promise<void> {
+  try {
+    await staffOrderApi.download(order.id, filename, sizeBytes, fileId)
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
   }
@@ -506,8 +572,15 @@ const columns = computed<DataTableColumns<Order>>(() => [
     title: '订单',
     key: 'id',
     width: 156,
-    render: (row) =>
-      h('div', { class: 'min-w-0' }, [
+    render: (row) => {
+      const names = orderFileNames(row)
+      //    一单多文件（2026-09-28 起的批量打印）：**逐份列出来**，让这一行自己变高。
+      //    只显示「第一份 等 3 份文件」的话，管理员核对实物时永远不知道另外两份
+      //    叫什么 —— 而那正是他要找的东西。超过 3 份时后两行折成一句「另有 N 份」，
+      //    再多的去详情页看（列表一行撑太高会把整页的节奏毁掉）。
+      const shown = names.slice(0, 3)
+      const rest = names.length - shown.length
+      return h('div', { class: 'min-w-0' }, [
         // 第一行：文件名（详情入口）+ 来源标记。
         //
         // 文件名本来就要 truncate（长中文文件名放进 156px 必然要截），所以让它
@@ -523,26 +596,51 @@ const columns = computed<DataTableColumns<Order>>(() => [
               class: 'min-w-0 flex-1 truncate text-sm font-semibold hover:underline',
               title: row.preset_content
                 ? `${row.preset_content} · 查看详情`
-                : `${row.filename} · 查看详情`,
+                // 多份的单：详情入口的悬停提示里带上**逐份参数**（「2 份 ·
+                // 第1份 A4 70g · 黑白 · 2 份 / 第2份 相纸 · 彩色 · 1 份」）——
+                // 打印员先从这一行判断该不该点进去，参数就写在他要看的地方。
+                : [
+                    names.join('\n') || orderFileLabel(row),
+                    (row.file_count ?? 0) > 1 ? orderFileParamSummary(row) : '',
+                    '查看详情',
+                  ].filter(Boolean).join('\n'),
             },
-            { default: () => orderFileLabel(row) },
+            { default: () => shown[0] ?? orderFileLabel(row) },
           ),
           //    来源只对**机器人下的单**标一个短标签：网页端是这个系统的默认入口，
           //    每行都挂一个「网页端」等于给所有人加噪音 —— 这里要的是
           //    「扫一眼发现哪几单不是学生自己在网页上下的」。
           //    标签用「QQ」两个字而不是「QQ 机器人」：156px 的一格里，多两个字
           //    就意味着文件名少显示两个字。
-          h(
-            'span',
-            {
-              class: 'shrink-0 border px-1 text-2xs whitespace-nowrap',
-              style: 'color: var(--secondary); border-color: var(--accent-tint-border)',
-              title: `来源 · ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}`,
-            },
-            [ORDER_SOURCE_BOT_LABEL_SHORT],
-          ) as never,
+          //    **判据与窄屏卡片同一口径**（isBotOrder）：这里曾经无条件渲染，
+          //    于是宽屏上每一单都被标成「QQ」—— 而它正是用来区分来源的那一格。
+          isBotOrder(row)
+            ? (h(
+              'span',
+              {
+                class: 'shrink-0 border px-1 text-2xs whitespace-nowrap',
+                style: 'color: var(--secondary); border-color: var(--accent-tint-border)',
+                title: `来源 · ${ORDER_SOURCE_LABELS[ORDER_SOURCE_BOT]}`,
+              },
+              [ORDER_SOURCE_BOT_LABEL_SHORT],
+            ) as never)
+            : null,
         ]),
-        // 第二行：单号（用户面前唯一的标识）+ 内部编号与时间。
+        // 第二行起：同一单里**其余**的文件（一单就一份时这一块是空的）。
+        // title 里带上这一份自己的参数：这一列只有 156px，参数写进正文会把文件名
+        // 挤没；但「这一单有几份、每份什么参数」正是打印员对着实物核对时要的答案，
+        // 所以走悬停 —— 一行文字既不撑破列宽，也不丢信息。
+        ...shown.slice(1).map((name, offset) => {
+          const file = (row.files ?? [])[offset + 1]
+          return h('div', {
+            class: 'truncate pl-0.5 text-xs text-ink-2',
+            title: file ? fileParamLabel(row, file, offset + 1) : name,
+          }, name)
+        }),
+        rest > 0
+          ? h('div', { class: 'text-2xs text-ink-3' }, `另有 ${rest} 份 · 详见订单`)
+          : null,
+        // 单号（用户面前唯一的标识）+ 内部编号与时间。
         //    ⚠️ 单号必须 `shrink-0`：它是这一格里唯一**不能**折行的东西 ——
         //    放在 flex 里不锁住的话，末尾那个 truncate 的兄弟会把它挤到换行，
         //    屏幕上就成了「362 换行 7」这种被劈开的号（本机实测过一次，
@@ -553,7 +651,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
           h('span', { class: 'truncate text-2xs text-ink-3' },
             `#${row.id} · ${shortTime(row.create_time)}`),
         ]),
-      ]),
+      ])
+    },
   },
   {
     title: '下单人',
@@ -611,14 +710,24 @@ const columns = computed<DataTableColumns<Order>>(() => [
           h(
             'span',
             { class: 'truncate text-sm font-semibold' },
-            row.duplex ? DUPLEX_LABEL[row.duplex] : '单面',
+            // DUPLEX_LABELS 才认 'mixed'（各份不同）：拿只含 single/double 的
+            // DUPLEX_LABEL 去索引，混合单会取到空值 —— 界面上就是一片空白，
+            // 而「双面」也不能替它顶上（那是在替这一单瞎猜）。
+            row.duplex ? DUPLEX_LABELS[row.duplex] : '单面',
           ),
         ]),
         h(
           'div',
           {
             class: 'mt-0.5 truncate text-xs text-ink-3',
-            title: row.paper_remark ?? undefined,
+            // 多份的单：悬停给出**逐份参数**（列宽放不下，正文只留颜色与纸张）。
+            // 单份的单仍然只悬停纸张备注，保持原来的读法。
+            title: [
+              (row.file_count ?? 0) > 1
+                ? `${row.file_count} 份 · ${orderFileParamSummary(row)}`
+                : '',
+              row.paper_remark ?? '',
+            ].filter(Boolean).join('\n') || undefined,
           },
           `${row.color_type ? COLOR_TYPE_LABEL[row.color_type] : '黑白'} · ${paperLabel(row.paper_name)}`,
         ),
@@ -808,18 +917,50 @@ const columns = computed<DataTableColumns<Order>>(() => [
               { default: () => '释放' },
             )
           : null,
+        //    一单多文件时把「下载」做成一个下拉：**一份一条**。
+        //    只给一颗按钮的话，管理员点了拿到的是第一份，而他要的可能是第三份 ——
+        //    而文件名的清单在详情页里，为了下一份文件专门跳一趟不值当。
+        //    单文件（绝大多数单）仍然是一颗直点的按钮，不多一次点击。
         canDownload(row)
-          ? h(
-              NButton,
-              {
-                size: 'tiny',
-                quaternary: true,
-                class: '!h-7 !w-7 !p-0',
-                title: '下载文件',
-                onClick: () => void download(row),
-              },
-              { icon: () => h(Download, { size: 13 }) },
-            )
+          ? (row.file_count ?? 0) > 1
+            ? h(
+                NDropdown,
+                {
+                  options: (row.files ?? []).map((file, index) => ({
+                    label: `第 ${index + 1} 份 · ${file.filename}`,
+                    key: String(file.id),
+                  })),
+                  trigger: 'click',
+                  onSelect: (key: string) => {
+                    const file = (row.files ?? []).find((item) => String(item.id) === key)
+                    if (file) void downloadFile(row, file.id, file.filename, file.size ?? undefined)
+                  },
+                },
+                {
+                  default: () =>
+                    h(
+                      NButton,
+                      {
+                        size: 'tiny',
+                        quaternary: true,
+                        class: '!h-7 !w-7 !p-0',
+                        title: `下载文件（共 ${row.file_count} 份，点开选一份）`,
+                      },
+                      { icon: () => h(Download, { size: 13 }) },
+                    ),
+                },
+              )
+            : h(
+                NButton,
+                {
+                  size: 'tiny',
+                  quaternary: true,
+                  class: '!h-7 !w-7 !p-0',
+                  title: '下载文件',
+                  onClick: () => void download(row),
+                },
+                { icon: () => h(Download, { size: 13 }) },
+              )
           : null,
         // 详情入口。文件名也是入口（见「订单」那一列），这里再给一颗图标按钮，
         // 别指望所有人都会去点标题。放在最后：它是「看」，前面几个是「改」。
@@ -1164,10 +1305,39 @@ onBeforeUnmount(() => {
               <RouterLink
                 :to="`/staff/orders/${order.id}`"
                 class="block truncate text-sm font-bold hover:underline"
-                :title="`${orderFileLabel(order)} · 查看详情`"
+                :title="`${orderFileNames(order).join(' / ') || orderFileLabel(order)} · 查看详情`"
               >
                 {{ orderFileLabel(order) }}
               </RouterLink>
+              <!-- 一单多份：**一行紧凑的参数摘要**（「2 份 · 第1份 A4 70g · 黑白 · 2 份 /
+                   第2份 相纸 · 彩色 · 1 份」）。窄屏卡片是打印员拿手机接单的那一屏，
+                   他要先知道「这一单里有几份、各是什么参数」，再决定怎么过纸。
+                   truncate + title：正文只留一行，全文在悬停里（手机上长按也一样）。 -->
+              <p
+                v-if="(order.files?.length ?? 0) > 1"
+                class="mt-1 truncate text-xs text-ink-2"
+                :title="orderFileParamSummary(order)"
+              >
+                {{ order.files?.length }} 份 · {{ orderFileParamSummary(order) }}
+              </p>
+              <!-- 一单多文件：窄屏卡片把**其余几份**的名字也列出来（与宽屏那一列
+                   同一个口径）。卡片的宽度比表格宽，所以这里多担待几份。 -->
+              <ul
+                v-if="(order.file_count ?? 0) > 1"
+                class="mt-0.5 space-y-0.5 text-xs text-ink-2"
+              >
+                <li
+                  v-for="name in orderFileNames(order).slice(1, 5)"
+                  :key="name"
+                  class="truncate"
+                  :title="name"
+                >
+                  {{ name }}
+                </li>
+                <li v-if="orderFileNames(order).length > 5" class="text-2xs text-ink-3">
+                  另有 {{ orderFileNames(order).length - 5 }} 份 · 详见订单
+                </li>
+              </ul>
               <!-- 单号在窄屏也从上面那行独立出来过（表格里是并进去的），
                    口径与宽屏一致：单号在前、加粗，编号与时间退到后面 -->
               <p class="mt-0.5 flex min-w-0 items-center gap-1.5">
@@ -1215,7 +1385,7 @@ onBeforeUnmount(() => {
           <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-ink-3">
             <span class="spec-chip tnum">{{ copiesLabel(order.copies) }}</span>
             <span class="text-sm font-semibold text-ink">
-              {{ order.duplex ? DUPLEX_LABEL[order.duplex] : '单面' }}
+              {{ order.duplex ? DUPLEX_LABELS[order.duplex] : '单面' }}
             </span>
             <span>{{ order.color_type ? COLOR_TYPE_LABEL[order.color_type] : '黑白' }}</span>
             <span :title="order.paper_remark ?? undefined">{{ paperLabel(order.paper_name) }}</span>
@@ -1386,7 +1556,7 @@ onBeforeUnmount(() => {
             #{{ priceOrder.id }} ·
             {{ priceOrder.color_type ? COLOR_TYPE_LABEL[priceOrder.color_type] : '黑白' }}
             /
-            {{ priceOrder.duplex ? DUPLEX_LABEL[priceOrder.duplex] : '单面' }}
+            {{ priceOrder.duplex ? DUPLEX_LABELS[priceOrder.duplex] : '单面' }}
             · {{ copiesLabel(priceOrder.copies) }} · {{ paperLabel(priceOrder.paper_name) }}
           </span>
         </p>

@@ -13,6 +13,7 @@ from config import (
 )
 from db import db_conn
 from security import client_ip
+from utils import parse_bool_flag
 
 bp = Blueprint('announce', __name__)
 
@@ -35,9 +36,24 @@ def _parse_announcement(data):
     if font_family not in ANNOUNCE_FONTS:
         return None, '字体不在允许范围内'
 
-    try:
-        font_size = int(data.get('font_size', 15))
-    except (TypeError, ValueError):
+    # 字号只认「ASCII 整数」：以前是裸 int(...)，两件事一起错 ——
+    # ① `12.9` 会被 int() 静默截成 12（前端传数字时这就是个悄悄变小的字号）；
+    # ② int() 认得全角数字，'１２' 也放行（见 config.STUDENT_ID_RE 那段同一个教训）。
+    # 判据与 prefs.py 的 isascii() and isdigit() 同一套：形状不对就回 400，不替对方取整。
+    raw_size = data.get('font_size', 15)
+    if isinstance(raw_size, bool):
+        return None, '字号必须是数字'
+    if isinstance(raw_size, int):
+        font_size = raw_size
+    elif isinstance(raw_size, float):
+        # 12.0 只是「同一个数」的另一种写法，接受；12.9 必须拒 ——
+        # 以前 int(12.9) 会静默截成 12，字号悄悄比管理员填的小，而没有任何提示。
+        if not raw_size.is_integer():
+            return None, '字号必须是整数'
+        font_size = int(raw_size)
+    elif isinstance(raw_size, str) and raw_size.strip().isascii() and raw_size.strip().isdigit():
+        font_size = int(raw_size.strip())
+    else:
         return None, '字号必须是数字'
     if not 12 <= font_size <= 28:
         return None, '字号需在 12-28 之间'
@@ -165,7 +181,12 @@ def api_admin_update_announcement(aid):
 def api_admin_toggle_announcement(aid):
     """启用 / 停用公告，启用一条时会先停用其它生效中的，保证只有一条悬浮。"""
     data = request.get_json(silent=True) or {}
-    active = bool(data.get('active'))
+    # 不能拿原始值直接过 bool()：字符串 'false' 会被当成 True，
+    # 第三方客户端/脚本发 "false" 时「停用」会变成「启用」且不报错。
+    # 解析不出来就回 400 —— 猜一个意思不如让人改请求（判据见 utils.parse_bool_flag）。
+    active = parse_bool_flag(data.get('active'))
+    if active is None:
+        return jsonify({'code': 400, 'msg': '启用状态只能是 true 或 false'}), 400
     with db_conn() as conn:
         if conn.execute('SELECT 1 FROM announcements WHERE id = ?', (aid,)).fetchone() is None:
             return jsonify({'code': 404, 'msg': '公告不存在'}), 404

@@ -27,6 +27,7 @@ from config import (COPIES_MAX, COPIES_MIN, EST_PAGES_MAX, ROLE_ADMIN, ROLE_SUPE
 from db import db_conn
 import pricing
 from security import audit_action, client_ip
+from utils import parse_bool_flag, parse_copies
 
 bp = Blueprint('price_table', __name__)
 
@@ -154,7 +155,10 @@ def api_admin_update_price_item(item_id):
 def api_admin_toggle_price_item(item_id):
     """启用 / 停用。停用只是不再出现在学生的可选项里，记录与历史订单都保留。"""
     data = request.get_json(silent=True) or {}
-    active = bool(data.get('active'))
+    # 不能拿原始值直接过 bool()：'false' 是真值字符串，停用会变成启用（见 utils.parse_bool_flag）。
+    active = parse_bool_flag(data.get('active'))
+    if active is None:
+        return jsonify({'code': 400, 'msg': '启用状态只能是 true 或 false'}), 400
     with db_conn() as conn:
         if pricing.find_item(conn, item_id) is None:
             return jsonify({'code': 404, 'msg': '这条价目项不存在'}), 404
@@ -221,11 +225,13 @@ def api_admin_price_preview():
     pages, error = _parse_pages(data.get('pages'))
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
-    try:
-        copies = int(data.get('copies') or 1)
-    except (TypeError, ValueError):
-        return jsonify({'code': 400, 'msg': '份数要填数字'}), 400
-    copies = max(COPIES_MIN, min(COPIES_MAX, copies))
+    # 份数走 utils.parse_copies，与下单路径同一把尺子：
+    # 以前这里是裸 int(...) —— `int(True)` 是 1（bool 静默当一份），
+    # `int('2.5')` 抛错回 400 倒还好，但 True/False 这种形状会悄悄变成合法值。
+    # parse_copies 显式挡 bool、只认 ASCII 整数、范围外回错误信息，这里统一按 400 处理。
+    copies, error = parse_copies(data.get('copies'))
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
     raw_item = data.get('price_item_id')
     if isinstance(raw_item, bool) or raw_item in (None, '', 0, '0'):
         return jsonify({'code': 400, 'msg': '请先选一条价目项'}), 400

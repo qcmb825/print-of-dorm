@@ -119,6 +119,23 @@ export function orderFileLabel(order: {
   return isPresetOrder(order) ? '预设打印服务' : '（无文件）'
 }
 
+/** 这一单里**每一份**文件的名字（一单多文件时要看得全）。
+ *
+ *  优先用服务端给的 files（2026-09-28 起，一单可以有几份文件）；
+ *  老接口 / 老订单没有这个字段时退回 filename 那一句摘要 ——
+ *  两种形状都要认，否则界面在某个版本上会突然空掉，而且不报错。
+ *  预设单（没有文件）回一个**空数组**：调用方据此走「这一单没有文件」那条路，
+ *  而不是显示一句「（无文件）」当文件名。 */
+export function orderFileNames(order: {
+  filename?: string | null
+  preset_content?: string | null
+  files?: { filename: string }[] | null
+}): string[] {
+  if (order.files?.length) return order.files.map((item) => item.filename)
+  if (order.filename) return [order.filename]
+  return []
+}
+
 /** 订单操作留痕的动作 → 令牌色（时间线上的圆点）。
  *
  *  配色不是装饰：「谁把单撤了、谁释放了别人的单」这类要一眼看见（err / warn），

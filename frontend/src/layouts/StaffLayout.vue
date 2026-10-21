@@ -40,23 +40,27 @@ const drawerOpen = ref(false)
  *  只是看不到密码、也没有任何改动入口 —— 那些入口在高级视图里。
  *  这里原本写的是 show: auth.isSuper，而对外角色早就收敛成 admin 和 user 两种，
  *  那个判断永远为假，于是整栏入口静默消失。用户看到的就是「新版界面少了一栏」。 */
-const navItems = computed(() =>
-  [
-    { to: '/staff/orders', label: '订单台', icon: Package, show: true },
-    { to: '/staff/logs', label: '历史记录', icon: History, show: true },
-    { to: '/staff/dashboard', label: '数据看板', icon: LayoutDashboard, show: true },
-    { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck, show: true },
-    { to: '/staff/tickets', label: '工单处理', icon: MessageSquare, show: true },
-    { to: '/staff/announcements', label: '公告管理', icon: Megaphone, show: true },
-    // 打印选项在公告管理后面、账号管理前面：它也是「内容维护」那一类，
-    // 而账号管理涉及权限，习惯上放最后。这里对所有管理员可见，理由见该页顶部注释。
-    { to: '/staff/print-options', label: '打印选项', icon: Printer, show: true },
-    // 价目表紧跟打印选项：两者都是「管理员维护的定价相关配置」，
-    // 也同样是所有管理员可改（后端 ROLE_ADMIN 起步）。
-    { to: '/staff/pricing', label: '价目表', icon: CircleDollarSign, show: true },
-    { to: '/staff/users', label: '账号管理', icon: Users, show: true },
-  ].filter((item) => item.show),
-)
+/** 导航栏九项，**对每个管理员都一样**（收窄权限的是服务端接口，不是这一栏）。
+ *
+ *  原先每项都带一个 `show: true`，末尾再 `.filter((item) => item.show)` ——
+ *  九项全 true，那是一个恒等过滤：删掉一项之后它不会自动消失，会静静地留在原处。
+ *  真要有条件，就把条件写在这里（例如 `...(auth.x ? [item] : [])`），
+ *  别再用一个永远为真的标记去假装它有判断。 */
+const navItems = computed(() => [
+  { to: '/staff/orders', label: '订单台', icon: Package },
+  { to: '/staff/logs', label: '历史记录', icon: History },
+  { to: '/staff/dashboard', label: '数据看板', icon: LayoutDashboard },
+  { to: '/staff/audits', label: '身份审核', icon: ClipboardCheck },
+  { to: '/staff/tickets', label: '工单处理', icon: MessageSquare },
+  { to: '/staff/announcements', label: '公告管理', icon: Megaphone },
+  // 打印选项在公告管理后面、账号管理前面：它也是「内容维护」那一类，
+  // 而账号管理涉及权限，习惯上放最后。这里对所有管理员可见，理由见该页顶部注释。
+  { to: '/staff/print-options', label: '打印选项', icon: Printer },
+  // 价目表紧跟打印选项：两者都是「管理员维护的定价相关配置」，
+  // 也同样是所有管理员可改（后端 ROLE_ADMIN 起步）。
+  { to: '/staff/pricing', label: '价目表', icon: CircleDollarSign },
+  { to: '/staff/users', label: '账号管理', icon: Users },
+])
 
 /** 高级视图的隐藏入口：连点品牌图标 5 次。
  *

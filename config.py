@@ -59,8 +59,8 @@ def env_bool(name, default=False):
 _env_int_warnings = []
 
 
-def _warn_env_int(name, raw, default):
-    """报告某个整数型环境变量没解析成功。
+def _warn_env_int(name, raw, default, kind='整数'):
+    """报告某个数值型环境变量没解析成功。
 
     这类问题（PORT=808O 把零敲成字母 O、LOGIN_MAX_FAILS= 留空、顺手写了 '5次'）
     以前是完全无声的：程序拿着默认值继续跑，看起来一切正常，只是行为和人想的不一样。
@@ -69,9 +69,9 @@ def _warn_env_int(name, raw, default):
     默认值也一并报出来，是因为「回退到了什么」才是真正需要知道的那半个信息：
     只说「PORT 不合法」，看日志的人还是不知道服务实际听在哪个端口上。
     """
-    message = ('环境变量 %s 的值 %r 解析不成整数，已回退到默认值 %s（请检查 .env：'
+    message = ('环境变量 %s 的值 %r 解析不成%s，已回退到默认值 %s（请检查 .env：'
                '常见是把数字 0 写成了字母 O、带了单位，或者值整个留空了）'
-               % (name, raw, default))
+               % (name, raw, kind, default))
     target = globals().get('logger')  # 见上面那段说明：这里可能还没有日志对象
     if target is not None:
         target.warning(message)
@@ -93,6 +93,24 @@ def env_int(name, default):
     except (TypeError, ValueError):
         _warn_env_int(name, os.getenv(name), default)
         return default
+
+
+
+def env_float(name, default):
+    """读浮点型环境变量，值不合法就用默认值，并留一条 warning。
+
+    单独开一个是因为**金额类配置真的会写小数**：`PRESET_PRICE_MAX=99.5`
+    走 env_int 时 `int('99.5')` 直接抛 ValueError，整条配置被回退成默认的 999 ——
+    「我把上限调小了，线上却还是 999」，而计费类配置对不上账是很难反过来查的。
+    与 env_int 一样，未设置时按默认值解析（不报警），设置成空串才报警。
+    """
+    try:
+        return float(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        _warn_env_int(name, os.getenv(name), default, kind='数字')
+        # 回退值也转成 float：否则「默认值走到这里」会得到 int，
+        # 同一个常量时而 int 时而 float，调用方一写 isinstance 就会踩到。
+        return float(default)
 
 
 
@@ -126,6 +144,14 @@ def resolve_path(value, base=BASE_DIR):
 LOG_LEVEL_NAME = os.getenv('LOG_LEVEL', 'INFO').strip().upper()
 
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
+
+# 拼错（LOG_LEVEL=INF0、顺手写成 INFOO）时上面那行会**静默**回退 INFO ——
+# 这是最难自查的一类配置问题：排查时以为 DEBUG 一直开着，实际只收到 INFO，
+# 关键的那几行根本没被写下来。这里先只做判定，真正的 warning 要等下面
+# logger 建出来才发得出（本模块前段引 logger 是 NameError，见 _warn_env_int 的说明）。
+# 判据用白名单而不是 hasattr(logging, ...)：logging 里还有 getLogger、Formatter 这些
+# 同名可读写属性，用 getattr 的返回值去猜「拼对了没有」是猜不准的。
+_LOG_LEVEL_NAMES = ('CRITICAL', 'FATAL', 'ERROR', 'WARNING', 'WARN', 'INFO', 'DEBUG', 'NOTSET')
 
 # ---- 运行期数据的**唯一根目录** --------------------------------------------
 # 这里定的是一条部署纪律：**所有会变的东西都住在这一个目录下** ——
@@ -221,6 +247,12 @@ def _setup_logger(name, filename, level=None):
 # 业务日志：注册、登录、下单、接单、改状态、后台管理
 logger = _setup_logger('print_service', LOG_FILE)
 
+# 到这里才报 LOG_LEVEL 拼错（原因见上面 _LOG_LEVEL_NAMES 那段）。
+# 用 warning 而不是 error：服务照常能跑，只是收的日志比预想的少。
+if LOG_LEVEL_NAME not in _LOG_LEVEL_NAMES:
+    logger.warning('LOG_LEVEL=%s 不是有效值，只认 %s，已按 INFO 处理',
+                   LOG_LEVEL_NAME, ' / '.join(_LOG_LEVEL_NAMES))
+
 # 访问日志：每个请求一行，含方法、路径、状态、耗时、来源 IP、账号
 access_logger = _setup_logger('print_service.access', 'access.log')
 
@@ -311,6 +343,9 @@ os.makedirs(PAY_QR_FOLDER, exist_ok=True)
 
 # 只收这几种图片。收款码是给人扫的，转成 webp 或者收 PDF 都会让部分手机扫不出来，
 # 所以不做格式转换、也不放宽白名单。
+# 这一份是**唯一的一份**：机器人二维码（BOT_QR_EXTENSIONS）直接引用它。
+# 两处各写一遍同样的三元组时，改一处忘了另一处不会报错，只会出现
+# 「收款码能传 webp、机器人码不能」这种没人说得清为什么的差别。
 PAY_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
 
 # 单张收款码大小上限。它是一张手机截图，正常几百 KB；给到 2MB 已经绰绰有余，
@@ -321,7 +356,9 @@ PAY_QR_MAX_BYTES = max(64 * 1024, env_int('PAY_QR_MAX_BYTES', 2 * 1024 * 1024))
 # ---- QQ 机器人引导（悬浮窗 + 二维码）--------------------------------------
 # 引导挂在两端外壳上（登录页也有一份），点「关闭」累计到 BOT_HINT_MAX_CLICKS 次
 # 就永久不再出现，并提示用户「已收进设置页」—— 那里能重新打开。
-BOT_HINT_MAX_CLICKS = env_int('BOT_HINT_MAX_CLICKS', 3)
+# 下限 1：填 0 或负数的话「关闭」一次就永久收起，等于把引导彻底关掉，
+# 而这件事没有任何日志会提示 —— 与别的数值常量一样在这里夹住。
+BOT_HINT_MAX_CLICKS = max(1, env_int('BOT_HINT_MAX_CLICKS', 3))
 
 # QQ 机器人二维码（**全站一张**，由超管上传；不是每人一张，所以没走 users 表）。
 # 与收款码同一个套路：库里存**文件名**，目录由这里决定 —— 换盘或改目录名只要改配置，
@@ -333,7 +370,9 @@ ASSET_FOLDER = resolve_path(
 os.makedirs(ASSET_FOLDER, exist_ok=True)
 
 # 只收这几种图片：二维码是给人扫的，转成 webp 或收 PDF 都会让部分手机扫不出来。
-BOT_QR_EXTENSIONS = ('png', 'jpg', 'jpeg')
+# 直接引用收款码那一份（同一个判据、同一组类型）。两个名字都留着，
+# 是为了不动调用方 —— 但**取值只有一个出处**，免得哪天放宽白名单只改了一处。
+BOT_QR_EXTENSIONS = PAY_QR_EXTENSIONS
 
 # 二维码上限（比收款码宽一点：有些截图工具直接出 2-4MB 的 PNG）
 BOT_QR_MAX_BYTES = max(64 * 1024, env_int('BOT_QR_MAX_BYTES', 4 * 1024 * 1024))
@@ -365,7 +404,10 @@ PRESET_DOC_MAX_BYTES = max(1024 * 1024, env_int('PRESET_DOC_MAX_BYTES', 20 * 102
 
 # 预设服务的定价（preset_price）上限，与价目表里的单价同一套口径。
 # 它在界面上的名字是「本服务定价（元/份）」——**每份**，总价由它乘份数得来。
-PRESET_PRICE_MAX = float(env_int('PRESET_PRICE_MAX', 999))
+# 按 **float** 读、不是 env_int：这一项的价格是「元/份」，写 99.5 完全合理，
+# 而 env_int 会把 int('99.5') 的 ValueError 当成写错，整条静默回退成 999 ——
+# 「我把上限调小了，怎么还能填 999」这种对账问题很难反过来查。
+PRESET_PRICE_MAX = env_float('PRESET_PRICE_MAX', 999)
 
 
 # 兜底收款码：接单人没传自己的码、内置管理员也没传时，用这一张。
@@ -403,7 +445,21 @@ PENDING_UPLOAD_TTL_HOURS = max(1, env_int('PENDING_UPLOAD_TTL_HOURS', 6))
 
 # 每个账号最多留几份「传了但还没下单」的文件。与分片会话那个上限同一套思路：
 # 拦的不是正常用户（他一次也就准备一份），而是拿这个接口当网盘刷的人。
-PENDING_UPLOAD_MAX_FILES = max(1, env_int('PENDING_UPLOAD_MAX_FILES', 5))
+#
+# 默认从 5 提到 15（2026-09-28，批量打印）：现在一次批量就是好几份文件
+# （网页端一次选 5 份、QQ 端一次发 10 份），上限还停在 5 的话，
+# 一张 6 份文件的批量单会卡在「还有 5 份没下单」上 —— 而拦住它的正是
+# 它自己刚传上去的那几份。留 15 = 单批上限（10）再加一份旧遗留的余量。
+PENDING_UPLOAD_MAX_FILES = max(1, env_int('PENDING_UPLOAD_MAX_FILES', 15))
+
+# 一次批量下单最多几份文件（**也是最多拆成几张订单**）。
+#
+# 它是**服务端**的硬边界，网页端与机器人共用：两边各写一个数的话，
+# 界面上允许选 10 份、服务端只收 5 份，用户看到的是「前三份传上去了、
+# 后两份 400」，而报错还发生在下单那一刻（文件已经传完）。
+# 取 10 的理由：一次要打的材料（讲义、作业、表格）到这个量级已经很多了，
+# 而再多就该分两批 —— 打印员一次也抱不动更多。
+BATCH_ORDER_MAX_FILES = max(1, env_int('BATCH_ORDER_MAX_FILES', 10))
 
 # 试算接口的频控。它被调得很勤是**正常的**——学生每改一次份数就重算一次，
 # 所以额度给得很宽：一分钟 90 次，足够一次下单会话随便点，又拦得住脚本刷。
@@ -583,7 +639,10 @@ PRICE_MAX_YUAN = 99999.99
 # 不用 float(x) 直接吃请求体：0.1 在二进制里存不下，
 # 而 JSON 里的 0.1 传过来本来就已经带上浮点误差了，先转成字符串再按字符串解析，
 # 精度才可控。真正落库时四舍五入到两位。
-PRICE_RE = re.compile(r'^\d{1,6}(\.\d{1,2})?$')
+# 用 [0-9] 而不是 \d：Python 的 \d 匹配 **Unicode 十进制数字**，全角「１２」也照样过。
+# 金额那边 float() 碰巧能把全角读成 12，所以症状不明显，但口径必须统一 ——
+# 底下学号 / QQ 那两条正则是同一个教训（见 STUDENT_ID_RE 的说明）。
+PRICE_RE = re.compile(r'^[0-9]{1,6}(\.[0-9]{1,2})?$')
 
 
 # ---- 预设打印服务（print_presets）----
@@ -618,6 +677,32 @@ COPIES_MIN = 1
 COPIES_MAX = 50
 
 COPIES_DEFAULT = 1
+
+
+# 密码找回（QQ 邮箱验证码）。
+#
+# 为什么是「发到 <QQ号>@qq.com」而不是让用户填一个新邮箱：注册时 QQ 是**必填**项，
+# 而它已经是取件提醒的收件来源（见 utils.validate_qq）。用一个已经在用的、
+# 且必然掌握在本人手里的地址，比让用户当场填一个新地址更安全 ——
+# 后者等于「谁先填谁就能接管账号」。
+#
+# 六个数字 + 10 分钟 + 5 次尝试：6 位数有 100 万种，5 次机会命中率是百万分之五，
+# 而每次尝试都要过 IP 限流；再长会让「手机上看到码 → 切回网页输」变得烦人。
+PASSWORD_RESET_CODE_DIGITS = 6
+PASSWORD_RESET_TTL_MINUTES = max(1, env_int('PASSWORD_RESET_TTL_MINUTES', 10))
+PASSWORD_RESET_MAX_ATTEMPTS = max(1, env_int('PASSWORD_RESET_MAX_ATTEMPTS', 5))
+# 同一账号两次申请之间至少隔这么久：防「连点发送」把 SMTP 配额打满，
+# 也防有人拿它当短信轰炸机用。
+PASSWORD_RESET_RESEND_SECONDS = max(10, env_int('PASSWORD_RESET_RESEND_SECONDS', 60))
+# 按 IP 与按学号的限流（公开接口，两种键都要有：
+# 只按 IP 挡不住「换代理刷同一个学号」，只按学号挡不住「同一 IP 刷一堆学号」）。
+PASSWORD_RESET_IP_MAX = max(1, env_int('PASSWORD_RESET_IP_MAX', 10))
+PASSWORD_RESET_IP_WINDOW = max(60, env_int('PASSWORD_RESET_IP_WINDOW', 3600))
+PASSWORD_RESET_SID_MAX = max(1, env_int('PASSWORD_RESET_SID_MAX', 5))
+PASSWORD_RESET_SID_WINDOW = max(60, env_int('PASSWORD_RESET_SID_WINDOW', 3600))
+# 提交验证码这一端的限流：比「发码」更宽松一点，但也要挡住穷举。
+PASSWORD_RESET_VERIFY_MAX = max(1, env_int('PASSWORD_RESET_VERIFY_MAX', 20))
+PASSWORD_RESET_VERIFY_WINDOW = max(60, env_int('PASSWORD_RESET_VERIFY_WINDOW', 3600))
 
 
 # 账户角色
@@ -675,7 +760,13 @@ NICKNAME_RE = re.compile(r'^[0-9A-Za-z_\u4e00-\u9fa5]{2,20}$')
 
 REALNAME_RE = re.compile(r'^[\u4e00-\u9fa5A-Za-z·]{2,20}$')
 
-STUDENT_ID_RE = re.compile(r'^\d{4,20}$')
+# 学号只认 **ASCII 数字**（[0-9]），不是 \d ——
+# Python 的 \d 匹配 Unicode 里的「十进制数字」，于是全角串 '１２３４'
+# 能过校验（实测过的真事）。后果不是一句「格式不严」：
+#   · 全角串在名单库里永远查不到（lookup 比的是半角），走审核通道被管理员批准；
+#   · 而它和半角串在唯一索引里是**两个不同的值**，同一个人因此能有两个账号。
+# 与 prefs.py 里 `isascii() and isdigit()` 是同一个教训：形状校验先问编码，再问长相。
+STUDENT_ID_RE = re.compile(r'^[0-9]{4,20}$')
 
 
 # 联系方式：注册必填，微信 / QQ / 邮箱里选一种
@@ -700,7 +791,11 @@ OTHER_CONTACT_LABELS = {key: CONTACT_LABELS[key] for key in OTHER_CONTACT_TYPES}
 
 WECHAT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{4,19}$')  # 5-20 位，字母开头
 
-QQ_RE = re.compile(r'^[1-9]\d{4,11}$')  # 5-12 位数字，不以 0 开头
+# 同样是 [0-9] 而不是 \d（理由见上面 STUDENT_ID_RE）。这条更要紧：
+# 全角 QQ 号能落库，mail/recipients.py 会拼出 '1２３４５@qq.com'，
+# SMTP 那边直接退信 —— 学生永远收不到取件提醒，而界面上 QQ 填得好好的、
+# 系统一个错都不报。这类「静默收不到」是最难被发现的一种失败。
+QQ_RE = re.compile(r'^[1-9][0-9]{4,11}$')  # 5-12 位数字，不以 0 开头
 
 EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
@@ -711,7 +806,15 @@ EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 # 夹着「black · single」两个英文单词。加后端这份时记得两边取值保持一致。
 COLOR_TYPE_LABELS = {'black': '黑白', 'color': '彩色'}
 
-DUPLEX_LABELS = {'single': '单面', 'double': '双面'}
+DUPLEX_LABELS = {'single': '单面', 'double': '双面', 'mixed': '混合'}
+
+# v24：一张单里几份文件的单双面**不一样**时，orders.duplex 写这个值。
+# 为什么不在订单级随便挑一份的：一张「2 份双面 + 3 份单面」的单，标成「双面」
+# 会让打印员按双面去准备纸；标成「单面」又会让后两份被当成单面打。
+# 混合是一个**如实的汇总**，具体到每一份去看 order_files.duplex。
+# 受影响的只有展示层（订单台、卡片、我的订单）：见到它就把文案换成「混合」，
+# 别再拿它去查 DUPLEX_LABELS['mixed'] 之外的东西。
+DUPLEX_MIXED = 'mixed'
 
 
 # 工单（站内信）状态和长度限制
@@ -911,9 +1014,9 @@ else:
 
 
 # 登录失败限制。内存计数只在单进程有效，多进程部署得换成 Redis 之类的共享存储
-LOGIN_MAX_FAILS = env_int('LOGIN_MAX_FAILS', 5)
+LOGIN_MAX_FAILS = max(1, env_int('LOGIN_MAX_FAILS', 5))
 
-LOGIN_LOCK_SECONDS = env_int('LOGIN_LOCK_SECONDS', 300)
+LOGIN_LOCK_SECONDS = max(1, env_int('LOGIN_LOCK_SECONDS', 300))
 
 
 # 调试开关。生产环境必须为 false，调试器会暴露源码，还留了任意代码执行的口子

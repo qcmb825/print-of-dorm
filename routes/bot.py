@@ -18,8 +18,21 @@ OneBot 事件里的发送者 user_id 由登录态给出、伪造不了，
     （代注册会绕开学号名单这道身份闸门）。
 
 建单全部复用 routes/orders.py 的共享函数（create_order_from_saved_file /
-create_preset_order），上传频控也与网页端**共用同一把计数器** ——
-不管从哪条路下单，一分钟内的下单额度是同一个，分 open 两把就是翻倍漏洞。
+create_order_from_saved_files / create_preset_order），上传频控也与网页端
+**共用同一把计数器** —— 不管从哪条路下单，一分钟内的下单额度是同一个，
+分 open 两把就是翻倍漏洞。
+
+## 批量（2026-09-28 起）
+
+QQ 里一次发好几份文件是常态（「这几份都打一下」）。批量那条路**不是**
+一次请求塞多个文件：Flask 的 MAX_CONTENT_LENGTH 是**整个请求体** 50MB，
+三份 20MB 的讲义合在一个请求里当场 413 —— 而那不是用户做错了什么。
+
+所以走的是网页端那条「先上传、后下单」的两段式：
+  ① 一份文件一个请求 POST /api/bot/upload/prepare → 收进 .pending，换 file_token；
+  ② 一组同参数的文件一个请求 POST /api/bot/order/prepared → 建**一张**订单。
+机器人在国内那台机器上按顺序打这几个请求，多出来的是几次跨洋往返（各 200ms），
+比让用户重发一遍文件便宜得多。
 """
 
 import os
@@ -33,16 +46,20 @@ import botcard
 import prefs
 import pricing
 
-from config import (ALLOWED_EXTENSIONS, ORDER_LOG_WITHDRAW, ORDER_SOURCE_BOT,
-                    PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE, ST_PENDING, ST_PRINTING,
-                    ST_READY, ST_UNPRICED, STATUS_ACTIVE, STATUS_DISABLED, TICKET_BODY_MAX,
-                    TICKET_CLOSED, TICKET_MAX_OPEN, TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
-from db import db_conn, find_preset
+from config import (ALLOWED_EXTENSIONS, BATCH_ORDER_MAX_FILES, ORDER_LOG_WITHDRAW,
+                    ORDER_SOURCE_BOT, PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE,
+                    ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED, STATUS_ACTIVE,
+                    STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED, TICKET_MAX_OPEN,
+                    TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
+from db import db_conn, files_for_orders, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
 from utils import allowed_file, content_signature_error, parse_copies
-from .orders import (create_order_from_saved_file, create_preset_order, log_event,
-                     quota_rejection, quota_snapshot, resolve_preset_item,
-                     resolve_price_item,
+from .estimate import (_group_item_label, _group_item_log, commit_prepared_group,
+                       discard_prepared, pages_for_pending,
+                       store_pending_file, validate_order_groups)
+from .orders import (create_order_from_saved_file, create_preset_order,
+                     discard_upload_file, log_event, quota_rejection, quota_snapshot,
+                     resolve_preset_item, resolve_price_item, save_incoming_file,
                      UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
 
 bp = Blueprint('bot', __name__)
@@ -65,6 +82,11 @@ BOT_HELP_SECTIONS = [
     # 结果五条里三条被截。要讲细节就在命令自己的回复里讲（如「设置」）。
     {'title': '下单', 'items': [
         {'cmd': '直接发文件', 'desc': 'pdf / word / 图片都行'},
+        {'cmd': '文件 + 「黑白 2份」', 'desc': '一句话说完，直接下单'},
+        #    v24：一批文件不再按参数拆单 —— 一次发几份就是**一张单、一个单号**，
+        #    每份可以带自己的档位/份数/单双面。所以这里不再写「同参数的合成一张单」
+        #    （那句话现在会让人以为参数不同就会分成几张单、拿几个号）。
+        {'cmd': '一次发多份文件', 'desc': '合成一张单、只给一个单号'},
         {'cmd': '备注 内容', 'desc': '下单过程中随时发，加到这一单上'},
         {'cmd': '打印服务', 'desc': '看有哪些现成服务；带编号下单'},
     ]},
@@ -85,7 +107,14 @@ BOT_HELP_SECTIONS = [
     ]},
     {'title': '其它', 'items': [
         {'cmd': '反馈 你的问题', 'desc': '提交工单；「工单」看进展'},
+        {'cmd': '工单', 'desc': '看工单进展与管理员回复'},
         {'cmd': '撤回 单号', 'desc': '撤回未被接单的订单（要再确认一次）'},
+        #    下面两条是 2026-09-28 补的：命令表里一直有它们（_ZH_EXACT 的「取消」
+        #    与「帮助」），但帮助卡漏了 —— 学生按卡片学不到「怎么反悔」和
+        #    「怎么看这份清单」。帮助卡是唯一一份对外的命令说明，漏一条就等于
+        #    那条命令对只看卡片的人不存在。
+        {'cmd': '取消', 'desc': '下单途中发，作废这一批文件'},
+        {'cmd': '帮助', 'desc': '看这份命令清单（卡片）'},
     ]},
 ]
 
@@ -173,7 +202,7 @@ def _orders_payload(uid, conn=None):
     user_prefs = prefs.get_prefs(uid, conn)
     sql = '''
         SELECT o.id, o.status, o.pickup_code, o.price, o.est_price, o.filename,
-               o.preset_content, o.copies,
+               o.preset_content, o.copies, o.duplex,
                datetime(o.create_time, 'localtime') AS create_time
         FROM orders o WHERE o.user_id = ?%s ORDER BY o.id DESC LIMIT ?
     ''' % (" AND o.status <> '%s'" % ST_DONE if user_prefs['hide_done_orders'] else '')
@@ -196,7 +225,11 @@ def _orders_payload(uid, conn=None):
             #    （还没定价的单显示「预估 ¥x」，定过价的显示实际金额）——
             #    在服务端挑一个塞进 price，等于让「哪个才是要收的钱」变得看不出来。
             'est_price': row['est_price'],
+            #    v24：整单的份数是**总份数**，单双面在几份不一样时是 'mixed'。
+            #    两个都原样给出去，让卡片/文字自己决定怎么说 —— 服务端在这一层
+            #    替它挑一个值，等于把「混合」这件事藏起来（打印员按那一列备纸）。
             'copies': row['copies'],
+            'duplex': row['duplex'],
             'title': title[:60],
             'create_time': row['create_time'],
         })
@@ -229,7 +262,12 @@ def api_bot_order():
                 'WHERE pickup_code = ? AND user_id = ? '
                 "ORDER BY (status = '%s') ASC, id DESC LIMIT 1" % ST_DONE,
                 (handle, g.user['id'])).fetchone()
-        elif legacy_id.isdigit():
+        #    `int()` 只对**合理长度**的数字串安全（P2-4）：CPython 对超过 4300 位的
+        #    十进制串直接抛 ValueError（防 DoS 的那道限制），而这里是请求参数 ——
+        #    一个超长数字串就能把接口打成 500。isascii() 也要判，理由同 _identify：
+        #    全角数字 `'１２３'.isdigit()` 是 True，放进去等于绕过格式校验查库。
+        #    12 位是 orders.id 的宽松上限（现在还是 4~5 位），够兼容到很久以后。
+        elif legacy_id.isdigit() and legacy_id.isascii() and len(legacy_id) <= 12:
             row = conn.execute(
                 'SELECT id, status, pickup_code FROM orders WHERE id = ? AND user_id = ?',
                 (int(legacy_id), g.user['id'])).fetchone()
@@ -246,7 +284,18 @@ def api_bot_order():
 
 @bp.get('/api/bot/presets')
 def api_bot_presets():
-    """当前可用的预设打印服务清单（学生选一条来下单）。"""
+    """当前可用的预设打印服务清单（学生选一条来下单）。
+
+    **刻意不查身份**（P2-3）。项目文档写的是「帮助卡是唯一不查身份的例外」，
+    与这里不一致 —— 差别是有意的，理由如下：
+      · 这条清单是一份**价目化的服务单**（有描述、有定价、有绑定的档位），
+        和价目表 / 公告是同一种东西：贴在柜台上的公开信息，不含任何人的数据；
+      · 没注册的 QQ 问「打印服务」时，先被要求去注册、再看到清单，
+        顺序反了 —— 他得先知道有什么服务、多少钱，才谈得上要不要注册；
+      · 下**预设单**（POST /api/bot/order/preset）照旧要身份，公开的只是「看」这一步。
+    文档那句话以后要不要跟着改由业主定；代码这一侧保持公开，注释钉住原因，
+    免得下一次整理时被人「顺手补齐」成查身份，把这条路径又弄回原来的样子。
+    """
     return jsonify({'code': 0, 'msg': 'ok', **_presets_payload()})
 
 
@@ -324,6 +373,10 @@ def api_bot_print_options():
 
     一次全给，和网页端一样的理由：这两份清单是下单流程的两步，
     拆成两个请求只会多一次往返、多一种「一个到了一个没到」的中间态。
+
+    **不查身份**，理由同 api_bot_presets 的 docstring（P2-3）：这里的两个返回值
+    都是公开的价目信息（预设服务 + 价目表），不含任何账号数据；真正要身份的是
+    下单那一步。与文档「只有帮助卡不查身份」那句不一致，是有意的取舍。
     """
     with db_conn() as conn:
         presets = _active_presets(conn)
@@ -355,7 +408,13 @@ def api_bot_price_table():
 @bp.get('/api/bot/announcement')
 def api_bot_announcement():
     """当前生效的公告（没有就 announcement=null）—— 与网页端公告栏同一个口径：
-    只取 is_active=1 里最新的一条。"""
+    只取 is_active=1 里最新的一条。
+
+    **不查身份**，理由同 api_bot_presets 的 docstring（P2-3）：公告是写给全校看的
+    那张纸，未注册的 QQ 也该读得到 —— 它恰好还承担着「告诉他怎么注册」的作用。
+    真正该守的是**谁能改**公告（管理端），不是谁能看。与文档那句「只有帮助卡
+    不查身份」不一致，这是有意留下的公开口子。
+    """
     with db_conn() as conn:
         row = conn.execute('''
             SELECT id, content, datetime(update_time, 'localtime') AS update_time
@@ -415,6 +474,14 @@ def api_bot_order_withdraw():
     if error is not None:
         return error
     uid = g.user['id']
+    #    撤回是**真删数据**的接口，给它一把宽松的频率闸（10 次 / 分钟）：
+    #    正常学生一分钟顶多撤一两单，而脚本拿着一个 QQ 号刷的代价是库里留痕被灌满、
+    #    盘上的文件被反复删。阈值取得松是刻意的 —— 它挡的是刷量，不是手抖。
+    #    ⚠️ `hit_limit` 返回 True 表示**超过**了（写成 `if not` 会把第一次请求拦掉）。
+    if hit_limit('bot_withdraw:%s' % uid, 10, 60):
+        return rate_limited('bot_withdraw_rate_limited',
+                            '账号 %s 一分钟内提交超过 10 次撤回（QQ）' % g.user['nickname'],
+                            '操作太频繁了，稍等一会儿再试')
     # 用户面前只有一个标识：**单号**。`order_id` 作兼容保留（老消息里可能还有），
     # 但优先用单号 —— 它才是「以后所有操作都用它」的那个号。
     handle = str(data.get('handle') or '').strip()
@@ -444,29 +511,46 @@ def api_bot_order_withdraw():
             return jsonify({'code': 400, 'msg': '订单已经被接取，无法撤回'}), 400
         if row['status'] == ST_DONE:
             return jsonify({'code': 400, 'msg': '订单已完成，不能撤回'}), 400
+        #    文件清单必须在**删库之前**取出来（与网页端那条路同一个道理）：一单多文件时
+        #    只删 orders.file_path（= 第一份）的话，剩下几份永远没人认领、永远占着盘，
+        #    而这个学生的用量页会一直算着一个他早就不想要的数字。
+        #    ⚠️ 顺序（P2-1）：先取清单 → 再删 orders → 再删 order_files → 提交 → 最后删
+        #    盘上的文件。原先这段写在 DELETE 之后，只因 order_files 没有外键、
+        #    删 orders 又不会连带它才侥幸没出事；哪天有人给它补上 ON DELETE CASCADE，
+        #    清单就会在删完订单那一刻变成空列表 —— 文件从此删不掉，而且不报错。
+        file_paths = [entry['file_path'] for entry in
+                      files_for_orders(conn, [order_id]).get(order_id, [])
+                      if entry['file_path']]
+        if not file_paths and row['file_path']:
+            file_paths = [row['file_path']]   # 老库回填之前留下的行
         cursor = conn.execute(
             'DELETE FROM orders WHERE id = ? AND user_id = ? AND claimed_by IS NULL AND status <> ?',
             (order_id, uid, ST_DONE))
         if cursor.rowcount == 0:
             conn.rollback()
             return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败'}), 409
+        conn.execute('DELETE FROM order_files WHERE order_id = ?', (order_id,))
+        if file_paths:
+            note = ('，文件「%s」已一并删除' % row['filename']) if len(file_paths) == 1 \
+                else ('，%d 份文件已一并删除' % len(file_paths))
+        else:
+            note = '（预设服务，无文件）'
         log_event(order_id, ORDER_LOG_WITHDRAW,
-                  '本人撤回订单（QQ，单号 %s）%s'
-                  % (handle or '—', '，文件「%s」已一并删除' % row['filename']
-                     if row['filename'] else '（预设服务，无文件）'),
+                  '本人撤回订单（QQ，单号 %s）%s' % (handle or '—', note),
                   conn=conn)
         conn.commit()
 
     # 库里删干净了才动文件：反过来的话会出现「订单还在、文件没了」。
-    if row['file_path']:
+    for file_path in file_paths:
         try:
-            os.remove(row['file_path'])
+            os.remove(file_path)
         except OSError:
             logger.warning('bot 撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                           order_id, os.path.basename(row['file_path'] or ''))
-    logger.info('订单 #%s 被 %s 通过 QQ 撤回，文件=%s ip=%s',
+                           order_id, os.path.basename(file_path or ''))
+    logger.info('订单 #%s 被 %s 通过 QQ 撤回，文件=%s（%d 份） ip=%s',
                 order_id, g.user['nickname'],
-                os.path.basename(row['filename'] or '') or '（无文件）', client_ip())
+                os.path.basename(row['filename'] or '') or '（无文件）',
+                len(file_paths), client_ip())
     return jsonify({'code': 0, 'msg': '订单已撤回'})
 
 
@@ -541,9 +625,16 @@ def _tickets_payload(uid):
             ORDER BY t.update_time DESC, t.id DESC LIMIT 5
         ''', (uid,)).fetchall()
         if rows:
-            # 列表里就带着最新回复，用户看到了 —— 与网页端「点开即已读」同一个口径
-            conn.execute('UPDATE tickets SET user_read_time = CURRENT_TIMESTAMP '
-                         'WHERE user_id = ?', (uid,))
+            # 列表里就带着最新回复，用户看到了 —— 与网页端「点开即已读」同一个口径。
+            # ⚠️ 只标**这一次真的返回的那几条**（P1-2）：上面那句 LIMIT 5 之外还有
+            # 工单，按 user_id 全表更新会把用户根本没看过的那些也标成已读 ——
+            # 回复从此不再显示未读，而这件事不报错，只是「我明明有 8 个工单，
+            # 机器人只说 5 个，剩下 3 个的回复再也没提醒过」。
+            ticket_ids = [r['id'] for r in rows]
+            conn.execute(
+                'UPDATE tickets SET user_read_time = CURRENT_TIMESTAMP WHERE user_id = ? '
+                'AND id IN (%s)' % ','.join('?' * len(ticket_ids)),
+                (uid, *ticket_ids))
             conn.commit()
     return {'tickets': [{'ticket_id': r['id'], 'subject': r['subject'], 'status': r['status'],
                          'unread': r['unread'], 'msg_count': r['msg_count'],
@@ -557,6 +648,14 @@ def api_bot_ticket_reply():
     error = _identify(data.get('qq'))
     if error is not None:
         return error
+    #    工单回复是纯写入（每条都落一行 ticket_messages 并把会话顶上来），
+    #    一把 20 次 / 分钟的闸挡的是「脚本拿着一个 QQ 号刷回复」。
+    #    正常对话远到不了这个频率（一句话想两分钟的人有的是）。
+    #    ⚠️ `hit_limit` 返回 True 表示**超过**了，别写成 `if not`。
+    if hit_limit('bot_ticket_reply:%s' % g.user['id'], 20, 60):
+        return rate_limited('bot_ticket_reply_rate_limited',
+                            '账号 %s 一分钟内提交超过 20 次工单回复（QQ）'
+                            % g.user['nickname'], '回复太频繁了，稍等一会儿再发')
     ticket_id = data.get('ticket_id')
     body = (data.get('body') or '').strip()
     if isinstance(ticket_id, bool) or not isinstance(ticket_id, int) or ticket_id < 1:
@@ -747,6 +846,185 @@ def api_bot_order_file():
                     'pickup_code': pickup_code, 'est_price': est_price})
 
 
+# ---- 批量下单：先逐份上传、再一组一张单（2026-09-28）------------------------
+#
+# 为什么不把几份文件塞进一个 multipart 请求：Flask 的 MAX_CONTENT_LENGTH 卡的是
+# **整个请求体**（默认 50MB），三份 20MB 的讲义合在一起当场 413 —— 而用户
+# 没做错任何事，他只是想一次打三份材料。所以走网页端那套两段式：
+#   ① 一份文件一个请求（POST /api/bot/upload/prepare）→ 收进 .pending、换 token；
+#   ② 一组**同参数**的文件一个请求（POST /api/bot/order/prepared）→ 建一张订单。
+# 多出来的是几次跨洋往返（每次约 200ms），比让用户把文件重发一遍便宜得多。
+#
+# 这一批接口与网页端共用 routes/estimate.py 里的同一批函数（save_incoming_file /
+# store_pending_file / validate_order_groups / commit_prepared_group）——
+# 各写一遍的话，迟早出现「网页传的文件会搬出 .pending、机器人传的留在里面」，
+# 而后者要等 TTL 清理删掉文件才会暴露（那时订单还指着它）。
+
+
+@bp.post('/api/bot/upload/prepare')
+def api_bot_upload_prepare():
+    """把一份文件先传上来，**不下单**，换一个 file_token。"""
+    error = _identify(request.form.get('qq'))
+    if error is not None:
+        return error
+
+    if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
+        return rate_limited('bot_upload_prepare_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次上传'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '上传太频繁了，稍等一会儿再试')
+
+    file = request.files.get('file')
+    if file is None or not file.filename:
+        return jsonify({'code': 400, 'msg': '没有收到文件，直接把文件发给我（不要压缩包）'}), 400
+
+    # 落盘 + 文件本身的校验（白名单 / 空文件 / 内容嗅探 / 配额）与网页端
+    # 和单文件下单那条路完全共用，见 orders.save_incoming_file 的 docstring。
+    info, error_response = save_incoming_file(file)
+    if error_response is not None:
+        return error_response
+
+    try:
+        token = store_pending_file(g.user['id'], info['path'], info['ext'])
+    except OSError:
+        discard_upload_file(info['path'])
+        logger.exception('bot 预上传收进 .pending 失败：账号=%s 文件=%s',
+                         g.user['nickname'], info['name'])
+        return jsonify({'code': 500, 'msg': '文件没能存下来，请重新发一次'}), 500
+
+    pages, note = pages_for_pending(g.user['id'], token)
+    logger.info('bot 预上传完成：账号=%s 文件=%s 大小=%sKB 页数=%s ip=%s',
+                g.user['nickname'], info['name'], info['size'] // 1024,
+                pages if pages is not None else '（%s）' % note, client_ip())
+    return jsonify({
+        'code': 0,
+        'file_token': token,
+        'filename': info['name'],
+        'size': info['size'],
+        'pages': pages,
+        'pages_note': note,
+    })
+
+
+@bp.post('/api/bot/order/prepared')
+def api_bot_order_prepared():
+    """用**已经传上来**的文件建单。**一个 group = 一张订单 = 一个单号**。
+
+    v24 起组内每份文件可以带自己的档位 / 份数 / 单双面（`files[i]` 上的
+    `price_item_id / copies / duplex`，缺了落组级）。这里**刻意不做任何按参数
+    分组的事**：分组（`resolve_spec` 那一步）在 printbot 里，它决定「一批文件
+    该发几个 group」；服务端只按收到的 group 建单，收到的份数就是一张单的份数。
+    在服务端再拆一次的话，学生一次发五份就会拿到好几个单号 —— 而 v24 的全部
+    意义就是「一次提交只拿一个单号」。实际判据只有一处：routes/estimate.py 的
+    validate_order_groups。
+    """
+    data = request.get_json(silent=True) or {}
+    error = _identify(data.get('qq'))
+    if error is not None:
+        return error
+
+    # 与网页下单、单文件下单共用同一把频控计数器（分开计数 = 额度翻倍）。
+    if hit_limit('upload:%s' % g.user['id'], UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS):
+        return rate_limited('bot_batch_order_rate_limited',
+                            '账号 %s 在 %s 秒内提交超过 %s 次下单'
+                            % (g.user['nickname'], UPLOAD_WINDOW_SECONDS, UPLOAD_MAX_IN_WINDOW),
+                            '提交太频繁了，稍等一会儿再试')
+
+    groups = data.get('groups')
+    if not isinstance(groups, list) or not groups:
+        groups = [{
+            'files': data.get('files'),
+            'price_item_id': data.get('price_item_id'),
+            'copies': data.get('copies'),
+            'duplex': data.get('duplex'),
+            'remark': data.get('remark'),
+        }]
+    #    这里的口径是**组数**，不是文件数（P2-5）：一组 = 一张订单（同参数的文件
+    #    合并成一张单），组内可以有好几份文件。常量名里的 FILES 是历史命名 ——
+    #    它最初用来限「一批最多几份文件」，现在实际比较的是 len(groups)。
+    #    所以文案对学生说「张订单」是对的：他只知道发了几份文件、拿到几张单，
+    #    「组」是服务端的说法（见下面 validate_order_groups 失败时那句注释）。
+    #    行为不变，只把注释和文案统一到同一个口径上。
+    if len(groups) > BATCH_ORDER_MAX_FILES:
+        return jsonify({'code': 400, 'msg': '一次最多提交 %d 张订单' % BATCH_ORDER_MAX_FILES}), 400
+
+    prepared, error = validate_order_groups(g.user['id'], groups)
+    if error is not None:
+        #    机器人侧不带「第 N 组」那种前缀：这条消息最终会原样转给学生，
+        #    而对他来说「组」是不存在的概念（他只知道发了几份文件）。
+        return jsonify({'code': 400, 'msg': error[1]}), 400
+
+    orders = []
+    for index, group in enumerate(prepared):
+        try:
+            order_id, pickup_code, est_price = commit_prepared_group(
+                group['entries'], group['options'], ORDER_SOURCE_BOT)
+        except Exception:
+            logger.exception('bot 批量下单失败：下单人=%s 第 %s/%s 组 文件=%s ip=%s',
+                             g.user['nickname'], index + 1, len(prepared),
+                             '、'.join(entry['name'] for entry in group['entries']),
+                             client_ip())
+            return jsonify({
+                'code': 500,
+                #    已经建成的几单照实回给机器人：它要照着这几张单回执给学生。
+                # 说「整批失败」会让他把已经下过的文件再传一遍（下单是真实发生的），
+                # 说「全部成功」更是撒谎。
+                'msg': '第 %d 组没下成，前面 %d 单已经提交' % (index + 1, len(orders)),
+                'orders': orders,
+            }), 500
+        logger.info('新订单 #%s（QQ 批量·第 %s/%s 组）下单人=%s 文件=%s 单双面=%s 份数=%s '
+                    '价目项=%s 单号=%s ip=%s',
+                    order_id, index + 1, len(prepared), g.user['nickname'],
+                    '、'.join(entry['name'] for entry in group['entries']),
+                    group['options']['duplex'], group['options']['copies'],
+                    _group_item_log(group['entries']),
+                    pickup_code, client_ip())
+        orders.append({
+            'order_id': order_id,
+            'pickup_code': pickup_code,
+            'est_price': est_price,
+            'files': [entry['name'] for entry in group['entries']],
+            #    逐份档位不同时给 null（回执里退回显示文件名）——
+            #    与网页端同一条口径，见 routes/estimate._group_item_label。
+            'price_item_name': _group_item_label(group['entries']),
+            'copies': group['options']['copies'],
+            'duplex': group['options']['duplex'],
+        })
+
+    return jsonify({
+        'code': 0,
+        'msg': '下单成功' if len(orders) == 1 else '已提交 %d 张订单' % len(orders),
+        'orders': orders,
+        # 单组时额外给老形状的键：printbot 的旧版本只认它们（服务器先升级、
+        # 机器人后升级是可能的，反过来也在跑），少一个键它就报「未知原因」。
+        'order_id': orders[0]['order_id'],
+        'pickup_code': orders[0]['pickup_code'],
+        'est_price': orders[0]['est_price'],
+    })
+
+
+@bp.post('/api/bot/upload/discard')
+def api_bot_upload_discard():
+    """丢弃几份还没下单的预上传文件。
+
+    机器人批量上传是「一份一份传上来、最后一次性建单」，中途任何一份失败
+    （超了服务端的份数上限、网络断了）都必须能把已经传上来的收回去 ——
+    不收的话，那几份会一直占着「每账号最多几份」的额度，用户看到的是
+    「我什么都没下成，可它说我还有 5 份没下单」，而他在 QQ 里没有任何办法处理。
+    """
+    data = request.get_json(silent=True) or {}
+    error = _identify(data.get('qq'))
+    if error is not None:
+        return error
+    tokens = data.get('file_tokens')
+    if not isinstance(tokens, list):
+        tokens = [data.get('file_token')] if data.get('file_token') else []
+    removed = discard_prepared(g.user['id'], tokens)
+    logger.info('bot 丢弃预上传文件：账号=%s 请求 %s 份、实删 %s 份',
+                g.user['nickname'], len(tokens), removed)
+    return jsonify({'code': 0, 'msg': '已丢弃 %d 份未下单的文件' % removed, 'removed': removed})
+
+
 @bp.get('/api/bot/prefs')
 def api_bot_prefs():
     """读偏好（机器人「设置」命令用）。"""
@@ -769,6 +1047,14 @@ def api_bot_prefs_save():
     error = _identify(data.get('qq'))
     if error is not None:
         return error
+    #    设置页改一次偏好就是一次 UPSERT。30 次 / 分钟对学生来说等于无限
+    #    （「设置」「通知 开」「通知 关」来回点也不会到），但脚本能靠它把
+    #    user_prefs 刷成高频写入、顺带把库锁住。阈值刻意宽松。
+    #    ⚠️ `hit_limit` 返回 True 表示**超过**了，别写成 `if not`。
+    if hit_limit('bot_prefs:%s' % g.user['id'], 30, 60):
+        return rate_limited('bot_prefs_rate_limited',
+                            '账号 %s 一分钟内提交超过 30 次偏好修改（QQ）'
+                            % g.user['nickname'], '改得太频繁了，稍等一会儿再改')
     fields = data.get('prefs') or {}
     if not isinstance(fields, dict):
         return jsonify({'code': 400, 'msg': '偏好格式不对'}), 400
@@ -897,9 +1183,20 @@ def api_bot_events():
         return jsonify({'code': 400, 'msg': 'since 应为数字'}), 400
     since = max(0, since)
 
+    #    events 是机器人每轮都要调的那一个（追问、推送都靠它），所以闸放得很松：
+    #    60 次 / 分钟够机器人按秒级轮询。它挡的是「令牌被拿去高频轮询」这一种
+    #    —— 而这个接口是全组唯一跨用户取数的，被高频拉走的正是别人的取件码。
+    #    键用 IP 而不是账号：本接口**没有身份**（不带 qq，按令牌放行），
+    #    而机器人跑在另一台机器上，IP 就是它能被区分出来的那个粒度。
+    #    ⚠️ `hit_limit` 返回 True 表示**超过**了，别写成 `if not`。
+    if hit_limit('bot_events:%s' % client_ip(), 60, 60):
+        return rate_limited('bot_events_rate_limited',
+                            '同一来源一分钟内请求超过 60 次事件推送',
+                            '轮询太频繁了，稍等一会儿再试')
+
     with db_conn() as conn:
         cursor_row = conn.execute('SELECT COALESCE(MAX(id), 0) AS m FROM order_logs').fetchone()
-        cursor = cursor_row['m']
+        max_cursor = cursor_row['m']
         #    ⚠️ **必须带时间窗与条数上限**。这个接口是按「令牌」放行的、不带 qq 参数，
         #    一次调用会把**所有**用户的单号与 QQ 一起吐出来 —— 它是全组唯一跨用户取数
         #    的接口（推送本来就是一对多，没法按人收口）。`since=0` 再叠上没有时间窗，
@@ -922,6 +1219,17 @@ def api_bot_events():
         # 顺手把每个下单人的偏好取出来（同一连接，别为每一行再开一次库）
         prefs_by_user = {uid: prefs.get_prefs(uid, conn)
                          for uid in {r['user_id'] for r in rows}}
+
+    # ⚠️ 游标只在**这一页没被截断**时才推到 MAX(id)（P1-1）。
+    #    待推的留痕超过 BOT_EVENTS_LIMIT 条时，被 LIMIT 截掉的那些 id 全都小于 MAX，
+    #    下一轮 `l.id > since` 不成立 —— 它们**永远不会再出现在结果里**，
+    #    学生就这样永久收不到自己的取件单号（不报错、日志里也没有任何异常）。
+    #    截断时把游标推到最后一条（本页最小留痕 id）之前：下一轮从它之后接着取，
+    #    剩下的排后面继续发。重复的那一两条例由机器人侧的 notified 集合去重。
+    if len(rows) < BOT_EVENTS_LIMIT:
+        cursor = max_cursor
+    else:
+        cursor = rows[-1]['first_log_id'] if rows else max_cursor
 
     events = []
     blocked_from = None
@@ -947,5 +1255,7 @@ def api_bot_events():
             'title': title[:60],
         })
     if blocked_from is not None:
+        # 两个「往后退」的理由可能同时出现（被截断 + 有事件被偏好挡下），
+        # 取**较小**的那个：游标只许往后退，往前进一格就会永久丢掉一条事件。
         cursor = min(cursor, blocked_from - 1)
     return jsonify({'code': 0, 'msg': 'ok', 'events': events, 'cursor': cursor})

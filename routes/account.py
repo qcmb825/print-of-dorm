@@ -581,7 +581,12 @@ def api_me_change_password():
         if row is None:
             return jsonify({'code': 404, 'msg': '账号不存在'}), 404
         if not verify_password(row['password_hash'], current):
-            return jsonify({'code': 401, 'msg': '当前密码错误'}), 401
+            # 这里用 400，**不用 401**：前端 client.ts 把 401 当作「会话失效」，
+            # 会立刻清本地登录态并跳登录页 —— 用户只是打错一次当前密码，
+            # 却被踢下线，还得重新登录才能再试。
+            # 全项目的口径：401 只留给「会话失效 / 未登录」，业务校验失败一律 400/403。
+            # 真正的登录失败（登录接口那一处）仍是 401，因为那时本来就没有会话可保。
+            return jsonify({'code': 400, 'msg': '当前密码错误'}), 400
         # 更新密码并把其它设备的 session_epoch +1；事务里做以防竞态
         password_hash, password_enc = make_password_records(newpw)
         conn.execute('UPDATE users SET password_hash = ?, password_enc = ?, session_epoch = session_epoch + 1 WHERE id = ?', (password_hash, password_enc, uid))

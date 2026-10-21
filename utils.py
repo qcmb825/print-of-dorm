@@ -1,6 +1,7 @@
 """utils.py —— 上传/单号/分页/注册校验等通用辅助函数。"""
 
 import re
+import unicodedata
 import uuid
 import zipfile
 import secrets
@@ -18,6 +19,7 @@ from config import (
     EMAIL_RE,
     NICKNAME_RE,
     OTHER_CONTACT_TYPES,
+    PASSWORD_RESET_CODE_DIGITS,
     PICKUP_CODE_COOLDOWN,
     PICKUP_CODE_DIGITS,
     PRICE_MAX_YUAN,
@@ -197,6 +199,52 @@ def display_name(nickname, status):
 
 
 
+def _is_extending(ch):
+    """判断这个码点是不是「贴在上一簇身上」的（组合符号 / 变体选择符 / ZWJ / 肤色 / 标签）。
+
+    完整实现要一整份 Unicode UAX #29 表，这里只要做到「不把人眼看到的一个字符切成两半」：
+    按码点切会产出的坏结果是排行榜上出现半个 📄、一个孤立的声调符号（é 的 ́），
+    或者一个「只有肤色、没有脸」的方块 —— 打码本来是为了别让人一眼认出是谁，
+    切坏了却会变成一眼看出「这行数据是坏的」。
+    """
+    code = ord(ch)
+    if unicodedata.combining(ch):
+        return True
+    if ch == '\u200d':                              # ZWJ：把前后两个 emoji 粘成一个
+        return True
+    if 0xfe00 <= code <= 0xfe0f:                    # 变体选择符（emoji 呈现方式）
+        return True
+    if 0xe0100 <= code <= 0xe01ef:                  # 变体选择符补充区
+        return True
+    if 0x1f3fb <= code <= 0x1f3ff:                  # 肤色修饰符
+        return True
+    if 0xe0020 <= code <= 0xe007f:                  # 标签字符（英格兰/苏格兰旗那类）
+        return True
+    return False
+
+
+def _is_regional(ch):
+    """地区指示符（🇨🇳 = 两个这样的码点拼出来，单独一个不成旗）。"""
+    return 0x1f1e6 <= ord(ch) <= 0x1f1ff
+
+
+def _grapheme_clusters(text):
+    """把字符串切成「人眼看到的一个字符」的近似单元（不是码点）。"""
+    clusters = []
+    for ch in text:
+        if clusters:
+            last = clusters[-1]
+            if _is_extending(ch) or last.endswith('\u200d'):
+                clusters[-1] = last + ch
+                continue
+            if _is_regional(ch) and len(last) == 1 and _is_regional(last):
+                clusters[-1] = last + ch
+                continue
+        clusters.append(ch)
+    return clusters
+
+
+
 def mask_nickname(nickname):
     """榜单展示用的打码昵称：首尾各留一个字，中间一律换成 *。
 
@@ -210,14 +258,21 @@ def mask_nickname(nickname):
 
     两个字的名字只遮后一个（「小明」→「小*」）。
     只留首字和留首尾的暴露程度是一样的，而「**」看着像系统出错了。
+
+    切分用 _grapheme_clusters 而不是直接下标：`len()` / `s[0]` 数的是**码点**，
+    而 emoji（📄 后面跟变体选择符、👨‍👩‍👧 是三个码点加两个 ZWJ）、
+    组合字符（é = e + ́）、国旗（🇨🇳 = 两个地区指示符）一个「字」都占多个码点。
+    按码点切的结果是把一个 emoji 劈成两半：那半个字符在页面上是方块或空白，
+    于是「打码」变成了「这行数据看起来是坏的」。
     """
     if not nickname:
         return nickname
-    if len(nickname) <= 1:
+    clusters = _grapheme_clusters(nickname)
+    if len(clusters) <= 1:
         return '*'
-    if len(nickname) == 2:
-        return nickname[0] + '*'
-    return nickname[0] + '*' * (len(nickname) - 2) + nickname[-1]
+    if len(clusters) == 2:
+        return clusters[0] + '*'
+    return clusters[0] + '*' * (len(clusters) - 2) + clusters[-1]
 
 
 
@@ -342,6 +397,53 @@ def parse_copies(value):
 
 
 
+def parse_bool_flag(value):
+    """把「启用 / 停用」这类开关解析成 True / False，认不出来返回 None。
+
+    为什么不直接 bool(value)：`bool('false')` 是 **True**。前端发的是真正的
+    boolean，所以正常路径踩不到；但脚本或第三方客户端传字符串 "false" 时，
+    「停用」会被静默执行成「启用」，而且一个错都不报 —— 这类「动作反了但不报错」
+    比报错难查得多（公告被停用却还在首页飘着，没人会想到是解析层干的）。
+    取值白名单与 pricing.save_rules 里那段字符串归一化保持一致，别各写一套。
+
+    认不出来就返回 None，由调用方回 400：猜一个意思，不如让调用方改请求。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        # bool 已在上一行挡掉，走到这里才是真整数。只认 0 / 1，
+        # 2 或 -1 这种既不是真也不是假，当非法处理。
+        return bool(value) if value in (0, 1) else None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ('1', 'true', 'on', 'yes', '开'):
+            return True
+        if text in ('0', 'false', 'off', 'no', '关'):
+            return False
+    return None
+
+
+
+def _text(data, key):
+    """从请求体里取一个**字符串**字段；不是字符串就当「没填」（空串）。
+
+    为什么要这一层：`(data.get('x') or '').strip()` 在值不是字符串时会炸 ——
+    `{"nickname": 12345}` 走的是 `int.strip()`，AttributeError 一路冒到 Flask，
+    用户拿到的是 500。而注册、身份审核申请都是**公开**接口，匿名就能打，
+    于是「传个数字当昵称」成了一个可远程触发的 500，日志里还留一条吓人的 traceback。
+    非字符串一律按「没填」处理，让调用方既有的格式校验回 400（这才是它该有的样子）。
+
+    data 也做了 dict 防御：request.get_json() 对 `[1,2]` 这种请求体会返回 list，
+    直接 .get 同样是 AttributeError。
+    """
+    if not isinstance(data, dict):
+        return ''
+    value = data.get(key)
+    # bool 天然不是 str，不用单列；数字、列表、dict 同理都落到空串。
+    return value.strip() if isinstance(value, str) else ''
+
+
+
 def validate_contact(data):
     """校验「联系方式」这一组字段，返回 (清洗后的字段, 错误信息)。
 
@@ -357,8 +459,8 @@ def validate_contact(data):
 
     联系方式在申请时是必填的：它**是唯一能把线上申请和线下真人对上号的东西**。
     """
-    contact_type = (data.get('contact_type') or '').strip().lower()
-    contact = (data.get('contact') or '').strip()
+    contact_type = _text(data, 'contact_type').lower()
+    contact = _text(data, 'contact')
     if contact_type not in CONTACT_TYPES:
         return None, '请选择联系方式类型（微信 / QQ / 邮箱）'
     if not contact:
@@ -389,9 +491,9 @@ def validate_other_contact(data):
     类型里刻意不含 qq：那一栏在别处，两处都能填 QQ 的话，
     两个值不一样时谁也说不清取件邮件该发给哪一个。
     """
-    raw_type = data.get('contact_type')
+    raw_type = data.get('contact_type') if isinstance(data, dict) else None
     contact_type = (raw_type or '').strip().lower() if isinstance(raw_type, str) else ''
-    raw_contact = data.get('contact')
+    raw_contact = data.get('contact') if isinstance(data, dict) else None
     contact = (raw_contact or '').strip() if isinstance(raw_contact, str) else ''
 
     if not contact_type and not contact:
@@ -434,7 +536,7 @@ def validate_qq(data):
     登录后的补填提示也是可关闭的 —— 也就是说「允许它空着存在」
     已经在存储层和交互层各表达了一次，这里再开一道口子纯属冗余。
     """
-    qq = (data.get('qq') or '').strip()
+    qq = _text(data, 'qq')
     if not qq:
         return None, '请填写 QQ 号（用来给你发送取件邮件提醒）'
     if not QQ_RE.match(qq):
@@ -453,10 +555,10 @@ def validate_identity_fields(data):
 
     返回 (清洗后的字典, 错误信息)，失败时字典为 None。
     """
-    nickname = (data.get('nickname') or '').strip()
-    real_name = (data.get('real_name') or '').strip()
-    student_id = (data.get('student_id') or '').strip()
-    dorm = (data.get('dorm') or '').strip()
+    nickname = _text(data, 'nickname')
+    real_name = _text(data, 'real_name')
+    student_id = _text(data, 'student_id')
+    dorm = _text(data, 'dorm')
 
     if not NICKNAME_RE.match(nickname):
         return None, '昵称需为 2-20 位中文、字母、数字或下划线'
@@ -512,8 +614,10 @@ def validate_registration(data):
     fields, error = validate_identity_fields(data)
     if fields is None:
         return None, error
-    password = data.get('password') or ''
-    confirm = data.get('confirm_password') or ''
+    # 密码同样走 _text 的收口：`data.get('password') or ''` 在传数字时会得到一个 int，
+    # 后面 password_error 里 len(12345) 直接 TypeError -> 500（注册是公开接口）。
+    password = _text(data, 'password')
+    confirm = _text(data, 'confirm_password')
     error = password_error(password, fields['nickname'], fields['student_id'])
     if error:
         return None, error
@@ -533,9 +637,9 @@ def validate_audit_request(data):
     所以**密码不在其中**：申请不等于注册，不能让一个还没通过审核的人
     提前把密码交给系统存着（存的东西越多，出了泄露事就越大）。
     """
-    student_id = (data.get('student_id') or '').strip()
-    real_name = (data.get('real_name') or '').strip()
-    note = (data.get('note') or '').strip()
+    student_id = _text(data, 'student_id')
+    real_name = _text(data, 'real_name')
+    note = _text(data, 'note')
 
     if not STUDENT_ID_RE.match(student_id):
         return None, '学号需为 4-20 位数字'
@@ -557,3 +661,30 @@ def validate_audit_request(data):
         'contact': contact_fields['contact'],
         'note': note,
     }, None
+
+
+
+def password_reset_error(student_id, code=None, password=None):
+    """密码找回两个接口共用的字段校验（routes/password_reset.py）：不合规返回提示，合规返回 None。
+
+    为什么三样东西放在一个函数里、还用 None 表示「这一项这次不校验」：
+    发码那一步只上传学号（code / password 压根没有），验码那一步三样都有。
+    两处各写一套判断，迟早出现「发码放行了、验码又拦下来」这种自相矛盾，
+    而用户看到的是「刚才明明说验证码已经发出去了」。
+
+    验证码必须是**定长 ASCII 数字**，不能只用 isdigit()：
+    `'１２３４５６'.isdigit()` 是 True（全角），`'²'.isdigit()` 也是 True。
+    它们走到 check_password_hash 只会得到一句「验证码不正确」，
+    而屏幕上那串看着和半角数字一模一样 —— 用户改到天亮也改不对。
+    """
+    if not STUDENT_ID_RE.match(student_id or ''):
+        return '学号格式不正确'
+    if code is not None:
+        if not (len(code) == PASSWORD_RESET_CODE_DIGITS and code.isascii() and code.isdigit()):
+            return '验证码格式不正确'
+    if password is not None:
+        # 昵称此刻还拿不到（要查库），所以这一遍只借 password_error 判
+        # 「长度 / 字母数字 / 不能与学号相同」；路由取到库里的昵称后会再补一次
+        # 同样的调用，把「不能与昵称相同」那条也落实 —— 规则只有一处，不另写一遍。
+        return password_error(password, '', student_id)
+    return None

@@ -37,6 +37,14 @@ const page = ref(1)
 const size = ref(30)
 const total = ref(0)
 
+/** 一次筛选 = 一个序号，列表与统计**共用**它。
+ *
+ *  这两份数据是一起请求的，但连点两个筛选项时会有两轮请求同时在飞；
+ *  先发的那一轮若后到，就会出现「明细是 A 条件、统计是 B 条件」——
+ *  两边都看着像正常数据，谁也不会报错，只有人工核对才发现对不上。
+ *  序号不是最新就整轮丢掉（loading 与错误提示一起丢，口径同 OrdersView.load）。 */
+let requestSeq = 0
+
 /** 本地日期（YYYY-MM-DD）。用本地时区而不是 toISOString：后者是 UTC，
  *  在东八区会让「今天」在晚上 8 点之后变成「明天」，筛出来的结果莫名其妙少一天。 */
 function localDate(ts: number): string {
@@ -58,6 +66,7 @@ function queryParams(): Record<string, string | number> {
 }
 
 async function load(): Promise<void> {
+  const mySeq = ++requestSeq
   loading.value = true
   try {
     const params = queryParams()
@@ -65,13 +74,16 @@ async function load(): Promise<void> {
       historyApi.list({ ...params, page: page.value, size: size.value }),
       historyApi.stats(params),
     ])
+    // 列表与统计一起收、一起丢：只写回其中一份就正好是那个「条件不一致」的状态。
+    if (mySeq !== requestSeq) return
     logs.value = list.logs
     total.value = list.total
     stats.value = overview
   } catch (error) {
-    notify.error(error instanceof ApiError ? error.message : '历史记录读取失败 · 稍后重试')
+    if (mySeq === requestSeq)
+      notify.error(error instanceof ApiError ? error.message : '历史记录读取失败 · 稍后重试')
   } finally {
-    loading.value = false
+    if (mySeq === requestSeq) loading.value = false
   }
 }
 

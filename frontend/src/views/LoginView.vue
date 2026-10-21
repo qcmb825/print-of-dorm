@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 登录 / 注册。同一个页面用标签切换，登录成功按角色分流。 */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ArrowRight, CircleAlert, CircleCheck, Loader2, Printer } from '@lucide/vue'
 import {
   NButton,
@@ -13,10 +13,12 @@ import {
   useMessage,
   type FormInst,
   type FormRules,
+  type InputInst,
 } from 'naive-ui'
 import { useRoute, useRouter } from 'vue-router'
 import AuditRequestDialog from '@/components/AuditRequestDialog.vue'
 import BlueprintSheet from '@/components/BlueprintSheet.vue'
+import ForgotPasswordDialog from '@/components/ForgotPasswordDialog.vue'
 import { ApiError } from '@/api/client'
 import BotHintCard from '@/components/BotHintCard.vue'
 import { showReceipt } from '@/composables/transition-receipt'
@@ -53,6 +55,12 @@ const online = ref<boolean | null>(null)
 
 const loginForm = reactive({ identifier: '', password: '' })
 const loginRef = ref<FormInst | null>(null)
+/** 登录密码框。密码重置成功后把焦点送到这里 —— 用户下一步就是拿新密码登录。 */
+const passwordInput = ref<InputInst | null>(null)
+
+/** 找回密码弹窗。它是「登录失败之后的补救路径」：不占页签（第三个页签会让每天正常登录的人
+ *  多做一次选择），只从密码框下面那一行小字进去。 */
+const forgotOpen = ref(false)
 
 const registerForm = reactive({
   nickname: '',
@@ -205,6 +213,10 @@ function landingPath(): string {
 }
 
 async function submitLogin(): Promise<void> {
+  // 重入保护。这个函数有三个触发点：表单 submit、密码框 keydown.enter、按钮 click ——
+  // 在密码框里敲回车会同时走前两条，于是同一份凭据连发两次登录请求
+  // （第二次带着第一次刚换掉的会话，用户看到的是「登录成功、紧接着又被打回去」）。
+  if (submitting.value) return
   try {
     await loginRef.value?.validate()
   } catch {
@@ -229,6 +241,24 @@ async function submitLogin(): Promise<void> {
   } finally {
     submitting.value = false
   }
+}
+
+/** 密码重置成功之后只做四件事：关弹窗、切回登录页签、把学号填进登录框、说一句怎么走。
+ *
+ *  ⚠️ **绝不自动登录。** 服务端在重置密码时已经让这个账号的所有会话失效 —— 包括当前这个
+ *  浏览器的 Cookie，它现在是一张废票。所以「重置成功」不等于「已登录」，
+ *  唯一可信的状态是用新密码再走一次 /api/login。若这里偷偷调 auth.login，
+ *  用户看到的会是「密码改好了，人却被踢回登录页」，还以为是重置把他搞坏了。
+ *
+ *  清掉密码框是有意的：那一格里是**旧**密码，留着它，用户一点「登录」就又失败一次。 */
+async function onPasswordReset(studentId: string): Promise<void> {
+  forgotOpen.value = false
+  tab.value = 'login'
+  loginForm.identifier = studentId
+  loginForm.password = ''
+  message.success('密码已重置，请用新密码登录')
+  await nextTick()
+  passwordInput.value?.focus()
 }
 
 async function submitRegister(): Promise<void> {
@@ -478,6 +508,7 @@ onMounted(async () => {
               </NFormItem>
               <NFormItem label="密码" path="password">
                 <NInput
+                  ref="passwordInput"
                   v-model:value="loginForm.password"
                   type="password"
                   show-password-on="click"
@@ -486,6 +517,20 @@ onMounted(async () => {
                   @keydown.enter="submitLogin"
                 />
               </NFormItem>
+              <!-- 「忘记密码」贴着密码框下方、右对齐、小字：
+                   它属于**密码这一栏的补救路径**，所以物理上就挨着密码框；
+                   放到「登录」按钮下面会和页脚那条「名单外学号 · 申请人工审核」并列成两个页脚选项，
+                   还会把视线从主按钮上拽走。右对齐是为了让「输入框 → 主按钮」这条竖线不被打断。
+                   NFormItem 自带下边距，-mt-2 把这条小字往上收一点，免得它悬在两栏中间。 -->
+              <div class="-mt-2 mb-2 flex justify-end">
+                <button
+                  type="button"
+                  class="text-xs text-ink-3 underline decoration-dotted underline-offset-2 hover:text-ink-2"
+                  @click="forgotOpen = true"
+                >
+                  忘记密码？
+                </button>
+              </div>
               <NButton
                 type="primary"
                 block
@@ -642,6 +687,14 @@ onMounted(async () => {
   </div>
 
   <AuditRequestDialog v-model:show="auditOpen" :prefill="auditPrefill" />
+
+  <!-- 找回密码：两步（学号 → 验证码 + 新密码）。把登录框里已填的学号带进去 ——
+       会点这个入口的人，通常已经先在学号栏里输好了。成功回调用的是 onPasswordReset。 -->
+  <ForgotPasswordDialog
+    v-model:show="forgotOpen"
+    :prefill="loginForm.identifier"
+    @success="onPasswordReset"
+  />
 
   <!-- 登录页也放一份，但 **guest**：这里没有账号可记，关掉只对本次会话有效
        （注册页与它同在一屏）。引导的目的正是把还没用机器人下单的人拉过去，

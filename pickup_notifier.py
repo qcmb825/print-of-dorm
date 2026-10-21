@@ -56,6 +56,13 @@ _started = False
 # 发信失败后的退避截止时刻（time.time()）。None 表示不处于退避中。
 _next_retry_at = None
 
+# 一轮最多处理多少单（P1-5）。config 里没有专门给取件提醒的数量上限
+# （PICKUP_NOTIFY_* 那组只有开关 / 间隔 / 退避 / 时间窗），所以按任务的兜底值取 100。
+# 它管的是「停机几天后一轮捞太多」：这一路是**一单一封**，积压 300 笔就是 300 次
+# SMTP 往返，能把这条线程占住几分钟。剩下的下一轮继续（SQL 里有时间窗兜着，
+# 所以积压量本身也是有界的）。
+PICKUP_NOTIFY_MAX_ITEMS = 100
+
 
 def _pending_orders(conn):
     """找出「已经可取件、但还没通知过学生」的订单。
@@ -78,6 +85,11 @@ def _pending_orders(conn):
     改状态那一刻，而改状态会更新 update_time。老订单这一列可能是 NULL，
     所以兜回 create_time —— 用 COALESCE 而不是 `update_time >= ...`，
     后者在 NULL 上恒为假，会让所有老单静默地永远不被通知。
+
+    LIMIT 是第二道闸（P1-5）：服务停几天再起来时，时间窗里可能积着几百笔
+    「可取件」的单，而这一路是**一单一封** —— 一轮全捞就是几百次 SMTP 往返。
+    **按 id 升序取最老的 N 笔**（最老的那批学生等得最久），剩下的下一轮继续；
+    所以 ORDER BY o.id 不能改，换了顺序被跳过的那批可能永远轮不到。
     """
     return conn.execute('''
         SELECT o.id, o.pickup_code, o.filename, o.preset_content, o.copies,
@@ -93,7 +105,9 @@ def _pending_orders(conn):
           AND o.ready_notify_time IS NULL
           AND COALESCE(o.update_time, o.create_time) >= datetime('now', ?)
         ORDER BY o.id
-    ''', (ST_READY, '-%d hours' % PICKUP_NOTIFY_MAX_AGE_HOURS)).fetchall()
+        LIMIT ?
+    ''', (ST_READY, '-%d hours' % PICKUP_NOTIFY_MAX_AGE_HOURS,
+          PICKUP_NOTIFY_MAX_ITEMS)).fetchall()
 
 
 def _claim(conn, order_id):
@@ -236,8 +250,19 @@ def _notify_claimers(conn, groups):
         #    代价是文案要说清楚：设置页那个「邮件提醒」只管**你自己的取件提醒**
         #    （见 SettingsView 的说明与 prefs.describe）。
         recipients = _claimer_recipients(conn, claimer_id, len(rows))
-        if send_mail(compose_manual_subject(len(rows)), compose_manual_body(rows, len(rows)),
-                     recipients, label='需人工联系提醒'):
+        try:
+            delivered = send_mail(compose_manual_subject(len(rows)),
+                                  compose_manual_body(rows, len(rows)),
+                                  recipients, label='需人工联系提醒')
+        except (ValueError, UnicodeError) as exc:
+            # 组信这一步抛出来的（主题/正文里带换行、控制字符时 EmailMessage 会报
+            # ValueError），mail/sender.py 只兜 SMTPException / OSError / SSLError。
+            # 这里必须自己接住：异常一旦冒泡出调用方，那批单的「已通知」凭证
+            # 已经占住了、_release 走不到 —— 学生与接单人会**永久**收不到提醒。
+            logger.error('取件提醒：组「需人工联系」汇总信时出错（%s），'
+                         '这一组撤标记下一轮重试', exc.__class__.__name__)
+            delivered = False
+        if delivered:
             continue
         failed.extend(order['id'] for order in orders)
     return failed
@@ -317,7 +342,22 @@ def scan_once():
                 failed.append(order['id'])
 
         if manual:
-            failed.extend(_notify_claimers(conn, manual))
+            # ⚠️ 这一步也必须包在 try 里（P0-2）。它原先露在 for 循环的 try 之外，
+            # 而 `conn.commit()` 已经执行过 —— `_notify_claimers` 内部的
+            # sqlite3.Error（读接单人联系方式、读收款码）或者 send_mail 没兜住的异常
+            # （ValueError / UnicodeError，见 mail/sender.py 只捕三类）一旦冒泡出
+            # scan_once，下面 `_release(failed)` 就永远走不到：这批学生的
+            # `ready_notify_time` 被占着，以后每轮扫描都不会再选中它们 ——
+            # **永久收不到提醒，且没有任何日志会提示**。
+            # 异常时把这批订单全部记进 failed，走上层「撤标记 + 退避」那条正路。
+            try:
+                failed.extend(_notify_claimers(conn, manual))
+            except Exception:
+                logger.exception('取件提醒：给接单人发「需人工联系」汇总时出错，'
+                                 '这批订单撤回标记下一轮重试（共 %d 笔）',
+                                 sum(len(orders) for orders in manual.values()))
+                for orders in manual.values():
+                    failed.extend(order['id'] for order in orders)
 
     if failed:
         _release(failed)

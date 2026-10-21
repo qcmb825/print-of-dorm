@@ -53,8 +53,18 @@ export const ORDER_SOURCE_LABELS: Record<OrderSource, string> = {
 export type ColorType = 'black' | 'color'
 export type Duplex = 'single' | 'double'
 
+/** 订单级的单双面：一单里几份文件不一样时是 `'mixed'`。
+ *
+ *  只有 `orders.duplex` 会用这个值（服务端把混合的单标成 mixed，见
+ *  `config.DUPLEX_MIXED`）。**每份文件自己的 duplex 只会是 single/double** ——
+ *  单份文件不存在「混合」这回事，`OrderFile.duplex` 用的仍然是 `Duplex`。
+ *
+ *  展示层见到 mixed 就把文案换成「混合」，别拿它去查单双面的价格或参数映射。
+ */
+export type OrderDuplex = Duplex | 'mixed'
+
 export const COLOR_LABELS: Record<ColorType, string> = { black: '黑白', color: '彩色' }
-export const DUPLEX_LABELS: Record<Duplex, string> = { single: '单面', double: '双面' }
+export const DUPLEX_LABELS: Record<OrderDuplex, string> = { single: '单面', double: '双面', mixed: '混合' }
 
 export type ContactType = 'wechat' | 'qq' | 'email'
 
@@ -260,7 +270,7 @@ export interface Order {
   id: number
   filename: string
   color_type: ColorType | null
-  duplex: Duplex | null
+  duplex: OrderDuplex | null
   remark: string | null
   status: OrderStatus
   pickup_code: string | null
@@ -352,6 +362,53 @@ export interface Order {
    *  （那是一份花名册，不是柜台核对）。 */
   owner_real_name?: string | null
   owner_student_id?: string | null
+
+  /** 这一单里的文件清单（一单可以有几份 —— 批量打印，2026-09-28 起）。
+   *
+   *  **服务端不回磁盘路径**（与详情页同一条纪律），只给名字、大小、页数。
+   *  一份文件一张单是它的特例（数组里就一个元素），所以渲染时要按
+   *  「有几份」分两种样子，不能一律当成「文件名」用。
+   *  上面那个 `filename` 在多文件时是「第一份 等 N 份文件」那句摘要，
+   *  仍然给着 —— 邮件、数据卡、老书签都在读它。 */
+  files?: OrderFile[]
+  /** 文件份数（= files.length）。列表里不逐份展开时用它显示「3 份」。
+   *  单独给一个字段，是为了让界面不用先判 files 存不存在。 */
+  file_count?: number
+}
+
+/** 订单里的一份文件。 */
+export interface OrderFile {
+  id: number
+  filename: string
+  /** 下单时记下的大小（字节）。老库回填的行没有这个值，服务端会拿磁盘上的
+   *  真实大小兜底；两者都拿不到时是 null。 */
+  size: number | null
+  /** 这一份自己的页数。null = 没数出来（扫描件、加密、太大没扫）。 */
+  pages?: number | null
+  /** v24：这一份自己的打印参数快照。
+   *
+   *  **null 表示「沿用订单级的值」**（v24 之前的老单、以及整单一套参数的新单
+   *  都会是 null），不是「没选」。展示时的读法是：
+   *  先用本行的值，为空再看订单上的 color_type / duplex / copies /
+   *  price_item_name / paper_name。
+   *
+   *  存快照而不是只存 id：三个月后管理员改了价目表，这一单当时按什么纸、
+   *  什么名目算的钱不能跟着变。 */
+  color_type?: ColorType | null
+  duplex?: Duplex | null
+  copies?: number | null
+  price_item_id?: number | null
+  price_item_name?: string | null
+  paper_name?: string | null
+  paper_remark?: string | null
+}
+
+/** 详情页的一份文件：在 OrderFile 之上多一个「还在不在盘上」。
+ *
+ *  按份给这个标志是有意的：管理员要能看出「3 份里有 1 份丢了」和
+ *  「文件全没了」是两件不同的事 —— 只给一个总开关就分不出来。 */
+export interface OrderDetailFile extends OrderFile {
+  exists: boolean
 }
 
 export interface OrderListResponse extends ApiEnvelope {
@@ -442,7 +499,7 @@ export interface OrderDetail {
   id: number
   filename: string
   color_type: ColorType | null
-  duplex: Duplex | null
+  duplex: OrderDuplex | null
   remark: string | null
   status: OrderStatus
   pickup_code: string | null
@@ -473,13 +530,17 @@ export interface OrderDetail {
   update_time: string | null
   claim_time: string | null
   price_time: string | null
-  /** 上传时的大小（字节）；文件已被清掉时是 null */
+  /** 上传时的大小（字节）；文件已被清掉时是 null。**多文件单这里是各份之和** ——
+   *  逐份的大小看 files。 */
   file_size: number | null
   /** 文件还在不在磁盘上。false 时界面上要给个明确提示 ——
    *  「订单还在、文件没了」是运维要知道的事，不该只是一个失效的下载按钮。
    *  预设单没有文件，这里**也是 false**，但那是正常情况，不是丢文件：
-   *  要区分的话看 filename / preset_content，别把预设单渲染成「文件丢了」。 */
+   *  要区分的话看 filename / preset_content，别把预设单渲染成「文件丢了」。
+   *  多文件单这里是「**至少还有一份在**」—— 哪一份丢了逐份看 files。 */
   file_exists: boolean
+  /** 这一单的文件清单，**逐份带在不在盘上**（一单可以有几份，2026-09-28 起）。 */
+  files: OrderDetailFile[]
   /** 用的哪条预设；null = 传文件的单 */
   preset_id: number | null
   /** 下单那一刻预设的原文 */
@@ -582,6 +643,9 @@ export interface PrintOptionsResponse extends ApiEnvelope {
   paper_types: PaperType[]
   /** 价目表（启用中的）—— 下单时选的就是它 */
   price_items: PriceItem[]
+  /** 一次最多能选几份文件（批量打印）。**由服务端给**，前端不写死这个数：
+   *  两边各写一个的话，学生会选满 10 份、传完，在最后一步才被拒。 */
+  batch_max_files: number
 }
 
 /** 管理端列表：比学生端多停用项，以及各自的用量。 */
@@ -738,6 +802,26 @@ export interface UploadResponse extends ApiEnvelope {
    *  四个下单口（直传 / 分片 / 预设 / 预上传）都带这个键。
    *  下单成功那一屏要立刻把「预估 ¥x.xx」告诉学生，不该再让他去打一次列表接口。 */
   est_price: number | null
+  /** **批量下单的结果：一次提交可能建出几张订单**（2026-09-28 起）。
+   *
+   *  网页端「每份文件单独设选项」是按参数自动分组的：同参数的合成一张单、
+   *  不同的分开，所以一次提交回来的是**一组订单**。
+   *  上面那三个字段是兼容老形状的（单组时等于 orders[0]）——
+   *  新的界面一律读 orders，别只读那三个键（多组时它们只代表第一组）。 */
+  orders?: SubmittedOrder[]
+}
+
+/** 批量提交里的一张订单（服务端建好之后回执的那一份）。 */
+export interface SubmittedOrder {
+  order_id: number
+  pickup_code: string
+  est_price: number | null
+  /** 这一张单里挂着哪几份文件（文件名，按提交顺序）。 */
+  files: string[]
+  /** 这一张单的档位名快照（「A4 70g · 黑白」）；没选档时是 null。 */
+  price_item_name: string | null
+  copies: number | null
+  duplex: OrderDuplex | null
 }
 
 /** 预上传的结果：文件已经落在服务端了，但**还没有订单**。
@@ -758,26 +842,86 @@ export interface UploadPrepareResponse extends ApiEnvelope {
 }
 
 /** 实时试算的响应。**price 不是最终价** —— 最终金额永远由管理员核定，
- *  这里只是「照现在的选择大概多少钱」。 */
+ *  这里只是「照现在的选择大概多少钱」。
+ *
+ *  v24 起支持「一次算多份、每份参数不同」：请求带 `files` 时，`files` 里是逐份的
+ *  明细与小计，顶层的 `price` / `pages` 是**整单合计**。老请求（`file_tokens` +
+ *  组级参数）照旧可用，那时 `files` 可能只有一条或为空。 */
 export interface EstimateResponse extends ApiEnvelope {
-  /** 预估金额（元）；null = 这组参数算不出价，原因在 hint 里 */
+  /** 预估金额（元）；null = 整单算不出价，原因在 hint 里 */
   price: number | null
+  /** 页数。**请求里给了多份文件时是所有份数之和**（每份的份数不算进页数） */
   pages: number | null
-  /** 这一档的显示名（服务端拼的） */
+  /** 这一档的显示名（服务端拼的）。多份且不同档时是空串 */
   label: string
   /** 算不出价时给学生看的一句话。算得出时是空串。 */
   hint: string
-  /** 服务端归正过的单双面：这一档不支持双面时会给回 single（界面据此改选项）。 */
-  duplex: Duplex
+  /** 服务端归正过的单双面：这一档不支持双面时会给回 single（界面据此改选项）。
+   *  一单里几份不一样时给 'mixed'。 */
+  duplex: OrderDuplex
+  /** 逐份明细（v24）。每一条带自己的页数、小计与归正后的参数。 */
+  files?: EstimateFileQuote[]
 }
 
-/** 预上传之后建单的请求体。与 UploadOptions 的区别只有第一个字段：
- *  文件不再随请求走，而是已经躺在服务端的那份。 */
-export interface PreparedOrderRequest extends UploadOptions {
+/** 一份文件在整单里的报价明细。 */
+export interface EstimateFileQuote {
+  file_token: string
+  filename: string
+  pages: number | null
+  /** 这一份的小计（元）；null = 这一份算不出价 */
+  price: number | null
+  price_item_id: number | null
+  price_item_name: string
+  copies: number
+  duplex: Duplex
+  /** 这一份算不出价的原因（人话）；算得出时是空串 */
+  hint: string
+}
+
+/** 一次算多份的请求形状：每份文件带自己的档位 / 份数 / 单双面。 */
+export interface EstimateFilesRequest {
+  files: Array<{
+    file_token: string
+    price_item_id?: number | null
+    copies?: number
+    duplex?: Duplex
+  }>
+}
+
+/** 预上传之后建单的请求体（**批量**，2026-09-28 起；v24 起一份一参数）。
+ *
+ *  一个 group = 一张订单 = **一个单号**。组内每份文件可以带自己的档位 / 份数 /
+ *  单双面（见 `PreparedOrderFile`）；没带的回落到 group 上那三个字段，
+ *  group 上也没有就用服务端默认（1 份 / 单面 / 不选档）。
+ *
+ *  ⚠️ 老形状仍然可用：缓存里的旧页面与旧版 printbot 会发「多个 groups、组内同参数」，
+ *  那会得到多张单。新前端一次提交只发一个 group，所以学生只拿一个单号。
+ *  服务端的判据是「group 里有几份，就按几份建一张单」——它不再按参数拆组。 */
+export interface PreparedOrderRequest {
+  groups: PreparedOrderGroup[]
+}
+
+export interface PreparedOrderGroup {
+  files: PreparedOrderFile[]
+  /** 组级默认参数：某份文件没带自己的值时用它 */
+  price_item_id?: number | null
+  copies?: number
+  duplex: string
+  remark?: string
+}
+
+export interface PreparedOrderFile {
+  /** 那份已落盘文件的凭据（服务端按账号分目录存，别人的 token 天然无效）。 */
   file_token: string
   /** 原始文件名（服务端只存了 uuid 名）。它只用于展示，
    *  但服务端仍然会校验扩展名与那份文件一致。 */
   filename: string
+  /** 这一份自己的档位；不给就落到 group 级，再落到服务端默认。 */
+  price_item_id?: number | null
+  /** 这一份自己的份数（1-50）；不给就落到 group 级。 */
+  copies?: number
+  /** 这一份自己的单双面；不给就落到 group 级。 */
+  duplex?: Duplex
 }
 
 /** 预上传时的进度回调（大文件走分片，这里回的是整份的百分比）。 */
@@ -1091,10 +1235,24 @@ export interface AuditListResponse extends ApiEnvelope {
 export interface BotHint {
   /** 被点掉过几次 */
   clicks: number
-  /** 点满这么多次就永久收起（服务端给的，前端不自己比数字） */
-  max_clicks: number
+  /** 点满这么多次就永久收起（服务端给的，前端不自己比数字）。
+   *
+   *  **可选**：只有 `GET /api/bot-hint` 会回它。dismiss / reset 两个接口
+   *  （routes/bot_hint.py）只回「现在点了几次、收没收起」，从来不给这个值 ——
+   *  把它们定成必填，等于让那两个响应的类型在说谎（读到的其实是 undefined）。 */
+  max_clicks?: number
   /** 是否已经永久收起（clicks >= max_clicks） */
   closed: boolean
-  /** 管理员上传过二维码没有（没有就不画 <img>，改显示一句说明） */
-  has_qr: boolean
+  /** 管理员上传过二维码没有（没有就不画 <img>，改显示一句说明）。
+   *  **可选**：同样只有 `GET /api/bot-hint` 会回（dismiss / reset 与二维码无关）。
+   *  二维码那张图本身就是 `/api/bot-qr`，未登录也能取 —— 别拿它当显示前提。 */
+  has_qr?: boolean
+}
+
+/** dismiss / reset 的返回：只有计数和「收没收起」。
+ *  单独一个类型而不是复用 BotHint —— 那两条接口**不返回** max_clicks / has_qr，
+ *  拿 BotHint 去接它们，模型就会允许「读到 undefined 还以为读到了」。 */
+export interface BotHintState {
+  clicks: number
+  closed: boolean
 }

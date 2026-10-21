@@ -172,8 +172,13 @@ def login_key(identifier):
     取 IP 统一走 client_ip()：开了 TRUST_PROXY 之后，如果这里还直接用 remote_addr，
     计数用的是代理地址、日志里记的却是真实地址，两边对不上；更难受的是反代场景下
     所有人都共用同一个代理 IP，别人试错会把你一起锁在门外。
+
+    identifier 要截断：它是**请求体里的原样输入**，而请求体上限是 50MB ——
+    不截的话一个请求就能让一个几百万字符的键常驻内存（这条字典还会被复制一遍），
+    拿它刷内存比刷密码便宜多了。64 个字符足够区分任何真实学号 / 昵称，
+    多出来的部分对「是不是同一个人」没有信息量。
     """
-    return '%s:%s' % (client_ip(), (identifier or '').strip().lower())
+    return '%s:%s' % (client_ip(), (identifier or '').strip().lower()[:64])
 
 
 
@@ -217,14 +222,22 @@ def hit_limit(key, limit, window_seconds):
 
     和登录失败计数一样放在内存里。本服务是单进程的 waitress，这点完全够用；
     重启就清空也无所谓 —— 它挡的是手抖连点和刷量，不是需要长期准确的账。
+
+    每个键**连同自己的窗口**一起存（`{key: (window, [时间戳])}`），不能只存时间戳列表：
+    清理旧键时如果拿「本次调用的 window_seconds」去判断所有键，短窗口的调用
+    会把长窗口键的计数提前清掉 —— 60 秒窗口的接口顺手扫一遍，
+    `register:`（1 小时）的失败次数就被抹平，注册限流被**静默**放松，
+    而日志里一个错都没有。参数签名保持不变（调用点有十几处）。
     """
     now = time.monotonic()
-    recent = [ts for ts in _hits.get(key, ()) if now - ts < window_seconds]
+    _, stamps = _hits.get(key, (window_seconds, ()))
+    recent = [ts for ts in stamps if now - ts < window_seconds]
     recent.append(now)
-    _hits[key] = recent
+    _hits[key] = (window_seconds, recent)
     if len(_hits) > 5000:  # 键太多了就顺带扫一遍，把窗口早已过期的清掉
-        for k, stamps in list(_hits.items()):
-            if all(now - ts >= window_seconds for ts in stamps):
+        for k, (window, stamps) in list(_hits.items()):
+            # 判据用**这个键自己的窗口**，不是当前这次调用的窗口（原因见 docstring）。
+            if all(now - ts >= window for ts in stamps):
                 _hits.pop(k, None)
     return len(recent) > limit
 

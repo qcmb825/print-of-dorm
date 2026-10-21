@@ -91,6 +91,21 @@ const STATUS_COLOR: Record<AccountStatus, string> = {
   closed: 'var(--text-tertiary)',
 }
 
+/** 状态色与状态文案都**带兜底**。
+ *
+ *  下标直取（`STATUS_COLOR[row.status]`）在库里出现一个前端还不认识的状态值时
+ *  （后端加了新状态、老产物还没更新，或有人手改过库）会取到 undefined；
+ *  拿 undefined 去拼样式/渲染只是不值一提的小事，但配合类型断言它可能直接抛错，
+ *  后果是**整张表格空白** —— 恰恰是最需要看到名单的时候。
+ *  未知值给中性文字色 + 原始文本，一眼就能看出「这一行状态不对劲」。 */
+function accountStatusColor(status: string): string {
+  return STATUS_COLOR[status as AccountStatus] ?? 'var(--text-tertiary)'
+}
+
+function accountStatusLabel(status: string): string {
+  return ACCOUNT_STATUS_LABELS[status as AccountStatus] ?? status
+}
+
 /* 筛选只列两种：列表接口在 SQL 层就把第三种角色挡在外面了，
  * 留着那一项等于给用户一个必然查出 0 条的选项。 */
 const roleOptions = [
@@ -130,6 +145,13 @@ const filtered = computed(() => {
   })
 })
 
+/** 拉全量名单。
+ *
+ *  **这一页刻意不分页**（本次只把 `scroll-x` 改成列宽求和，没动分页）：
+ *  它的用途是「找一个具体的人」，而关键词与角色筛选都在前端做 ——
+ *  只有全量在手，筛出来的结果和上面那句「X / Y 个账号」才对得上。
+ *  改成服务端分页要连带重做筛选、计数、以及「另有 N 个已注销未列出」那行，
+ *  而名单量级（几百到几千行）一次性传并不吃力。真要分页，得连后端接口一起改。 */
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
   try {
@@ -538,8 +560,8 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
       render: (row) =>
         h(
           'span',
-          { class: 'tech-label tech-label--cn', style: { color: STATUS_COLOR[row.status] } },
-          ACCOUNT_STATUS_LABELS[row.status],
+          { class: 'tech-label tech-label--cn', style: { color: accountStatusColor(row.status) } },
+          accountStatusLabel(row.status),
         ),
     },
     {
@@ -645,6 +667,16 @@ const columns = computed<DataTableColumns<AdminUser>>(() => {
   return base
 })
 
+/** 宽屏表格的横向契约：**从列定义直接算出来**，不再手写一个常数。
+ *
+ *  原先写的是 `advanced ? 1400 : 1180` —— 两个数字和列宽分居两处，改一列宽时
+ *  没人会提醒另一处：给小了末尾几列被外层 overflow-hidden 裁掉（连横滚都够不着），
+ *  给大了则不管屏幕多宽底部都挂着一条滚动条。口径与 OrdersView 的
+ *  ORDER_TABLE_MIN_WIDTH 一致：`scroll-x` = 各列宽之和，密码列/操作列加进来自动跟随。 */
+const TABLE_MIN_WIDTH = computed(() =>
+  columns.value.reduce((sum, column) => sum + (Number(column.width) || 0), 0),
+)
+
 onMounted(load)
 </script>
 
@@ -733,7 +765,7 @@ onMounted(load)
         :bordered="false"
         :single-line="false"
         size="small"
-        :scroll-x="advanced ? 1400 : 1180"
+        :scroll-x="TABLE_MIN_WIDTH"
         :row-key="(row: AdminUser) => row.id"
       />
     </div>

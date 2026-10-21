@@ -42,7 +42,7 @@ import {
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
-import { priceLabel } from '@/utils/format'
+import { normalizePrice, priceLabel } from '@/utils/format'
 
 const message = useMessage()
 
@@ -73,9 +73,15 @@ const form = reactive({
   sort_order: 0,
 })
 const editingId = ref<number | null>(null)
+/** 能不能提交。只判「非空」是不够的：`1.2.3`、`abc`、`0` 都会让按钮亮起来，
+ *  点下去再被后端以 400 顶回来 —— 用户看到的是一颗按不出结果的按钮。
+ *  normalizePrice 是后端 config.PRICE_RE 的镜像（订单台也在用），两边同一个口径：
+ *  双面价选填，但填了就必须是合法金额。 */
 const canSubmit = computed(
   () => form.paper.trim().length > 0 && form.kind.trim().length > 0
-    && form.price_single.trim().length > 0 && !saving.value,
+    && normalizePrice(form.price_single) !== null
+    && (form.price_double.trim() === '' || normalizePrice(form.price_double) !== null)
+    && !saving.value,
 )
 
 /** 全局系数与说明 */
