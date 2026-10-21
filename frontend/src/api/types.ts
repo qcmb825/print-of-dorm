@@ -418,8 +418,16 @@ export interface OrderListResponse extends ApiEnvelope {
   orders: Order[]
 }
 
+/** 站点取件信息（site_assets 的两列）。地点为空时服务端已回退 env 的 PICKUP_ADDRESS，
+ *  所以前端只需要判「有没有」。 */
+export interface SitePickup {
+  pickup_place: string | null
+  pickup_hours: string | null
+}
+
 export interface MyOrdersResponse extends ApiEnvelope {
   orders: Order[]
+  site: SitePickup
 }
 
 /** 订单操作留痕的动作名，与后端 config.ORDER_LOG_* 一一对应。

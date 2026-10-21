@@ -2,7 +2,7 @@
 /** 公告管理：发布、编辑、启停、删除。
  *  正文按纯文本渲染（Vue 插值默认转义），字体只收后端白名单里的键 —— 绝不把管理员输入当 HTML。 */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Eye, Megaphone, Pencil, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Eye, MapPin, Megaphone, Pencil, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import {
   NButton,
   NColorPicker,
@@ -15,7 +15,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { announcementApi, type AnnouncementPayload } from '@/api/endpoints'
+import { announcementApi, sitePickupApi, type AnnouncementPayload } from '@/api/endpoints'
 import { ANNOUNCE_FONTS, type AnnounceFont, type Announcement } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -163,7 +163,49 @@ async function remove(item: Announcement): Promise<void> {
   }
 }
 
-onMounted(load)
+/* ---------- 站点取件信息 ----------
+ *  存 site_assets 的两列（routes/bot_hint.py 的 GET/PUT /api/site-pickup）。
+ *  表单回填的是**库里实际存的值**（服务端不套 env 兜底）—— 把兜底值显示成已存值，
+ *  管理员随手一保存就把环境变量变成了数据，那是第二处真相的长法。 */
+const pickupForm = reactive<{ pickup_place: string; pickup_hours: string }>({
+  pickup_place: '',
+  pickup_hours: '',
+})
+const pickupSaving = ref(false)
+const pickupLoaded = ref(false)
+
+async function loadPickup(): Promise<void> {
+  try {
+    const data = await sitePickupApi.get()
+    pickupForm.pickup_place = data.pickup_place ?? ''
+    pickupForm.pickup_hours = data.pickup_hours ?? ''
+    pickupLoaded.value = true
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '取件信息读取失败')
+  }
+}
+
+async function savePickup(): Promise<void> {
+  if (pickupSaving.value) return
+  pickupSaving.value = true
+  try {
+    await sitePickupApi.save({
+      pickup_place: pickupForm.pickup_place.trim() || null,
+      pickup_hours: pickupForm.pickup_hours.trim() || null,
+    })
+    message.success('取件信息已保存 · 学生端可取件卡片与取件邮件同步生效')
+    await loadPickup()
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
+  } finally {
+    pickupSaving.value = false
+  }
+}
+
+onMounted(() => {
+  void load()
+  void loadPickup()
+})
 </script>
 
 <template>
@@ -252,6 +294,51 @@ onMounted(load)
         </div>
         <p v-if="editingId === null" class="mt-3 text-xs text-ink-3">
           发布后立即生效 · 上一条公告同时停用。
+        </p>
+      </section>
+
+      <!-- 站点取件信息：和公告同一页，因为两者回答的是同一个学生问题
+           「去哪取、几点能取」。公告是临时的，这两格是常设的。 -->
+      <section class="panel h-fit p-4">
+        <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
+          <MapPin :size="15" style="color: var(--accent-text)" />
+          取件信息
+        </h3>
+
+        <NFormItem label="取件地点" :show-feedback="false">
+          <NInput
+            v-model:value="pickupForm.pickup_place"
+            :maxlength="120"
+            show-count
+            :disabled="!pickupLoaded"
+            placeholder="例：3 号楼宿管室"
+          />
+        </NFormItem>
+
+        <NFormItem label="取件时间" :show-feedback="false">
+          <NInput
+            v-model:value="pickupForm.pickup_hours"
+            :maxlength="120"
+            show-count
+            :disabled="!pickupLoaded"
+            placeholder="例：8:00–22:00"
+          />
+        </NFormItem>
+
+        <div class="mt-3 flex items-center gap-2">
+          <NButton
+            type="primary"
+            class="!font-bold"
+            size="small"
+            :loading="pickupSaving"
+            :disabled="!pickupLoaded"
+            @click="savePickup"
+          >
+            保存取件信息
+          </NButton>
+        </div>
+        <p class="mt-3 text-xs text-ink-3">
+          学生端的可取件卡片与取件邮件都会显示这两项 · 留空则不显示。
         </p>
       </section>
 

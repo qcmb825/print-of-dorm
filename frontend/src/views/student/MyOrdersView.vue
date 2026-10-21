@@ -7,7 +7,7 @@ import { Clock, Inbox, RefreshCw, Trash2 } from '@lucide/vue'
 import { NButton, NSkeleton, NSwitch } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { authApi, orderApi } from '@/api/endpoints'
-import { DUPLEX_LABELS, type Order } from '@/api/types'
+import { DUPLEX_LABELS, type Order, type SitePickup } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import {
@@ -26,6 +26,8 @@ import { confirmAction, notify } from '@/composables/feedback'
 import { useValueTick } from '@/composables/motion'
 
 const orders = ref<Order[]>([])
+// 站点取件信息随列表一起到（后端顶层 `site`）。默认全空：卡片块自己判有没有。
+const site = ref<SitePickup>({ pickup_place: null, pickup_hours: null })
 const loading = ref(true)
 
 /* ---------- 「隐藏已取件」----------
@@ -118,6 +120,7 @@ async function load(silent = false): Promise<void> {
     // 只接受最后一次请求的响应：防止旧响应覆盖新数据
     if (mySeq !== requestSeq) return
     orders.value = data.orders
+    site.value = data.site ?? site.value
   } catch (error) {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让用户以为刚刷出来的列表是坏的。
@@ -455,6 +458,17 @@ async function withdraw(order: Order): Promise<void> {
             </div>
           </div>
         </div>
+
+        <!-- 可取件：把「去哪取、几点能取」放在单号下面 —— 学生到了楼下才想起来
+             问地点，这一屏就该替他省掉那趟来回。站点没配时整块不出现（不显示空字）。 -->
+        <p
+          v-if="order.status === '可取件' && (site.pickup_place || site.pickup_hours)"
+          class="spec mt-2.5 px-2.5 py-1.5 text-xs text-ink-2"
+        >
+          <span class="tech-label tech-label--cn text-ink-3">取件</span>
+          <span v-if="site.pickup_place" class="ml-1.5">{{ site.pickup_place }}</span>
+          <span v-if="site.pickup_hours"> · {{ site.pickup_hours }}</span>
+        </p>
 
         <!-- 预设服务那句话：学生看不到「自己下单时选了什么」会很没安全感，
              而他们甚至没有文件名可以对照。 -->

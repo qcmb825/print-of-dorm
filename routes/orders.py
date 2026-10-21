@@ -45,7 +45,7 @@ from config import (
     public_role_label,
 )
 from db import (db_conn, files_for_orders, find_preset, get_db,
-                insert_order_row, log_order_event)
+                get_pickup_info, insert_order_row, log_order_event)
 from mail import user_mailbox
 import pricing
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
@@ -2110,7 +2110,9 @@ def api_my_orders():
         ]
         item['file_count'] = len(item['files'])
         orders.append(item)
-    return jsonify({'code': 0, 'orders': orders})
+    # 站点取件信息（地点/时间）：它是站点级事实，不是订单上的字段，所以放在顶层
+    # `site` 里随列表一起给 —— 学生看可取件卡片时不用再发第二个请求。
+    return jsonify({'code': 0, 'orders': orders, 'site': get_pickup_info()})
 
 
 

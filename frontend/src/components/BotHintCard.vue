@@ -13,6 +13,10 @@
  *    · 未登录（登录页 / 注册页）：没有账号可记，**不设永久关闭**，
  *      只用 sessionStorage 记「这一屏会话里别再挡我」，退出重进还会看到。
  *      引导的目的正是把「还没用机器人下单的人」拉过去，对陌生人关掉它没意义。
+ *    · **管理端（`staff`）只催能干活的人**：学生话术对管理员没有意义，
+ *      普通管理员（传不了码）干脆不弹；超管且二维码还没上传时弹的是
+ *      「去上传」提醒 —— 这张卡对管理员的价值不是宣传，是催办。
+ *      上传之后 `has_qr` 变真，它自然不再出现，不需要谁去「关闭」它。
  *
  *  **未登录也要有二维码**：这一版把图从「登录后才取」改成无条件渲染那张
  *  `/api/bot-qr`（它本来就不要求登录）。引导要拉的是还没用过机器人的人，
@@ -23,22 +27,29 @@
  *  「点几次之后就不再自动出现」—— 把「永久别看」做成主按钮，
  *  等于替用户做了他没想过的决定；写清楚规则，让他自己点几次。
  */
-import { onMounted, ref } from 'vue'
-import { Check, QrCode } from '@lucide/vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowUpToLine, Check, QrCode } from '@lucide/vue'
 import { NButton, NModal } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { BOT_QR_URL, botHintApi } from '@/api/endpoints'
 import type { BotHint } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(
   defineProps<{
     /** 未登录场景（登录页 / 注册页）：关闭只记在本次会话里，不做永久关闭 */
     guest?: boolean
+    /** 管理端挂载：不弹学生话术，只在二维码缺失时催超管去上传（见顶部规则） */
+    staff?: boolean
   }>(),
-  { guest: false },
+  { guest: false, staff: false },
 )
 
 const SESSION_KEY = 'pod-bot-hint-hidden'
+
+const router = useRouter()
+const auth = useAuthStore()
 
 const visible = ref(false)
 const hint = ref<BotHint | null>(null)
@@ -50,6 +61,9 @@ const justClosed = ref(false)
 
 /** 已登录时的那句规则说明（次数由服务端给，前端不自己比数字）。 */
 const dismissRule = ref('')
+
+/** 管理端催办变体：只有「超管 + 还没上传二维码」这一种情况会弹（onMounted 把关）。 */
+const uploadNag = computed(() => props.staff && hint.value !== null && !hint.value.has_qr)
 
 onMounted(async () => {
   // 未登录：只看这一屏会话关没关过（不碰服务端，也没有账号可记）
@@ -64,6 +78,13 @@ onMounted(async () => {
   try {
     const data = await botHintApi.get()
     hint.value = data
+    if (props.staff) {
+      // 管理端：普通管理员没有上传权限，弹了也只是拦路；超管只在缺码时催办。
+      if (!auth.advancedAllowed || data.has_qr) return
+      dismissRule.value = `上传二维码后不再出现 · 关闭 ${data.max_clicks} 次内还会提醒`
+      visible.value = !data.closed
+      return
+    }
     dismissRule.value = `关闭 ${data.max_clicks} 次后不再自动出现 · 可在「设置」里重新打开`
     visible.value = !data.closed
   } catch (error) {
@@ -73,6 +94,13 @@ onMounted(async () => {
     visible.value = false
   }
 })
+
+/** 催办变体的主按钮：直接去设置页那块上传区。不计数 ——
+ *  用户是去**办事**的，不是去「关闭打扰」的；办完（has_qr 变真）它自然不再出现。 */
+function goUpload(): void {
+  visible.value = false
+  void router.push({ name: 'student-settings' })
+}
 
 async function dismiss(): Promise<void> {
   if (closing.value) return
@@ -139,9 +167,13 @@ function onShowChange(value: boolean): void {
           <QrCode :size="18" />
         </span>
         <span class="flex flex-col leading-tight">
-          <span class="font-heading text-lg font-bold">用 QQ 机器人下单</span>
+          <span class="font-heading text-lg font-bold">
+            {{ uploadNag ? '机器人二维码还没上传' : '用 QQ 机器人下单' }}
+          </span>
           <span class="tech-label text-ink-3 tech-label--cn text-xs">
-            {{ guest ? '网页端与 QQ 是同一个账号体系' : '不必打开网页 · 在 QQ 里发文件即可' }}
+            {{ uploadNag
+              ? '登录页与设置页都在等这张图 · QQ 下单这条路现在是断的'
+              : guest ? '网页端与 QQ 是同一个账号体系' : '不必打开网页 · 在 QQ 里发文件即可' }}
           </span>
         </span>
       </div>
@@ -162,7 +194,7 @@ function onShowChange(value: boolean): void {
            右下角那张卡片上的 80px 在别人举着手机隔一张桌子时是真的扫不出来。 -->
       <div
         class="flex size-44 shrink-0 items-center justify-center border p-2"
-        style="border-color: var(--border-strong); background-color: var(--paper)"
+        style="border-color: var(--border); background-color: var(--paper)"
       >
         <img
           v-if="qrOk"
@@ -181,7 +213,7 @@ function onShowChange(value: boolean): void {
         </span>
       </div>
 
-      <ul class="flex w-full list-none flex-col gap-2 p-0 text-sm leading-6">
+      <ul v-if="!uploadNag" class="flex w-full list-none flex-col gap-2 p-0 text-sm leading-6">
         <li class="flex items-start gap-2">
           <Check :size="15" class="mt-1 shrink-0" style="color: var(--secondary)" aria-hidden="true" />
           <span>扫码加机器人好友后，直接在 QQ 里发文件下单</span>
@@ -212,7 +244,14 @@ function onShowChange(value: boolean): void {
         <span class="text-xs leading-5 text-ink-3">
           {{ guest ? '本次会话关闭后不再弹出 · 换一次刷新还会看到' : dismissRule }}
         </span>
-        <NButton type="primary" class="!font-bold" :loading="closing" @click="dismiss">
+        <span v-if="uploadNag" class="flex items-center gap-2">
+          <NButton quaternary :loading="closing" @click="dismiss">知道了</NButton>
+          <NButton type="primary" class="!font-bold" @click="goUpload">
+            <template #icon><ArrowUpToLine :size="15" /></template>
+            去上传
+          </NButton>
+        </span>
+        <NButton v-else type="primary" class="!font-bold" :loading="closing" @click="dismiss">
           知道了
         </NButton>
       </div>

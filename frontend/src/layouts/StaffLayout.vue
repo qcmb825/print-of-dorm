@@ -375,7 +375,7 @@ style="--depth: 20px"
           {{ route.meta.code ?? '--' }} // PRINT SERVICE
         </span>
         <span class="ticks min-w-8 flex-1" aria-hidden="true" />
-        <span class="readout shrink-0" aria-hidden="true">P.{{ pageNo }}</span>
+        <span class="readout hidden shrink-0 sm:inline" aria-hidden="true">P.{{ pageNo }}</span>
       </div>
       <!-- 装饰条：危险斜纹块 + 半调网点 + 括角坐标框 + 版号读数。
            放在文档流末尾，所以永远不会压到内容上。 -->
@@ -392,8 +392,9 @@ style="--depth: 6px"
     </main>
     </div>
 
-    <!-- QQ 机器人引导：管理端每一页都有。管理员自己多半用网页端，
-         但他也可能把这一屏投给来问的同学看 —— 顺手就能指过去扫。 -->
-    <BotHintCard />
+    <!-- QQ 机器人引导：管理端挂的是**催办变体**（`staff`）—— 学生话术对管理员无意义，
+         普通管理员没有上传权限干脆不弹，超管只在二维码缺失时被催去上传。
+         规则全文见 BotHintCard.vue 顶部注释。 -->
+    <BotHintCard staff />
   </div>
 </template>
