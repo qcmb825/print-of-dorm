@@ -209,6 +209,10 @@ _HINTS = (
     ('没选价目项', '先选一档类型 / 纸张'),
     ('自动估价未启用', '管理员未开启自动估价'),
     ('读不出文件页数', '读不出这份文件的页数'),
+    #    「明确要双面、这一档只有单面」：resolve_price_item 会把这句原文放在
+    #    reason 里，试算接口不报 400（试算失败不该把学生挡在页面上），
+    #    但必须翻成一句能照着做的话，否则学生只看到「暂时算不出预估」。
+    ('只支持单面', '这一档只支持单面，换一档或改成单面'),
     # v24 起逐份估价：明细里的说法比整单那句更具体（「读不出**这份**文件的页数」、
     # 「按这一项的单价算出来是 0 元」），两条都要能认出来 —— 认不出来时
     # _hint_for 只会回一句中性的兜底，学生就不知道下一步该改哪里。
@@ -247,7 +251,11 @@ def _quote_payload(price, pages, label, reason, duplex, files=None):
         'price': price,
         'pages': pages,
         'label': label or '',
-        'hint': _hint_for(reason),
+        #    只有**算不出价**时 hint 才有意义。算得出时 reason 是「3 页 × 5 份，
+        #    价目表」这种内部说明，_hint_for 不认识它，会返回「暂时算不出预估」——
+        #    于是一个明明算出了 15.00 的响应里挂着一句「算不出」，前端只要哪天
+        #    把它显示出来就是自相矛盾。这里直接置空，与 _quote_for_files 同口径。
+        'hint': '' if price is not None else _hint_for(reason),
         'duplex': duplex,
     }
     if files is not None:

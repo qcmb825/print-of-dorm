@@ -1604,17 +1604,23 @@ def _receipt_text(entry, created, failed, summary=None, note=None):
             total = summary.get('copies') or count
             est = order.get('est_price')
             est_text = (' · 预估 %.2f 元' % est) if isinstance(est, (int, float)) else ''
+            #    「几个文件」与「每份几份」必须分开写。截图里那句
+            #    「2 份文件 · 共 2 份」把两个量都叫「份」，学生读成「打了 2 份」，
+            #    而实际是「2 个文件、每个 1 份」。
+            #    能整除时写「各 X 份（共 M 份）」，除不尽只写合计（不编一个平均数）。
+            per = total // count if count and total % count == 0 else None
+            multi = ('各 %d 份（共 %d 份）' % (per, total)) if per else ('共 %d 份' % total)
             lines.append('已下单｜单号 %s' % (order.get('pickup_code'),))
             if summary.get('mixed'):
-                lines.append('%d 份文件 · 共 %s 份%s' % (count, total, est_text))
+                lines.append('%d 个文件 · %s%s' % (count, multi, est_text))
                 lines.append('（混合单：各份参数不同，明细见网页「我的订单」）')
             else:
                 grade = (order.get('price_item_name') or summary.get('label')
                          or '未选档')
-                lines.append('%d 份文件 · %s · %s · 共 %s 份%s' % (
+                lines.append('%d 个文件 · %s · %s · %s%s' % (
                     count, grade,
                     _duplex_text(order.get('duplex') or summary.get('duplex')),
-                    total, est_text))
+                    multi, est_text))
         else:
             # 老形状（单文件单、预设单）与「服务端回了不止一张单」的极端情形
             # 都走这里：一张单一行，信息不删减。

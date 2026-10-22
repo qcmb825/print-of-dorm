@@ -1042,8 +1042,17 @@ def resolve_price_item(conn, data):
         return None, duplex, '这一档价目项不存在了，刷新页面重新选择'
     if row['is_active'] != 1:
         return None, duplex, '这一档价目项已经停用了，刷新页面重新选择'
+    #    学生**明确说了双面**、而这一档只有单面价时：报错，不替他改成单面。
+    #    这里原先写的是 `duplex = 'single'`（静默归正），理由是「落库的 duplex
+    #    必须与计价那一档一致，否则账单写着双面、钱按单面收」。理由本身没错，
+    #    但静默改参数是更糟的错：学生要双面、拿到的是单面，回执上还写着单面价，
+    #    他要么当场跟打印员吵，要么回去才发现。
+    #    正确做法与「说了 A3 而没这一档」同一条纪律：说清楚、让他选。
+    #    网页端在档位不支持双面时本来就禁用了双面选项，所以正常路径走不到这里；
+    #    这一条是给机器人 / 第三方调用 / 缓存里的旧页面兜底的。
     if duplex == 'double' and not pricing.supports_duplex(row):
-        duplex = 'single'
+        return None, duplex, ('「%s」这一档只支持单面。要用双面请换一档支持双面的纸张，'
+                              '或者把单双面改成单面' % pricing.format_item_label(row))
     return row, duplex, None
 
 

@@ -495,12 +495,14 @@ def estimate_for_files(conn, items):
         item = entry.get('item')
         copies = _clamp_copies(entry.get('copies'))
         duplex = normalize_duplex(entry.get('duplex'))
-        #    这一档不支持双面却传了 double：按单面算并把 duplex 归正 ——
-        #    与 resolve_price_item 同一个判据，落库的 duplex 必须与计价那一档一致，
-        #    否则账单上写着「双面」、钱按单面收。
+        #    这一档不支持双面却传了 double：**不再静默改单面**（2026-10-21）。
+        #    上游 routes.orders.resolve_price_item 与 printbot 的 nlu 都会先拦住它，
+        #    这里作为最后一道：记成「这一份算不出价」，整单因此不报价 ——
+        #    与「任一份算不出就整单 None」同一条纪律，比悄悄按单面算更诚实。
         #    **没选档（item 为 None）时不动它**：没有档位就没有「支不支持双面」
         #    可问，硬降成单面会让明细显示一个调用方没选的参数。
-        if duplex == 'double' and item and not supports_duplex(item):
+        duplex_blocked = bool(duplex == 'double' and item and not supports_duplex(item))
+        if duplex_blocked:
             duplex = 'single'
 
         detail = {
@@ -539,6 +541,8 @@ def estimate_for_files(conn, items):
             detail['reason'] = '自动估价未启用'
         elif not item:
             detail['reason'] = note or _FILES_NO_ITEM
+        elif duplex_blocked:
+            detail['reason'] = '这一份选的档位只支持单面，换一档或改成单面'
         elif not pages or pages < 1:
             detail['reason'] = note or _FILES_NO_PAGES
         else:

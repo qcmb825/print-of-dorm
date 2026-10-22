@@ -575,10 +575,24 @@ def resolve_spec(spec, items, default_item_id=None, default_copies=None,
         assumed.append('%s 份' % copies)
 
 
-    duplex = (spec or {}).get('duplex') or default_duplex or 'single'
+    duplex_asked = (spec or {}).get('duplex')
+    duplex = duplex_asked or default_duplex or 'single'
     if not chosen.get('supports_duplex'):
-        # 不支持双面的档（相纸那一类）：**不问也不留一个传不出去的值**，
-        # 服务端 resolve_price_item 也会这么归正，两处一致。
+        #    学生**明确说了**「双面」、而这一档只有单面价：报错，不静默降级。
+        #    原先这里是 `duplex = 'single'` 加一句 assumed —— 而多份文件的回执
+        #    只念汇总、根本不念 assumed，于是学生看到的是「黑白 · 单面」，
+        #    他要的双面就这么没了（真实反馈：截图里那句「黑白双面 一份」）。
+        #    这与「说了 A3 而没这一档」是同一条纪律：说清楚有哪些、让他选，
+        #    不替他改参数。默认值带来的 double（他没说）仍按单面并念出来。
+        if duplex == 'double' and duplex_asked:
+            able = [item for item in items if item.get('supports_duplex')]
+            same_color = [item for item in able
+                          if _item_matches_color(item, chosen.get('color'))]
+            pool = same_color or able
+            hint = ('换一档支持双面的：%s' % _labels(pool)) if pool else '现有档位都是单面'
+            return None, ('你说了「双面」，但「%s」这一档只支持单面。\n'
+                          '· 回「单面」按单面下；\n'
+                          '· 或者%s' % (chosen.get('label'), hint))
         if duplex == 'double':
             assumed.append('这一档不支持双面，按单面')
         duplex = 'single'
