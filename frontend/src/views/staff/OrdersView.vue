@@ -5,6 +5,7 @@ import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useDocumentVisibility, useIntervalFn, useMediaQuery } from '@vueuse/core'
 import {
+  ChevronDown,
   CircleDollarSign,
   Download,
   FolderPlus,
@@ -56,6 +57,7 @@ import {
   COLOR_TYPE_LABEL,
   contactLabel,
   copiesLabel,
+  formatBytes,
   normalizePrice,
   orderFileLabel,
   orderFileNames,
@@ -132,6 +134,163 @@ function orderFileParamSummary(order: Order): string {
   const files = order.files ?? []
   if (!files.length) return ''
   return files.map((file, index) => fileParamLabel(order, file, index)).join(' / ')
+}
+
+/** 这一份自己的单双面：**本行为空才回落到订单级**，而订单级若是 mixed
+ *  （各份不同）就不能拿它当某一份的值 —— 那是替这一份瞎猜。 */
+function fileDuplexOf(order: Order, file: OrderFile): string | null {
+  if (file.duplex) return DUPLEX_LABELS[file.duplex]
+  if (order.duplex && order.duplex !== 'mixed') return DUPLEX_LABELS[order.duplex]
+  return null
+}
+
+/** 一份自己的档位名（本行为空回落订单级；都没有就说「未选档」）。 */
+function fileGradeOf(order: Order, file: OrderFile): string {
+  return file.price_item_name ?? order.price_item_name
+    ?? file.paper_name ?? order.paper_name ?? '未选档'
+}
+
+/** 这一单里几份文件的参数是不是**不一致**。
+ *
+ *  只比三个会改变实物的维度（档位 / 份数 / 单双面），不比文件名。
+ *  老单（v24 之前 order_files 的那几列是 NULL）全部回落到订单级，
+ *  比出来是「一致」—— 那正是它们的真实含义。 */
+function orderFilesMixed(order: Order): boolean {
+  const files = order.files ?? []
+  if (files.length < 2) return false
+  const keys = new Set(files.map((file) => [
+    fileGradeOf(order, file),
+    String(file.copies ?? order.copies ?? ''),
+    fileDuplexOf(order, file) ?? '',
+  ].join('|')))
+  return keys.size > 1
+}
+
+// 展开行：key 用订单 id，翻页/筛选变化时清空（见 load 里那段注释）。
+// 10 秒轮询**不清**：行数据换了 key 不变，展开状态要留住 —— 打印员正对着
+// 一单逐份下载，刷新一下把表收起来，等于把他手上的活打断。
+const expandedKeys = ref<Array<string | number>>([])
+
+function toggleExpand(order: Order): void {
+  const key = order.id
+  expandedKeys.value = expandedKeys.value.includes(key)
+    ? expandedKeys.value.filter((item) => item !== key)
+    : [...expandedKeys.value, key]
+}
+
+function onExpandedKeysChange(keys: Array<string | number>): void {
+  expandedKeys.value = keys
+}
+
+/** 一单多文件时的**逐份明细表**（宽屏展开行）。
+ *
+ *  为什么是行内展开，而不是浮层或跳详情：
+ *  打印员的动作是「扫一屏 → 对某单点开 → 逐份下载」。展开后其他行还在原地，
+ *  可以同时开几单对着看；浮层会盖住相邻行，跳详情则要来回。
+ *  这也是「一单多文件」在表格里最省认知的形态：展开区与行共用同一套列语义。
+ *
+ *  字段顺序按**核对实物**的顺序排：第几份 → 叫什么 → 多少页 → 什么档 →
+ *  打几份 → 单双面 → 多大 → 下载。参数一律「本行为空回落到订单级」，
+ *  老单（v24 之前那七列是 NULL）才不会显示成一片空白。
+ */
+function renderOrderFiles(order: Order) {
+  const files = order.files ?? []
+  if (files.length <= 1) return null
+  const mixed = orderFilesMixed(order)
+  // 合计页数：打印员数纸时先看这个数，比逐份加一遍快。
+  // 有一份页数读不出来就不显示（算一半的合计比没有更坑）。
+  const pages = files.every((file) => file.pages != null)
+    ? files.reduce((sum, file) => sum + (file.pages ?? 0), 0)
+    : null
+  const head = mixed
+    ? `${files.length} 份文件 · 各份参数不同`
+    : `${files.length} 份文件 · ${order.price_item_name ?? '未选档'} · ${order.duplex ? DUPLEX_LABELS[order.duplex] : '单面'}`
+  const cell = 'py-1.5'
+  return h(
+    'div',
+    {
+      //    左缘只留 2px 青线、内容缩进 12px：**不再自己加 px** ——
+      //    单元格本身已经有 8px 内边距（size="small" 的 tdPaddingSmall），
+      //    再加 12px 会让竖条落在 20px，而上面所有列的内容左缘在 8px，
+      //    展开区看起来像「错位了一格」。
+      //    横向滚动交给 `sticky-expanded-rows`：Naive 会把内容包进
+      //    .n-data-table-expand（sticky left:0 并抵消内边距），
+      //    不加那一项的话，1366 的屏幕上往右滚时「下载」会先跑出视野。
+      class: 'border-l-2 bg-[var(--surface-table-head)] py-0.5 pl-3',
+      style: 'border-color: var(--secondary)',
+    },
+    [
+      h('div', { class: 'mb-1.5 flex flex-wrap items-center gap-2' }, [
+        h('span', { class: 'text-2xs font-semibold tracking-wide text-ink-2' },
+          pages != null && pages > 0 ? `${head} · 合计 ${pages} 页` : head),
+        mixed
+          ? h('span', {
+            class: 'border px-1 text-2xs',
+            //    混合用 warn（与「需人工通知」同一支）：它表达的是「这一单要你多看一眼」，
+            //    不是错误（--err 留给撤回/越权那类）。
+            style: 'color: var(--warn); border-color: var(--warn-tint-border);'
+              + ' background: var(--warn-tint)',
+          }, '混合')
+          : null,
+      ]),
+      //    表宽封在 760px：展开区是整行宽（跨所有列），不封顶的话「页数」
+      //    会被推到离文件名 700px 外，读一行要横跳两次。
+      //    760 是照着「文件名还能显示 20 来个汉字 + 右侧六列不挤」量的。
+      h('table', { class: 'w-full max-w-[760px] table-fixed border-collapse text-xs' }, [
+        h('thead', {}, [
+          h('tr', {
+            class: 'border-b text-2xs text-ink-3',
+            //    表头与数据行之间要有线：主表就是靠 1px 线读成一张表的，
+            //    子表只靠留白会显得像几行散字（而它恰恰是要被逐格核对的）。
+            style: 'border-color: var(--border-subtle)',
+          }, [
+            h('th', { class: 'w-7 pb-1 text-left font-normal' }, '#'),
+            h('th', { class: 'pb-1 text-left font-normal' }, '文件'),
+            h('th', { class: 'w-12 pb-1 text-right font-normal' }, '页数'),
+            h('th', { class: 'w-36 pb-1 pl-2 text-left font-normal' }, '档位'),
+            h('th', { class: 'w-12 pb-1 text-right font-normal' }, '份数'),
+            h('th', { class: 'w-16 pb-1 pl-2 text-left font-normal' }, '单双面'),
+            h('th', { class: 'w-16 pb-1 text-right font-normal' }, '大小'),
+            h('th', { class: 'w-12 pb-1 text-right font-normal' }, ''),
+          ]),
+        ]),
+        h('tbody', {}, files.map((file, index) => h(
+          'tr',
+          { class: 'border-t', style: 'border-color: var(--border)' },
+          [
+            h('td', { class: `${cell} tnum text-ink-3` }, `${index + 1}`),
+            h('td', {
+              class: `${cell} truncate pr-2`,
+              title: file.filename,
+            }, file.filename),
+            h('td', { class: `${cell} tnum text-right text-ink-2` },
+              file.pages != null ? `${file.pages}` : '—'),
+            h('td', {
+              class: `${cell} truncate pl-2 pr-2 text-ink-2`,
+              title: fileGradeOf(order, file),
+            }, fileGradeOf(order, file)),
+            h('td', { class: `${cell} tnum text-right` },
+              file.copies ?? order.copies ?? '—'),
+            h('td', { class: `${cell} pl-2 text-ink-2` },
+              fileDuplexOf(order, file) ?? '—'),
+            h('td', { class: `${cell} tnum text-right text-ink-3` },
+              formatBytes(file.size)),
+            h('td', { class: `${cell} text-right` },
+              h(
+                NButton,
+                {
+                  size: 'tiny',
+                  quaternary: true,
+                  disabled: !canDownload(order),
+                  onClick: () => void downloadFile(order, file.id, file.filename, file.size ?? undefined),
+                },
+                { default: () => '下载' },
+              )),
+          ],
+        ))),
+      ]),
+    ],
+  )
 }
 
 /** 订单台那一列里给机器人单用的**短**标签。
@@ -562,6 +721,17 @@ function statusButton(order: Order) {
 
 const columns = computed<DataTableColumns<Order>>(() => [
   {
+    // 展开列：只有**多份文件**的行才有箭头。
+    //   为什么单独一列而不是把展开塞进订单列：Naive 的展开内容要挂在
+    //   `type: 'expand'` 这一列上，而且这一列会把内容渲染成整行宽（跨所有列）——
+    //   放在最前，展开区才是「这一行的续」，而不是被挤在 156px 的订单格里。
+    //   单份的行 `expandable` 返回 false，连箭头都不出现，不占视觉。
+    type: 'expand',
+    width: 26,
+    expandable: (row) => (row.file_count ?? 0) > 1,
+    renderExpand: (row) => renderOrderFiles(row),
+  },
+  {
     // 订单：文件名（详情入口）+ 单号 + 内部编号 + 时间，三行压成两行。
     //
     // 单号原本单独占一列（78px）。合并进来是因为那一列除了 5 个数字什么也没有，
@@ -579,7 +749,6 @@ const columns = computed<DataTableColumns<Order>>(() => [
       //    叫什么 —— 而那正是他要找的东西。超过 3 份时后两行折成一句「另有 N 份」，
       //    再多的去详情页看（列表一行撑太高会把整页的节奏毁掉）。
       const shown = names.slice(0, 3)
-      const rest = names.length - shown.length
       return h('div', { class: 'min-w-0' }, [
         // 第一行：文件名（详情入口）+ 来源标记。
         //
@@ -637,8 +806,35 @@ const columns = computed<DataTableColumns<Order>>(() => [
             title: file ? fileParamLabel(row, file, offset + 1) : name,
           }, name)
         }),
-        rest > 0
-          ? h('div', { class: 'text-2xs text-ink-3' }, `另有 ${rest} 份 · 详见订单`)
+        // 多份的单：一颗「N 份明细」按钮，点开就是这一行的逐份参数与下载。
+        //   以前这里写的是「另有 N 份 · 详见订单」，等于告诉人「去别处看」——
+        //   而管理员此刻要的就是**在这儿**看。按钮与左侧箭头同一个开关
+        //   （expandedKeys），两个入口、一份状态。
+        (row.file_count ?? 0) > 1
+          ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'mt-0.5 inline-flex w-fit items-center gap-0.5 text-2xs text-ink-3 hover:text-ink-1',
+              'aria-expanded': expandedKeys.value.includes(row.id) ? 'true' : 'false',
+              'aria-label': expandedKeys.value.includes(row.id)
+                ? '收起这一单的文件明细'
+                : `展开 ${row.file_count} 个文件的参数与下载`,
+              title: '展开逐份参数与下载',
+              onClick: () => toggleExpand(row),
+            },
+            [
+              //    「个文件」而不是「份明细」：右边「规格」列里的「份」是**打印份数**，
+              //    两个量在相邻两格里都叫「份」，打印员会拿错纸。
+              expandedKeys.value.includes(row.id) ? '收起明细' : `${row.file_count} 个文件`,
+              h(ChevronDown as never, {
+                size: 12,
+                class: expandedKeys.value.includes(row.id)
+                  ? 'rotate-180 transition-transform duration-[var(--motion-dur-fast)]'
+                  : 'transition-transform duration-[var(--motion-dur-fast)]',
+              }),
+            ],
+          )
           : null,
         // 单号（用户面前唯一的标识）+ 内部编号与时间。
         //    ⚠️ 单号必须 `shrink-0`：它是这一格里唯一**不能**折行的东西 ——
@@ -983,17 +1179,22 @@ const columns = computed<DataTableColumns<Order>>(() => [
  * 保证一次点击只发一次请求（watch 链很容易在"重置页码"时双发）。 */
 function onPageChange(next: number): void {
   page.value = next
+  // 换页时把展开状态收起来：上一页那几行的 key 已经不在这张表里了，
+  // 留着只会在回来时「随机有几行是开的」，而管理员并不记得自己开过。
+  expandedKeys.value = []
   void load()
 }
 
 function onPageSizeChange(next: number): void {
   size.value = next
   page.value = 1
+  expandedKeys.value = []
   void load()
 }
 
 function onFilterChange(): void {
   page.value = 1
+  expandedKeys.value = []
   void load()
 }
 
@@ -1282,6 +1483,9 @@ onBeforeUnmount(() => {
         :scroll-x="ORDER_TABLE_MIN_WIDTH"
         size="small"
         :row-key="(row: Order) => row.id"
+        :expanded-row-keys="expandedKeys"
+        @update:expanded-row-keys="onExpandedKeysChange"
+        sticky-expanded-rows
       />
 
       <!-- 窄屏：卡片。入场规则与学生端订单列表一致：10 秒轮询下只有新单会动。
@@ -1320,24 +1524,54 @@ onBeforeUnmount(() => {
               >
                 {{ order.files?.length }} 份 · {{ orderFileParamSummary(order) }}
               </p>
-              <!-- 一单多文件：窄屏卡片把**其余几份**的名字也列出来（与宽屏那一列
-                   同一个口径）。卡片的宽度比表格宽，所以这里多担待几份。 -->
-              <ul
-                v-if="(order.file_count ?? 0) > 1"
-                class="mt-0.5 space-y-0.5 text-xs text-ink-2"
-              >
-                <li
-                  v-for="name in orderFileNames(order).slice(1, 5)"
-                  :key="name"
-                  class="truncate"
-                  :title="name"
+              <!-- 一单多文件：一颗开关 + 展开后的**逐份明细**（文件名 / 参数 /
+                   页数 / 大小 / 下载）。与宽屏展开行共用同一份状态（expandedKeys），
+                   两个屏上的行为一致 —— 在手机上接单的人也要能逐份核对。 -->
+              <div v-if="(order.file_count ?? 0) > 1" class="mt-1">
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-0.5 text-2xs text-ink-3 hover:text-ink-1"
+                  :aria-expanded="expandedKeys.includes(order.id) ? 'true' : 'false'"
+                  @click="toggleExpand(order)"
                 >
-                  {{ name }}
-                </li>
-                <li v-if="orderFileNames(order).length > 5" class="text-2xs text-ink-3">
-                  另有 {{ orderFileNames(order).length - 5 }} 份 · 详见订单
-                </li>
-              </ul>
+                  {{ expandedKeys.includes(order.id) ? '收起明细' : `${order.file_count} 个文件` }}
+                  <ChevronDown
+                    :size="12"
+                    :class="expandedKeys.includes(order.id)
+                      ? 'rotate-180 transition-transform duration-[var(--motion-dur-fast)]'
+                      : 'transition-transform duration-[var(--motion-dur-fast)]'"
+                  />
+                </button>
+                <ul
+                  v-if="expandedKeys.includes(order.id)"
+                  class="mt-1.5 space-y-1.5 border-l-2 pl-2"
+                  style="border-color: var(--secondary)"
+                >
+                  <li v-for="(file, index) in (order.files ?? [])" :key="file.id" class="text-xs">
+                    <div class="flex min-w-0 items-center gap-1.5">
+                      <span class="tnum shrink-0 text-ink-3">{{ index + 1 }}</span>
+                      <span class="min-w-0 flex-1 truncate" :title="file.filename">
+                        {{ file.filename }}
+                      </span>
+                      <NButton
+                        size="tiny"
+                        quaternary
+                        :disabled="!canDownload(order)"
+                        @click="downloadFile(order, file.id, file.filename, file.size ?? undefined)"
+                      >
+                        下载
+                      </NButton>
+                    </div>
+                    <div class="truncate pl-5 text-2xs text-ink-3">
+                      {{ fileGradeOf(order, file) }}
+                      · {{ file.copies ?? order.copies ?? 1 }} 份
+                      <template v-if="fileDuplexOf(order, file)"> · {{ fileDuplexOf(order, file) }}</template>
+                      <template v-if="file.pages != null"> · {{ file.pages }} 页</template>
+                      <template v-if="file.size != null"> · {{ formatBytes(file.size) }}</template>
+                    </div>
+                  </li>
+                </ul>
+              </div>
               <!-- 单号在窄屏也从上面那行独立出来过（表格里是并进去的），
                    口径与宽屏一致：单号在前、加粗，编号与时间退到后面 -->
               <p class="mt-0.5 flex min-w-0 items-center gap-1.5">
