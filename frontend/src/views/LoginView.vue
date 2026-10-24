@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 登录 / 注册。同一个页面用标签切换，登录成功按角色分流。 */
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
-import { ArrowRight, CircleAlert, CircleCheck, Loader2, Printer } from '@lucide/vue'
+import { ArrowRight, CircleAlert, CircleCheck, Loader2, MessageCircle, Printer } from '@lucide/vue'
 import {
   NButton,
   NForm,
@@ -31,7 +31,6 @@ import {
 } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import {
-  CONTACT_HINT,
   NICKNAME_RE,
   OTHER_CONTACT_HINT,
   OTHER_CONTACT_PLACEHOLDER,
@@ -79,6 +78,45 @@ const registerForm = reactive({
 })
 const registerRef = ref<FormInst | null>(null)
 
+/** 注册这一栏的 DOM 根。校验失败时要**在它里面**找第一个红字并滚过去 ——
+ *  按整页 `document.querySelector` 取的话，会摸到隔壁登录栏的错误行。 */
+const registerPaneEl = ref<HTMLElement | null>(null)
+
+/** 站长的 QQ —— 注册卡住时唯一的求助入口。
+ *
+ *  为什么写在前端常量里、而不是从服务端下发：它是**部署者自己的联系方式**，
+ *  全校就这一个，没有「每人一份」的含义；为它加一个接口，等于让这个页面
+ *  多一次往返、多一个可能 404 的依赖，而它恰恰要在「别的都不顺」的时候出现。
+ *  改号 = 改这一行 + 重新 build（产物入库，不需要部署机装 Node）。 */
+const ADMIN_QQ = '2399344717'
+const copiedQq = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 点一下就复制 QQ 号。
+ *
+ *  不用 `mqqwpa://` 唤起 QQ：那个协议在桌面浏览器里会静默失败（点了没反应），
+ *  而「点了没反应」正是这个提示要解决的问题 —— 同一个坑不能自己再踩一遍。
+ *  复制是两边（手机 / 桌面）都成立的动作，用户自己粘到 QQ 里加好友。 */
+async function copyAdminQq(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(ADMIN_QQ)
+  } catch {
+    // http 访问（非安全上下文）或老浏览器没有 clipboard API：退回 execCommand。
+    const ta = document.createElement('textarea')
+    ta.value = ADMIN_QQ
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch { /* 复制不了也不挡路，号就写在按钮上 */ }
+    document.body.removeChild(ta)
+  }
+  copiedQq.value = true
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => { copiedQq.value = false }, 2200)
+}
+
+
 const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
   label: OTHER_CONTACT_LABELS[value],
   value,
@@ -123,81 +161,96 @@ const loginRules: FormRules = {
   password: [{ required: true, message: '密码为必填', trigger: ['blur', 'input'] }],
 }
 
+/** 注册表单的校验。
+ *
+ *  ⚠️ **每个字段只挂一条 rule**（不是「required + 格式」两条）。
+ *  这是一个实测出来的显示 bug：Naive 的 form-item 反馈区只按一条错误的高度预留，
+ *  两条同时亮时后一条会**压在前一条上面** —— 截图里「QQ 号为必填」与
+ *  「5-12 位数字 · 不以 0 开头」叠成一团字，密码那格更是三条压在一起。
+ *  一屏 6 个字段都这样，用户看到的是一坨红字，既不知道错在哪、也不知道改哪个，
+ *  最后反馈出来就是「点了注册没反应」。
+ *  所以把「空」与「格式不对」收进同一个 validator，一次只回一句话；
+ *  文案仍然取自 validators.ts 那一份（不在这里另抄，改一处就够）。
+ */
 const registerRules = computed<FormRules>(() => ({
-  nickname: [
-    { required: true, message: '昵称为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => NICKNAME_RE.test(value),
-      message: '昵称 2-20 位 · 可含中文、字母、数字、下划线',
-      trigger: ['blur', 'input'],
+  nickname: [{
+    validator: (_rule, value: string) => {
+      const text = (value ?? '').trim()
+      if (!text) return new Error('昵称为必填')
+      if (!NICKNAME_RE.test(text)) return new Error('昵称 2-20 位 · 可含中文、字母、数字、下划线')
+      return true
     },
-  ],
-  real_name: [
-    { required: true, message: '姓名为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => REALNAME_RE.test(value),
-      message: '姓名 2-20 位 · 中文或字母',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  real_name: [{
+    validator: (_rule, value: string) => {
+      const text = (value ?? '').trim()
+      if (!text) return new Error('姓名为必填')
+      if (!REALNAME_RE.test(text)) return new Error('姓名 2-20 位 · 中文或字母')
+      return true
     },
-  ],
-  student_id: [
-    { required: true, message: '学号为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => STUDENT_ID_RE.test(value),
-      message: '学号 4-20 位数字',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  student_id: [{
+    validator: (_rule, value: string) => {
+      const text = (value ?? '').trim()
+      if (!text) return new Error('学号为必填')
+      if (!STUDENT_ID_RE.test(text)) return new Error('学号 4-20 位数字')
+      return true
     },
-  ],
-  dorm: [
-    { required: true, message: '宿舍为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => value.trim().length >= 2 && value.trim().length <= 50,
-      message: '宿舍 2-50 字符 · 写到门牌号',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  dorm: [{
+    validator: (_rule, value: string) => {
+      const text = (value ?? '').trim()
+      if (!text) return new Error('宿舍为必填')
+      if (text.length < 2 || text.length > 50) return new Error('宿舍 2-50 字符 · 写到门牌号')
+      return true
     },
-  ],
-  qq: [
-    { required: true, message: 'QQ 号为必填 · 用于取件提醒', trigger: ['blur', 'input'] },
-    {
-      // 文案直接取 CONTACT_HINT 的那一句，别在这里另抄一遍：
-      // 提示语抄两份时，改一处就会出现「框里说 5-12 位、红字说别的」。
-      validator: (_rule, value: string) => qqIssue(value) === null,
-      message: CONTACT_HINT.qq,
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  qq: [{
+    // 文案直接取 qqIssue 的那一句，别在这里另抄一遍：
+    // 提示语抄两份时，改一处就会出现「框里说 5-12 位、红字说别的」。
+    validator: (_rule, value: string) => {
+      const issue = qqIssue(value ?? '')
+      return issue ? new Error(issue) : true
     },
-  ],
-  contact: [
-    {
-      // 这一栏整组选填，所以**没有 required**：QQ 才是必填的那个。
-      // 但填了一半要拦住 —— 只选类型不填号码，库里会留下一个说不清是什么的东西。
-      validator: (_rule, value: string) =>
-        otherContactIssue(registerForm.contact_type, value ?? '') === null,
-      message: '其他联系方式格式无效 · 或整组留空',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  contact: [{
+    // 这一栏整组选填，所以**没有必填**：QQ 才是必填的那个。
+    // 但填了一半要拦住 —— 只选类型不填号码，库里会留下一个说不清是什么的东西。
+    validator: (_rule, value: string) => {
+      const issue = otherContactIssue(registerForm.contact_type, value ?? '')
+      return issue ? new Error(issue) : true
     },
-  ],
-  password: [
-    { required: true, message: '密码为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => passwordIssue(value) === null,
-      message: '8-64 位 · 需同时含字母与数字',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  password: [{
+    validator: (_rule, value: string) => {
+      const text = value ?? ''
+      if (!text) return new Error('密码为必填')
+      const issue = passwordIssue(text)
+      if (issue) return new Error(issue)
+      const nickname = registerForm.nickname.trim()
+      const studentId = registerForm.student_id.trim()
+      if ((nickname && text === nickname) || (studentId && text === studentId)) {
+        return new Error('密码不能与昵称或学号相同')
+      }
+      return true
     },
-    {
-      validator: (_rule, value: string) =>
-        value !== registerForm.nickname && value !== registerForm.student_id,
-      message: '密码不能与昵称或学号相同',
-      trigger: ['blur', 'input'],
+    trigger: ['blur', 'input'],
+  }],
+  confirm_password: [{
+    validator: (_rule, value: string) => {
+      const text = value ?? ''
+      if (!text) return new Error('确认密码为必填')
+      if (text !== registerForm.password) return new Error('两次密码不一致')
+      return true
     },
-  ],
-  confirm_password: [
-    { required: true, message: '确认密码为必填', trigger: ['blur', 'input'] },
-    {
-      validator: (_rule, value: string) => value === registerForm.password,
-      message: '两次密码不一致',
-      trigger: ['blur', 'input'],
-    },
-  ],
+    trigger: ['blur', 'input'],
+  }],
 }))
 
 function landingPath(): string {
@@ -220,6 +273,9 @@ async function submitLogin(): Promise<void> {
   try {
     await loginRef.value?.validate()
   } catch {
+    //    校验没过必须有一句全局的话：红字挂在字段下方，而手机点底部按钮时
+    //    那些字段可能全在屏幕外 ——「点了没反应」是最难自查的一种反馈。
+    message.warning('学号与密码填好再登录')
     return
   }
   submitting.value = true
@@ -265,6 +321,18 @@ async function submitRegister(): Promise<void> {
   try {
     await registerRef.value?.validate()
   } catch {
+    //    同上：7 个字段的红字可能全在屏幕外，点完按钮像是什么都没发生。
+    //    这句话是「注册并登录点了没反应」这类反馈的直接答案。
+    message.warning('还有几项没填对 · 请看标红的字段')
+    //    Naive 的 validate 第二个参数是「过滤哪些字段」，不是滚动选项，
+    //    所以滚到第一个错误项要自己做；feedback 行是校验之后才渲染的，
+    //    必须等一个 tick 再找。这里查的是**注册这一栏**的 DOM（registerPaneEl），
+    //    不是整页第一个红字 —— 登录表单就在隔壁，按整页取会滚到别人那一栏去。
+    void nextTick(() => {
+      registerPaneEl.value
+        ?.querySelector('.n-form-item-feedback__line')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
     return
   }
   submitting.value = true
@@ -546,6 +614,7 @@ onMounted(async () => {
           </NTabPane>
 
           <NTabPane name="register" tab="注册">
+            <div ref="registerPaneEl">
             <NForm
               ref="registerRef"
               :model="registerForm"
@@ -554,7 +623,7 @@ onMounted(async () => {
               :show-require-mark="false"
               @submit.prevent="submitRegister"
             >
-              <div class="grid gap-x-3 sm:grid-cols-2">
+              <div class="grid gap-x-3 gap-y-1 sm:grid-cols-2">
                 <NFormItem label="昵称" path="nickname">
                   <NInput v-model:value="registerForm.nickname" placeholder="显示名 · 2-20 位" />
                 </NFormItem>
@@ -573,17 +642,24 @@ onMounted(async () => {
                    <QQ号>@qq.com，缺了它这个账号一条通知都收不到。
                    所以它跟「姓名 / 学号」是一个级别的东西，不该混在选填的那一组里。 -->
               <NFormItem label="QQ 号（取件提醒用）" path="qq">
-                <NInput
-                  v-model:value="registerForm.qq"
-                  :maxlength="12"
-                  placeholder="5-12 位数字 · 不以 0 开头"
-                />
+                <!-- 提示语放在**表单项内部**，不要用 -mt-3 的负边距贴到外面去：
+                     负边距把它的位置钉死了，而校验失败时 form-item 会长出一行红字，
+                     两者就叠在一起（截图里「QQ 号为必填」压在「取件提醒发往…」上）。
+                     放进 blank 里之后，红字在提示下方自然展开。 -->
+                <div class="w-full">
+                  <NInput
+                    v-model:value="registerForm.qq"
+                    :maxlength="12"
+                    placeholder="5-12 位数字 · 不以 0 开头"
+                  />
+                  <p class="mt-1 text-xs text-ink-3">
+                    取件提醒发往这个 QQ 邮箱 · 微信号推不出邮箱地址，不能替代。
+                  </p>
+                </div>
               </NFormItem>
-              <p class="-mt-3 mb-3 text-xs text-ink-3">
-                取件提醒发往这个 QQ 邮箱 · 微信号推不出邮箱地址，不能替代。
-              </p>
 
               <NFormItem label="其他联系方式（选填）" path="contact">
+                <div class="w-full">
                 <div class="flex w-full gap-2">
                   <!-- 可以清空回「不填」：这一组整组选填，没有退路的必选下拉
                        会让「只留 QQ」变成存不进来的状态。 -->
@@ -606,15 +682,17 @@ onMounted(async () => {
                     class="min-w-0 flex-1"
                   />
                 </div>
+                  <!-- 同 QQ 那一栏：提示放在表单项内部，别用负边距贴到外面。 -->
+                  <p class="mt-1 text-xs text-ink-3">
+                    <template v-if="registerForm.contact_type">
+                      {{ OTHER_CONTACT_HINT[registerForm.contact_type] }}
+                    </template>
+                    <template v-else>微信 / 邮箱为备用线索 · 可留空；QQ 号为必填。</template>
+                  </p>
+                </div>
               </NFormItem>
-              <p class="-mt-3 mb-3 text-xs text-ink-3">
-                <template v-if="registerForm.contact_type">
-                  {{ OTHER_CONTACT_HINT[registerForm.contact_type] }}
-                </template>
-                <template v-else>微信 / 邮箱为备用线索 · 可留空；QQ 号为必填。</template>
-              </p>
 
-              <div class="grid gap-x-3 sm:grid-cols-2">
+              <div class="grid gap-x-3 gap-y-1 sm:grid-cols-2">
                 <NFormItem label="密码" path="password">
                   <NInput
                     v-model:value="registerForm.password"
@@ -646,7 +724,49 @@ onMounted(async () => {
               >
                 注册并登录
               </NButton>
+
+              <!-- 卡住的时候找谁：站长 QQ。
+                   放在按钮**下面**而不是页面顶部 —— 人是在「点了没反应」的那一刻
+                   才需要它的，而那一刻他的视线就在按钮上。
+                   整块用 accent 的淡黄底 + 一条竖标，和页面里其它「要你做点什么」
+                   的提示同一语法；QQ 号本身是实心黄块（全页最亮的东西之一），
+                   点一下复制 —— 不挂 mqqwpa:// 那种「桌面点了没反应」的协议。 -->
+              <div
+                class="mt-3 flex items-center gap-2.5 border px-3 py-2"
+                style="border-color: var(--accent-tint-border); background: var(--accent-tint-soft)"
+              >
+                <span
+                  class="h-7 w-[2px] shrink-0"
+                  style="background: var(--accent)"
+                  aria-hidden="true"
+                />
+                <MessageCircle :size="16" class="shrink-0" style="color: var(--secondary)" />
+                <div class="min-w-0 flex-1 leading-tight">
+                  <p class="text-2xs font-bold tracking-wide text-ink-2">
+                    注册遇到问题？直接找站长
+                  </p>
+                  <!-- 第一次写的是「学号不在名单 · 账号被拦 · 收不到提醒」，
+                       430px 下折成两行、最后只剩一个「醒」字。文案收到 12 个字，
+                       窄屏也能一行放下；多出来的情况本来也归「直接找站长」。 -->
+                  <p class="mt-0.5 line-clamp-2 text-2xs leading-snug text-ink-3">
+                    学号不在名单 · 收不到提醒
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="tnum shrink-0 border px-2 py-1 text-xs font-bold transition-colors duration-[var(--motion-dur-fast)]"
+                  :style="copiedQq
+                    ? 'color: var(--secondary-foreground); background: var(--secondary); border-color: var(--secondary)'
+                    : 'color: var(--accent-foreground); background: var(--accent); border-color: var(--accent)'"
+                  :title="`点击复制 QQ 号 ${ADMIN_QQ}`"
+                  aria-live="polite"
+                  @click="copyAdminQq"
+                >
+                  {{ copiedQq ? '已复制' : `QQ ${ADMIN_QQ}` }}
+                </button>
+              </div>
             </NForm>
+            </div>
           </NTabPane>
         </NTabs>
         </div>
