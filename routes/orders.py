@@ -38,6 +38,7 @@ from config import (
     ST_PENDING,
     ST_PRINTING,
     ST_READY,
+    ST_UNCLAIMED,
     ST_UNPRICED,
     UPLOAD_FOLDER,
     logger,
@@ -1853,10 +1854,15 @@ def api_update_status(order_id):
         # B 手里还攥着「待打印」，盖掉之后留下一句「待打印 → 可取件」，
         # 中间那一次「打印中」就这么凭空消失了）。rowcount = 0 说明这中间有人动过，
         # 让他刷新重看，别替他把别人的操作悄悄改写掉。
+        #    「进入可取件的时刻」单独记一列（v25）：超期归档按它算天数，
+        #    而 update_time 会被后面任何一次改动刷掉。
+        #    只有切到「可取件」时才写；从「未取件」改回「可取件」会重置成现在，
+        #    等于重新开始计 7 天 —— 那是柜台把这张单重新摆上架的意思。
         cursor = conn.execute('''
-            UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP
+            UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP,
+                              ready_at = CASE WHEN ? = ? THEN CURRENT_TIMESTAMP ELSE ready_at END
             WHERE id = ? AND status = ?
-        ''', (new_status, order_id, row['status']))
+        ''', (new_status, new_status, ST_READY, order_id, row['status']))
         if cursor.rowcount == 0:
             conn.rollback()
             logger.info('改状态竞争失败：订单 #%s 在读完之后被改过，操作人=%s',
@@ -1943,10 +1949,14 @@ def api_confirm_pickup():
         # 最后才是状态条件。写成 (*codes, ST_DONE, ST_READY) 的话
         # 状态列会被赋成用户输入的单号文本（UPDATE 照样成功、rowcount 也是 1），
         # 然后下面按「已取件」再查就查不到，当场 500 —— 这个坑已经踩过一次。
+        #    状态认「可取件」**和「未取件」**：超期归档只是把它从柜台上挪下去，
+        #    人来了照样要能给他 —— 学生隔半个月才来取是常事，那两张纸一直就在架子上，
+        #    拒掉这一单等于让他白跑一趟，还得管理员手动改状态才能给。
         cursor = conn.execute(
             'UPDATE orders SET status = ?, update_time = CURRENT_TIMESTAMP '
-            'WHERE pickup_code IN (%s) AND status = ? RETURNING id, claimed_by' % placeholders,
-            (ST_DONE, *codes, ST_READY))
+            'WHERE pickup_code IN (%s) AND status IN (?, ?) '
+            'RETURNING id, claimed_by' % placeholders,
+            (ST_DONE, *codes, ST_READY, ST_UNCLAIMED))
         # RETURNING 让「这次真正改到的那一行」跟着 UPDATE 一起回来。
         #
         # 原先的写法是改完再查一遍 `pickup_code IN (...) AND status = '已取件'`
@@ -2156,7 +2166,8 @@ def api_my_stats():
             WHERE o.user_id = ?
         ''', (uid,)).fetchall()
 
-    mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0, 'unpriced': 0, 'spent': 0.0}
+    mine = {'total': len(rows), 'in_progress': 0, 'ready': 0, 'done': 0, 'unpriced': 0,
+            'unclaimed': 0, 'spent': 0.0}
     by_color = {'black': 0, 'color': 0}
     by_duplex = {'single': 0, 'double': 0}
     counts = {}
@@ -2169,6 +2180,13 @@ def api_my_stats():
             spent += r['price']
         if r['status'] == ST_READY:
             mine['ready'] += 1
+        elif r['status'] == ST_UNCLAIMED:
+            #    超期归档：东西还在店里，只是从柜台挪到了架子顶上。
+            #    对学生来说它**仍然是能取的**（凭单号就能取），所以一并算进 ready ——
+            #    只算 into in_progress 的话，学生会看到「进行中 +1」，
+            #    以为管理员还没打完，于是又去催一遍。
+            mine['ready'] += 1
+            mine['unclaimed'] += 1
         elif r['status'] == ST_DONE:
             mine['done'] += 1
         elif r['status'] == ST_UNPRICED:

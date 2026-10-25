@@ -509,22 +509,53 @@ ST_READY = '可取件'
 
 ST_DONE = '已取件'
 
-ORDER_STATUSES = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
+# 「未取件」——2026-10-21 新增：可取件超过 ARCHIVE_AFTER_DAYS 天还没人来取，
+# 由后台线程自动归档到这个状态。
+#
+# 为什么不直接复用「可取件」+ 一个时间筛选：
+#   ① 「可取件」是**等人来**的活单，柜台上要一眼看见；超期单混在里面，
+#      真正该催的那几单就被淹没了 —— 而这个状态的唯一用处就是「让它跳出来」；
+#   ② 归档要留痕（谁在什么时候把它归掉的），一个独立的终态才好写时间线；
+#   ③ 学生隔了半个月才来取是常事，所以它**不是**废弃：柜台仍然能凭单号取件、
+#      管理员也能手动改回「可取件」重新计时。
+ST_UNCLAIMED = '未取件'
+
+# 顺序即界面顺序：未取件排在可取件之后、已取件之前 ——
+# 它是「可取件」这条路的超期分支，不是另一条路。
+ORDER_STATUSES = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY, ST_UNCLAIMED, ST_DONE)
 
 # 能靠「改状态」按钮手动切到的状态。待计费不在里面：
 # 它只能由计费动作产生（计费成功时自动从它走到待打印）。
 # 允许手动往回切就会造出「已经标了价、又退回待计费」的单子 ——
 # 那单的钱已经在界面上了，再显示成待计费，用户看到的费用就和状态对不上。
-ORDER_STATUSES_MANUAL = (ST_PENDING, ST_PRINTING, ST_READY, ST_DONE)
+#
+# 「未取件」在里面：它虽然由后台自动产生，但人来了就得能手动放回流程
+# （通常直接改「已取件」，也可能改回「可取件」重新计时）。
+ORDER_STATUSES_MANUAL = (ST_PENDING, ST_PRINTING, ST_READY, ST_UNCLAIMED, ST_DONE)
 
 # 「排队情况」画哪几档。比 ORDER_STATUSES 少一个已取件。
 # 已取件是终态，单子已经走完流程、纸也被取走了，摆在「还在排队」里没有意义；
 # 它同时是个累计数 —— 性质和总单数一样，属于站点规模，
 # 不该由服务数据页替业主对外说。
+# 「未取件」同理不进排队：它不在流程里，是搁在架子上的存货（超期那部分）。
 # 注意它和 ORDER_STATUSES_MANUAL 长得像但**不能合并**：
 # 排队里要显示待计费（它就是队列的一环：还没报价、还没开印），
 # 而下拉框里不能有（手改回待计费会做出「已经收了钱又变回没报价」的单子）。
 ORDER_STATUSES_QUEUE = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY)
+
+# ---- 取件超期归档（archiver.py）----
+# 「可取件」摆满 ARCHIVE_AFTER_DAYS 天还没人来取，就自动转到「未取件」。
+# 7 天是照学校作息定的：一个周末加几天缓冲，学生不至于刚回家就被归档。
+ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').strip().lower() not in (
+    '0', 'false', 'no', 'off')
+
+ARCHIVE_AFTER_DAYS = env_int('ARCHIVE_AFTER_DAYS', 7)
+
+# 扫描间隔（秒）。归档不是秒级的事，半小时一轮足够；
+# 每轮最多处理 ARCHIVE_BATCH 单，免得第一次上线时把几千张老单一次性刷成留痕。
+ARCHIVE_INTERVAL = env_int('ARCHIVE_INTERVAL', 1800)
+
+ARCHIVE_BATCH = env_int('ARCHIVE_BATCH', 200)
 
 # ---- 订单操作留痕（order_logs）----
 # 订单详情页要回答的是「这一单被谁动过、动了什么」。光看 orders 表那几个

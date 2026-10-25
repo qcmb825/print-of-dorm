@@ -48,7 +48,7 @@ import pricing
 
 from config import (ALLOWED_EXTENSIONS, BATCH_ORDER_MAX_FILES, ORDER_LOG_WITHDRAW,
                     ORDER_SOURCE_BOT, PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE,
-                    ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED, STATUS_ACTIVE,
+                    ST_PENDING, ST_PRINTING, ST_READY, ST_UNCLAIMED, ST_UNPRICED, STATUS_ACTIVE,
                     STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED, TICKET_MAX_OPEN,
                     TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
 from db import db_conn, files_for_orders, find_preset
@@ -453,7 +453,9 @@ def _me_payload(uid, nickname, conn=None):
         'orders': {
             'total': sum(counts.values()),
             'in_progress': sum(counts.get(s, 0) for s in (ST_UNPRICED, ST_PENDING, ST_PRINTING)),
-            'ready': counts.get(ST_READY, 0),
+            # 同 account.py：未取件也是「还没取」，一并算给 ready。
+            'ready': counts.get(ST_READY, 0) + counts.get(ST_UNCLAIMED, 0),
+            'unclaimed': counts.get(ST_UNCLAIMED, 0),
             'done': counts.get(ST_DONE, 0),
             'spent': round(spent or 0.0, 2),
         },

@@ -17,15 +17,15 @@ export const ROLE_LABELS: Record<Role, string> = {
  *  后端按它落库（config.ST_*），前端按它取颜色 —— 不要单独翻译或重命名。
  *  改这里记得同时改 utils/format.ts 的两张颜色表，否则新状态会取不到颜色，
  *  表现为标签没背景色而不是报错。 */
-export type OrderStatus = '待计费' | '待打印' | '打印中' | '可取件' | '已取件'
+export type OrderStatus = '待计费' | '待打印' | '打印中' | '可取件' | '未取件' | '已取件'
 
-export const ORDER_STATUSES: OrderStatus[] = ['待计费', '待打印', '打印中', '可取件', '已取件']
+export const ORDER_STATUSES: OrderStatus[] = ['待计费', '待打印', '打印中', '可取件', '未取件', '已取件']
 
 /** 管理员能手动切到的状态，比上面少一个「待计费」。
  *  待计费只能由计费动作产生（后端 POST /api/order/<id>/price）；
  *  允许切回去就造得出「已标了价却又退回待计费」的单，
  *  而前端会照旧把那个金额显示出来，没人看得出它其实还没被确认。 */
-export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '可取件', '已取件']
+export const ORDER_STATUSES_MANUAL: OrderStatus[] = ['待打印', '打印中', '可取件', '未取件', '已取件']
 
 /** 「按打印服务筛选」里代表「什么都没归」的那个取值。
  *

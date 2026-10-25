@@ -48,6 +48,10 @@ const emit = defineEmits<{
 const message = useMessage()
 
 const READY = '可取件'
+/** 能交件的状态：可取件 + 超期归档的「未取件」。
+ *  归档只是把它从柜台上挪到架子顶上，人来了照样要给他 —— 那几张纸一直在店里。
+ *  （后端 api_confirm_pickup 的 WHERE 也是这两个状态，两边同一口径。） */
+const HANDABLE = new Set<string>([READY, '未取件'])
 const DONE = '已取件'
 const WAIT_PRICE = '待计费'
 
@@ -114,7 +118,7 @@ async function lookup(): Promise<void> {
 function confirmBlockReason(current: PickupOrder): string | null {
   if (current.status === DONE) return '已取件 · 不可重复交件'
   if (current.status === WAIT_PRICE) return '待计费 · 先在订单台填金额'
-  if (current.status !== READY) return `当前「${current.status}」· 不可交件`
+  if (!HANDABLE.has(current.status)) return `当前「${current.status}」· 不可交件`
   return null
 }
 

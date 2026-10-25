@@ -454,6 +454,9 @@ const poolSummary = computed(() => ({
   pool: orders.value.filter((order) => order.claimed_by === null).length,
   mine: orders.value.filter((order) => order.claimed_by === currentUserId.value).length,
   ready: orders.value.filter((order) => order.status === '可取件').length,
+  // 未取件单独一格：超期归档那批纸还在店里。混进「可取件」会让柜台以为
+  // 今天要交的件多了一堆；分开放才知道「该催几张、存货几张」。
+  unclaimed: orders.value.filter((order) => order.status === '未取件').length,
   unpriced: orders.value.filter((order) => order.status === WAIT_PRICE).length,
 }))
 
@@ -1373,12 +1376,13 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
       <StatCard label="本页订单" :value="orders.length" :icon="Package" />
       <StatCard label="本页待接单" :value="poolSummary.pool" accent />
       <StatCard label="本页待计费" :value="poolSummary.unpriced" />
       <StatCard label="本页我接的" :value="poolSummary.mine" />
       <StatCard label="本页可取件" :value="poolSummary.ready" />
+      <StatCard label="本页未取件" :value="poolSummary.unclaimed" />
     </div>
 
     <div class="panel mb-3 flex flex-wrap items-center gap-2 p-2.5">

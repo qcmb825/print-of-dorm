@@ -5,7 +5,8 @@ import secrets
 from flask import Blueprint, g, jsonify, request, session
 
 from config import (ROLE_LABELS, ROLE_SUPER, ROLE_USER, STATUS_ACTIVE, STATUS_CLOSED,
-                    ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNPRICED,
+                    ST_DONE, ST_PENDING, ST_PRINTING, ST_READY, ST_UNCLAIMED,
+                    ST_UNPRICED,
                     STUDENT_ID_RE, logger, public_role, public_role_label)
 import prefs
 
@@ -431,7 +432,11 @@ def api_me_overview():
             # 待计费也算进行中：对本人来说这单还没结束（正等管理员报价），
             # 不算进任何一格会让刚下单的人看到「进行中 0」而以为没提交上。
             'in_progress': sum(counts.get(s, 0) for s in (ST_UNPRICED, ST_PENDING, ST_PRINTING)),
-            'ready': counts.get(ST_READY, 0),
+            # 「还没取的件」= 可取件 + 超期归档的未取件：对学生来说两者都是
+            # 「我的纸在店里，去就能拿」。只算可取件的话，单子归档那天
+            # 这个数字会突然掉下去，看着像「我的东西没了」。
+            'ready': counts.get(ST_READY, 0) + counts.get(ST_UNCLAIMED, 0),
+            'unclaimed': counts.get(ST_UNCLAIMED, 0),
             'done': counts.get(ST_DONE, 0),
             'spent': round(spent or 0.0, 2),
         },

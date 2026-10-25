@@ -380,7 +380,15 @@ def get_pickup_info(conn=None, apply_fallback=True):
 #            就能改；env 退居兜底（库里为空时回退），取件邮件与订单载荷读同一处，
 #            不留第二处真相。纯加列，不回填 —— 空就是空，回退逻辑替它说话。
 # v23 -> v24：order_files 加七列（每份文件自己的参数）+ 新表 password_resets。
-SCHEMA_VERSION = '24'
+# v24 -> v25：orders 加一列 ready_at（进入「可取件」的时刻）。
+#            取件超期归档（archiver.py）按它算天数：可取件摆满 ARCHIVE_AFTER_DAYS 天
+#            还没人来取，就自动转到「未取件」（红色）。
+#            为什么不拿 update_time：那列会被任何一次改状态、改金额刷掉，
+#            而「摆了几天」只该从那一次进入可取件算起。
+#            老单回填：优先取 order_logs 里最近一次「→可取件」的留痕时刻，
+#            没有留痕的退回 update_time / create_time —— 留空的话那些单
+#            会永远挂在可取件里，永远不会被归档。
+SCHEMA_VERSION = '25'
 
 
 
@@ -433,7 +441,7 @@ def _schema_work_pending(cursor, current_version):
                        'copies', 'paper_type_id', 'paper_name', 'paper_remark',
                        'claim_alert_time', 'ready_notify_time', 'preset_group_id',
                        'source', 'est_price', 'est_pages', 'price_item_id',
-                       'price_item_name'):
+                       'price_item_name', 'ready_at'):
             if column not in order_columns:
                 pending.append('orders.' + column)
     if _table_exists(cursor, 'order_logs') and 'to_status' not in _table_columns(cursor, 'order_logs'):
@@ -799,6 +807,35 @@ def _migrate_order_files_backfill(cursor, current_version):
         logger.info('迁移：把 %s 张老订单的文件补进 order_files（此后清单一律以它为准）', filled)
 
 
+def _migrate_ready_at(cursor, current_version):
+    """v24 -> v25：给「已经在可取件」的老单补上进入可取件的时刻（ready_at）。
+
+    优先用 order_logs 里最近一次「→可取件」的留痕；没有留痕的（v16 之前的老库、
+    或者被手工直接改过状态的单）退回 update_time，再退 create_time。
+    留空的话归档扫描会跳过它们 —— 那些单会永远挂在「可取件」里，
+    而「挂在可取件里没人取」正是这次要收拾的东西。
+
+    幂等：只填 ready_at IS NULL 的行，重复执行不会再动。
+    """
+    if _migration_version(current_version) >= 25:
+        return
+    if _table_exists(cursor, 'order_logs'):
+        filled = cursor.execute("""
+            UPDATE orders SET ready_at = COALESCE(
+                (SELECT MAX(l.create_time) FROM order_logs l
+                  WHERE l.order_id = orders.id AND l.to_status = ?),
+                update_time, create_time)
+            WHERE status = ? AND ready_at IS NULL
+        """, (ST_READY, ST_READY)).rowcount
+    else:
+        # 连留痕表都没有的库（v16 之前）：只能退回那两个时间戳。
+        filled = cursor.execute(
+            'UPDATE orders SET ready_at = COALESCE(update_time, create_time) '
+            'WHERE status = ? AND ready_at IS NULL', (ST_READY,)).rowcount
+    if filled:
+        logger.info('迁移：给 %s 张「可取件」老单补上进件时刻（超期归档按它算天数）', filled)
+
+
 def _migrate_relax_real_name_unique(cursor, current_version):
     """v4 -> v5：姓名不再要求唯一，只留普通索引加速查询。
 
@@ -908,7 +945,10 @@ def init_database():
                 ready_notify_time TIMESTAMP,
                 source TEXT NOT NULL DEFAULT 'web',
                 est_price REAL,
-                est_pages INTEGER
+                est_pages INTEGER,
+                -- v25：进入「可取件」的时刻。超期归档（archiver.py）按它算天数；
+                -- 不能拿 update_time 代替 —— 那列会被任何一次改状态/改金额刷掉。
+                ready_at TIMESTAMP
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -1159,6 +1199,13 @@ def init_database():
             cursor.execute('ALTER TABLE orders ADD COLUMN price_item_name TEXT')
         order_columns.update(('source', 'est_price', 'est_pages',
                               'price_item_id', 'price_item_name'))
+
+        # v25：这一单**什么时候变成「可取件」**的。取件超期归档（archiver.py）
+        # 拿它算天数 —— 不能拿 update_time：那列被任何一次改状态、改金额刷过，
+        # 而「摆了几天没人取」只该从那一次进入可取件算起。
+        if 'ready_at' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN ready_at TIMESTAMP')
+        order_columns.add('ready_at')
 
         # ⚠️ paper_types 的补列**不能写在这儿**：这张表是下面一百多行才
         # CREATE TABLE IF NOT EXISTS 的，排在这一段就是「对着还不存在的表 ALTER」——
@@ -1593,6 +1640,7 @@ def init_database():
         # 位置无所谓（只读 orders、写自己的新表），跟着其它迁移排在最后，
         # 免得又出现「用结构的语句排在产生结构的语句之前」那一类坑。
         _migrate_order_files_backfill(cursor, current_version)
+        _migrate_ready_at(cursor, current_version)
 
         if _pickup_index_ok and _qq_index_ok:
             cursor.execute(

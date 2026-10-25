@@ -115,6 +115,14 @@
   --status-unpriced: #7e22ce;
   --status-unpriced-bg: #f3e8ff;
 
+  /* 未取件（2026-10-21 新增）：可取件摆满 7 天没人来取，自动归档到这里。
+   * 用红 —— 这是这套界面里**唯一**一个红色状态，而它确实是个该被看见的问题
+   * （东西还在柜上、钱可能已经收了、人却一直不来）。
+   * 不用 --err 的暗红 #b91c1c（那是表单报错的颜色，铺在大片状态带里太闷），
+   * 取一档稍亮的红，保证在浅色底上仍有 4.5:1 以上。 */
+  --status-unclaimed: #c62828;
+  --status-unclaimed-bg: #fee2e2;
+
   /* 角色：普通用户 / 管理员。
    * --role-super 保留着，是给「角色」字段的第三种取值兜底用的。
    * 它不能只靠一句注释声明「不会有第三行」—— 真漏出一行的时候，
@@ -341,6 +349,10 @@
   --status-done-bg: #4ade801f;
   --status-unpriced: #c084fc;
   --status-unpriced-bg: #c084fc1f;
+
+  /* 未取件：深色底下用亮一点的红（同 --err 那一档），压在 #101110 上仍是 7:1。 */
+  --status-unclaimed: #ff5c5c;
+  --status-unclaimed-bg: #ff5c5c24;
 
   --role-user: #22d3ee;
   --role-user-bg: #00f0ff1a;

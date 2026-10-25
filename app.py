@@ -52,6 +52,7 @@ from identity import check_roster_schema
 from mail import mask_address
 from notifier import start_claim_watcher
 from pickup_notifier import start_pickup_watcher
+from archiver import start_archive_watcher
 from security import actor_label, client_ip, ensure_csrf_token, sanitize_log, security_event
 
 from routes import register_blueprints
@@ -723,4 +724,8 @@ if __name__ == '__main__':
     # （claim_alert_time / ready_notify_time），互不影响。
     start_claim_watcher()
     start_pickup_watcher()
+    # 第三条：取件超期归档。可取件摆满 ARCHIVE_AFTER_DAYS 天没人来取，转「未取件」。
+    # 它与上面两条的判据完全不同 —— 上面两条是「该发提醒了」，这条是「该挪下柜台了」，
+    # 各自扫各自的列（ready_notify_time / ready_at），互不影响。
+    start_archive_watcher()
     start_server(os.getenv('HOST', '0.0.0.0'), env_int('PORT', 8080))

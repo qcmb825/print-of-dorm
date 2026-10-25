@@ -95,7 +95,7 @@ const summary = computed(() => ({
   active: orders.value.filter(
     (o) => o.status === '待计费' || o.status === '待打印' || o.status === '打印中',
   ).length,
-  ready: orders.value.filter((o) => o.status === '可取件').length,
+  ready: orders.value.filter((o) => o.status === '可取件' || o.status === '未取件').length,
   done: orders.value.filter((o) => o.status === '已取件').length,
 }))
 
@@ -451,7 +451,8 @@ async function withdraw(order: Order): Promise<void> {
               <div class="tech-label mb-0.5 text-ink-3 tech-label--cn text-xs">单号</div>
               <div
                 class="tnum font-heading text-2xl leading-none font-bold tracking-[0.1em]"
-                :style="order.status === '可取件' ? { color: 'var(--accent-text)' } : undefined"
+                :style="order.status === '可取件' || order.status === '未取件'
+                  ? { color: 'var(--accent-text)' } : undefined"
               >
                 {{ pickupCodeLabel(order.pickup_code) }}
               </div>
@@ -460,9 +461,11 @@ async function withdraw(order: Order): Promise<void> {
         </div>
 
         <!-- 可取件：把「去哪取、几点能取」放在单号下面 —— 学生到了楼下才想起来
-             问地点，这一屏就该替他省掉那趟来回。站点没配时整块不出现（不显示空字）。 -->
+             问地点，这一屏就该替他省掉那趟来回。站点没配时整块不出现（不显示空字）。
+             超期归档的「未取件」同样在店里等他去拿，所以这条提示照给。 -->
         <p
-          v-if="order.status === '可取件' && (site.pickup_place || site.pickup_hours)"
+          v-if="['可取件', '未取件'].includes(order.status)
+            && (site.pickup_place || site.pickup_hours)"
           class="spec mt-2.5 px-2.5 py-1.5 text-xs text-ink-2"
         >
           <span class="tech-label tech-label--cn text-ink-3">取件</span>
