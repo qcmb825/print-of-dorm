@@ -21,6 +21,7 @@
   - 日志不记消息正文，只记 QQ 号与动作（正文可能有闲聊和隐私）。
 """
 
+import collections
 import json
 import logging
 import os
@@ -549,6 +550,41 @@ def _pending_pop(qq):
     """摘掉某个 QQ 的待办（不删文件，删文件是 _clear_pending 的事）。"""
     with _pending_lock:
         return _pending.pop(qq, None)
+
+
+# ---- 同一条消息只处理一次 -----------------------------------------------------
+#
+# 为什么要去重（真实反馈，2026-10-21）：学生只发了一份 PDF，机器人却问了两遍、
+# 最后收成「2 份文件」（① ② 是同一个文件名）。现场是消息被**投递了两次** ——
+# OneBot 实现在 WebSocket 重连、心跳超时补发、或者框架自己重试时会把同一条
+# 事件再推一遍。而 `_pending` 是**累积**的（收到文件就往同一批里加），
+# 于是第二遍进来的同一份被当成第二份文件：学生拿到的单子里有两份一样的纸。
+#
+# 判据用 `message_id`（同一条消息的唯一标识）。不按「文件名 + 内容」去重：
+# 学生**真的**可能发两次同一个文件（比如他想打两份不同的页），
+# 那种情况是两条消息、两个 id，不该被吃掉。
+_SEEN_MAX = 400                 # 只记最近几百条：一条消息只会在几秒内重投
+_seen_lock = threading.Lock()
+_seen_order = collections.deque()
+_seen_ids = set()
+
+
+def _seen_before(message_id):
+    """这条消息之前处理过吗？没处理过就记下来并返回 False。
+
+    有界 + 加锁：事件线程只有一个，但推送线程和测试会并发调 handle_event，
+    而无界集合会在跑几个月之后慢慢变成内存里的一条垃圾带。
+    """
+    if not message_id:
+        return False                 # 框架没给 id：宁可处理，也不能把真消息吞掉
+    with _seen_lock:
+        if message_id in _seen_ids:
+            return True
+        _seen_ids.add(message_id)
+        _seen_order.append(message_id)
+        while len(_seen_order) > _SEEN_MAX:
+            _seen_ids.discard(_seen_order.popleft())
+    return False
 
 
 def _pending_keys():
@@ -2192,6 +2228,13 @@ def handle_event(client, event):
         return
     if qq == client.self_id:
         return  # 自己发出的消息（开了 reportSelfMessage 时会出现），别自问自答
+
+    #    同一条消息被投递两次时，第二遍必须整条丢掉 —— 见 _seen_before 上面那段。
+    #    放在附件处理之前：重复投递最典型的现场就是「同一份文件被加进第二批」。
+    message_id = str(event.get('message_id') or '').strip()
+    if _seen_before(message_id):
+        log.info('重复投递的消息，已忽略 qq=%s message_id=%s', qq, message_id)
+        return
 
     attachments = extract_attachments(event.get('message'))
     if attachments:

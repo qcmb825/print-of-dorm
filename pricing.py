@@ -1020,21 +1020,48 @@ def _doc_ccp_text(raw):
     return value if 0 < value <= 100 * 1000 * 1000 else 0
 
 
-def _count_doc(blob):
-    """.doc 页数：摘要信息的页数 > 摘要信息的字数折算 > 正文里的换页符（近似）。
+def _count_rtf(blob):
+    """RTF：数 `\\page` 控制符。
 
-    前两档读的是 SummaryInformation（Word 保存时自己写的），最可信。
+    RTF 的自动分页由渲染器决定，文件里根本不记录，所以这一档给的是**下界**
+    —— 回执里也照实说「至少 N 页」，不假装是准确页数。
+    """
+    if len(blob) > _DOC_WORD_STREAM_MAX:
+        return None, 'Word：文件太大，没有做页数统计'
+    pages = blob.count(b'\\page') + 1
+    return pages, 'Word：按分页符统计（至少 %s 页）' % pages
+
+
+def _count_doc(blob):
+    """.doc 页数：先看**真实格式**，再按摘要信息 > 字数 > 换页符逐档降级。
+
+    为什么第一步是看格式而不是信后缀：后缀是学生随手写的，而内容才决定怎么解析。
+    实测里「.doc 不给预估价」最常见的原因根本不是 Word 97 解析失败 ——
+    而是这份文件其实是 **docx 改名**、或者 WPS/在线转换存出来的 **RTF**。
+    按后缀走 OLE 解析，魔术字节对不上，`_ole_stream` 全都返回空，
+    最后落到「文档里没有页数信息」—— 于是整单没有预估价。
+    先认魔术字节，这一大类当场就数出来了。
+
+    其余部分：前两档读的是 SummaryInformation（Word 保存时自己写的），最可信。
     第三档是兜底：有些 .doc（另存/转换工具生成、被别的软件改过的）没有摘要信息，
     但 WordDocument 流里还留着正文 —— 数换页符就能给一个页数量级。
 
     为什么第三档放在最后、还要加护栏：换页符是**近似**。它不解析 piece table，
     不知道每段用了多大字号/行距、哪些页是图表撑出来的；更要紧的是 0x0c 在流里
     不只有换页符一个角色 —— 压缩的图形/表格数据里也会出现，实测能让 5 页的文件
-    数出 60 页。所以这里用 FIB 的 ccpText（正文字符数）给结果封顶：
-    超了就认为这一档被噪声骗了，宁可回 None 让管理员自己看，也不报一个几倍高估的数。
+    数出 60 页（仓库里那份样本就是：正文区间内仍有 53 个 0x0c，实际 5 页）。
+    所以用 FIB 的 ccpText（正文字符数）给结果封顶；超了说明这一档被噪声骗了，
+    **改走字数估算**（只会偏低，不会几倍高估），而不是干脆不给页数。
 
     字数折算的分母 1400：一页中文 A4 正文约 1200-1500 字（小四、单倍行距），取中值。
     """
+    head = blob[:8]
+    if head.startswith(b'PK\x03\x04'):
+        # docx 改名成 .doc（或 WPS 另存）：按 zip 里的 XML 数。
+        return _count_docx(blob)
+    if head.startswith(b'{\\rtf'):
+        return _count_rtf(blob)
+
     props = _ole_properties(_ole_stream(blob, 'SummaryInformation') or b'')
     pages = props.get(_PIDSI_PAGECOUNT)
     if isinstance(pages, int) and pages > 0:
@@ -1049,12 +1076,25 @@ def _count_doc(blob):
     if page_breaks and _doc_looks_textual(raw):
         pages = page_breaks + 1
         ccp = _doc_ccp_text(raw)
-        #    护栏的说明见 _DOC_MIN_CHARS_PER_PAGE 上面那段：它不是「更准的算法」，
+        #    护栏的说明见上面那段：它不是「更准的算法」，
         #    只是一道「这个数看起来不可能」的检查。ccp 读不出来时只能信换页符。
         if not ccp or pages * _DOC_MIN_CHARS_PER_PAGE <= ccp:
             return pages, 'Word：按换页符数估算（近似），共 %s 页' % pages
-        logger.warning('.doc 的换页符数与正文字数不符（%s 个换页符 / %s 字），这次不给页数',
-                       page_breaks, ccp)
+        #    被噪声骗了：换页符数远超正文字数撑得起的页数。
+        #    改按字数估一个下界 —— 这一档**只会偏低**（图表多、字号大的文档
+        #    页数会比实际少），但比「这单没有预估价」好：管理员计费时本来
+        #    就要打开文件看一遍，而学生至少看得到一个数。
+        estimated = max(1, (ccp + 1399) // 1400)
+        logger.info('.doc 的换页符被噪声骗了（%s 个换页符 / %s 字），改用字数估算：%s 页',
+                    page_breaks, ccp, estimated)
+        return estimated, 'Word：按字数估算（可能偏低），共 %s 页' % estimated
+    #    走到这里说明连 ccpText 都没有（流损坏、或者 FIB 标识不对）。
+    #    这时唯一还剩的事实是「正文字符数能从 FIB 读到吗」——
+    #    读到了就还能给个下界，读不到才是真的什么都不知道。
+    ccp = _doc_ccp_text(raw)
+    if ccp:
+        estimated = max(1, (ccp + 1399) // 1400)
+        return estimated, 'Word：按字数估算（可能偏低），共 %s 页' % estimated
     return None, 'Word：文档里没有页数信息'
 
 

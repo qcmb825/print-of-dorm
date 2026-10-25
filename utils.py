@@ -151,8 +151,14 @@ def content_signature_error(path, ext):
     # 而这条 warning 只给运维看，知道是哪个扩展名、期望哪几种头、实际是什么就够了。
     logger.warning('上传文件内容与扩展名不符：扩展名=%s 期望=%s 实际文件头=%r',
                    ext, '|'.join(kind for _sig, kind in entry), head)
+    # 最常见的两种「改错后缀」说清怎么改：一句「内容与扩展名不符」用户只知道被拒了，
+    # 不知道该做什么；而这两种其实只要把后缀改回去就能传（内容是好的）。
+    lower = (ext or '').lower()
+    if lower == 'doc' and head[:4] == b'PK\x03\x04':
+        return '这份文件其实是 .docx（Word 2007 之后的格式），把后缀改回 .docx 再传就行'
+    if lower == 'docx' and head[:4] == b'\xd0\xcf\x11\xe0':
+        return '这份文件其实是老版 .doc（Word 97-2003），把后缀改回 .doc 再传就行'
     return _SIGNATURE_MISMATCH_HINT
-
 
 
 def resolve_contained_file(root, filename):
