@@ -12,6 +12,8 @@ from db import db_conn
 from security import (audit_action, client_ip, decrypt_password, make_password_records,
                       security_event)
 from utils import display_name, password_error, validate_identity_fields
+# 审计里的联系方式统一走这一层打码（qq 本身不落日志）：
+from mail.recipients import mask_address
 
 bp = Blueprint('admin', __name__)
 
@@ -298,9 +300,14 @@ def api_admin_set_profile(user_id):
     # qq 是 v14 起就有的列，SELECT * 一定带着它，下标取就够。
     if (fields['qq'], fields['contact_type'], fields['contact']) != (
             target['qq'], target['contact_type'], target['contact']):
-        changes.append('联系方式 qq=%s %s:%s → qq=%s %s:%s' % (
-            target['qq'] or '(空)', target['contact_type'], target['contact'],
-            fields['qq'] or '(空)', fields['contact_type'], fields['contact']))
+        # 审计只留形状、不留原文：qq 能推邮箱，邮箱能收信，微信号能加人，
+        # 而 security.log 是最容易被整包拷走的文件（与注册日志同一条纪律）。
+        # qq 变没变用「有/无」表达，类型与遮蔽后的形状照旧看得出来。
+        changes.append('联系方式 %s:%s(qq%s) → %s:%s(qq%s)' % (
+            target['contact_type'], mask_address(target['contact']),
+            '有' if target['qq'] else '无',
+            fields['contact_type'], mask_address(fields['contact']),
+            '有' if fields['qq'] else '无'))
     if changes:
         audit_action('change_profile',
                      '目标 #%s/%s %s' % (user_id, target['nickname'], '；'.join(changes)))

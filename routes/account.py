@@ -32,6 +32,8 @@ from security import (
 import utils as _utils
 from utils import validate_registration
 from security import audit_action
+# 审计里的联系方式统一走这一层打码（qq 本身不落日志）：
+from mail.recipients import mask_address
 # 在盘用量与配额判定只认 orders 里那一套算法，这里直接借过来：
 # 设置页说「还剩 1.2GB」和上传时真的拦不拦，必须是同一个口径 ——
 # 两处各算一遍，迟早出现「页面说还有余量、上传却被 429 拦住」，而且两边都不报警。
@@ -247,10 +249,11 @@ def api_register():
     session.permanent = True
     # QQ 号本身不写进日志：它能直接推出一个邮箱地址（见 mail/recipients.py 的
     # mask_address 那段，那边连地址都打码），而日志是最容易被整包拷走的东西。
-    # 这里只需要知道「填了」—— 注册时它是必填，这一行只是留个痕。
-    logger.info('新用户注册 #%s 昵称=%s 姓名=%s 学号=%s 宿舍=%s 联系方式=%s ip=%s',
+    # 其他联系方式同理 —— 邮箱能收信、微信号能加人，原文一概不落盘，
+    # 这里只记「填了哪一类」。QQ 注册时必填，这一行只是留个痕。
+    logger.info('新用户注册 #%s 昵称=%s 姓名=%s 学号=%s 宿舍=%s 联系类型=%s ip=%s',
                 uid, payload['nickname'], payload['real_name'], payload['student_id'],
-                payload['dorm'], payload['contact'] or '(未填写)', client_ip())
+                payload['dorm'], payload['contact_type'] or '(未填写)', client_ip())
     return jsonify({'code': 0, 'msg': '注册成功', 'csrf': session['csrf'], 'user': {
         'id': uid, 'nickname': payload['nickname'], 'real_name': payload['real_name'],
         'student_id': payload['student_id'], 'dorm': payload['dorm'],
@@ -293,8 +296,13 @@ def api_login():
         # 否则这个接口就成了「哪些学号注册过」的探测工具 ——
         # 填个没注册的学号响应快一点，填个注册过的慢一点，这点差别已经够用了。
         if STUDENT_ID_RE.match(identifier):
+            # status 过滤不能省：注销把学号「让出去」（注册判重与部分唯一索引都
+            # 放行同学号再注册），表里可以同时存在 closed + active 两行同号。
+            # 不带这个条件，查询按行序命中的是先注销的那行 —— 新账号的密码
+            # 永远对不上，对外还只说「学号或密码错误」，应用内无解。
             row = conn.execute(
-                'SELECT * FROM users WHERE student_id = ? LIMIT 1', (identifier,)).fetchone()
+                'SELECT * FROM users WHERE student_id = ? AND status != ? LIMIT 1',
+                (identifier, STATUS_CLOSED)).fetchone()
             # 返回给用户的永远是同一句话，避免泄露账号是否存在；
             # 但日志里要记清真实原因，不然后面排查完全抓瞎。这两者必须分开。
             if row is None:
@@ -546,9 +554,14 @@ def api_me_update_profile():
     if fields['dorm'] != target['dorm']:
         changes.append('宿舍 %s → %s' % (target['dorm'], fields['dorm']))
     if (fields['qq'], fields['contact_type'], fields['contact']) != (target['qq'], target['contact_type'], target['contact']):
-        changes.append('联系方式 qq=%s %s:%s → qq=%s %s:%s' % (
-            (target['qq'] or '(空)'), target['contact_type'], target['contact'],
-            (fields['qq'] or '(空)'), fields['contact_type'], fields['contact']))
+        # 审计只留形状、不留原文：qq 能推邮箱，邮箱能收信，微信号能加人，
+        # 而 security.log 是最容易被整包拷走的文件（与注册日志同一条纪律）。
+        # qq 变没变用「有/无」表达，类型与遮蔽后的形状照旧看得出来。
+        changes.append('联系方式 %s:%s(qq%s) → %s:%s(qq%s)' % (
+            target['contact_type'], mask_address(target['contact']),
+            '有' if target['qq'] else '无',
+            fields['contact_type'], mask_address(fields['contact']),
+            '有' if fields['qq'] else '无'))
     if changes:
         audit_action('change_profile', '目标 #%s/%s %s' % (uid, target['nickname'], '；'.join(changes)))
     logger.info('用户修改个人资料 #%s 变更=%s ip=%s', uid, '；'.join(changes) or '(无变化)', client_ip())

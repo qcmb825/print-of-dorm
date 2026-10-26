@@ -13,6 +13,7 @@ from auth import login_required, roles_required
 from config import (
     ALLOWED_EXTENSIONS,
     DUPLEX_MIXED,
+    EST_PAGES_MAX,
     ORDER_LOG_CLAIM,
     ORDER_LOG_CREATE,
     ORDER_LOG_DOWNLOAD,
@@ -995,7 +996,11 @@ def create_preset_order(preset, copies, item, duplex, remark,
             #    页数只在**真的估出价**时才存（与文件单同一条理由：存一个
             #    「读了 12 页、但没算出价」的孤零零数字，界面上会显示「按 12 页估」
             #    却又没有价格，读的人只会以为价格丢了）。
-            'est_pages': est_pages if est_price is not None else None,
+            #    预设这条路的金额由 estimate() 按夹断到 EST_PAGES_MAX 的页数算出，
+            #    落库的页数必须夹到同一处 —— 否则详情页写着「按 3500 页估」，
+            #    钱却只按 2000 页算，对账的人无从解释。
+            'est_pages': (min(est_pages, EST_PAGES_MAX)
+                          if est_price is not None else None),
         })
         log_event(order_id, ORDER_LOG_CREATE,
                   '使用预设打印服务下单：%s%s'
@@ -1848,6 +1853,12 @@ def api_update_status(order_id):
             # 和允许手动切回「待计费」是同一个破洞，只是从另一头进。
             # 老库遗留的单（金额为空但不是待计费）不受影响，状态照旧走。
             return jsonify({'code': 400, 'msg': '这单还没计费，请先填好金额'}), 400
+        if row['status'] == ST_DONE:
+            # 已取件是终态，接单、释放、计费、撤回都把它挡在源头，这里不能缺：
+            # 改回活态后 claimed_by 还挂着，计费接口「已取件不能再改金额」的闸
+            # 就跟着失效；单号回收复用后，这张「复活单」还会撞活单的部分唯一索引
+            # （idx_orders_pickup_live），请求以 500 收场。
+            return jsonify({'code': 400, 'msg': '订单已取件，状态不能再改'}), 400
         # 旧状态写进 WHERE：两个人同时改这一单时，后到的那一位原先会直接覆盖，
         # 而留痕里那句「「旧」→「新」」的「旧」是他读到的那个值 ——
         # 于是时间线上会出现一次从没存在过的流转（A 把待打印改成打印中，

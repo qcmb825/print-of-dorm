@@ -49,8 +49,9 @@ ONEBOT_WS = os.getenv('ONEBOT_WS', 'ws://127.0.0.1:8085').strip()
 ONEBOT_ACCESS_TOKEN = os.getenv('ONEBOT_ACCESS_TOKEN', '').strip()
 
 # 打印服务器根地址。默认指向本机 8091（联调用）；上生产必须在 .env 里
-# 显式写美国服务器的地址，下面 bot.py 启动时会对「还挂着默认值」的情况报警。
-API_BASE = os.getenv('API_BASE', 'http://127.0.0.1:8091').strip().rstrip('/')
+# 显式写美国服务器的地址，bot.py 启动时会对「还挂着默认值」的情况报警。
+API_BASE_DEFAULT = 'http://127.0.0.1:8091'
+API_BASE = os.getenv('API_BASE', API_BASE_DEFAULT).strip().rstrip('/')
 
 # bot 的全部身份就是这张票，必须与服务器 .env 的 BOT_TOKEN 一字不差。
 BOT_TOKEN = os.getenv('BOT_TOKEN', '').strip()

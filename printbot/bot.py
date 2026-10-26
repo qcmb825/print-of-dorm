@@ -32,6 +32,7 @@ import urllib.request
 import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import api, config, llm, nlu
 from .onebot import OneBotClient, OneBotError
@@ -2455,6 +2456,18 @@ def run():
         log.error('BOT_TOKEN 没有配置（printbot/.env）。这张票就是 bot 的全部身份，'
                   '没有它服务器只会回 401/503，先去服务器那边生成再启动。')
         return 2
+
+    # 这张令牌、各用户的 QQ 号与取件码、传的文件本体，全都走 API_BASE 这一条 URL：
+    # 挂着联调默认值（生产服务器不在本机）、或用 http 明文跨网，都该当场喊出来。
+    # 只报错不拦人 —— 防火墙内网里走 http 是合法部署，要不要继续由部署的人决定。
+    parsed = urlsplit(config.API_BASE)
+    host = (parsed.hostname or '').lower()
+    if config.API_BASE == config.API_BASE_DEFAULT:
+        log.error('API_BASE 还挂着联调默认值（%s）：生产服务器不在本机，'
+                  '请在 printbot/.env 里显式写服务器地址。', config.API_BASE)
+    elif parsed.scheme != 'https' and host not in ('127.0.0.1', 'localhost', '::1'):
+        log.error('API_BASE 是 %s://%s（非 https、非回环地址）：令牌、QQ 号与取件码'
+                  '会明文过网，跨机部署请改用 https://。', parsed.scheme, host)
 
     # 启动自检：链路不通就别进 WS 循环白转（大纲第 9 节：第 3 步之前不写业务）。
     try:
