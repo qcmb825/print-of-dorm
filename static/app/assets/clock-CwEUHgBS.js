@@ -1,0 +1,1 @@
+import{Ht as e,gt as t,mt as n}from"./endpoints-CJcQWKVb.js";function r(){let e=new Date,t=e=>String(e).padStart(2,`0`);return`${t(e.getHours())}:${t(e.getMinutes())}:${t(e.getSeconds())}`}function i(){let i=e(``),a;return t(()=>{i.value=r(),a=window.setInterval(()=>{i.value=r()},1e3)}),n(()=>{a!==void 0&&window.clearInterval(a)}),i}export{i as t};

@@ -258,7 +258,10 @@ function landingPath(): string {
   // 注意 redirect 参数可能来自守卫内部的重定向（访问 "/" 会先跳到 /upload 再被拦下），
   // 那不是用户的真实目标；管理员照办就会被带到学生端，所以必须按角色过滤。
   const redirect = route.query.redirect
-  if (typeof redirect === 'string' && redirect.startsWith('/')) {
+  // `//` 开头的值（/login?redirect=//evil.com）同样满足 startsWith('/')。
+  // 现在它出不了站是靠 vue-router 的兜底路由和 URL 构造方式兜着的 ——
+  // 合法的站内路径从来不会以 // 开头，在这里就拒掉，不指望下游。
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
     const isStaffPath = redirect.startsWith('/staff')
     if (isStaffPath === auth.isStaff) return redirect
   }

@@ -1735,7 +1735,10 @@
 
   .boot[data-phase='exit'] {
     opacity: 0;
-    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out);
+    /* 这一条必须带 !important：同文件的全局减少动效兜底（transition-duration:
+       0.001ms !important）压过一切 author-normal 声明，漏了它这次淡出会被
+       压成瞬时硬切 —— 全屏亮度反转，比不做动画还难看（换场段同一坑已栽过）。 */
+    transition: opacity var(--motion-dur-route-still) var(--motion-ease-out) !important;
   }
 
   .boot[data-phase='exit'] .boot__mat,

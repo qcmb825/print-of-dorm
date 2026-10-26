@@ -351,7 +351,11 @@ const status = ref<string>('')
 const scope = ref<'pool' | 'mine' | 'all'>('pool')
 const loading = ref(true)
 const autoRefresh = ref(true)
-const busyId = ref<number | null>(null)
+/** 正在行内动作中的订单 id（接单/释放/改状态/归类共用）。
+ *  **按行记账（Set），不设单槽**：柜台连点两行时，先完成的动作若把槽位清成 null，
+ *  还在途的那一行的 loading/disabled 就被提前解除，第二下点得出重复请求 ——
+ *  后端有原子闸兜底，但界面上会莫名弹一句「接单未完成」。 */
+const busyIds = ref(new Set<number>())
 
 /** 请求序号闸门：只接受最后一次发起请求的响应，避免慢响应覆盖新数据
  *  （刚撤回的单「复活」、刚改的状态看似回退）。 */
@@ -628,7 +632,7 @@ async function submitPrice(): Promise<void> {
   }
 }
 async function claim(order: Order): Promise<void> {
-  busyId.value = order.id
+  busyIds.value.add(order.id)
   try {
     await staffOrderApi.claim(order.id)
     message.success(`单号 ${pickupCodeLabel(order.pickup_code)} 已接单`)
@@ -638,12 +642,12 @@ async function claim(order: Order): Promise<void> {
     message.error(error instanceof ApiError ? error.message : '接单未完成 · 稍后重试')
     await load(true)
   } finally {
-    busyId.value = null
+    busyIds.value.delete(order.id)
   }
 }
 
 async function release(order: Order): Promise<void> {
-  busyId.value = order.id
+  busyIds.value.add(order.id)
   try {
     await staffOrderApi.release(order.id)
     message.success(`单号 ${pickupCodeLabel(order.pickup_code)} 已释放`)
@@ -651,13 +655,13 @@ async function release(order: Order): Promise<void> {
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '释放未完成 · 稍后重试')
   } finally {
-    busyId.value = null
+    busyIds.value.delete(order.id)
   }
 }
 
 async function changeStatus(order: Order, next: OrderStatus): Promise<void> {
   if (next === order.status) return
-  busyId.value = order.id
+  busyIds.value.add(order.id)
   try {
     await staffOrderApi.setStatus(order.id, next)
     message.success(`单号 ${pickupCodeLabel(order.pickup_code)} · 状态更新为「${next}」`)
@@ -665,7 +669,7 @@ async function changeStatus(order: Order, next: OrderStatus): Promise<void> {
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '状态更新未完成 · 稍后重试')
   } finally {
-    busyId.value = null
+    busyIds.value.delete(order.id)
   }
 }
 
@@ -963,7 +967,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
           {
             options: groupDropdownOptions(row),
             trigger: 'click',
-            disabled: busyId.value === row.id || noPresets,
+            disabled: busyIds.value.has(row.id) || noPresets,
             onSelect: (key: string) => void setGroup(row, key),
           },
           {
@@ -979,7 +983,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
                   quaternary: true,
                   class: '!h-7 !w-7 !p-0',
                   type: hasGroup(row) ? 'primary' : 'default',
-                  disabled: busyId.value === row.id || noPresets,
+                  disabled: busyIds.value.has(row.id) || noPresets,
                   title: noPresets
                     ? '打印服务名单读取失败 · 到「打印服务」页确认是否为空'
                     : hasGroup(row)
@@ -1082,7 +1086,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
               {
                 size: 'tiny',
                 type: 'primary',
-                loading: busyId.value === row.id,
+                loading: busyIds.value.has(row.id),
                 onClick: () => void claim(row),
               },
               { default: () => '接单' },
@@ -1094,7 +1098,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
             size: 'tiny',
             quaternary: true,
             type: row.price === null || row.price === undefined ? 'primary' : 'default',
-            loading: busyId.value === row.id && !priceOrder.value,
+            loading: busyIds.value.has(row.id) && !priceOrder.value,
             disabled: !canPrice(row),
             // 灰着的原因直接写在按钮上：否则管理员只看到一颗按不动的按钮，
             // 不知道是得先接单、还是该去找揽下这单的人。
@@ -1110,7 +1114,7 @@ const columns = computed<DataTableColumns<Order>>(() => [
               {
                 size: 'tiny',
                 quaternary: true,
-                disabled: busyId.value === row.id,
+                disabled: busyIds.value.has(row.id),
                 onClick: () => void release(row),
               },
               { default: () => '释放' },
@@ -1294,7 +1298,7 @@ async function loadPresets(): Promise<void> {
  *  自己转一遍再发，因为「取消归类」到底用什么值表示是后端的约定。 */
 async function setGroup(order: Order, key: string): Promise<void> {
   const target = key === ORDER_PRESET_FILTER_NONE ? null : Number(key)
-  busyId.value = order.id
+  busyIds.value.add(order.id)
   try {
     // 后端已经把三种结果（已归入 / 已取消 / 本来就在这一组里）各自写好了一句话，
     // 直接用它的 —— 在前端再编一句就可能跟服务端的口径对不上。
@@ -1307,7 +1311,7 @@ async function setGroup(order: Order, key: string): Promise<void> {
     // 否则那个已消失的选项会一直赖在下拉框里。
     await loadPresets()
   } finally {
-    busyId.value = null
+    busyIds.value.delete(order.id)
   }
 }
 
@@ -1343,7 +1347,10 @@ onMounted(async () => {
   // 两份清单并行取：打印服务名单不是首屏必要数据，串行等它只会
   // 把订单列表的出来时间往后拖。
   await Promise.all([load(), loadPresets()])
-  if (autoRefresh.value) resume()
+  // 挂载时页面可能藏在后台标签页（中键/Ctrl+点开、会话恢复）：
+  // 可见性没确认就 resume，10 秒轮询会在后台一直空转 ——
+  // 上面那条 visibility watch 只在「变化」时接管，挂载这一刻得自己判。
+  if (autoRefresh.value && visibility.value === 'visible') resume()
 })
 
 // 防抖计时器必须随组件一起收掉：否则离开这一页之后它到点还会发一次
@@ -1686,7 +1693,7 @@ onBeforeUnmount(() => {
               v-if="order.claimed_by === null"
               size="tiny"
               type="primary"
-              :loading="busyId === order.id"
+              :loading="busyIds.has(order.id)"
               @click="claim(order)"
             >
               <template #icon><Lock :size="12" /></template>
@@ -1725,7 +1732,7 @@ onBeforeUnmount(() => {
               v-if="canRelease(order)"
               size="tiny"
               quaternary
-              :disabled="busyId === order.id"
+              :disabled="busyIds.has(order.id)"
               @click="release(order)"
             >
               <template #icon><Unlock :size="12" /></template>
@@ -1743,10 +1750,10 @@ onBeforeUnmount(() => {
               v-if="presets.length"
               :options="groupDropdownOptions(order)"
               trigger="click"
-              :disabled="busyId === order.id"
+              :disabled="busyIds.has(order.id)"
               @select="(key: string) => setGroup(order, key)"
             >
-              <NButton size="tiny" quaternary :disabled="busyId === order.id">
+              <NButton size="tiny" quaternary :disabled="busyIds.has(order.id)">
                 <template #icon><FolderPlus :size="12" /></template>
                 {{ hasGroup(order) ? '改分组' : '归入服务' }}
               </NButton>

@@ -144,7 +144,10 @@ watch(visibility, (state) => {
 
 onMounted(async () => {
   await Promise.all([load(), loadPrefs()])
-  resume()
+  // 挂载时页面可能藏在后台标签页（中键/Ctrl+点开、会话恢复）：
+  // 可见性没确认就 resume，轮询会在后台一直空转 ——
+  // 上面那条 visibility watch 只在「变化」时接管，挂载这一刻得自己判。
+  if (visibility.value === 'visible') resume()
 })
 
 /** 整单的总份数。有几份文件时是**各份份数之和**（一张单里每一份可以不一样，
@@ -169,7 +172,7 @@ function orderTotalCopies(order: Order): string {
  *  两句话分别对应后端的 400「订单已经被接取，无法撤回」和 400「订单已完成，不能撤回」。 */
 function withdrawBlockReason(order: Order): string | null {
   if (order.status === '已取件') return '已取件 · 不可撤回'
-  if (order.claimed_by !== null) return '已接单 · 撤回请提交工单'
+  if (order.claimed_by !== null) return '已接单 · 撤回走工单'
   return null
 }
 
@@ -274,7 +277,7 @@ async function withdraw(order: Order): Promise<void> {
       <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
         <div class="tech-label text-ink-3 tech-label--cn text-xs">已计费合计</div>
         <div class="value-tick tnum font-heading text-xl font-bold" :class="tickSpent && 'value-tick--on'">
-          ￥{{ spent.toFixed(2) }}
+          ¥{{ spent.toFixed(2) }}
         </div>
       </div>
     </div>
@@ -427,7 +430,7 @@ async function withdraw(order: Order): Promise<void> {
                 v-if="typeof order.price === 'number'"
                 class="tnum font-heading text-2xl leading-none font-bold"
               >
-                ￥{{ order.price.toFixed(2) }}
+                ¥{{ order.price.toFixed(2) }}
               </div>
               <!-- 未计费时：先给**预估**价（系统按提交的文件页数算的），
                    再说明它还不是最终价。两个信息缺一不可 ——
@@ -437,7 +440,7 @@ async function withdraw(order: Order): Promise<void> {
               <div v-else class="text-sm leading-[23px] text-ink-3">
                 <template v-if="order.est_price !== null && order.est_price !== undefined">
                   <span class="tnum text-base font-semibold text-ink-2">
-                    预估 ￥{{ order.est_price.toFixed(2) }}
+                    预估 ¥{{ order.est_price.toFixed(2) }}
                   </span>
                   <span class="text-xs">· 以管理员核定为准</span>
                 </template>
@@ -503,12 +506,19 @@ async function withdraw(order: Order): Promise<void> {
             type="error"
             :disabled="withdrawBlockReason(order) !== null"
             :loading="withdrawingId === order.id"
-            :title="withdrawBlockReason(order) ?? undefined"
             @click="withdraw(order)"
           >
             <template #icon><Trash2 :size="12" /></template>
             撤回
           </NButton>
+          <!-- 不能撤的原因印成**可见的**文字，不放进 title：触摸端没有 hover，
+               禁用的按钮连 click 都不派发，只给 title 的话学生看到的就是
+               一颗按不动的按钮和一句永远读不到的解释（按钮为什么还在而不是
+               消失，见上一条注释）。 -->
+          <span
+            v-if="order.status !== '已取件' && withdrawBlockReason(order)"
+            class="text-xs text-ink-3"
+          >{{ withdrawBlockReason(order) }}</span>
         </div>
       </li>
     </TransitionGroup>

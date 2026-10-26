@@ -51,6 +51,11 @@ const selected = computed(() => tickets.value.find((item) => item.id === selecte
  *  只接受最后一次发起的那份响应，其余整轮丢掉（口径同 OrdersView.load）。 */
 let requestSeq = 0
 
+/** 读取失败要有页内落点：列表是空的时分不清「没有工单」和「没读到」——
+ *  把后者渲染成「尚未提交工单」是编造事实，学生会以为工单丢了再提一份。
+ *  轮询（silent）哪一轮成功就熄掉，失败会自己恢复。 */
+const ticketsError = ref(false)
+
 async function load(silent = false): Promise<void> {
   const mySeq = ++requestSeq
   if (!silent) loading.value = true
@@ -59,6 +64,7 @@ async function load(silent = false): Promise<void> {
     if (mySeq !== requestSeq) return
     tickets.value = data.tickets
     unreadTotal.value = data.unread_total
+    ticketsError.value = false
     // 选中的工单被筛掉时清掉选中态，避免详情和列表不一致
     if (selectedId.value && !tickets.value.some((item) => item.id === selectedId.value)) {
       selectedId.value = null
@@ -66,6 +72,7 @@ async function load(silent = false): Promise<void> {
   } catch (error) {
     if (!silent && mySeq === requestSeq)
       message.error(error instanceof ApiError ? error.message : '工单读取失败')
+    ticketsError.value = true
   } finally {
     if (mySeq === requestSeq) loading.value = false
   }
@@ -106,7 +113,10 @@ watch(statusFilter, () => void load())
 
 onMounted(async () => {
   await load()
-  resume()
+  // 挂载时页面可能藏在后台标签页（中键/Ctrl+点开、会话恢复）：
+  // 可见性没确认就 resume，30 秒轮询会在后台一直空转 ——
+  // 与下面那条 watch 的约定（不可见即 pause）保持同一口径。
+  if (visibility.value === 'visible') resume()
 })
 </script>
 
@@ -148,6 +158,18 @@ onMounted(async () => {
       <div class="panel overflow-hidden">
         <div v-if="loading && !tickets.length" class="flex flex-col gap-2 p-3">
           <NSkeleton v-for="index in 4" :key="index" height="58px" :sharp="false" />
+        </div>
+        <div v-else-if="ticketsError && !tickets.length" class="grid place-items-center gap-3 py-12">
+          <!-- 假空态比空白更糟：明明可能有工单，页面却说「尚未提交工单」。
+               明说没读到，并给重试（30 秒轮询也会自己补上）。 -->
+          <EmptyState
+            code="ERR / NO LOAD"
+            title="工单没读到"
+            hint="多半是网络没跟上"
+          >
+            <template #icon><Inbox :size="28" /></template>
+          </EmptyState>
+          <NButton size="small" @click="load()">重试</NButton>
         </div>
         <div v-else-if="!tickets.length" class="grid place-items-center py-12">
           <EmptyState

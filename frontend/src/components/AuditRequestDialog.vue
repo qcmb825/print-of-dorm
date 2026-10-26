@@ -76,6 +76,11 @@ const formRef = ref<FormInst | null>(null)
 const queryForm = reactive({ student_id: '', contact: '' })
 const queryRef = ref<FormInst | null>(null)
 
+/** 查询进度页签里「无此记录」只在**真的查过**之后才许出现：
+ *  它挂在 result 的 else 上，而 result 初始就是 null —— 不加这个标记，
+ *  切到页签第一眼看到的就是一句假陈述（页面不说没发生过的事）。 */
+const queried = ref(false)
+
 /** 查到的结果。rejected 时把理由展示出来 —— 那段字本来就是写给申请人看的。 */
 const result = ref<{
   status: AuditStatus
@@ -185,6 +190,7 @@ async function check(): Promise<void> {
     // 真被拦下（用户把预填内容删了）就直接返回，校验提示已经显示了
     return
   }
+  queried.value = true
   querying.value = true
   try {
     const data = await auditApi.status(queryForm.student_id.trim(), queryForm.contact.trim())
@@ -356,7 +362,7 @@ async function check(): Promise<void> {
           </p>
         </div>
 
-        <p v-else class="mt-5 flex items-center gap-1.5 text-xs text-ink-3">
+        <p v-else-if="queried" class="mt-5 flex items-center gap-1.5 text-xs text-ink-3">
           <CircleHelp :size="13" />
           无此记录 · 学号与联系方式都对才查得到。
         </p>

@@ -1,0 +1,1 @@
+import{kt as e,q as t}from"./endpoints-CJcQWKVb.js";function n(n,r){return e(n,e=>{e!==void 0&&(r.value=e)}),t(()=>n.value===void 0?r.value:n.value)}export{n as t};

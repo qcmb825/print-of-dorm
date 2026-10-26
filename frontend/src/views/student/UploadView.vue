@@ -256,13 +256,13 @@ const chunkCount = computed(() =>
 const blockReason = computed<string | null>(() => {
   if (submitting.value) return null
   if (usingPreset.value) {
-    if (!presets.value.length) return '暂无可用预设打印服务'
+    if (!presets.value.length) return '管理员未配置预设打印服务'
     if (presetId.value === null) return '尚未选择预设打印服务'
     return null
   }
   if (!rows.value.length) return '尚未选择文件'
   if (uploading.value) return '文件上传中 · 传完即可提交'
-  if (rows.value.some((item) => item.status === 'failed')) return '有文件没传完 · 移除后重选'
+  if (rows.value.some((item) => item.status === 'failed')) return '有文件没传完 · 可重试上传'
   if (!readyRows.value.length) return '文件还没传完 · 重新选择一次'
   return null
 })
@@ -327,6 +327,11 @@ function reset(): void {
   mode.value = 'file'
   quote.value = null
   presetDocOpen.value = false
+  // formTouched 一起复位：applyDefaults 只在没动过表单时才生效，不复位的话
+  // 「再下一单」的兜底路径（跳转失败留在原地）里，表单会沿用上一单的手改值，
+  // 而提示还写着「已按默认参数预填」—— 那句话就成了假的。
+  // 这层守卫真正防的是挂载时 prefs 慢到的竞态；reset 时 prefs 早已就位，无副作用。
+  formTouched.value = false
   // 打印参数回到**偏好里的默认值**（而不是写死的黑白/单面/1 份）：
   // 下第二单时把自己设过的默认值丢掉，那个设置就等于不存在。
   applyDefaults()
@@ -1015,6 +1020,12 @@ onMounted(async () => {
       <p v-if="optionsError" class="mb-4 px-3 py-2 text-xs" role="alert"
          style="background-color: var(--err-bg); color: var(--err)">
         {{ optionsError }}
+      </p>
+      <!-- 清单拉到了但一条都没有：预设那个按钮会一直灰着，此时 blockReason
+           那句「管理员未配置预设打印服务」永远走不到（预设模式根本进不去），
+           解释必须直接摆在按钮旁边 —— 否则灰按钮与「功能没做」分不开。 -->
+      <p v-else-if="!presets.length && !optionsLoading" class="mb-4 px-3 py-2 text-xs text-ink-3">
+        管理员未配置预设打印服务 · 走「上传文件」这条路
       </p>
 
       <!-- 预设模式：上传区整块换成预设选择。**不是把上传框 disabled 掉** ——

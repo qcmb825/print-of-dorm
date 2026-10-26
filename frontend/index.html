@@ -410,9 +410,28 @@
           bump(60)
         })
 
-        // 3. 字体就位（中文字体是分片的，窄带上这一段并不短）
-        if (document.fonts && document.fonts.ready) {
-          document.fonts.ready.then(function () {
+        // 3. 字体就位：把要用的字体族**显式触发**下载，真的到齐了才亮灯。
+        //    挂 document.fonts.ready 是虚报 —— 此刻页面一个字都还没渲染，
+        //    没有任何 @font-face 发起加载，ready 几乎立刻兑现；而中文字体的大头
+        //    要等应用渲染出汉字才开始拉，这一行却已经写着 OK。
+        //    fonts.load 拿一段样张去要字体，浏览器这才下载对应分片 ——
+        //    顺带把字体下载提前到与 bundle 并行，窄带上首屏少看一段系统字。
+        //    样张取这一层自己要显示的文本：读数说「字体就位」，
+        //    指的就是画出这一层所需的那些分片。字族名与 tokens.css 的栈一字不差
+        //    （fontsource 注册的是带 Variable 后缀的名字），写错了 load 会
+        //    空数组兑现 —— 灯照样亮，读数就又假了。
+        if (document.fonts && document.fonts.load) {
+          var sampleLatin = 'BUNDLE FONTS SESSION READY 0123456789'
+          var fontsReady = Promise.all([
+            document.fonts.load('15px "Noto Sans SC"', '正在接入服务'),
+            document.fonts.load('15px "Space Grotesk Variable"', sampleLatin),
+            document.fonts.load('15px "DM Sans Variable"', sampleLatin),
+            document.fonts.load('15px "JetBrains Mono Variable"', sampleLatin),
+          ])
+          fontsReady.then(function () {
+            mark('fonts', true)
+            bump(85)
+          }, function () {
             mark('fonts', true)
             bump(85)
           })

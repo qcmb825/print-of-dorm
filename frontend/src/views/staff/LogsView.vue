@@ -135,20 +135,20 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
     title: '时间',
     key: 'create_time',
     width: 165,
-    render: (row) => h('span', { class: 'tnum text-[12px] text-ink-2' }, fullTime(row.create_time)),
+    render: (row) => h('span', { class: 'tnum text-xs text-ink-2' }, fullTime(row.create_time)),
   },
   {
     title: '订单',
     key: 'order_id',
     width: 90,
-    render: (row) => h('span', { class: 'tnum text-[12px]' }, `#${row.order_id}`),
+    render: (row) => h('span', { class: 'tnum text-xs' }, `#${row.order_id}`),
   },
   {
     title: '操作',
     key: 'action',
     width: 110,
     render: (row) =>
-      h('span', { class: 'inline-flex items-center gap-1.5 text-[12px] font-semibold' }, [
+      h('span', { class: 'inline-flex items-center gap-1.5 text-xs font-semibold' }, [
         h('span', {
           class: 'inline-block size-2 shrink-0',
           style: `background-color: ${LOG_ACTION_COLOR[row.action] ?? 'var(--text-tertiary)'}`,
@@ -160,7 +160,7 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
     title: '说明',
     key: 'detail',
     minWidth: 260,
-    render: (row) => h('span', { class: 'text-[12px] text-ink-2' }, row.detail || '—'),
+    render: (row) => h('span', { class: 'text-xs text-ink-2' }, row.detail || '—'),
   },
   {
     title: '结果状态',
@@ -169,16 +169,16 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
     render: (row) =>
       row.to_status
         ? h(StatusTag, { status: row.to_status, size: 'sm' })
-        : h('span', { class: 'text-[12px] text-ink-4' }, '—'),
+        : h('span', { class: 'text-xs text-ink-4' }, '—'),
   },
   {
     title: '操作人',
     key: 'actor_nickname',
     width: 150,
     render: (row) =>
-      h('span', { class: 'text-[12px]' }, [
+      h('span', { class: 'text-xs' }, [
         row.actor_nickname ?? h('span', { class: 'opacity-50' }, '（无归属）'),
-        row.actor_role_label ? h('span', { class: 'ml-1 text-[11px] text-ink-4' },
+        row.actor_role_label ? h('span', { class: 'ml-1 text-xs text-ink-4' },
                                  `· ${row.actor_role_label}`) : null,
       ]),
   },
@@ -275,7 +275,7 @@ onMounted(() => {
           </div>
         </label>
       </div>
-      <div v-if="hasFilters" class="mt-2 flex items-center gap-2 text-[12px] text-ink-4">
+      <div v-if="hasFilters" class="mt-2 flex items-center gap-2 text-xs text-ink-4">
         <NButton size="tiny" quaternary @click="resetFilters">
           <template #icon><X :size="13" /></template>
           清除筛选
@@ -288,15 +288,15 @@ onMounted(() => {
     <section v-if="stats" class="mb-3 grid gap-3 lg:grid-cols-3">
       <div class="panel panel-raised p-3.5 sm:p-4 lg:col-span-2">
         <div class="mb-2 flex items-baseline justify-between gap-2">
-          <h2 class="font-heading text-[14px] font-bold">操作类型分布</h2>
-          <span class="tnum text-[12px] text-ink-4">共 {{ stats.total }} 条</span>
+          <h2 class="font-heading text-sm font-bold">操作类型分布</h2>
+          <span class="tnum text-xs text-ink-4">共 {{ stats.total }} 条</span>
         </div>
         <!-- 十种动作全给（含 0）：少给一种，那种就永远筛不出来，界面上还看不出来少了什么 -->
         <div class="flex flex-wrap gap-1.5">
           <span
             v-for="item in stats.by_action"
             :key="item.action"
-            class="flex items-center gap-1.5 px-2 py-1 text-[12px]"
+            class="flex items-center gap-1.5 px-2 py-1 text-xs"
             :class="item.count === 0 ? 'opacity-45' : ''"
             style="background-color: var(--muted)"
           >
@@ -311,8 +311,8 @@ onMounted(() => {
 
         <div class="mt-3">
           <div class="mb-1 flex items-baseline justify-between">
-            <h2 class="font-heading text-[14px] font-bold">按天记录数</h2>
-            <span class="text-[12px] text-ink-4">
+            <h2 class="font-heading text-sm font-bold">按天记录数</h2>
+            <span class="text-xs text-ink-4">
               {{ trend.length }} 天有记录 · 最多显示最近 60 天
             </span>
           </div>
@@ -331,27 +331,27 @@ onMounted(() => {
               :title="`${day.date}：${day.count} 条`"
             />
           </div>
-          <p v-else class="text-[12px] text-ink-4">此范围内无记录</p>
+          <p v-else class="text-xs text-ink-4">此范围内无记录</p>
         </div>
       </div>
 
       <div class="panel panel-raised p-3.5 sm:p-4">
-        <h2 class="mb-2 font-heading text-[14px] font-bold">状态流转</h2>
+        <h2 class="mb-2 font-heading text-sm font-bold">状态流转</h2>
         <dl v-if="statusFlow.length" class="grid gap-1.5">
           <div
             v-for="item in statusFlow"
             :key="item.status"
-            class="flex items-baseline justify-between px-2.5 py-1.5 text-[12px]"
+            class="flex items-baseline justify-between px-2.5 py-1.5 text-xs"
             style="background-color: var(--muted)"
           >
             <dt><StatusTag :status="item.status" size="sm" /></dt>
             <dd class="tnum m-0 font-semibold">{{ item.count }}</dd>
           </div>
         </dl>
-        <p v-else class="text-[12px] text-ink-4">此范围内无状态变更记录</p>
+        <p v-else class="text-xs text-ink-4">此范围内无状态变更记录</p>
 
-        <h2 class="mt-3 mb-1.5 font-heading text-[14px] font-bold">操作人排行</h2>
-        <ol v-if="stats.by_actor.length" class="m-0 list-none p-0 text-[12px]">
+        <h2 class="mt-3 mb-1.5 font-heading text-sm font-bold">操作人排行</h2>
+        <ol v-if="stats.by_actor.length" class="m-0 list-none p-0 text-xs">
           <li
             v-for="(item, index) in stats.by_actor"
             :key="`${item.nickname}-${index}`"
@@ -364,7 +364,7 @@ onMounted(() => {
             <b class="tnum">{{ item.count }}</b>
           </li>
         </ol>
-        <p v-else class="text-[12px] text-ink-4">暂无数据</p>
+        <p v-else class="text-xs text-ink-4">此范围内无记录</p>
       </div>
     </section>
 

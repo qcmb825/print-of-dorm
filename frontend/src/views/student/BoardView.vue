@@ -28,6 +28,10 @@ import { STATUS_COLOR_VAR } from '@/utils/format'
 
 const board = ref<ServiceBoard | null>(null)
 const loading = ref(true)
+/** 读取失败要有页内落点：只弹 toast 的话，骨架撤掉后正文整块空白，
+ *  toast 几秒后也不在了 —— 学生看到的是标题下的一片空白，
+ *  不知道发生了什么、更不知道能重试（SettingsView 已修过同一课）。 */
+const boardError = ref(false)
 /** 当前看的是哪张榜。两张榜后端一次响应就都给了（两个查询都很小），
  *  切换只换本地数据 —— 切一下就要转圈的样子更像页面卡住了，不像在切榜单。 */
 const tab = ref<Board['key']>('recent')
@@ -73,7 +77,7 @@ function barWidth(count: number): string {
 const myLine = computed(() => {
   const me = current.value?.me
   if (!me) return ''
-  if (!me.count) return '尚未下单 · 暂无名次'
+  if (!me.count) return '尚未下单 · 未上榜'
   return `共 ${me.count} 单 · 第 ${me.rank} 名 · 共 ${me.ranked} 人上榜`
 })
 
@@ -97,10 +101,12 @@ const tickRank = useValueTick(() => mineRankText.value)
  *  后台开着标签页一直轮询只是在白烧数据库。 */
 async function load(): Promise<void> {
   loading.value = true
+  boardError.value = false
   try {
     board.value = await boardApi.load()
   } catch (error) {
     notify.error(error instanceof ApiError ? error.message : '服务数据读取失败')
+    boardError.value = true
   } finally {
     loading.value = false
   }
@@ -122,6 +128,20 @@ onMounted(load)
 
     <div v-if="loading && !board" class="flex flex-col gap-3">
       <NSkeleton v-for="index in 3" :key="index" height="96px" :sharp="false" />
+    </div>
+
+    <!-- 读取失败：一块带重试的页内面板，与下面空态共用同一形状 ——
+         空着等轮询自愈和「页面坏了」看起来不一样，这里明说是前者。 -->
+    <div v-else-if="boardError && !board" class="grid place-items-center py-6">
+      <div class="bracket-lg w-full max-w-sm px-5 py-6 text-center" style="--bracket-arm: 20px">
+        <span class="readout">ERR / BOARD</span>
+        <p class="mt-3 text-sm font-semibold">服务数据没读到</p>
+        <p class="mt-1 text-xs text-ink-3">多半是网络没跟上</p>
+        <NButton class="mt-3.5" size="small" @click="load()">
+          <template #icon><RefreshCw :size="14" /></template>
+          重试
+        </NButton>
+      </div>
     </div>
 
     <template v-else-if="board">

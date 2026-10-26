@@ -16,7 +16,7 @@
  *  权限：所有管理员可改（后端 routes/price_table.py 是 ROLE_ADMIN 起步）。
  *  价目表正是打印员自己最清楚的东西，收进超管只会让它没人维护。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Calculator, Pencil, Plus, ReceiptText, RefreshCw, Save, Trash2 } from '@lucide/vue'
 import {
   NAlert,
@@ -121,6 +121,13 @@ const duplexOptions = computed(() => [
   { label: DUPLEX_LABELS.single, value: 'single' },
   { label: DUPLEX_LABELS.double, value: 'double', disabled: !previewDuplexAllowed.value },
 ])
+
+// 切到不支持双面的档位时把单双面拨回「单面」：下拉只是把 double 选项禁掉，
+// 已选中的值不会自己复位 —— 留着的话，先选了支持双面的档再切走，点「试算」
+// 必然吃一个 400「这一档不支持双面」，屏幕上却还写着双面。
+watch(previewItem, (item) => {
+  if (item && item.price_double === null) preview.duplex = 'single'
+})
 
 async function runPreview(): Promise<void> {
   if (preview.price_item_id === null) {

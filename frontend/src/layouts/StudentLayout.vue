@@ -134,8 +134,6 @@ onMounted(() => {
             {{ item.label }}
           </RouterLink>
         </nav>
-        <!-- 主题切换原来拆掉过一次（主题跟系统偏好走），2026-09-18 补回来 ——
-             系统偏好是对的默认值，但不是所有人都会去改系统设置。 -->
         <div class="ml-auto flex items-center gap-2">
           <ChromeActions />
           <!-- 终端读数：与学生端这一页的编号同源，也是四角装饰里"右上角那一件"。

@@ -2,7 +2,8 @@
  *
  *  它替全应用扛下三件事，业务代码不需要再关心：
  *    1. 写操作自动挂 X-CSRF-Token（后端对所有 POST/PUT/PATCH/DELETE 强制校验）；
- *    2. 令牌轮换：后端每次响应都会带回新的 csrf，这里自动收下；
+ *    2. 令牌收下：后端在登录/注册/登出/改密码这些换会话的响应里、
+ *       以及 403 自愈补发的响应体里带 csrf，这里自动收下（令牌会话内稳定，不轮换）；
  *    3. 错误归一：把 axios 的异常统一成带中文提示的 ApiError，调用方只需 try/catch 一个类型。
  */
 import axios, { AxiosError, AxiosHeaders, type AxiosRequestConfig } from 'axios'
@@ -114,27 +115,6 @@ export const http = axios.create({
   withCredentials: true,
 })
 
-/** 重新握手：只为了拿一张新的 CSRF 令牌。
- *
- *  未登录时 /api/me 会返回 401，但响应体里照样带着一张新令牌，
- *  下面的响应拦截器会顺手收下 —— 所以这里把失败当正常分支吞掉。
- *  并发失败时共用一个 Promise，避免一次页面操作打出一串握手请求。
- */
-let handshake: Promise<void> | null = null
-
-function refreshCsrf(): Promise<void> {
-  if (!handshake) {
-    handshake = http
-      .get('/api/me')
-      .then(() => undefined)
-      .catch(() => undefined)
-      .finally(() => {
-        handshake = null
-      })
-  }
-  return handshake
-}
-
 http.interceptors.request.use((config) => {
   inFlight += 1
   const method = (config.method ?? 'get').toLowerCase()
@@ -169,12 +149,11 @@ http.interceptors.response.use(
     // 前端手里那张票已经作废（后端日志是 csrf_failed has_session_token=False），
     // 于是写请求全被 403 挡下，用户只看到「请求校验失败，请刷新页面后重试」。
     // 后端在这种情况下会补发一张新令牌并标 reason=csrf（令牌存在但对不上时刻意不补，
-    // 那种才可能是真的伪造），这里重新握手拿到它、再把原请求原样重发一次。
+    // 那种才可能是真的伪造）—— 新令牌已经在上面的 setCsrf 收下了，把原请求原样重发一次。
     // 只重发一次：标记打在 config 上，两个请求同时失败也不会互相串。
     const config = error.config as (AxiosRequestConfig & { csrfRetried?: boolean }) | undefined
     if (status === 403 && data?.reason === 'csrf' && config && !config.csrfRetried) {
       config.csrfRetried = true
-      await refreshCsrf()
       return http.request(config)
     }
 

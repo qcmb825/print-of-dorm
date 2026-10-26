@@ -148,7 +148,7 @@ onBeforeUnmount(() => {
       :src="presetDocApi.url(presetId)"
       :alt="docName || '预设文档'"
       class="max-h-[70vh] w-full border object-contain"
-      style="border-color: var(--border); background-color: var(--paper-2)"
+      style="border-color: var(--border); background-color: var(--paper)"
     />
 
     <template v-else>
@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <div
           class="flex max-h-[70vh] justify-center overflow-auto border p-2"
-          style="border-color: var(--border); background-color: var(--paper-2)"
+          style="border-color: var(--border); background-color: var(--paper)"
         >
           <!-- canvas 上的右键菜单没有「另存为 PDF」这一项 —— 这正是选它
                而不是 <iframe> 的原因（浏览器内置阅读器自带下载按钮）。 -->

@@ -340,6 +340,11 @@ async function loadPrefs(): Promise<void> {
   prefsError.value = false
   try {
     const response = await authApi.prefs()
+    // 到达时再查一次脏标记：refresh() 发请求前的判断只代表出发那一刻，
+    // 这一个来回里翻动的开关不能被悄悄冲回旧值 —— 资料表单的 load()
+    // 防的就是同一手。整份丢弃，别只丢表单：lines 与表单是同一次响应的
+    // 两半，各收一半会让两处对不上。
+    if (prefsDirty.value) return
     fillPrefs(response.prefs)
     prefsLines.value = response.lines
   } catch (error) {
@@ -532,7 +537,7 @@ async function doLogout(): Promise<void> {
     // 界面其实已经算「未登录」了，只是服务端那个会话可能没断干净。
     // 提示一句再照常回登录页 —— 停在这一页更糟：用户会看到一个已经登出、
     // 却还显示着设置页的界面，比直接走更让人困惑。
-    notify.error(error instanceof ApiError ? error.message : '退出登录未完成 · 请重新登录确认')
+    notify.error(error instanceof ApiError ? error.message : '退出登录未完成 · 重新登录确认')
   } finally {
     loggingOut.value = false
     // replace 而不是 push：退出之后按浏览器后退键不该再回到设置页。
@@ -1161,7 +1166,7 @@ onMounted(() => {
           账号与其他
         </h2>
         <p class="mb-3 text-xs leading-5 text-ink-3">
-          与订单无关的问题（打印出错、退款、账号异常）请提交工单 · 管理员能看到订单情况。
+          与订单无关的问题（打印出错、退款、账号异常）走工单 · 管理员能看到订单情况。
           退出登录只影响当前设备；其他设备需改密码才会下线。
         </p>
 

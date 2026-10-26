@@ -87,6 +87,14 @@ const canConfirm = computed(() => {
   return note.value.trim().length >= REJECT_MIN
 })
 
+/** 切页签先清空再读：骨架屏的条件是 loading && !list.length，不清的话
+ *  等待期渲染的是上一个页签的条目 —— 慢网时足以让人把「已通过」读成「已驳回」，
+ *  而且请求失败时旧条目会一直挂在错误页签下面。 */
+function switchStatus(): void {
+  list.value = []
+  void load()
+}
+
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
   try {
@@ -144,7 +152,7 @@ onMounted(load)
       一个学号一条记录，处理过可改判。
     </NAlert>
 
-    <NTabs v-model:value="status" type="line" animated @update:value="load()">
+    <NTabs v-model:value="status" type="line" animated @update:value="switchStatus">
       <NTabPane v-for="tab in STATUS_TABS" :key="tab.key" :name="tab.key">
         <template #tab>
           <span class="inline-flex items-center gap-1.5">
