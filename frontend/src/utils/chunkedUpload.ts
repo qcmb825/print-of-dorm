@@ -27,6 +27,33 @@ const CHUNK_THRESHOLD = 8 * 1024 * 1024
  *  否则进度条会在 100% 上干等着不动，看着像卡死了。 */
 const MAX_PROGRESS = 99
 
+/** 内容指纹覆盖首尾各 64KB。跨洋链路上读 128KB 毫无压力，
+ *  而同名同大小的两份文件几乎必然在这两个窗口里不同。 */
+const FINGERPRINT_SPAN = 64 * 1024
+
+/** 续传匹配用的内容指纹：首尾 64KB + 总长的 SHA-256。
+ *  「文件名 + 大小」认得出重试的那一份，认不出恰好同名同大小的另一份 ——
+ *  服务端不知道你换了文件，会把两份的分片拼进同一个会话，合并出一份
+ *  谁也没核对过的混合文档。算不出指纹（老浏览器、非安全上下文）就退回旧口径。 */
+async function fingerprintOf(file: File): Promise<string | undefined> {
+  try {
+    const head = new Uint8Array(
+      await file.slice(0, Math.min(FINGERPRINT_SPAN, file.size)).arrayBuffer(),
+    )
+    const tail = new Uint8Array(
+      await file.slice(Math.max(0, file.size - FINGERPRINT_SPAN)).arrayBuffer(),
+    )
+    const payload = new Uint8Array(head.length + tail.length + 8)
+    payload.set(head, 0)
+    payload.set(tail, head.length)
+    new DataView(payload.buffer).setBigUint64(head.length + tail.length, BigInt(file.size))
+    const digest = await crypto.subtle.digest('SHA-256', payload)
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return undefined
+  }
+}
+
 export interface UploadProgress {
   /** 0-100 */
   percent: number
@@ -46,7 +73,7 @@ function partSize(index: number, totalSize: number, chunkSize: number): number {
 /**
  * 把一份文件传上去，返回它的 file_token（**还没建单**）。
  *
- * 传同一个文件（同名同大小）时，服务端会复用上次没传完的会话，
+ * 传同一份没传完的文件时（按文件名、大小与内容指纹认），服务端会复用上次的会话，
  * 于是这里会自动跳过已经收到过的分片 —— 这就是断点续传。
  *
  * 进度回调的分母始终是整份文件：分片那条路会把「已收到的分片」先算进去，
@@ -67,7 +94,14 @@ export async function prepareUpload(
 
   if (file.size <= CHUNK_THRESHOLD) {
     const data = await orderApi.prepare(file, (percent) => {
-      onProgress({ percent: percent * (MAX_PROGRESS / 100), uploaded: file.size, total: file.size })
+      onProgress({
+        percent: percent * (MAX_PROGRESS / 100),
+        // 读数必须是真的：直传没有「片」可累加，就按百分比折算。
+        // 恒报全量的话，进度条还在爬、读数却已经写「46.0 / 46.0 MB」，
+        // 学生会以为卡住了，然后刷新页面把上传打断。
+        uploaded: (file.size * percent) / 100,
+        total: file.size,
+      })
     })
     onProgress({ percent: 100, uploaded: file.size, total: file.size })
     return data
@@ -81,8 +115,10 @@ async function uploadChunked(
   onProgress: ProgressHandler,
   onSessionCreated?: (uploadId: string) => void,
 ): Promise<UploadPrepareResponse> {
-  // 1. 开会话。同名同大小会拿回上次那份（resumed），它的 received 就是续传的起点。
-  const session: ChunkSession = await chunkApi.init(file.name, file.size)
+  // 1. 开会话。同一份没传完的文件（名字、大小与指纹都对得上）会拿回上次那份（resumed），
+  //    它的 received 就是续传的起点。
+  const fingerprint = await fingerprintOf(file)
+  const session: ChunkSession = await chunkApi.init(file.name, file.size, fingerprint)
   // 通知组件会话已建立，组件以此追踪 active upload_id，卸载时若仍未完成就清理
   onSessionCreated?.(session.upload_id)
   const { upload_id: uploadId, chunk_size: chunkSize, total_chunks: totalChunks } = session
@@ -130,7 +166,7 @@ async function uploadChunked(
 /**
  * 页面上那条「上次还有一份没传完」的提醒要用它。
  *
- * 为什么不自己用 localStorage 记：服务端早就按「文件名 + 大小」认得出同一份文件，
+ * 为什么不自己用 localStorage 记：服务端按「文件名 + 大小 + 内容指纹」认得出同一份文件，
  * 再在浏览器里存一份指纹纯属重复记账，还得处理隐私模式下 localStorage 直接抛异常。
  * 而且这条服务端记录**刷新页面也还在**，比浏览器本地存储更靠谱。
  */

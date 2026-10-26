@@ -464,16 +464,30 @@ def api_chunk_init():
             'msg': '文件太大，单个文件不能超过 %s MB' % MAX_UPLOAD_MB
         }), 413
 
+    # 内容指纹（可缺省）：前端对「首尾 64KB + 总长」算的散列。会话匹配时
+    # 两边都有就比对 —— 同名同大小的两份不同文件（同模板导出的同名 docx、
+    # 改版后恰好同大小的 PDF）靠名字分不出来，复用旧会话会把两份文件的
+    # 分片拼成一份，产出一份谁也没核对过的混合文档。任何一边没有指纹
+    # （老会话、不带指纹的客户端）就退回「文件名 + 大小」的旧口径。
+    fingerprint = data.get('fingerprint')
+    if not isinstance(fingerprint, str):
+        fingerprint = None
+    fingerprint = fingerprint.strip()[:128] or None
+
     # 幂等：同一个文件重复 init（前端重试、或用户刷新页面后又选了同一个文件）
     # 直接复用已有会话，不会平白多出一份重复分片。前端也因此可以放心重试这个请求。
     for pending_id, meta in _pending_of_user(g.user['id']):
-        if meta.get('filename') == original_name and meta.get('size') == size:
-            return jsonify({
-                'code': 0,
-                'msg': '继续上次未完成的上传',
-                'resumed': True,
-                **_session_info(pending_id, meta),
-            })
+        if meta.get('filename') != original_name or meta.get('size') != size:
+            continue
+        if (fingerprint is not None and meta.get('fingerprint') is not None
+                and fingerprint != meta['fingerprint']):
+            continue
+        return jsonify({
+            'code': 0,
+            'msg': '继续上次未完成的上传',
+            'resumed': True,
+            **_session_info(pending_id, meta),
+        })
 
     pending = _pending_of_user(g.user['id'])
     if len(pending) >= MAX_PENDING_PER_USER:
@@ -515,6 +529,7 @@ def api_chunk_init():
         'user_id': g.user['id'],
         'filename': original_name,
         'size': size,
+        'fingerprint': fingerprint,
         'total_chunks': total_chunks,
         'created_at': time.time(),
     }

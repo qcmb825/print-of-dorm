@@ -252,11 +252,12 @@ export const boardApi = {
 
 /* 大文件分片上传。分片尺寸由服务端的 CHUNK_SIZE 定，前端跟着它的返回值走，不自己算。 */
 export const chunkApi = {
-  /** 开会话。同名同大小会复用上一次没传完的那份（resumed: true），断点续传就靠这条。
-   *  **不接受 preset_id**：选了预设就没有文件，也就不需要分片上传
-   *  （服务端在 init 和 complete 两处都会拒，不只是没入口）。 */
-  init: (filename: string, size: number) =>
-    post<ChunkSession>('/api/upload/chunked', { filename, size }),
+  /** 开会话。同一份没传完的文件会复用上次那个会话（resumed: true），断点续传就靠这条。
+   *  匹配口径是「文件名 + 大小 + 内容指纹」—— 指纹是防「同名同大小的另一份文件」
+   *  顶掉旧会话的续传资格。**不接受 preset_id**：选了预设就没有文件，
+   *  也就不需要分片上传（服务端在 init 和 complete 两处都会拒，不只是没入口）。 */
+  init: (filename: string, size: number, fingerprint?: string) =>
+    post<ChunkSession>('/api/upload/chunked', { filename, size, fingerprint }),
   /** 未完成的会话列表，用来提醒「上次那份还没传完」。 */
   pending: () => get<ChunkPendingResponse>('/api/upload/chunked'),
   info: (uploadId: string) => get<ChunkSession>(`/api/upload/chunked/${uploadId}`),
