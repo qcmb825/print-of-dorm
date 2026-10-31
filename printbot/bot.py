@@ -1289,7 +1289,13 @@ def _site_hint(resp):
 
 
 def _duplex_text(duplex):
-    return '双面' if duplex == 'double' else '单面'
+    #    'mixed' 是订单级的「各份不同」，不能落到「单面」那一支 ——
+    #    客户端回执里已经把混合单独说一句了，但详情/摘要仍可能拿到它。
+    if duplex == 'double':
+        return '双面'
+    if duplex == 'mixed':
+        return '混合'
+    return '单面'
 
 
 # 给学生看的序号。**上标圆圈**（①②③）比「1)」在手机上一眼能认出来，

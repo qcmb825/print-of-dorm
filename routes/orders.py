@@ -17,6 +17,7 @@ from config import (
     ORDER_LOG_CLAIM,
     ORDER_LOG_CREATE,
     ORDER_LOG_DOWNLOAD,
+    ORDER_LOG_EDIT,
     ORDER_LOG_GROUP,
     ORDER_LOG_LABELS,
     ORDER_LOG_PICKUP,
@@ -35,6 +36,7 @@ from config import (
     PRESET_DOC_FOLDER,
     ROLE_ADMIN,
     ROLE_SUPER,
+    ROLE_USER,
     ST_DONE,
     ST_PENDING,
     ST_PRINTING,
@@ -1000,7 +1002,12 @@ def create_preset_order(preset, copies, item, duplex, remark,
             #    落库的页数必须夹到同一处 —— 否则详情页写着「按 3500 页估」，
             #    钱却只按 2000 页算，对账的人无从解释。
             'est_pages': (min(est_pages, EST_PAGES_MAX)
-                          if est_price is not None else None),
+                          #    est_pages 会**是 None**：预设单按「预设价 × 份数」计价时
+                          #    根本没有文档可数（这条分支是主路径，不是边缘情况）。
+                          #    直接 min() 会在 `None < 2000` 上抛 TypeError，
+                          #    接口收成 500「下单失败，请稍后重试」—— 学生看到的是
+                          #    「预设服务坏了」，而日志里只有一句 TypeError。
+                          if est_price is not None and est_pages is not None else None),
         })
         log_event(order_id, ORDER_LOG_CREATE,
                   '使用预设打印服务下单：%s%s'
@@ -1891,6 +1898,168 @@ def api_update_status(order_id):
     return jsonify({'code': 0, 'msg': f'订单 {order_id} 已更新为「{new_status}」'})
 
 
+# ---- 修改打印参数（2026-10-25）------------------------------------------------
+#
+# 为什么需要这个入口：学生下错单是常态（该双面写成单面、份数填成 1），
+# 而在此之前只有两条路 —— 撤回重下（单号变了、学生得重新来取），
+# 或者干脆照错打（纸浪费、账对不上）。管理员要的只是「把参数改对」。
+#
+# 权限：**任何管理员**，不限于接单人 —— 与「下载」那条放开的理由相同：
+# 柜台 / 计费的人常常不是接单人，而错单第一时间正是在他手上。
+# 已取件的单不能改：纸已经交出去了，改参数只会让账单和实物对不上。
+@bp.route('/api/order/<int:order_id>/params', methods=['PUT'])
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_update_order_params(order_id):
+    """改这一单的打印参数（档位 / 份数 / 单双面），留痕并重算预估价。
+
+    请求两种形状，可以同时用：
+      · 订单级：`{'copies': 2, 'duplex': 'double', 'price_item_id': 3}`
+      · 逐份：  `{'files': [{'file_id': 12, 'copies': 1, 'duplex': 'single',
+                             'price_item_id': 5}, …]}`
+
+    逐份优先于订单级；**没给的字段保持原值**。这一点是刻意的：接口不做
+    「整体替换」—— 那样界面少传一个键就会把份数清成默认值，而且不报错。
+    """
+    data = request.get_json(silent=True) or {}
+    with db_conn() as conn:
+        row = conn.execute(
+            'SELECT id, status, copies, duplex FROM orders WHERE id = ?', (order_id,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '没找到这个订单'}), 404
+        if row['status'] == ST_DONE:
+            # 已取件是终点：纸在对方手上，这一单再也没有「改对」的余地。
+            return jsonify({'code': 400, 'msg': '已取件的单不能再改参数'}), 400
+
+        files = files_with_options(conn, [order_id]).get(order_id, [])
+        if not files:
+            return jsonify({'code': 400, 'msg': '这一单没有文件可以改'}), 400
+
+        wanted_by_file = {}
+        for item in (data.get('files') or []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                wanted_by_file[int(item.get('file_id'))] = item
+            except (TypeError, ValueError):
+                return jsonify({'code': 400, 'msg': 'file_id 不合法'}), 400
+
+        plans = []
+        for index, file in enumerate(files, start=1):
+            wanted = wanted_by_file.get(file['id'], {})
+            copies = file['copies'] if file['copies'] is not None else (row['copies'] or 1)
+            raw_copies = wanted.get('copies', data.get('copies'))
+            if raw_copies not in (None, ''):
+                #    parse_copies 回的是 (份数, 错误) —— 直接拿它当值绑定 SQL 会抛
+                #    `type 'tuple' is not supported`，而那是个 500，不是校验失败。
+                parsed, copy_error = parse_copies(raw_copies)
+                if copy_error:
+                    return jsonify({
+                        'code': 400,
+                        'msg': '第 %d 份：%s' % (index, copy_error),
+                    }), 400
+                copies = parsed
+            #    单双面：先看这次给的，再看这一份原来的，最后才是订单级。
+            #    最后这一层是给 v24 之前的老单用的（那时 order_files 那几列是 NULL，
+            #    它们的真实含义就是「沿用订单级」）。
+            duplex = pricing.normalize_duplex(
+                wanted.get('duplex', data.get('duplex'))
+                or file['duplex'] or row['duplex'] or 'single')
+            raw_item = wanted.get('price_item_id', data.get('price_item_id'))
+            target_item = raw_item if raw_item not in (None, '', 0) else file['price_item_id']
+            #    档位校验复用下单那一条实现：它同时管「条目存在 / 启用 / 这一档支不支持双面」。
+            #    各写一遍的话，改参数这条路迟早能造出「账单上写着双面、那一档只有单面价」的单。
+            item_row, duplex_ok, error = resolve_price_item(
+                conn, {'price_item_id': target_item, 'duplex': duplex})
+            if error:
+                return jsonify({'code': 400, 'msg': '第 %d 份：%s' % (index, error)}), 400
+            plans.append({'file': file, 'copies': copies, 'duplex': duplex_ok,
+                          'item': item_row})
+
+        # ---- 写库：逐份 → 订单级 → 留痕，同一个事务 ----
+        for plan in plans:
+            file = plan['file']
+            item = plan['item']
+            conn.execute(
+                'UPDATE order_files SET copies = ?, duplex = ?, price_item_id = ?,'
+                ' price_item_name = ?, paper_name = ?, paper_remark = ?, color_type = ?'
+                ' WHERE id = ?',
+                (plan['copies'], plan['duplex'],
+                 item['id'] if item else None,
+                 pricing.format_item_label(item) if item else file['price_item_name'],
+                 item['paper'] if item else file['paper_name'],
+                 item['note'] if item else file['paper_remark'],
+                 item['color'] if item else file['color_type'],
+                 file['id']))
+
+        total = sum(plan['copies'] for plan in plans)
+        duplexes = {plan['duplex'] for plan in plans}
+        order_duplex = duplexes.pop() if len(duplexes) == 1 else DUPLEX_MIXED
+        first = plans[0]
+        labels = {(pricing.format_item_label(p['item']) if p['item']
+                   else p['file']['price_item_name']) for p in plans}
+        #    重算预估价：参数变了，旧的那个数就不作数了。
+        #    算不出来时置空（`est_price` 从来不是价格，置空只会让界面少一个参考数，
+        #    而留着一个错的数字会让管理员照着它收钱）。
+        try:
+            quote, _details, _note = pricing.estimate_for_files(conn, [
+                {'pages': plan['file']['pages'], 'copies': plan['copies'],
+                 'duplex': plan['duplex'], 'item': plan['item']} for plan in plans])
+        except Exception:
+            logger.exception('改参数后重算预估价失败：订单 #%s', order_id)
+            quote = None
+
+        conn.execute(
+            'UPDATE orders SET copies = ?, duplex = ?, color_type = ?, price_item_id = ?,'
+            ' price_item_name = ?, paper_name = ?, paper_remark = ?, est_price = ?,'
+            ' update_time = CURRENT_TIMESTAMP WHERE id = ?',
+            (total, order_duplex,
+             first['item']['color'] if first['item'] else first['file']['color_type'],
+             first['item']['id'] if first['item'] else first['file']['price_item_id'],
+             labels.pop() if len(labels) == 1 else None,
+             first['item']['paper'] if first['item'] else first['file']['paper_name'],
+             first['item']['note'] if first['item'] else first['file']['paper_remark'],
+             quote, order_id))
+
+        #    留痕写「改前 → 改后」。只说「改了参数」的话，学生事后问
+        #    「我明明要的是单面」时，时间线上答不出原来是什么。
+        cn = lambda value: {'double': '双面', 'mixed': '混合'}.get(value or '', '单面')  # noqa: E731
+        changes = []
+        for index, plan in enumerate(plans, start=1):
+            file = plan['file']
+            item = plan['item']
+            old = '%s · %s 份 · %s' % (
+                file['price_item_name'] or '未选档',
+                file['copies'] if file['copies'] is not None else (row['copies'] or 1),
+                cn(file['duplex'] or row['duplex']))
+            new = '%s · %s 份 · %s' % (
+                (pricing.format_item_label(item) if item else file['price_item_name']) or '未选档',
+                plan['copies'], cn(plan['duplex']))
+            if old != new:
+                changes.append('第%d份 %s → %s' % (index, old, new))
+        log_event(order_id, ORDER_LOG_EDIT, '；'.join(changes) or '参数未变化', conn=conn)
+        conn.commit()
+
+    logger.info('订单 #%s 打印参数被 %s(%s) 修改：%s ip=%s',
+                order_id, g.user['nickname'], g.user['role'],
+                '；'.join(changes) or '无变化', client_ip())
+    return jsonify({
+        'code': 0,
+        'msg': '参数已更新',
+        'copies': total,
+        'duplex': order_duplex,
+        'est_price': quote,
+        'changed': bool(changes),
+        'files': [{
+            'file_id': plan['file']['id'],
+            'copies': plan['copies'],
+            'duplex': plan['duplex'],
+            'price_item_id': plan['item']['id'] if plan['item'] else None,
+            'price_item_name': (pricing.format_item_label(plan['item']) if plan['item']
+                                else plan['file']['price_item_name']),
+        } for plan in plans],
+    })
+
+
 # ---- 柜台取件：凭单号核对、确认取件 ----
 #
 # 为什么单独给两条接口，而不是让柜台那人在列表里翻出那一单再改状态：
@@ -2425,11 +2594,16 @@ def api_download(order_id):
             return jsonify({'code': 404, 'msg': '订单不存在'}), 404
         listed = files_for_orders(conn, [order_id]).get(order_id, [])
 
-    if g.user['role'] != ROLE_SUPER and row['claimed_by'] != g.user['id']:
+    # 2026-10-25：**取消「只有接单人能下载」这条限制**。
+    #    原因是它把「谁接的单谁负责」变成了「谁接的单谁也下不了」：一张单的纸
+    #    常常是另一个人打的，柜台或计费的人想核一下那份文件，却被挡在门外，
+    #    只能去求接单人 —— 而接单人可能正在里屋、或者已经下班。
+    #    现在任何管理员都能下载。学生仍然不能：纸在店里，他不需要原件。
+    if public_role(g.user['role']) == ROLE_USER:
         security_event('download_denied',
-                       '订单 #%s 接单人 uid=%s，操作人试图下载他人订单文件'
-                       % (order_id, row['claimed_by']))
-        return jsonify({'code': 403, 'msg': '只有接单人可以下载该订单的文件'}), 403
+                       '订单 #%s 被学生账号（uid=%s）请求下载'
+                       % (order_id, g.user['id']))
+        return jsonify({'code': 403, 'msg': '只有管理员可以下载订单文件'}), 403
 
     target = None
     raw_file_id = (request.args.get('file_id') or '').strip()

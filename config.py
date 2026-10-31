@@ -577,10 +577,16 @@ ORDER_LOG_DOWNLOAD = 'download'  # 下载了订单文件
 ORDER_LOG_PICKUP = 'pickup'      # 凭单号确认取件（柜台核对那一步）
 ORDER_LOG_GROUP = 'group'        # 管理员把订单归入某条打印服务分组（不是下单时选的预设）
 
+# 管理员改打印参数（颜色 / 单双面 / 份数 / 档位）——2026-10-25 新增。
+# 与「计费」分开记：改参数改的是**要打什么**，改金额改的是**收多少钱**，
+# 学生事后问「为什么我的单变成双面了」，靠时间线上这一条才答得出来。
+ORDER_LOG_EDIT = 'edit'
+
 ORDER_LOG_ACTIONS = (
     ORDER_LOG_CREATE, ORDER_LOG_CLAIM, ORDER_LOG_RELEASE,
     ORDER_LOG_PRICE, ORDER_LOG_REPRICE, ORDER_LOG_STATUS,
     ORDER_LOG_WITHDRAW, ORDER_LOG_DOWNLOAD, ORDER_LOG_PICKUP, ORDER_LOG_GROUP,
+    ORDER_LOG_EDIT,
 )
 
 # 动作的中文名由**服务端**给（响应里带 action_label），前端只管拿来显示。
@@ -593,6 +599,7 @@ ORDER_LOG_LABELS = {
     ORDER_LOG_PRICE: '计费',
     ORDER_LOG_REPRICE: '修改金额',
     ORDER_LOG_STATUS: '修改状态',
+    ORDER_LOG_EDIT: '修改参数',
     ORDER_LOG_WITHDRAW: '撤回订单',
     ORDER_LOG_DOWNLOAD: '下载文件',
     # 取件和改状态分开说：柜台那位可能不是接单人，「这单是被人凭码取走的」

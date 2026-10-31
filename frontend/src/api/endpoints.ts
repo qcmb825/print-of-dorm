@@ -303,6 +303,33 @@ export const staffOrderApi = {
    *  塞进列表就变成每页 20 次磁盘调用 + 一次 N+1 查询（见后端 api_order_detail）。 */
   detail: (id: number) => get<OrderDetailResponse>(`/api/order/${id}/detail`),
   claim: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/claim`),
+  /** 改打印参数（档位 / 份数 / 单双面），逐份提交。
+   *
+   *  服务端会：校验档位与双面支持、重算预估价、写一条「修改参数」留痕。
+   *  没传的字段保持原值 —— 这个接口**不是**整体替换，少传一个键不会把它清空。 */
+  updateParams: (
+    id: number,
+    payload: {
+      files?: {
+        file_id: number
+        copies?: number
+        duplex?: 'single' | 'double'
+        price_item_id?: number | null
+      }[]
+      copies?: number
+      duplex?: 'single' | 'double'
+      price_item_id?: number | null
+    },
+  ) =>
+    put<{
+      code: number
+      msg: string
+      copies: number
+      duplex: string
+      est_price: number | null
+      changed: boolean
+      files: { file_id: number; copies: number; duplex: string; price_item_name: string | null }[]
+    }>(`/api/order/${id}/params`, payload),
   release: (id: number) => post<{ code: number; msg: string }>(`/api/order/${id}/release`),
   setStatus: (id: number, status: OrderStatus) =>
     put<{ code: number; msg: string }>(`/api/order/${id}/status`, { status }),

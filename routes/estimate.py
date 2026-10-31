@@ -775,6 +775,22 @@ def api_discard_prepared():
     return jsonify({'code': 0, 'msg': '已丢弃 %d 份未下单的文件' % removed, 'removed': removed})
 
 
+def _saved_duplex_and_copies(order_id):
+    """刚建好的那一单落库之后的 (duplex, copies)。
+
+    为什么不直接回传刚用过的参数：一单多文件之后「用过的参数」是**每份一份**，
+    而回执要念的是整单的那一个值（全同取该值、不同则 mixed）。
+    这个值只有 create_order_from_saved_files 汇总时算得对 —— 与其在这里
+    再算一遍（算错了不报错，只是回执和帐单对不上），不如按主键读回来。
+    """
+    with db_conn() as conn:
+        row = conn.execute(
+            'SELECT duplex, copies FROM orders WHERE id = ?', (order_id,)).fetchone()
+    if row is None:
+        return {'duplex': None, 'copies': None}
+    return {'duplex': row['duplex'], 'copies': row['copies']}
+
+
 @bp.post('/api/order/prepared')
 @login_required
 def api_order_from_prepared():
@@ -872,8 +888,13 @@ def api_order_from_prepared():
             #    逐份档位不同时给 null（前端回执会退回去显示文件名）——
             #    理由见 _group_item_label。
             'price_item_name': _group_item_label(group['entries']),
-            'copies': group['options']['copies'],
-            'duplex': group['options']['duplex'],
+            #    ⚠️ 单双面与份数**从落库的那一行读**，不拿组级 options。
+            #    v24 起参数挂在每一份上（entry['duplex'] / entry['copies']），
+            #    组级 options 只是「没写的那几份用什么默认」，它并不能代表这一单。
+            #    读组级的下场是实测抓到的：两份都指定双面的单，
+            #    接口照样回 `duplex: 'single'`，机器人照着念 ——
+            #    纸打出来是双面、回执写着单面（用户报的就是这个）。
+            **_saved_duplex_and_copies(order_id),
         })
 
     first = orders[0]

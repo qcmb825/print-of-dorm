@@ -24,8 +24,11 @@ import {
   NDataTable,
   NDropdown,
   NInput,
+  NInputNumber,
   NModal,
   NPagination,
+  NRadioButton,
+  NRadioGroup,
   NSelect,
   NSkeleton,
   NSwitch,
@@ -34,7 +37,7 @@ import {
   type DropdownOption,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { staffOrderApi, staffPrintOptionsApi } from '@/api/endpoints'
+import { priceTableApi, staffOrderApi, staffPrintOptionsApi } from '@/api/endpoints'
 import {
   DUPLEX_LABELS,
   ORDER_PRESET_FILTER_NONE,
@@ -45,6 +48,7 @@ import {
   type Order,
   type OrderFile,
   type OrderStatus,
+  type PriceItem,
   type PrintPreset,
 } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
@@ -383,6 +387,81 @@ let keywordTimer: ReturnType<typeof setTimeout> | null = null
  *  一条预设停用之后，早就归在它下面的老单不会跟着消失，
  *  而这份下拉恰恰是拿来找这些老单的。只给启用项就会把它们变成搜不到的单。 */
 const presets = ref<PrintPreset[]>([])
+
+/* ---------- 改打印参数（2026-10-25）----------
+ *  学生会下错单（该双面写成单面、份数填成 1），而在此之前只有「撤回重下」
+ *  一条路 —— 单号会变，学生得重新来取。这里让管理员直接改对，并留痕。
+ *  已取件的单不给改：纸已经交出去了，改参数只会让账单和实物对不上。
+ */
+interface ParamRow {
+  file_id: number
+  filename: string
+  pages: number | null
+  copies: number
+  duplex: 'single' | 'double'
+  price_item_id: number | null
+}
+
+const paramsOrder = ref<Order | null>(null)
+const paramsRows = ref<ParamRow[]>([])
+const paramItems = ref<PriceItem[]>([])
+const paramSaving = ref(false)
+
+const paramItemOptions = computed(() =>
+  paramItems.value.map((item) => ({ label: item.label, value: item.id })),
+)
+
+/** 这一档支不支持双面 —— 不支持时把「双面」那颗禁掉，而不是让人选了再被服务端拒。 */
+function duplexAllowed(itemId: number | null): boolean {
+  if (itemId === null) return true
+  const item = paramItems.value.find((entry) => entry.id === itemId)
+  return item ? item.price_double !== null : true
+}
+
+async function openParams(order: Order): Promise<void> {
+  paramsOrder.value = order
+  const fallbackDuplex = order.duplex === 'mixed' ? 'single' : (order.duplex ?? 'single')
+  paramsRows.value = (order.files ?? []).map((file) => ({
+    file_id: file.id,
+    filename: file.filename,
+    pages: file.pages ?? null,
+    copies: file.copies ?? order.copies ?? 1,
+    duplex: (file.duplex ?? fallbackDuplex) === 'double' ? 'double' : 'single',
+    price_item_id: file.price_item_id ?? order.price_item_id ?? null,
+  }))
+  // 价目项拉一次就缓存：改参数是高频动作，别每开一次弹窗都打一趟接口。
+  if (!paramItems.value.length) {
+    try {
+      const data = await priceTableApi.load()
+      paramItems.value = data.items ?? []
+    } catch {
+      // 拉不到就只让改份数 / 单双面 —— 档位那格留空，服务端会保留原档。
+    }
+  }
+}
+
+async function submitParams(): Promise<void> {
+  const order = paramsOrder.value
+  if (!order || paramSaving.value) return
+  paramSaving.value = true
+  try {
+    const data = await staffOrderApi.updateParams(order.id, {
+      files: paramsRows.value.map((row) => ({
+        file_id: row.file_id,
+        copies: row.copies,
+        duplex: row.duplex,
+        price_item_id: row.price_item_id,
+      })),
+    })
+    message.success(data.changed ? '参数已更新 · 已留痕' : '参数没有变化')
+    paramsOrder.value = null
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '改参数失败 · 稍后重试')
+  } finally {
+    paramSaving.value = false
+  }
+}
 
 /** 取件核对弹窗。它是个二级窗口、不是路由页：柜台交件时手不能离开这一屏，
  *  跳走再跳回来会把后面的列表翻页和筛选全重置掉。 */
@@ -1108,6 +1187,19 @@ const columns = computed<DataTableColumns<Order>>(() => [
           { default: () => (row.price === null || row.price === undefined ? '计费' : '改价') },
         ),
         canChangeStatus(row) ? statusButton(row) : null,
+        // 改参数：已取件的单没有「改对」的余地（纸在对方手上），不出现这颗按钮。
+        row.status === '已取件'
+          ? null
+          : h(
+              NButton,
+              {
+                size: 'tiny',
+                quaternary: true,
+                title: '改打印参数（会重算预估价并留痕）',
+                onClick: () => void openParams(row),
+              },
+              { default: () => '改参数' },
+            ),
         canRelease(row)
           ? h(
               NButton,
@@ -1777,6 +1869,66 @@ onBeforeUnmount(() => {
 
     <!-- 计费弹窗。金额一律以字符串来回（见 submitPrice 里的理由），
          所以这里用 NInput 而不是 NInputNumber。 -->
+    <!-- 改打印参数：学生会下错单（该双面写成单面、份数填成 1），而撤回重下
+         会换单号、学生得重新来取。这里让管理员直接改对，并留一条痕。 -->
+    <NModal
+      :show="paramsOrder !== null"
+      preset="card"
+      class="max-w-[560px]"
+      title="改打印参数"
+      :bordered="false"
+      @update:show="(value: boolean) => !value && (paramsOrder = null)"
+    >
+      <template v-if="paramsOrder">
+        <p class="mb-3 text-xs leading-5 text-ink-3">
+          改完会重算预估价，并在时间线上留一条「修改参数」。没动的格保持原样。
+        </p>
+        <div class="space-y-2.5">
+          <div
+            v-for="(row, index) in paramsRows"
+            :key="row.file_id"
+            class="border p-2.5"
+            style="border-color: var(--border)"
+          >
+            <p class="mb-2 min-w-0 truncate text-xs font-semibold" :title="row.filename">
+              <span class="tnum text-ink-3">{{ index + 1 }}.</span> {{ row.filename }}
+              <span v-if="row.pages != null" class="tnum font-normal text-ink-3">
+                · {{ row.pages }} 页
+              </span>
+            </p>
+            <div class="grid gap-2 sm:grid-cols-3">
+              <NSelect
+                v-model:value="row.price_item_id"
+                :options="paramItemOptions"
+                size="small"
+                clearable
+                placeholder="档位"
+              />
+              <NInputNumber
+                v-model:value="row.copies"
+                :min="1"
+                :max="50"
+                size="small"
+                placeholder="份数"
+              />
+              <NRadioGroup v-model:value="row.duplex" size="small">
+                <NRadioButton value="single">单面</NRadioButton>
+                <NRadioButton value="double" :disabled="!duplexAllowed(row.price_item_id)">
+                  双面
+                </NRadioButton>
+              </NRadioGroup>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <NButton quaternary @click="paramsOrder = null">取消</NButton>
+          <NButton type="primary" :loading="paramSaving" @click="submitParams">保存</NButton>
+        </div>
+      </template>
+    </NModal>
+
     <NModal
       :show="priceOrder !== null"
       preset="card"

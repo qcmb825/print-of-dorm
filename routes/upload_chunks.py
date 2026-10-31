@@ -470,9 +470,13 @@ def api_chunk_init():
     # 分片拼成一份，产出一份谁也没核对过的混合文档。任何一边没有指纹
     # （老会话、不带指纹的客户端）就退回「文件名 + 大小」的旧口径。
     fingerprint = data.get('fingerprint')
-    if not isinstance(fingerprint, str):
+    #    ⚠️ 先判类型再 strip：客户端**没传**指纹是正常路径（老会话、算不出指纹的浏览器），
+    #    而 `None.strip()` 会抛 AttributeError，被兜成 500 ——
+    #    症状是整个分片上传入口直接不可用，而日志里只有一句 `'NoneType' has no attribute 'strip'`。
+    if isinstance(fingerprint, str):
+        fingerprint = fingerprint.strip()[:128] or None
+    else:
         fingerprint = None
-    fingerprint = fingerprint.strip()[:128] or None
 
     # 幂等：同一个文件重复 init（前端重试、或用户刷新页面后又选了同一个文件）
     # 直接复用已有会话，不会平白多出一份重复分片。前端也因此可以放心重试这个请求。
