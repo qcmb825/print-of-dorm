@@ -204,6 +204,58 @@
     transform: scaleY(1);
   }
 
+  /* ══ 刀架滑轨：一件共享的激活指示 ═══════════════════════════════
+   * 原来每个 nav-link 各有一条 ::before 自己缩放，切换时是"旧的缩回去、
+   * 新的长出来"，两件东西各自为政。改成**一整条**指示器沿导航滑到目标项 ——
+   * 机器换刀时刀架是整体移动的，不是每把刀各自冒出来。
+   *
+   * 几何：滑块保持 1px 的基准尺寸，用 scaleX/scaleY 撑到目标长度，
+   * 所以长度变化也只是合成属性（不写 width/height 过渡）。
+   * 厚度恒定：横向 2px 高、纵向 2px 宽 —— 缩放只走长轴，不会被拉粗。
+   *
+   * `will-change` 在这里安全：它是空壳元素，内部没有任何 fixed/sticky 后代
+   * （第 2 节的包含块禁令针对的是"肚子里装着布局"的容器）。
+   * 首次定位由 JS 直接写终值、不加过渡（useNavSlider 的 first 标记），
+   * 否则页面一进来指示器会从左上角滑到激活项，像一次多余的开场。 */
+  .nav-slider {
+    position: absolute;
+    background-color: var(--accent-text);
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .nav-slider[data-orientation='vertical'] {
+    top: 0;
+    left: 0;
+    width: 2px;
+    height: 1px;
+    transform-origin: left top;
+    transition: transform var(--motion-dur-decor) var(--motion-ease-drawer);
+  }
+
+  .nav-slider[data-orientation='horizontal'] {
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 2px;
+    transform-origin: left top;
+    transition: transform var(--motion-dur-decor) var(--motion-ease-drawer);
+  }
+
+  .nav-slider[data-first='true'] {
+    transition: none;
+  }
+
+  /* 滑块接管之后，逐项的激活记号必须退场 —— 两条同时出现读起来是
+     "有一个东西在动，而且原来的位置也还亮着"。 */
+  [data-nav-slider] .nav-link::before {
+    display: none;
+  }
+
+  [data-nav-slider] .cut {
+    display: none;
+  }
+
   .nav-link:active,
   .n-button:not(.n-button--disabled):active {
     transform: scale(0.98);
@@ -746,6 +798,32 @@
     }
   }
 
+  /* 通道告警：同一周期内闪两下（1.1s 内两次明灭 = 1.8Hz，仍在 3 次/秒的闪阈之下）。
+     它只落在半字宽的小方块上，面积比光标还小，不构成新的常驻循环 ——
+     是给既有那件循环加了一档语义（见 PageHeader 的 channel prop）。 */
+  .caret--alarm {
+    animation: caret-double var(--motion-dur-blink) linear infinite;
+  }
+
+  @keyframes caret-double {
+    0%,
+    22% {
+      opacity: 1;
+    }
+    23%,
+    33% {
+      opacity: 0.12;
+    }
+    34%,
+    56% {
+      opacity: 1;
+    }
+    57%,
+    100% {
+      opacity: 0.12;
+    }
+  }
+
   /* 状态灯：4px 方块，与光标同一节奏但**错开半拍**（负 delay 推半个周期），
      所以一行里不会两件东西一起亮 —— 同频的两个亮点会读成一处频闪。
      不用 box-shadow 做外圈：全站投影归零的验收把 box-shadow 收成了白名单，
@@ -979,6 +1057,278 @@
     transition-duration: var(--motion-dur-fast);
   }
 
+  /* ══ 落章 ══════════════════════════════════════════════════════
+   * 状态真的变了时，文字块自己盖下来一次（见 StatusTag.vue 的注释）。
+   * 只写 from：动画结束后回到元素本来的样式，不留残余 transform。
+   * 过冲曲线（--motion-ease-back）只在这一件上用 —— 面积是几个字，
+   * 越过终点的那一点距离不会读成"抖"。
+   *
+   * 用 animation 而不是 transition：这是一次性播放，且类名摘掉后要立刻复位；
+   * transition 在"类被摘掉"和"类被加上"两个方向都会跑，读到的是两次动作。 */
+  .stamp-in {
+    display: inline-block;
+  }
+
+  .stamp-in--on {
+    animation: stamp-in var(--motion-dur-base) var(--motion-ease-back);
+  }
+
+  @keyframes stamp-in {
+    from {
+      opacity: 0.35;
+      transform: scale(1.14);
+    }
+  }
+
+  /* ══ 跳闸 ══════════════════════════════════════════════════════
+   * 请求失败的一次性反馈（配套 useBreakerTrip）：面板顶边压一条 hazard 细带，
+   * 从右往左"合闸"，同时整块边框闪一次 err 色。
+   *
+   * 为什么不是 shake：抖动是通用语汇，任何网站都能用；这条机器上"出事"的动作
+   * 是断路器跳闸 —— 一条斜纹带盖下来，边界还在，只是被标出来了。
+   *
+   * 只动 transform/opacity：斜纹带是一个独立伪元素，scaleX 从 0 到 1 是合成属性。
+   * **不占用 ::after**：.login-card 已经用掉它了；这里统一用 ::before，
+   * 并要求宿主自己不是 .gauge（.gauge::before 也被占了）。
+   * 宿主必须有 position: relative（.panel / .login-card 本来就有）。 */
+  .trip::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 2;
+    height: 4px;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--err) 0 3px,
+      transparent 3px 6px
+    );
+    content: '';
+    opacity: 0;
+    pointer-events: none;
+    transform: scaleX(0);
+    transform-origin: right center;
+  }
+
+  .trip--on::before {
+    opacity: 1;
+    transform: scaleX(1);
+    transition:
+      transform var(--motion-dur-base) var(--motion-ease-out),
+      opacity var(--motion-dur-fast) linear;
+  }
+
+  /* ══ 点阵走纸 ═══════════════════════════════════════════════════
+   * 上传进度不再是连续进度条，而是一排格子从左往右依次通电
+   * （DotsProgress.vue）。这台机器的进度就是"纸在走"，不是"条在长"。
+   *
+   * 每格只有 opacity 变化，所以整行都可以落在合成器上；
+   * 格子数固定，靠 flex 平分宽度，不读 JS 尺寸。
+   * 行首那一格复用 .status-led 的呼吸 —— 那是"还在走"的唯一常驻信号，
+   * 但它只落在 4px 面积上，不构成第二个循环件。 */
+  .dots-progress {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 10px;
+  }
+
+  .dots-progress__cell {
+    flex: 1 1 0;
+    height: 100%;
+    background-color: var(--accent-text);
+    opacity: 0.14;
+  }
+
+  .dots-progress__cell--on {
+    opacity: 1;
+  }
+
+  .dots-progress__cell--head {
+    animation: led-pulse var(--motion-dur-blink) linear infinite;
+  }
+
+  /* ══ 进纸（下单成功卡）══════════════════════════════════════════
+   * 一张纸被送进机器：整块从下往上顶进来（translateY 32px → 0），
+   * 顶边那条 hazard「进纸口」同时从右往左合上。括角的咬合在模板里
+   * 用 .bracket-lg 自带的伪元素做，这里只给整卡与进纸口。
+   *
+   * 用 Vue 的 Transition 类（enter-active/enter-from 由模板下发），
+   * 所以这里只写两段，不写 keyframes —— 过渡的起止由类切换驱动，
+   * 和 .route-stage 的写法同源。
+   *
+   * 退场（点「再下一单」）：继续往上走（喂进去），比进场短一档。
+   * reduced-motion：位移全部撤掉，只留淡入淡出（见文件末尾降级块）。 */
+  .paper-in {
+    transition:
+      opacity var(--motion-dur-slow) var(--motion-ease-drawer),
+      transform var(--motion-dur-slow) var(--motion-ease-drawer);
+  }
+
+  .paper-in-from {
+    opacity: 0;
+    transform: translate3d(0, 32px, 0);
+  }
+
+  .paper-out {
+    transition:
+      opacity var(--motion-dur-fast) var(--motion-ease-in-out),
+      transform var(--motion-dur-fast) var(--motion-ease-in-out);
+  }
+
+  .paper-out-to {
+    opacity: 0;
+    transform: translate3d(0, -24px, 0);
+  }
+
+  /* 进纸口：面板顶边的一条斜纹。它不是装饰带，是"这张纸从哪出来"的方向记号，
+   * 所以只在成功卡上出现一次，不做常驻。 */
+  .paper-slot {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 3px;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--accent-text) 0 3px,
+      transparent 3px 6px
+    );
+    content: '';
+    opacity: 0.55;
+    pointer-events: none;
+    transform-origin: right center;
+  }
+
+  .paper-in-from .paper-slot {
+    transform: scaleX(0);
+  }
+
+  .paper-in .paper-slot {
+    transition: transform var(--motion-dur-slow) var(--motion-ease-drawer)
+      var(--motion-dur-press);
+  }
+
+  /* 单号那副括角在纸落定之后才咬合：两个伪元素各从自己的角上缩进一点再弹开。
+   * 它跟着 .paper-in 的进度走，延迟一个 press 档 —— 先有纸，后有框。 */
+  .paper-in .bracket-lg::before,
+  .paper-in .bracket-lg::after {
+    animation: bracket-clamp var(--motion-dur-base) var(--motion-ease-back)
+      var(--motion-dur-slow);
+  }
+
+  @keyframes bracket-clamp {
+    from {
+      opacity: 0;
+      transform: scale(1.35);
+    }
+  }
+
+  /* ══ 开机自检（登录成功）════════════════════════════════════════
+   * 整站唯一一次"上电"的报告屏（components/BootSequence.vue）。
+   * 样式放在这里而不是组件里，是因为全站组件都不带 <style>：视觉规则集中在
+   * base.css / tokens.css，组件只负责结构。颜色仍然全部读令牌，深浅两套自动跟随。
+   *
+   * 层级：90 —— 在布局 chrome(20) 之上、换场覆盖层(100) 之下。
+   * 这是刻意的：自检退场之后紧接着就是那次外壳换场，两段动作接力而不是叠着。
+   */
+  .post {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: grid;
+    place-items: center;
+    background-color: var(--veil-mat);
+    pointer-events: none;
+  }
+
+  .post__mat {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    padding: 24px;
+    color: #fff;
+  }
+
+  /* 网格与换场面板同尺度（48px）：这一层是"同一台机器的另一块屏"。
+     换场面板的网格是 48px（见 .route-veil__wipe），两套尺度必须一致。 */
+  .post__grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--veil-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .post__head,
+  .post__foot {
+    position: absolute;
+    right: 24px;
+    left: 24px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .post__head {
+    top: 20px;
+  }
+
+  .post__foot {
+    bottom: 20px;
+  }
+
+  .post__lines {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: min(440px, 82vw);
+    font-family: var(--stack-mono);
+    font-size: var(--text-sm);
+    letter-spacing: 0.08em;
+    transform: translate(-50%, -50%);
+  }
+
+  /* 四行固定高度：打字的行在变长，行高不能跟着变 ——
+     否则整个自检块会在打字过程中一行一行往下沉，读起来像在抖。 */
+  .post__line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    height: 32px;
+    color: var(--veil-hairline);
+  }
+
+  .post__line--ok .post__value {
+    color: var(--accent-text);
+  }
+
+  .post__label {
+    flex: none;
+    color: var(--veil-hairline);
+  }
+
+  .post__dots {
+    flex: 1 1 auto;
+    height: 1px;
+    border-bottom: 1px dotted var(--veil-hairline);
+    opacity: 0.5;
+  }
+
+  /* 值的宽度留够最长那一行（ESTABLISHED），换行不会把点线挤短。 */
+  .post__value {
+    flex: none;
+    min-width: 8ch;
+    text-align: right;
+  }
+
+  /* 整层退场：一次淡出就够，它紧接着会被换场面板接管。
+     减少动效下这一层压根不挂载（JS 侧直接交棒），所以不需要降级分支。 */
+  .post[data-finished] {
+    opacity: 0;
+    transition: opacity var(--motion-dur-fast) var(--motion-ease-in-out);
+  }
+
   /* ══ 转场回执条 ═════════════════════════════════════════════════
    * 一条横贯全屏的带子，两层（黄承载带慢进、殿后；数据带后进、先走）+ 底边排空线，
    * 说清"刚才发生了什么、你现在去哪"。**只给有结果的事件**：登录成功、下单成功、撤回…
@@ -1167,6 +1517,79 @@
      两条读数说的是同一件事（都报目标页），挤在同一个位置只是噪音。 */
   :root[data-receipt] .route-veil__hud {
     display: none;
+  }
+
+  /* ══ 出票（取件核销）════════════════════════════════════════════
+   * 核销成功的那一下，从取件弹窗里"吐"出一张票根：顶端一条锯齿撕线，
+   * 下面一行编号读数 + 取件码 + 一句结论。
+   *
+   * 锯齿用 clip-path —— 按第 3 节，它只用在**不载文字的装饰件**上，
+   * 所以锯齿单独一层（.ticket-stub__teeth），内容在它的下一层，不被裁。
+   * 也不能给它 border：clip-path 会裁掉描边（第 3 节第 1 条），
+   * 撕线的"齿"靠两个伪元素错位画出来，不靠 border。
+   *
+   * 吐出的方向是**从下往上**（translateY 100% → 0），像打印机把纸顶出来；
+   * 落定后印章才盖（stamp-in 的 delay）。减少动效下整块直接出现，不吐不盖。 */
+  .ticket-stub {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .ticket-stub__teeth {
+    position: relative;
+    height: 8px;
+    /* 齿距 10px：齿 5px、缝 5px。齿形是朝下的三角，铺在纸的顶边。 */
+    background-image: linear-gradient(135deg, var(--muted) 25%, transparent 25%),
+      linear-gradient(225deg, var(--muted) 25%, transparent 25%);
+    background-position: 0 0, 5px 0;
+    background-size: 10px 8px;
+    background-repeat: repeat-x;
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 40%,
+      95% 100%,
+      90% 40%,
+      85% 100%,
+      80% 40%,
+      75% 100%,
+      70% 40%,
+      65% 100%,
+      60% 40%,
+      55% 100%,
+      50% 40%,
+      45% 100%,
+      40% 40%,
+      35% 100%,
+      30% 40%,
+      25% 100%,
+      20% 40%,
+      15% 100%,
+      10% 40%,
+      5% 100%,
+      0 40%
+    );
+  }
+
+  .ticket-stub__body {
+    background-color: var(--muted);
+    border: 1px solid var(--border);
+    border-top: 0;
+  }
+
+  .ticket-stub--in .ticket-stub__body {
+    animation: ticket-out var(--motion-dur-band) var(--motion-ease-drawer);
+  }
+
+  .ticket-stub--in .ticket-stub__teeth {
+    animation: ticket-out var(--motion-dur-band) var(--motion-ease-drawer);
+  }
+
+  @keyframes ticket-out {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 24px, 0);
+    }
   }
 
   /* 规格标签：一条左强调边 + 极淡底。
@@ -1748,6 +2171,29 @@
   }
 }
 
+/* ══ 数据回响（轮询拿到变了的数据）══════════════════════════════════
+ * 与上面那组换场回响是**同一批动画、另一条触发通道**：切页是"整页换了一口气"，
+ * 数据更新是"有货进来了"。由 composables/motion.ts 的 pulseDecor() 挂 / 摘
+ * html 上的 .decor-pulse 类；类名先摘一帧再加回，动画才会重播。
+ *
+ * 只挑**不载文字**的装饰件：水印、斜切块、刻度、装饰带。
+ * 读数（.readout）不参与 —— 它上面写着页名和编号，让它闪一下等于把要读的东西
+ * 短暂变成不可读（与第 8 节"不给要读准的东西加会动的字"同一条）。
+ */
+:root.decor-pulse .watermark {
+  animation: decor-drift var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+:root.decor-pulse .ticks,
+:root.decor-pulse .vticks {
+  animation: decor-measure var(--motion-dur-decor) var(--motion-ease-out);
+}
+
+:root.decor-pulse .cut,
+:root.decor-pulse .data-dump {
+  animation: decor-nudge var(--motion-dur-decor) var(--motion-ease-out);
+}
+
 /* ══ 切页时装饰元素动起来 ══════════════════════════════════════════
  * 换场相位被镜像到 <html> 的 data-veil-phase 上（见 composables/route-veil.ts），
  * 装饰元素用后代选择器挂动效，所以"切页"这件事在整页都有回响，而不只是那块斜切面板在动。
@@ -2069,6 +2515,100 @@
   box-shadow: none !important;
 }
 
+/* ══ 弹层的进出场：换曲线 + 退场编排 ════════════════════════════════
+ *
+ * 进场：Naive 的 Modal 是 fade-in-scale-up（0.25s、scale(.5→1)），曲线是
+ * cubic-bezier(0,0,.2,1) —— 起步慢、收尾平，和站内的 --motion-ease-out
+ * （起步快、尾段长）不是一台机器上的动作。这里把**曲线**换成令牌里的那支，
+ * 时长沿用 Naive 自己的（不抢）：组件内部的卸载时机挂在它算好的时长上，
+ * 改短了会先拆 DOM 再退场，改长了会留一块透明面板挡点击。
+ *
+ * 退场：多做一件事 —— **内容先走、边框和括角后撤**。
+ * Naive 的退场是一条 transition 同时撤 opacity 与 transform，画面是
+ * "整块一起缩回去"。改成让内容块先淡出上浮、1px 硬描边多站一拍再消失，
+ * 读到的是"门关上了，门框还在"。
+ * 实现上只动内容块自己的 opacity/transform，不去碰 Naive 的卸载逻辑：
+ * 退场时长仍由 Naive 的 transition 决定，我们在它之上加一段 border-color 的延迟。
+ *
+ * **不给弹层加 clip-path**（DESIGN_RULES 第 4 节第 3 条：会同时弄坏焦点环与切角）。
+ * 无层级 + !important 的理由同上面几条：Naive 的样式是运行时插进 head 的无层级规则。
+ */
+.fade-in-scale-up-transition-enter-active {
+  transition:
+    opacity var(--motion-dur-slow) var(--motion-ease-out),
+    transform var(--motion-dur-slow) var(--motion-ease-out) !important;
+}
+
+.fade-in-scale-up-transition-leave-active {
+  transition:
+    opacity var(--motion-dur-base) var(--motion-ease-in-out),
+    transform var(--motion-dur-base) var(--motion-ease-in-out) !important;
+}
+
+/* 退场时内容块先缩、边框晚一档撤：边框在元素本身上，所以只能给
+   "正在退场的那一块"补一条延迟的 border-color 过渡。
+   它比内容多站 --motion-dur-press，刚好是"门框还在"的那一拍。 */
+.fade-in-scale-up-transition-leave-active.n-modal,
+.fade-in-scale-up-transition-leave-active.n-drawer {
+  border-color: transparent !important;
+  transition:
+    opacity var(--motion-dur-base) var(--motion-ease-in-out) var(--motion-dur-press),
+    transform var(--motion-dur-base) var(--motion-ease-in-out) var(--motion-dur-press),
+    border-color var(--motion-dur-fast) linear !important;
+}
+
+/* Drawer 的四个方向各有自己的类名（slide-in-from-right/left/top/bottom）。
+   进场曲线一样拉平；退场时长比 Modal 长一档 —— 它要滑出一整个侧边宽度，
+   用 180ms 会读成"啪地抽走"。 */
+.slide-in-from-right-transition-enter-active,
+.slide-in-from-left-transition-enter-active,
+.slide-in-from-top-transition-enter-active,
+.slide-in-from-bottom-transition-enter-active,
+.slide-in-from-right-transition-leave-active,
+.slide-in-from-left-transition-leave-active,
+.slide-in-from-top-transition-leave-active,
+.slide-in-from-bottom-transition-leave-active {
+  transition: transform var(--motion-dur-slow) var(--motion-ease-drawer) !important;
+}
+
+/* Naive 自己那条已知缺口：它的过渡类（transition: all .2s !important）赢过站点的
+   reduced-motion 兜底（`*` 是 0,0,0，它至少 0,1,0），所以减少动效下
+   抽屉遮罩/弹窗遮罩/Spin 仍会播 200ms。按类名逐个覆盖 —— 这是 DESIGN_RULES 第 4 节
+   点名的待还债务。
+   注意：这一段必须**也是** !important + 类选择器，才能和 Naive 的无层级规则同台竞争。 */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in-scale-up-transition-enter-active,
+  .fade-in-scale-up-transition-leave-active,
+  .fade-in-transition-enter-active,
+  .fade-in-transition-leave-active,
+  .fade-in-height-expand-transition-enter-active,
+  .fade-in-height-expand-transition-leave-active,
+  .slide-in-from-right-transition-enter-active,
+  .slide-in-from-right-transition-leave-active,
+  .slide-in-from-left-transition-enter-active,
+  .slide-in-from-left-transition-leave-active,
+  .slide-in-from-top-transition-enter-active,
+  .slide-in-from-top-transition-leave-active,
+  .slide-in-from-bottom-transition-enter-active,
+  .slide-in-from-bottom-transition-leave-active,
+  .icon-switch-transition-enter-active,
+  .icon-switch-transition-leave-active {
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  /* 退场编排在减少动效下没有意义（没有"多站一拍"这回事），整件撤掉。 */
+  .fade-in-scale-up-transition-leave-active.n-modal,
+  .fade-in-scale-up-transition-leave-active.n-drawer {
+    border-color: var(--border) !important;
+  }
+
+  /* Naive 的 Spin 是 SVG 旋转（内联 animation），同样绕不过兜底。 */
+  .n-spin-body {
+    animation: none !important;
+  }
+}
+
 /* Naive 有三处圆角**不读 common.borderRadius**，是写在它自己样式表里的字面量：
    Badge 的计数泡（4px 点 / 9px 数字泡，见 es/badge/src/styles/index.cssr.mjs）
    与 Timeline 的节点（`border-radius: var(--n-icon-size)`，等于画成一个圆）。
@@ -2145,6 +2685,59 @@
     opacity: 1 !important;
   }
 
+  /* 新增语汇的降级。都不是"放慢"，是各自退到静态等价形态：
+     · 落章 / 跳闸：整件不播，状态语义本来就在文字与颜色里（JS 侧也不置类）；
+     · 出票：不吐纸，票根直接出现在原位（它是核销的唯一凭据，不能撤掉）；
+     · 刀架滑轨：滑块直接跳到目标项，不滑行；
+     · 点阵：格子的"亮/暗"是信息（走到第几格），保留；行首的呼吸撤掉；
+     · 数据回响：纯装饰，整件不挂（JS 侧已 skip）。 */
+  .stamp-in--on,
+  .trip--on,
+  .trip--on::before {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .ticket-stub--in .ticket-stub__body,
+  .ticket-stub--in .ticket-stub__teeth {
+    animation: none !important;
+  }
+
+  .nav-slider {
+    transition: none !important;
+  }
+
+  .dots-progress__cell--head {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+
+  /* 进纸：位移撤掉，只留淡入；括角咬合与进纸口整件不播
+     （它们是"纸从机器里出来"的记号，没有纸在动时这两个动作是空的）。 */
+  .paper-in,
+  .paper-out {
+    transition: opacity var(--motion-dur-fast) var(--motion-ease-out) !important;
+  }
+
+  .paper-in-from,
+  .paper-out-to {
+    transform: none !important;
+  }
+
+  .paper-slot,
+  .paper-in .bracket-lg::before,
+  .paper-in .bracket-lg::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  :root.decor-pulse .watermark,
+  :root.decor-pulse .ticks,
+  :root.decor-pulse .vticks,
+  :root.decor-pulse .cut,
+  :root.decor-pulse .data-dump {
+    animation: none !important;
+  }
 }
 
 /* ══ 移动端：手指能碰到、按下去有回应、聚焦不缩放 ════════════════════

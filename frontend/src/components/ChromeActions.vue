@@ -10,17 +10,17 @@
  *  但样式从没落地，浏览器默认的那层灰斜面一直都在，直到被截图报出来）。
  *  不写圆角也不写阴影 —— 这套界面里所有圆形与投影都已经清掉了（见 DESIGN_RULES）。
  *
- *  ⚠️ **亮暗切换那颗按钮已经拆掉**（2026-09-21，业主的要求：网页一律亮色）。
- *  组件名与文件名保留（它还有"去学生端"这一半，三个布局都在引它）——
- *  别因为名字里带着 Actions 就以为还能往里加东西。
- *  要放开暗色时：把 stores/theme.ts 的三处改回来，再把那颗按钮连同 Sun/Moon
- *  图标一起加回来（git 历史里有原样）。
+ *  ⚠️ 亮暗切换那颗按钮**曾经**被拆掉（2026-09-21，业主要求网页一律亮色）。
+ *  2026-11 恢复：切主题要过一次换场面板（见 stores/theme.ts 的 toggle）——
+ *  它不是"翻一下颜色"那么轻的动作，同一台机器换档就该有换挡的动作。
  *
  *  去学生端那一个只给管理端：学生端通往管理端的入口早就有了（导航里那一项
  *  「管理控制台」，只对 isStaff 出现），反方向却只能手敲 URL。
  */
-import { GraduationCap } from '@lucide/vue'
+import { GraduationCap, Moon, Sun } from '@lucide/vue'
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useThemeStore } from '@/stores/theme'
 
 withDefaults(
   defineProps<{
@@ -29,10 +29,27 @@ withDefaults(
   }>(),
   { studentSwitch: false },
 )
+
+const theme = useThemeStore()
+/** 提示语说的是"点下去会变成什么"，不是"现在是什么"。 */
+const themeLabel = computed(() => (theme.isDark ? '切换到亮色' : '切换到暗色'))
 </script>
 
 <template>
   <div class="flex items-center">
+    <!-- 亮暗切换。图标给的是**下一步**：亮着出月亮、暗着出太阳，
+         两个图标都是这套界面里已有的（lucide 线性图标），不另引入风格。 -->
+    <button
+      type="button"
+      class="tap-area icon-btn grid size-9 place-items-center"
+      style="color: var(--text-secondary)"
+      :title="themeLabel"
+      :aria-label="themeLabel"
+      @click="theme.toggle()"
+    >
+      <Moon v-if="!theme.isDark" :size="18" aria-hidden="true" />
+      <Sun v-else :size="18" aria-hidden="true" />
+    </button>
     <!-- 去学生端。落点就是学生端的首页（/upload，路由表里 '' 重定向到它），
          不猜"他上次待在哪一页"——那个状态没有存过，猜出来的多半是错的。 -->
     <RouterLink

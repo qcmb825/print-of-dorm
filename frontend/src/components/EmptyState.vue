@@ -12,8 +12,16 @@
  *
  *  纯展示：不 aria-hidden（空态是这一页当前唯一的内容，读屏用户必须听到它），
  *  主文用 role="status" 播报。
+ *
+ *  ── 敲入（2026-11）────────────────────────────────────────────────
+ *  编号读数逐字打出来，末尾挂一枚光标，打完光标就撤 —— 空态不是"没有内容"，
+ *  是"这台终端报了一条 00 / QUEUE EMPTY"。它是页面上唯一一件"被写出来"的东西，
+ *  所以给一次写入的动作是合理的，也是这一层唯一的动效。
+ *  **只打在编号上**：主文与提示是第一眼要读的内容，不能有打字过程。
+ *  减少动效下整行直接出现（见 useTypewriter 的注释）。
  */
-withDefaults(
+import { useTypewriter } from '@/composables/motion'
+const props = withDefaults(
   defineProps<{
     /** 编号读数，例如 '00 / QUEUE EMPTY'、'ERR / 404' */
     code: string
@@ -26,13 +34,15 @@ withDefaults(
   }>(),
   { tone: 'quiet' },
 )
+
+const { text: typedCode, typing } = useTypewriter(() => props.code)
 </script>
 
 <template>
   <div class="grid place-items-center py-6">
     <div class="bracket-lg w-full max-w-sm px-5 py-6 text-center" style="--bracket-arm: 20px">
       <span class="readout" :style="tone === 'alarm' ? { color: 'var(--err)' } : undefined">
-        {{ code }}
+        {{ typedCode }}<span v-if="typing" class="caret" aria-hidden="true" />
       </span>
       <div v-if="$slots.icon" class="mt-3 flex justify-center text-ink-4" aria-hidden="true">
         <slot name="icon" />

@@ -41,6 +41,7 @@ import {
   X,
 } from '@lucide/vue'
 import PageHeader from '@/components/PageHeader.vue'
+import DotsProgress from '@/components/DotsProgress.vue'
 import PresetDocViewer from '@/components/PresetDocViewer.vue'
 import PriceTableDialog from '@/components/PriceTableDialog.vue'
 import StageHead from '@/components/StageHead.vue'
@@ -50,7 +51,6 @@ import {
   NInput,
   NInputNumber,
   NModal,
-  NProgress,
   NRadioButton,
   NRadioGroup,
   NSelect,
@@ -62,6 +62,7 @@ import {
 import { useRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
 import { showReceipt } from '@/composables/transition-receipt'
+import { useBreakerTrip, useTypewriter, useValueTick } from '@/composables/motion'
 import { chunkApi, orderApi, printOptionsApi, authApi } from '@/api/endpoints'
 import type {
   ChunkSession,
@@ -75,6 +76,8 @@ import { pickupCodeLabel } from '@/utils/format'
 import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
 
 const message = useMessage()
+/** 提交失败的跳闸（见 base.css 的 .trip）。 */
+const { tripped: submitTripped, trip: tripSubmit } = useBreakerTrip()
 
 /** 与后端 config.ALLOWED_EXTENSIONS 对齐；只用于提前拦掉白名单外的文件，省一次大文件上传。
  *  真正的把关在服务端（上传接口会再校验一次）。 */
@@ -514,6 +517,14 @@ const quoteText = computed(() => {
   return `预估 ¥${total.toFixed(2)}`
 })
 
+/** 试算金额的"打价签"：值真的变了才逐字打一遍。
+ *  skipFirst：首次拿到报价是"数据到达"，不该像刚算出来一样打一遍。 */
+const { text: quoteTyped, typing: quoteTyping } = useTypewriter(() => quoteText.value, {
+  skipFirst: true,
+})
+/** 打完最后一下亮一档，把"这一签是刚算出来的"说完。 */
+const quoteLanded = useValueTick(() => quoteText.value)
+
 const quoteHint = computed(() => {
   const data = quote.value
   if (!data) return ''
@@ -814,6 +825,9 @@ async function submit(): Promise<void> {
     reset()
     announceOrders(orders)
   } catch (error) {
+    // 提交失败 = 一次跳闸。上传失败（逐份）不跳：那是单份文件的问题，
+    // 行内已经写着原因和重试按钮，整块面板跳一下反而盖住了那行字。
+    tripSubmit()
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
       void refreshPending()
@@ -854,14 +868,15 @@ onMounted(async () => {
 <template>
   <div class="mx-auto max-w-3xl">
     <!-- 成功回执：单号是页面上最该被看到的信息。
-         这里给整页唯一一段「有分量」的动效（rare 档，一单只出现一次）：0.97→1 的缩放配淡入，
-         只用透明度会像换了张图，不像「东西出现了」。起点是 0.97 而不是 0 —— 现实里没有东西
-         从虚无里冒出来，scale(0) 一律禁止。 -->
+         动效是「进纸」：一张纸被送进机器 —— 顶边先进（translateY 32px → 0），
+         落定之后单号外面那副括角才咬合。整套只在这块卡上跑一次，一单只出现一次。
+         起点不用 scale(0)：现实里没有东西从虚无里冒出来，0.97 是允许的下限。
+         reduced-motion 下进纸与咬合都撤掉，只留一次淡入（见 base.css 的降级块）。 -->
     <Transition
-      enter-active-class="transition duration-[var(--motion-dur-slow)] ease-out"
-      enter-from-class="opacity-0 scale-[0.97]"
-      leave-active-class="transition duration-[var(--motion-dur-fast)] ease-out"
-      leave-to-class="opacity-0"
+      enter-active-class="paper-in"
+      enter-from-class="paper-in-from"
+      leave-active-class="paper-out"
+      leave-to-class="paper-out-to"
     >
       <section
         v-if="receipt"
@@ -869,6 +884,9 @@ onMounted(async () => {
         role="status"
         aria-live="polite"
       >
+        <!-- 进纸口：顶边一条 hazard 斜纹，卡进场时从右往左合上。
+             它只是"这块面板是从机器里出来的"的记号，不承载任何文字。 -->
+        <span class="paper-slot" aria-hidden="true" />
         <div class="flex items-start gap-3">
           <span
             class="mt-0.5 grid size-8 shrink-0 place-items-center"
@@ -977,12 +995,10 @@ onMounted(async () => {
           {{ session.total_chunks }} 片
           · 剩余 {{ session.expires_in < 60 ? session.expires_in + ' 秒' : Math.ceil(session.expires_in / 60) + ' 分钟' }}
         </p>
-        <NProgress
+        <!-- 点阵走纸：进度是"纸在走"，不是"条在长"（见 components/DotsProgress.vue）。 -->
+        <DotsProgress
           v-if="session.total_chunks > 0"
-          :percentage="Math.round((session.received_count / session.total_chunks) * 100)"
-          :height="4"
-          :border-radius="0"
-          :show-indicator="false"
+          :percent="Math.round((session.received_count / session.total_chunks) * 100)"
           class="mt-2"
         />
       </div>
@@ -1001,7 +1017,9 @@ onMounted(async () => {
       "
     />
 
-    <div class="p-4 sm:p-5">
+    <!-- 下单表单。跳闸反馈挂在**这一块**上：失败的是"提交这一单"这件事，
+         不是页面上别的地方（见 base.css 的 .trip）。 -->
+    <div class="relative p-4 sm:p-5" :class="submitTripped && 'trip trip--on'">
 
       <!-- ① 选择文件 -->
       <StageHead code="01" title="选择文件" step="STEP 1/3" class="mb-3" />
@@ -1188,13 +1206,11 @@ onMounted(async () => {
             </NButton>
           </div>
 
-          <NProgress
+          <!-- 点阵走纸：每一格是"这一片到了"，不是百分比的小数点后一位。
+               reduced-motion 下格子仍然亮/暗（那是信息），只撤掉行首的呼吸。 -->
+          <DotsProgress
             v-if="row.status === 'uploading'"
-            type="line"
-            :percentage="row.percent"
-            :height="4"
-            :border-radius="0"
-            :show-indicator="false"
+            :percent="row.percent"
             class="mt-2.5"
           />
 
@@ -1395,9 +1411,14 @@ onMounted(async () => {
         aria-live="polite"
       >
         <span class="tech-label text-ink-3 tech-label--cn text-xs">预估费用</span>
-        <span class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
-          {{ quoteText }}
-        </span>
+        <!-- 打价签：金额逐字打出来，打完亮一档（见 composables/motion.ts 的 useTypewriter）。
+             只在**值真的变了**时打；打的过程中旁边不出现 spinner —— 那会让人以为
+             还在算，而实际上这一签已经出完了。 -->
+        <span
+          class="tnum font-heading text-xl font-bold value-tick"
+          :class="quoteLanded && !quoteTyping && 'value-tick--on'"
+          style="color: var(--accent-text)"
+        >{{ quoteTyping ? quoteTyped : quoteText }}</span>
         <span v-if="quoteHint" class="text-xs text-ink-3">· {{ quoteHint }}</span>
         <Loader2
           v-if="quoting"

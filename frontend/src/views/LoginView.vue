@@ -21,11 +21,11 @@ import BlueprintSheet from '@/components/BlueprintSheet.vue'
 import ForgotPasswordDialog from '@/components/ForgotPasswordDialog.vue'
 import { ApiError } from '@/api/client'
 import BotHintCard from '@/components/BotHintCard.vue'
-import { showReceipt } from '@/composables/transition-receipt'
+import { prefersReducedMotion, useBreakerTrip } from '@/composables/motion'
+import BootSequence from '@/components/BootSequence.vue'
 import { useClock } from '@/composables/clock'
 import {
   OTHER_CONTACT_LABELS,
-  ROLE_LABELS,
   type ContactType,
   type OtherContactType,
 } from '@/api/types'
@@ -46,6 +46,36 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
+/** 请求失败的跳闸反馈（见 base.css 的 .trip）。 */
+const { tripped: breakerTripped, trip: tripBreaker } = useBreakerTrip()
+
+/** 开机自检：登录成功后、跳转前演一场。
+ *
+ *  返回值是一个 Promise，由组件的 done 事件兑现 —— 但**它永远会兑现**：
+ *  组件自己有 3s 看门狗、减少动效下直接交棒、卸载时也会走同一个出口。
+ *  所以调用方不需要 try/finally，也不该把它当成"能否进站"的判据。
+ *  目标外壳名与学生端/管理端的口径一致（登录后只会进这三者之一）。 */
+const bootActive = ref(false)
+const bootTarget = ref('STUDENT')
+let bootDone: (() => void) | null = null
+
+/** 模板里不能直接 `bootDone?.()`：那是在渲染时读一个会被函数改写的普通 let，
+ *  模板类型收窄看到的是初值 null。包一层函数，读写都发生在运行时。 */
+function finishBoot(): void {
+  bootDone?.()
+}
+
+function runBootSequence(target: string): Promise<void> {
+  bootTarget.value = target.startsWith('/staff') ? 'STAFF' : 'STUDENT'
+  bootActive.value = true
+  return new Promise((resolve) => {
+    bootDone = () => {
+      bootActive.value = false
+      bootDone = null
+      resolve()
+    }
+  })
+}
 
 const tab = ref<'login' | 'register'>('login')
 const submitting = ref(false)
@@ -284,18 +314,19 @@ async function submitLogin(): Promise<void> {
   submitting.value = true
   try {
     await auth.login(loginForm.identifier.trim(), loginForm.password)
-    // 不再用 message.success('登录成功')：通用的吐司是"操作成功"的形状，
-    // 而这一下是**身份被接收**——换成一张会跨换场留下来的回执
-    // （components/TransitionReceipt.vue）。目标页名从路由表取，和守卫算的是同一份事实来源。
     const target = landingPath()
-    showReceipt({
-      code: 'AUTHORIZATION SUCCESS',
-      title: '认证成功',
-      detail: `${auth.user?.nickname ?? '已登录'}（${auth.user ? ROLE_LABELS[auth.user.role] : '用户'}）`,
-      target: (router.resolve(target).meta.title as string | undefined) ?? '主页',
-    })
+    // 登录成功不再走"通用回执"：这一下是整站唯一一次**上电**，
+    // 让机器自报一遍（components/BootSequence.vue）比一张成功条更贴这套语言。
+    // 自检只演不决策：它在看门狗/减少动效/正常演完三条路径上都会 resolve，
+    // 之后照常跳转 —— 它永远不是"能不能进站"的判据。
+    if (!prefersReducedMotion.value) {
+      await runBootSequence(target)
+    }
     await router.replace(target)
   } catch (error) {
+    // 跳闸只给**服务端拒绝**这一种失败（凭据错、服务没起来）。
+    // 前端校验失败不跳：那不是"机器坏了"，是"东西没填对"，字段下方的红字已经说清。
+    tripBreaker()
     message.error(error instanceof ApiError ? error.message : '登录未完成 · 稍后重试')
   } finally {
     submitting.value = false
@@ -512,7 +543,7 @@ onMounted(async () => {
            配色分工（全站唯一一处）：这里让青色主导（仪器/核验语汇），
            黄色只留给**动作**（登录按钮、强调数）。进到业务区仍然只有一种强调色，
            所以这条分工不会渗出去。 -->
-      <div class="panel login-card" data-parallax style="--depth: 10px">
+      <div class="panel login-card" :class="breakerTripped && 'trip trip--on'" data-parallax style="--depth: 10px">
         <div
           class="flex items-center justify-between gap-3 border-b px-5 py-2"
           style="border-color: var(--border)"
@@ -810,6 +841,10 @@ onMounted(async () => {
   </div>
 
   <AuditRequestDialog v-model:show="auditOpen" :prefill="auditPrefill" />
+
+  <!-- 开机自检：只在登录成功、跳转之前出现一次（见 runBootSequence 的注释）。
+       它自己 Teleport 到 body，所以放在这里不会影响登录页的布局与层叠。 -->
+  <BootSequence v-if="bootActive" :target="bootTarget" @done="finishBoot" />
 
   <!-- 找回密码：两步（学号 → 验证码 + 新密码）。把登录框里已填的学号带进去 ——
        会点这个入口的人，通常已经先在学号栏里输好了。成功回调用的是 onPasswordReset。 -->

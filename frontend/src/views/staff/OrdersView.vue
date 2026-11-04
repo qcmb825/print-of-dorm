@@ -70,6 +70,19 @@ import {
   priceLabel,
   shortTime,
 } from '@/utils/format'
+import { pulseDecor } from '@/composables/motion'
+
+/** 两张订单列表之间有没有**状态**变化（数据回响的判据）。
+ *  只看 id → status 的映射：新出现的单、消失的单（翻页/筛选）都不算 ——
+ *  翻一页就让整页装饰动一次，读到的会是"页面在抖"，而不是"有货进来了"。 */
+function statusChanged(before: Order[], after: Order[]): boolean {
+  if (!before.length || !after.length) return false
+  const previous = new Map(before.map((order) => [order.id, order.status]))
+  return after.some((order) => {
+    const old = previous.get(order.id)
+    return old !== undefined && old !== order.status
+  })
+}
 
 /** 待计费。单独提成常量是因为它在这个文件里到处要判：计费按钮能不能点、
  *  改状态要不要置灰、计费按钮是「计费」还是「改价」。 */
@@ -354,6 +367,10 @@ const size = ref(20)
 const status = ref<string>('')
 const scope = ref<'pool' | 'mine' | 'all'>('pool')
 const loading = ref(true)
+/** 连续读取失败次数：≥2 次把页头的通道光标切成双闪（见 PageHeader 的 channel prop）。
+ *  只统计**最新的那次请求**的失败，旧请求的失败不参与 —— 它代表的是一次已经被
+ *  丢弃的尝试，拿它去点亮告警会让指示器比数据还旧。 */
+const loadFailures = ref(0)
 const autoRefresh = ref(true)
 /** 正在行内动作中的订单 id（接单/释放/改状态/归类共用）。
  *  **按行记账（Set），不设单槽**：柜台连点两行时，先完成的动作若把槽位清成 null，
@@ -572,10 +589,15 @@ async function load(silent = false): Promise<void> {
       void load(silent)
       return
     }
+    // 数据回响：有单子的**状态**变了，就让页面上那几件装饰动一次。
+    // 只比 status，不比整单 —— 改备注/改金额不是"有货进来了"。
+    if (statusChanged(orders.value, data.orders)) pulseDecor()
     orders.value = data.orders
+    loadFailures.value = 0
   } catch (error) {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让管理员以为刚刷出来的列表是坏的。
+    if (mySeq === requestSeq) loadFailures.value += 1
     if (!silent && mySeq === requestSeq)
       message.error(error instanceof ApiError ? error.message : '订单读取失败')
   } finally {
@@ -1455,7 +1477,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="mx-auto max-w-[1400px]">
-    <PageHeader title="订单台" subtitle="接单后即可改状态、下载文件">
+    <PageHeader
+      title="订单台"
+      subtitle="接单后即可改状态、下载文件"
+      :channel="loadFailures >= 2 ? 'alarm' : 'live'"
+    >
       <template #actions>
         <!-- 取件核对是柜台最常用的那个动作，所以它是主按钮（这一排里唯一的实心按钮）。
              它是个弹窗而不是路由页：交件时手不能离开这一屏，跳走再跳回来会把
@@ -1475,7 +1501,7 @@ onBeforeUnmount(() => {
       </template>
     </PageHeader>
 
-    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
+    <div class="motion-stagger mb-4 grid grid-cols-2 gap-3 sm:grid-cols-6">
       <StatCard label="本页订单" :value="orders.length" :icon="Package" />
       <StatCard label="本页待接单" :value="poolSummary.pool" accent />
       <StatCard label="本页待计费" :value="poolSummary.unpriced" />

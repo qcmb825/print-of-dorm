@@ -3,10 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <!-- 界面锁定亮色（业主的要求，2026-09-21）：声明成 light，浏览器自带的控件
-         （滚动条、表单、日期选择器）才跟着亮，否则系统是暗色时它们会自己变暗，
-         在一片浅色里格外突兀。 -->
-    <meta name="color-scheme" content="light" />
+    <!-- color-scheme 由下面那段首屏脚本按存下的主题写，这里不写死：
+         它决定浏览器自带控件（滚动条、表单）跟哪一套走。 -->
     <!-- 地址栏/状态栏的颜色跟着**开屏层**走（那一层是刻意的恒暗设计），
          不是跟主题走 —— 开屏结束时它已经被浏览器取过一次了。 -->
     <meta name="theme-color" content="#050505" />
@@ -15,15 +13,19 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>猫娘打印服务</title>
     <script>
-      // 界面**锁定亮色**（2026-09-21，业主的要求：网页一律亮色，不跟系统走）。
-      // 这一段必须在 CSS 之前跑：它的活儿是防 FOUC —— 以前读的是
-      // 「localStorage 的 pod-theme，没有就跟随系统」，现在两边都不读了，
-      // 只做一件事：把可能残留在 HTML 上的 dark 类摘掉、把 color-scheme 钉成 light。
-      // 摘 class 而不是什么都不做：老用户浏览器里可能还留着上个版本写下的
-      // `html.dark`（那是当时 toggle 落下的），不摘就是一块黑底配浅色令牌。
+      // 首屏防闪：这一段必须在 CSS 之前跑。
+      // 它读的是 localStorage 的 pod-theme（与 stores/theme.ts 用的同一个键），
+      // 有 dark 就先把 class 落上 —— 等应用挂载再落的话，暗色用户会先看到
+      // 一整屏浅色再翻黑，那一次全屏亮度反转比没有暗色更难接受。
+      // **不跟随系统**：整套界面是同一间屋子里的一块屏，明暗不该随各自的夜间模式分家。
       try {
-        document.documentElement.classList.remove('dark')
-        document.documentElement.style.colorScheme = 'light'
+        var saved = localStorage.getItem('pod-theme')
+        if (saved === 'dark') {
+          document.documentElement.classList.add('dark')
+          document.documentElement.style.colorScheme = 'dark'
+        } else {
+          document.documentElement.style.colorScheme = 'light'
+        }
       } catch (e) {}
     </script>
 

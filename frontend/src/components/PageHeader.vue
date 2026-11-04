@@ -25,6 +25,13 @@ const props = defineProps<{
   subtitle?: string
   code?: string
   heading?: 'lg' | 'md'
+  /** 数据通道的健康度。挂在校时基光标上：
+   *  · live  正常（默认）—— 1.1s 单闪，与全站一致；
+   *  · alarm 连续拉取失败 —— 同周期**双闪**。这是给既有循环加语义分档，
+   *    不是新增一件常驻循环（全站常驻件的预算很紧，见 DESIGN_RULES §7）。
+   *  为什么用闪烁频率而不是加个红点：红点会变成第二个"状态色"，
+   *  而这一页没有"错误状态"这个概念 —— 数据旧了也是数据，只是别再装作是新的。 */
+  channel?: 'live' | 'alarm'
 }>()
 
 const route = useRoute()
@@ -93,8 +100,9 @@ const clock = useClock()
         <span class="field__k">SYNC</span>
         <span class="field__lead" />
         <span class="field__v">{{ clock || '--:--:--' }}</span>
-        <!-- 光标跟在时间后面：这行的读数是"活的"，光标是它最小的证据。 -->
-        <span class="caret" />
+        <!-- 光标跟在时间后面：这行的读数是"活的"，光标是它最小的证据。
+             通道出问题时变成双闪（见 props.channel 的注释）。 -->
+        <span class="caret" :class="channel === 'alarm' && 'caret--alarm'" />
       </span>
     </div>
 

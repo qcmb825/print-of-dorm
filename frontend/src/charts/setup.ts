@@ -22,12 +22,21 @@ export interface ChartPalette {
   surface: string
 }
 
+/** 从 CSS 令牌读一档毫秒值。ECharts 的时长是 JS 数字，拿不到 CSS 变量 ——
+ *  所以这里**读一次**，读完就用，不在组件里另写一个数。
+ *  读不到（SSR、令牌还没解析）时回落到 300：那个值等于 --motion-dur-decor。 */
+function motionMs(name: string, fallback: number): number {
+  if (typeof document === 'undefined') return fallback
+  const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name))
+  return Number.isFinite(value) ? value : fallback
+}
+
 /** 图表配色全部从令牌推导，所以深浅主题切换时图表跟着变。 */
 export function baseOption(palette: ChartPalette) {
   return {
     backgroundColor: 'transparent',
     textStyle: { color: palette.text, fontFamily: 'inherit' },
-    // 入场动画从默认的约 1000ms 压到 300ms：看板一次要初始化 4 张图，
+    // 入场动画从默认的约 1000ms 压到 --motion-dur-decor 那一档：看板一次要初始化 4 张图，
     // 这段绘制正好和页面过场、骨架屏收尾抢同一个窗口。
     // 不整个关掉，是因为 ChartBox 用的是响应式 :option —— 切主题时也会重放一遍动画，
     // 全关掉会让主题切换显得"跳"。
@@ -38,7 +47,10 @@ export function baseOption(palette: ChartPalette) {
     // 会话中途改系统设置时，已经建好的 option 要等调用方重算才会跟上，
     // 而调用方是依赖配色的 computed —— 切主题时正好会重算。
     animation: !prefersReducedMotion.value,
-    animationDuration: 300,
+    // 时长走令牌：图表的"生长"和装饰回响是同一档节奏（--motion-dur-decor）。
+    // 曲线名是 ECharts 自己的枚举，没有对应的 CSS 曲线可读；cubicOut 与
+    // --motion-ease-out 同为"起步快、尾段长"，所以这一项留在 ECharts 的词汇里。
+    animationDuration: motionMs('--motion-dur-decor', 300),
     animationEasing: 'cubicOut' as const,
     grid: { left: 8, right: 12, top: 28, bottom: 4, containLabel: true },
     tooltip: {

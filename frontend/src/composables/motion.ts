@@ -23,7 +23,7 @@
  *  CSS 那条 transition 随之删掉 —— 两层平滑叠在一起只会互相打架。
  */
 
-import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 
 /** 系统是否要求减少动效。**响应式**：用户可以在会话中途改系统设置，
  *  所以必须监听 change，不能只读一次 .matches（那会让设置改了也不生效）。 */
@@ -200,3 +200,260 @@ export function useValueTick(
 
   return ticking
 }
+
+/** 打字机的字间间隔（ms）。
+ *
+ *  这个值不进 tokens.css：它不是"过渡时长"，没有一条 CSS 曲线能表达"每 24ms 落一个字"。
+ *  24ms 是等宽字体下一眼能看出"在敲"、又不至于慢到要等的档位 —— 再快就是瞬间出现，
+ *  再慢（40ms 以上）一行 20 字的读数要 800ms，读者会先失去耐心。
+ *
+ *  **它不是动画时长**，所以不适用 tokens.css 里"交互反馈 < 200ms"那条规矩：
+ *  整行打完的时长由字数决定，语义是"这条读数正在被写入"。 */
+export const TYPE_MS = 24
+
+/** 逐字打出文本。用于**编号读数**这类短、等宽、语义是"被写进去"的字符串。
+ *
+ *  三条边界，都是这套语言里已经定过的：
+ *  1. **只给编号读数用**（空态编号、试算金额）。正文、表单标签、订单号一律不用 ——
+ *     那些是要读准的东西，打字过程会把它们短暂变成不可读的残字。
+ *  2. 减少动效下**直接给全量文本**，不是"打快一点"。位移和闪烁都撤掉，
+ *     但"这段文字存在"这件事必须立刻成立。
+ *  3. 值变化时从头打。同一时刻只有最后一次运行有效（run 号闸门）——
+ *     轮询/防抖让源值连变时，旧的那次必须当场作废，否则两行字会叠在一起。
+ */
+export function useTypewriter(
+  source: () => string,
+  { skipFirst = false, typeMs = TYPE_MS }: { skipFirst?: boolean; typeMs?: number } = {},
+): { text: Ref<string>; typing: Ref<boolean> } {
+  const text = ref('')
+  const typing = ref(false)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let run = 0
+  let seen = 0
+
+  function stop(): void {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    typing.value = false
+  }
+
+  function play(value: string): void {
+    stop()
+    run += 1
+    const id = run
+    if (prefersReducedMotion.value) {
+      text.value = value
+      return
+    }
+    typing.value = true
+    text.value = ''
+    let i = 0
+    const step = (): void => {
+      if (id !== run) return
+      i += 1
+      text.value = value.slice(0, i)
+      if (i < value.length) {
+        timer = setTimeout(step, typeMs)
+      } else {
+        timer = undefined
+        typing.value = false
+      }
+    }
+    timer = setTimeout(step, typeMs)
+  }
+
+  watch(
+    source,
+    (value) => {
+      seen += 1
+      // skipFirst：首次是"数据到达"，不是"数据更新"。与 useValueTick 同一口径 ——
+      // 骨架屏收尾时打一遍字，读到的是"页面在抖"。
+      if (skipFirst && seen === 1) {
+        stop()
+        text.value = value
+        return
+      }
+      play(value)
+    },
+    { immediate: true },
+  )
+
+  onBeforeUnmount(stop)
+
+  return { text, typing }
+}
+
+/** 断路器跳闸后的复位时间（ms）。要盖住最长的那一段跳闸动画（斜纹带 + 边框闪），
+ *  否则类会在动画中途被摘掉，读到的是"闪了一下就没了"。 */
+const TRIP_MS = 600
+
+/** 断路器跳闸：**一次性**的错误反馈，取代通用的 shake。
+ *
+ *  `trip()` 只置一个布尔，视觉全在 CSS（`.trip--on`）。连续失败时每次都重播 ——
+ *  跳闸是"这一下坏了"，不是"一直坏着"，所以它必须每次都能重新触发。
+ *  减少动效下不置位：错误本身由文案与颜色承担，动画只是加粗。
+ */
+export function useBreakerTrip(): { tripped: Ref<boolean>; trip: () => void } {
+  const tripped = ref(false)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let raf = 0
+
+  function trip(): void {
+    if (prefersReducedMotion.value) return
+    if (timer !== undefined) clearTimeout(timer)
+    if (raf) cancelAnimationFrame(raf)
+    // 先归零再在下一帧置位：类名从"有"到"有"不会重播动画，
+    // 必须真的经历一次"没有"（与 route-veil 靠 out→in→idle 三态轮转重触发同一原理）。
+    tripped.value = false
+    raf = requestAnimationFrame(() => {
+      raf = 0
+      tripped.value = true
+    })
+    timer = setTimeout(() => {
+      timer = undefined
+      tripped.value = false
+    }, TRIP_MS)
+  }
+
+  onBeforeUnmount(() => {
+    if (timer !== undefined) clearTimeout(timer)
+    if (raf) cancelAnimationFrame(raf)
+  })
+
+  return { tripped, trip }
+}
+
+/** 数据回响：轮询拿到**变了的数据**时，让页面上那几件装饰动一次。
+ *
+ *  与换场回响（`:root[data-veil-phase='out']`）是同一套动画、不同的触发通道：
+ *  切页时"整页换了一口气"，数据更新时"有货进来了"。两条通道各自独立，
+ *  同时发生也只是各播各的（不同属性、不同元素集合，不互相顶掉）。
+ *
+ *  实现上靠**类名的移除 → 下一帧加回**强制重播。不能只靠 data-* 属性赋值：
+ *  属性值变了但选择器始终匹配时，CSS 动画不会重新开始。
+ *  减少动效下直接不挂 —— 这是纯装饰，没有它信息一字不少。
+ */
+const PULSE_CLASS = 'decor-pulse'
+let pulseTimer: ReturnType<typeof setTimeout> | undefined
+let pulseRaf = 0
+
+export function pulseDecor(): void {
+  if (typeof document === 'undefined' || prefersReducedMotion.value) return
+  const root = document.documentElement
+  root.classList.remove(PULSE_CLASS)
+  if (pulseTimer !== undefined) clearTimeout(pulseTimer)
+  if (pulseRaf) cancelAnimationFrame(pulseRaf)
+  pulseRaf = requestAnimationFrame(() => {
+    pulseRaf = 0
+    root.classList.add(PULSE_CLASS)
+  })
+  pulseTimer = setTimeout(() => {
+    pulseTimer = undefined
+    root.classList.remove(PULSE_CLASS)
+  }, 400)
+}
+
+/** 刀架滑轨：一件共享的激活指示器沿导航滑到当前项（见 base.css 的 .nav-slider）。
+ *
+ *  为什么不让每项自己亮：逐项各自的缩放读起来是"两件东西各自动了一下"；
+ *  一整条滑过去读起来才是"刀架换位"——一个机构，一次移动。
+ *
+ *  **几何全部走 transform**：滑块保持 1px 的基准尺寸，用 scaleX/scaleY 撑到目标长度，
+ *  长度变化也只是合成属性（写 width/height 过渡会每帧 layout）。
+ *  厚度恒定由 CSS 保证（只缩放长轴），所以这里不用管。
+ *
+ *  测量时机有三处，缺一不可：
+ *  1. 路由变化后（nextTick）—— 激活项换了；
+ *  2. 字体加载完（fonts.ready）—— 中文字体晚到会把导航项撑宽，滑块长度就短了；
+ *  3. 容器尺寸变化（ResizeObserver）—— 窗口缩放、窄屏抽屉开合。
+ *  另外滚动容器是 sticky（StaffLayout）或页面滚回顶部（router 的 scrollBehavior），
+ *  两者都不改变 offsetTop/offsetLeft 的参照，所以滚动不需要重新测量。
+ *
+ *  减少动效下**仍然定位**，只是 CSS 把过渡关掉（滑块直接跳到目标）。
+ *  它是"当前在哪一页"的指示，不是装饰 —— 没有它导航就少一个线索。
+ */
+export function useNavSlider(
+  container: Ref<HTMLElement | null>,
+  /** 会随导航变化的**依赖源**（路由路径 / 回退后的栏目路径）。
+   *  它只负责"什么时候该重新量"，不负责选元素 —— 早期版本把选择器函数当成
+   *  watch 的源，而那个函数返回的是常量字符串，永远不触发，滑块只会停在首帧位置，
+   *  不报错、看起来"能用"（每次都是硬跳）。 */
+  activeKey: () => unknown,
+  { vertical = false, selector = '.nav-link--active' }: { vertical?: boolean; selector?: string } = {},
+): void {
+  const slider = ref<HTMLElement | null>(null)
+  let first = true
+  let ro: ResizeObserver | undefined
+
+  function place(): void {
+    const host = container.value
+    const bar = slider.value
+    if (!host || !bar) return
+    const target = host.querySelector<HTMLElement>(selector)
+    if (!target) {
+      bar.style.opacity = '0'
+      return
+    }
+    bar.style.opacity = '1'
+    const x = target.offsetLeft
+    const y = target.offsetTop
+    // 纵向导航：滑块是 2px 宽、1px 高，scaleY 拉到项高，1px 的基准被放大到目标高度；
+    // 横向导航同理反过来。厚度那一轴不参与缩放。
+    const length = vertical ? target.offsetHeight : target.offsetWidth
+    bar.style.transform = `translate3d(${x}px, ${y}px, 0) scale${vertical ? 'Y' : 'X'}(${length})`
+    if (first) {
+      bar.dataset.first = 'true'
+      // 首帧定位不加过渡（理由见 base.css 的 .nav-slider），下一帧再放开。
+      // 两条兜底并存：rAF 在个别环境（内嵌 WebView、后台标签页）不跑，
+      // 只挂 rAF 的话 data-first 会永远留着，滑块从此再也不会滑 ——
+      // 而它看起来仍然"能定位"，只是每次都是硬跳，不报错。
+      const release = (): void => {
+        if (!bar.isConnected) return
+        delete bar.dataset.first
+        first = false
+      }
+      requestAnimationFrame(release)
+      setTimeout(release, 80)
+    }
+  }
+
+  onMounted(() => {
+    const host = container.value
+    if (!host) return
+    // 滑块由 JS 建、插在导航容器的第一个子节点之前 —— 不放进模板，
+    // 因为三处导航（横向顶栏 / 纵向侧栏 / 底部标签栏）结构完全不同，
+    // 模板里各写一份等于三份重复的几何宿主。
+    const bar = document.createElement('span')
+    bar.className = 'nav-slider'
+    bar.dataset.orientation = vertical ? 'vertical' : 'horizontal'
+    bar.setAttribute('aria-hidden', 'true')
+    host.appendChild(bar)
+    slider.value = bar
+    place()
+
+    // 字体晚到会把项撑宽：fonts.ready 之后重量一次。
+    void document.fonts?.ready.then(place)
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(place)
+      ro.observe(host)
+    }
+  })
+
+  watch(activeKey, () => {
+    // 下一帧再量：激活类与布局都要先落定（RouterLink 的 active 样式是同步的，
+    // 但窄屏抽屉里的导航要等它渲染出来）。
+    // rAF 之外补一条 setTimeout：rAF 在后台标签页里不跑，只挂 rAF 的话
+    // 切回前台时滑块会停在上一个位置，直到下一次导航才纠正。
+    requestAnimationFrame(place)
+    setTimeout(place, 90)
+  })
+
+  onBeforeUnmount(() => {
+    ro?.disconnect()
+    slider.value?.remove()
+  })
+}
+
+

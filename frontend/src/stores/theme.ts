@@ -1,23 +1,49 @@
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { buildOverrides, naiveThemeFor, readTokens, type Tokens } from '@/theme/naive'
+import { useRouteVeil } from '@/composables/route-veil'
 
 const STORAGE_KEY = 'pod-theme'
+
+/** 读存下来的主题偏好。读不到（首次访问、隐私模式、值不合法）一律亮色。 */
+function readStoredTheme(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEY) === 'dark'
+  } catch {
+    return false
+  }
+}
+
+/** 借换场面板翻主题（见 stores/theme.ts 顶部注释与 route-veil.ts 的 pulse）。
+ *  放在模块级而不是 store 内部：pulse 不依赖 store 的任何状态。 */
+const veil = useRouteVeil()
+
+function pulseTheme(applyTheme: () => void): boolean {
+  return veil.pulse(
+    { code: 'THEME', title: '配色切换', lead: 'RECONFIGURING:' },
+    applyTheme,
+  )
+}
 
 /** 主题：html.dark 是唯一开关，令牌和 Naive UI 的覆盖都从 CSS 变量反读，
  *  所以切换主题只要改这一个 class，两边同时生效。
  *
- *  ⚠️ **2026-09-21 起界面锁定为亮色**（业主的要求：网页一律亮色，不跟系统走）。
- *  这里的 isDark 因此恒为 false，但它**仍然存在**：公告取色（theme/paper.ts）、
- *  看板图表取色（DashboardView）都读它来决定用哪一套令牌 —— 删掉它那两处会编译不过，
- *  而"删掉之后到处改成常量"只会把同一个事实散到三个文件里。
- *  真正保证亮色的地方是三处，缺一处就会漏：
- *    ① frontend/index.html 的首屏脚本（它在 CSS 之前跑，负责防闪）；
- *    ② 这里（applyShell 落 class）；
- *    ③ 下面 isDark 的初值（不读 localStorage、不读系统偏好）。
- *  想恢复暗色时把这三处一起改回来，并记得把 ChromeActions 里的切换按钮也加回来。 */
+ *  **2026-11 起放开暗色**（此前 2026-09-21 曾按业主要求锁定亮色，那一版留了
+ *  三处锁：index.html 的首屏脚本、applyShell、isDark 初值 —— 现在三处一起恢复，
+ *  少改一处就会漏：首屏脚本漏了，暗色用户整页加载时会先白闪一下再变黑）。
+ *
+ *  切换主题走**换场面板**（见 composables/route-veil.ts 的 pulse）：
+ *  面板扫到盖住的那一帧才落 class，全黑的那一瞬换完，用户看不到任何中间态。
+ *  直接瞬切会把整页颜色在一帧里翻过去 —— 那是这套界面里唯一一次"闪"，
+ *  而它恰好落在闪阈附近，也破坏"机器在换挡"的叙事。
+ *
+ *  与导航换场撞车时（pulse 返回 false）退回瞬切：主题是高频小动作，
+ *  排队等一场换场结束会让人以为按钮没反应。 */
 export const useThemeStore = defineStore('theme', () => {
-  const isDark = ref(false)
+  /** 初值读 localStorage；没有就**固定亮色**，不跟随系统。
+   *  不跟系统是刻意的：这套界面是给柜台和学生看的一块屏，
+   *  同一间屋子里几台机器的明暗不该随各自的夜间模式分家。 */
+  const isDark = ref(readStoredTheme())
 
   /** 只负责落 class。必须先落 class 再读令牌 —— readTokens() 读的就是 CSS 变量，
    *  顺序反了会把上一套主题的颜色当成当前主题的。 */
@@ -37,20 +63,28 @@ export const useThemeStore = defineStore('theme', () => {
     tokens.value = readTokens()
   })
 
-  // 老版本留下的 pod-theme 键（那时用户可以手动选暗色）：清掉。
-  // 留着它没有任何用（现在没人读），而它会让下一个读这份代码的人以为
-  // "主题偏好还存着、只是暂时没用上" —— 于是去实现一个已经不存在的能力。
-  try {
-    localStorage.removeItem(STORAGE_KEY)
-  } catch (e) {
-    /* 隐私模式下 localStorage 会抛，忽略即可 —— 主题是锁定的，本来也不需要它 */
-  }
-
-  /** 切换主题。**现在是空实现**：界面锁定亮色，切换入口（ChromeActions）也拆掉了。
-   *  保留这个函数是为了不改 App/布局里的引用，而且它是"以后要放开暗色"时唯一的落点 ——
-   *  到时候把 isDark 的初值与这里一起改回来即可。 */
+  /** 切换主题。面板盖住的那一帧才真正翻 class。 */
   function toggle(): void {
-    /* 锁定亮色：不响应 */
+    const next = !isDark.value
+    const wrote = pulseTheme(() => {
+      isDark.value = next
+      try {
+        localStorage.setItem(STORAGE_KEY, next ? 'dark' : 'light')
+      } catch {
+        /* 隐私模式下写不进去：主题只在本次会话有效，不影响可用性 */
+      }
+    })
+    // 换场进行中 / 减少动效（pulse 内部会拒绝）：就地瞬切。
+    // 减少动效下"面板扫过"整层不出现，pulse 里那条 setTimeout 仍然会到点执行，
+    // 所以这里其实只需要处理"正在换场"这一种；两种情况都写进同一个兜底。
+    if (!wrote) {
+      isDark.value = next
+      try {
+        localStorage.setItem(STORAGE_KEY, next ? 'dark' : 'light')
+      } catch {
+        /* 同上 */
+      }
+    }
   }
 
   const naiveTheme = computed(() => naiveThemeFor(isDark.value))

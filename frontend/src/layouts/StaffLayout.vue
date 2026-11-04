@@ -25,6 +25,7 @@ import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
+import { useNavSlider } from '@/composables/motion'
 
 const route = useRoute()
 const router = useRouter()
@@ -127,6 +128,13 @@ const activeNav = computed(() => {
   return navItems.value.some((item) => item.to === parent) ? parent : path
 })
 
+/** 侧栏的共享激活指示器（见 composables/motion.ts 的 useNavSlider）。
+ *  纵向导航：滑块是 2px 宽的竖条，沿项高缩放。
+ *  窄屏抽屉里的那份导航不挂 —— 抽屉每次开合都是新的一次呈现，
+ *  里面没有"从上一项滑过来"这回事，逐项记号反而更准。 */
+const sideNav = ref<HTMLElement | null>(null)
+useNavSlider(sideNav, () => activeNav.value, { vertical: true })
+
 /** 页码读数：`P.03/07`。取的是**当前栏位在导航里的序号**（activeNav 已经把
  *  "详情页算在它所属的栏目下"这件事处理掉了），不是路由序号 ——
  *  订单详情那种子页面如果按路由序号走，序号会跟着订单 id 变，那就不是页码了。
@@ -180,7 +188,7 @@ onMounted(() => {
            13px 读不清。左边那根色条（.nav-link--active::before）仍是 --primary，
            所以激活态本来就不止颜色一条线索，这里换的只是「文字」这一层。
            未激活态用 --text-tertiary（60% 黑，等效 #6e6e6e，在 --muted 上 4.77:1）。 -->
-      <nav class="flex flex-col gap-1 px-3" aria-label="管理导航">
+      <nav ref="sideNav" class="relative flex flex-col gap-1 px-3" data-nav-slider aria-label="管理导航">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"

@@ -267,9 +267,22 @@ function close(): void {
         </p>
       </div>
 
-      <NAlert v-if="justPicked" type="success" :bordered="false" class="mt-3">
-        已标记「已取件」· 可以交件
-      </NAlert>
+      <!-- 出票：核销成功的那一下，从弹窗里"吐"出一张票根（见 base.css 的 .ticket-stub）。
+           它不是把 NAlert 换了个皮 —— 票根上写着**取件码**，柜台剪下来就能贴在包裹上；
+           而"已标记已取件"这句话仍然在，只是从一条警示条变成了票根上的一行结论。
+           票据内容全部来自这一单的真实字段，没有一处是编排出来的。 -->
+      <div v-if="justPicked" class="ticket-stub ticket-stub--in mt-3">
+        <span class="ticket-stub__teeth" aria-hidden="true" />
+        <div class="ticket-stub__body px-3 py-2.5">
+          <div class="flex items-center justify-between gap-3">
+            <span class="readout">PICKUP CONFIRMED</span>
+            <span class="readout">{{ order?.pickup_code ? pickupCodeLabel(order.pickup_code) : '' }}</span>
+          </div>
+          <p class="mt-1 text-sm font-semibold" style="color: var(--status-done)">
+            已标记「已取件」· 可以交件
+          </p>
+        </div>
+      </div>
       <NAlert v-else-if="blockReason" type="warning" :bordered="false" class="mt-3">
         {{ blockReason }}
       </NAlert>

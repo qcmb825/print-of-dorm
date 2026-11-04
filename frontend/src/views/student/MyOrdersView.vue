@@ -23,7 +23,21 @@ import {
   shortTime,
 } from '@/utils/format'
 import { confirmAction, notify } from '@/composables/feedback'
-import { useValueTick } from '@/composables/motion'
+import { pulseDecor, useValueTick } from '@/composables/motion'
+
+/** 两张订单列表之间有没有**状态**变化（数据回响的判据）。
+ *  只看 id → status 的映射：新出现的单不计 —— 刚下的那一单会立刻出现在列表里，
+ *  为它让整页装饰动一次等于"每下一单页面都抖一下"。
+ *  这一页的装饰件只有全站那几件（水印/刻度），它们是"页面在报状态"，
+ *  不该被一次普通的列表刷新惊动。 */
+function statusChanged(before: Order[], after: Order[]): boolean {
+  if (!before.length || !after.length) return false
+  const previous = new Map(before.map((order) => [order.id, order.status]))
+  return after.some((order) => {
+    const old = previous.get(order.id)
+    return old !== undefined && old !== order.status
+  })
+}
 
 const orders = ref<Order[]>([])
 // 站点取件信息随列表一起到（后端顶层 `site`）。默认全空：卡片块自己判有没有。
@@ -112,6 +126,11 @@ const tickActive = useValueTick(() => summary.value.active)
 const tickDone = useValueTick(() => summary.value.done)
 const tickSpent = useValueTick(() => spent.value)
 
+/** 连续失败次数：≥2 次才认定通道出问题。
+ *  一次失败可能只是网络抖了一下，为它把指示器改成双闪是误报；
+ *  两次以上还没恢复，说明这一屏的数据已经不是"刚刚的"了。 */
+const loadFailures = ref(0)
+
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
   const mySeq = ++requestSeq
@@ -119,11 +138,15 @@ async function load(silent = false): Promise<void> {
     const data = await orderApi.mine()
     // 只接受最后一次请求的响应：防止旧响应覆盖新数据
     if (mySeq !== requestSeq) return
+    // 数据回响：某一单的状态变了，让页面上的装饰动一次（比 status，不比整单）。
+    if (statusChanged(orders.value, data.orders)) pulseDecor()
     orders.value = data.orders
     site.value = data.site ?? site.value
+    loadFailures.value = 0
   } catch (error) {
     // 报错也只在「自己仍是最新请求」时提示：旧请求的失败盖在新数据之上，
     // 会让用户以为刚刷出来的列表是坏的。
+    if (mySeq === requestSeq) loadFailures.value += 1
     if (!silent && mySeq === requestSeq)
       notify.error(error instanceof ApiError ? error.message : '订单读取失败')
   } finally {
@@ -224,7 +247,12 @@ async function withdraw(order: Order): Promise<void> {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <PageHeader heading="md" title="我的订单" subtitle="自动刷新 20 秒 · 离开页面暂停">
+    <PageHeader
+      heading="md"
+      title="我的订单"
+      subtitle="自动刷新 20 秒 · 离开页面暂停"
+      :channel="loadFailures >= 2 ? 'alarm' : 'live'"
+    >
       <template #actions>
         <!-- 「隐藏已取件」是个**偏好**（存在服务端），所以这里是个开关而不是页内筛选：
              点完就落库，下次进来还是这个状态，机器人「订单」也跟着变。 -->

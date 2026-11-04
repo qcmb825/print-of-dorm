@@ -13,6 +13,7 @@ import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
+import { useNavSlider } from '@/composables/motion'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -73,6 +74,14 @@ const navItems = computed(() => [
 
 const currentPath = computed(() => route.path)
 
+/** 两处导航各自的滑块（横向顶栏一件、窄屏底栏一件）。
+ *  它们**同时存在**（一个 md:flex、一个 md:hidden），所以不能共用一个实例：
+ *  各自量自己的项。数据属性挂在 nav 上，base.css 用它把逐项的 ::before 记号让位。 */
+const topNav = ref<HTMLElement | null>(null)
+const tabBar = ref<HTMLElement | null>(null)
+useNavSlider(topNav, () => currentPath.value, { vertical: false })
+useNavSlider(tabBar, () => currentPath.value, { vertical: false })
+
 /** 页码读数：`P.02/05`。它是**导航序号**，不是虚构的文档页码 ——
  *  学生端这一栏就是终端里的五个视图，读数说的是"你在第几个"。
  *  当前路径不在导航里时给 `--/--`（比如从别处落到某个学生路由），
@@ -117,7 +126,7 @@ onMounted(() => {
         <BrandMark />
         <!-- 横向导航放到 md：sm(640) 就显示的话，staff 的 4 个导航项会和品牌、
              账号区挤在一行，实测在 640px 会溢出 31px。窄屏继续用底部标签栏。 -->
-        <nav class="ml-4 hidden items-center gap-1 md:flex" aria-label="主导航">
+        <nav ref="topNav" class="relative ml-4 hidden items-center gap-1 md:flex" data-nav-slider aria-label="主导航">
           <RouterLink
             v-for="item in navItems"
             :key="item.to"
@@ -264,7 +273,9 @@ style="--depth: 6px"
          页面右下角那枚编号水印的让位距离读的也是它。栏高由内容撑的话，这一对角上的两件
          东西就各自漂了 —— 而漂开的表现只是"水印被切掉半截"，没人会想到是这里。 -->
     <nav
+      ref="tabBar"
       class="fixed inset-x-0 bottom-0 z-20 grid border-t md:hidden"
+      data-nav-slider
       :style="{
         gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))`,
         backgroundColor: 'color-mix(in srgb, var(--background) 96%, transparent)',
@@ -282,20 +293,17 @@ style="--depth: 6px"
         v-for="item in navItems"
         :key="item.to"
         :to="item.to"
-        class="relative flex flex-col items-center gap-1 py-2.5 no-underline"
+        class="nav-link relative flex flex-col items-center gap-1 py-2.5 no-underline"
+        :class="currentPath === item.to && 'nav-link--active'"
         :style="
           currentPath === item.to
             ? { color: 'var(--accent-text)' }
             : { color: 'var(--text-tertiary)' }
         "
       >
-        <!-- 激活记号：一小段斜切色条，压在格子顶边。
-             比"整块填充"轻，但因为它斜着，比一条直线更像"贴上去的标签"。 -->
-        <span
-          v-if="currentPath === item.to"
-          class="cut absolute -top-px h-1 w-7 bg-[var(--accent-text)]"
-          aria-hidden="true"
-        />
+        <!-- 激活记号由共享滑块接管（见 composables/motion.ts 的 useNavSlider）：
+             原来这里是一小段斜切色条，现在改成一条横贯整格的指示器滑过来。
+             滑块由 JS 插进 nav，data-nav-slider 让它把逐项记号让位（见 base.css）。 -->
         <component :is="item.icon" :size="19" />
         <!-- w-full + truncate 是给「管理员看学生端」那种情形兜底的：
              他的标签栏比别人多一格（6 列），320px 屏上每列只剩 ~52px，

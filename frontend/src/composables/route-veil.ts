@@ -28,6 +28,9 @@ export interface VeilTarget {
   code: string
   /** 目标页名，中文 */
   title: string
+  /** 读数上方那句引导词。不传就是换场用的 "REDIRECTING TO:"；
+   *  主题切换这类非路由事件传自己的（见 stores/theme.ts）。 */
+  lead?: string
 }
 
 const phase = ref<VeilPhase>('idle')
@@ -142,6 +145,71 @@ export function useRouteVeil() {
     target.value = nextTarget
   }
 
+  /** **非路由事件**借用同一次换场（目前只有主题切换）。
+   *
+   *  为什么要借用而不是自己做一套：这套面板的几何、时长、黄边顺序、读数排版
+   *  已经调过五版，另做一套必然走样；主题切换与整壳切页在语义上也确实是
+   *  "整块屏幕换掉"这一件事。复用它，两处动作天然是同一台机器。
+   *
+   *  与路由换场的三个区别，都在这里处理掉：
+   *  1. **没有 DOM 换手帧**，所以没有 @after-leave 那个钩子来调 open()。
+   *     改成在**面板盖住的那一帧**就地翻主题，然后自己推进到 in —— 翻的那一刻
+   *     屏幕是全黑的，用户看不到任何中间态。
+   *  2. 没有内容层要等（内容没变，只是配色变了），所以不需要 whenRequestsIdle。
+   *  3. 没有 @after-enter 来 settle()，所以由自己按令牌里的总时长收尾。
+   *
+   *  `onCovered` 由调用方给：它在面板盖死那一帧执行（翻主题）。
+   *  返回 false 表示当前正在换场 —— 调用方应当就地瞬切，不要排队
+   *  （主题切换是高频小动作，排在换场后面会让人以为按钮没反应）。
+   *
+   *  这一条**不参与路由换场的重入逻辑**：它与导航竞争时，后来的 `begin()` 会
+   *  直接接管（runSeq 递增，pulse 的看门狗与收尾都被 id 守卫挡掉）。
+   */
+  function pulse(nextTarget: VeilTarget, onCovered: () => void): boolean {
+    if (phase.value !== 'idle') return false
+    const id = ++runSeq
+    profile.value = 'shell'
+    target.value = nextTarget
+    phase.value = 'out'
+
+    disarmWatchdog()
+    // 面板滑到盖住 = 该档的 latch + gate。直接读 CSS 变量，不在这里写毫秒
+    // （时长只有一份事实来源，这条纪律对非路由入口同样成立）。
+    const style = typeof document !== 'undefined'
+      ? getComputedStyle(document.documentElement)
+      : null
+    const ms = (name: string, fallback: number): number => {
+      const raw = style?.getPropertyValue(name).trim() ?? ''
+      const value = Number.parseFloat(raw)
+      return Number.isFinite(value) ? value : fallback
+    }
+    const covered = ms('--motion-dur-route-latch', 0) + ms('--motion-dur-route-gate', 360)
+
+    watchdog = setTimeout(() => {
+      watchdog = null
+      if (id !== runSeq) return
+      phase.value = 'idle'
+      reentrant.value = false
+    }, WATCHDOG_MS)
+
+    setTimeout(() => {
+      if (id !== runSeq || phase.value !== 'out') return
+      // 全黑的那一帧：翻主题。此刻改动只影响"幕布后面"的内容。
+      onCovered()
+      phase.value = 'in'
+      // 入相位：停留 + 面板滑出，跑完就是 idle。同样读令牌。
+      const tail = ms('--motion-dur-route-hold', 180) + ms('--motion-dur-route-shell-enter', 360)
+      setTimeout(() => {
+        if (id !== runSeq) return
+        disarmWatchdog()
+        phase.value = 'idle'
+        reentrant.value = false
+      }, tail)
+    }, covered)
+
+    return true
+  }
+
   return {
     phase: readonly(phase),
     profile: readonly(profile),
@@ -151,5 +219,6 @@ export function useRouteVeil() {
     open,
     settle,
     retarget,
+    pulse,
   }
 }

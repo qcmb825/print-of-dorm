@@ -147,7 +147,7 @@ onMounted(load)
     <template v-else-if="board">
       <!-- 四格读数：每格左缘立一条竖刻度（.gauge），读起来像仪表的读数窗。
            pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
-      <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+      <div class="motion-stagger mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
         <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
           <div class="tech-label text-ink-3 tech-label--cn text-xs">待我取件</div>
           <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
