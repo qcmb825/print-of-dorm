@@ -20,8 +20,9 @@ import type { ChunkSession, UploadPrepareResponse } from '@/api/types'
 /** 单文件的硬上限，与后端 config.MAX_UPLOAD_MB 对齐（服务端才是最终把关者）。 */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-/** 超过这个尺寸才切分片。小文件直传更省事，也少两三个来回的延迟。 */
-const CHUNK_THRESHOLD = 8 * 1024 * 1024
+/** 超过这个尺寸才切分片。小文件直传更省事，也少两三个来回的延迟。
+ *  导出给界面用：上传页要靠它念「会分几片」，两边必须是同一个数。 */
+export const CHUNK_THRESHOLD = 8 * 1024 * 1024
 
 /** 进度条的百分比只走到 99，最后 1% 留给「合并 + 落盘」那一次请求。
  *  否则进度条会在 100% 上干等着不动，看着像卡死了。 */

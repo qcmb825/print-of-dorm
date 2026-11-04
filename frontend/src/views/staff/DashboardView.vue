@@ -22,6 +22,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatCard from '@/components/StatCard.vue'
 import { rankOption, splitBarOption, statusOption, trendOption } from '@/charts/options'
 import type { ChartPalette } from '@/charts/setup'
+import { priceLabel } from '@/utils/format'
 import { useThemeStore } from '@/stores/theme'
 
 const message = useMessage()
@@ -108,7 +109,7 @@ const claimRate = computed(() => {
 
 /** 累计金额。后端已经 COALESCE + round 过，这里只负责补上 ¥ 和两位小数 ——
  *  直接插值会得到「12.5」这种少了小数位的写法。 */
-const revenueLabel = computed(() => `¥${(orderStats.value?.revenue ?? 0).toFixed(2)}`)
+const revenueLabel = computed(() => priceLabel(orderStats.value?.revenue ?? 0))
 
 async function load(): Promise<void> {
   loading.value = true

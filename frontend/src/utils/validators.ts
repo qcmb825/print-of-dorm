@@ -114,6 +114,3 @@ export const COPIES_DEFAULT = 1
 
 /** 预设正文长度上限，镜像 config.PRESET_CONTENT_MAX。管理端输入框用它做 maxlength。 */
 export const PRESET_CONTENT_MAX = 300
-/** 纸张名 / 备注长度上限，镜像 config.PAPER_NAME_MAX / PAPER_REMARK_MAX。 */
-export const PAPER_NAME_MAX = 20
-export const PAPER_REMARK_MAX = 120

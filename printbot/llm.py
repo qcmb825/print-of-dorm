@@ -67,13 +67,6 @@ def enabled():
     return bool(config.LLM_API_KEY)
 
 
-def describe_state():
-    """启动日志里那一行：这一层到底开没开、用的哪个模型。"""
-    if not enabled():
-        return '大模型兜底：未配置（只用规则解析）'
-    return '大模型兜底：%s @ %s' % (config.LLM_MODEL, config.LLM_BASE_URL)
-
-
 def _papers(items):
     """给模型看的纸张清单：**只给服务端真实存在的那些**。
 

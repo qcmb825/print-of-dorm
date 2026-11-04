@@ -265,6 +265,17 @@ print_files/
 frontend/node_modules/
 frontend/.vite/
 
+# cn-font-split 每次切片都会顺手吐出三份「构建报告」：
+#   index.html（自带的可视化调试页，只在浏览器里手动打开才有用，构建不读它）
+#   index.proto / reporter.bin（上一条那个页面自己用的协议与数据，互为引用）
+# 它们不是运行时输入：main.ts 只导入 fonts/index.css，CSS 只引用 .woff2。
+# 而 build-cn-font.mjs 每次会 rmSync 整个字重目录再重新生成，所以入库只会
+# 在每次重新切片时产生无意义的二进制 diff。产物里只留 woff2 与 css。
+# 规则按文件名写，避免误伤 assets 下别处的 index.html。
+frontend/src/assets/fonts/*/index.html
+frontend/src/assets/fonts/*/index.proto
+frontend/src/assets/fonts/*/reporter.bin
+
 # 构建产物 static/app/ 是**刻意入库**的：部署机上通常只有 Python 环境，
 # 产物跟着仓库走就不用为了发个版本去装 Node。改完前端记得
 # npm run build 并把 static/app/ 一并提交，否则线上还是旧界面。

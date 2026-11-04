@@ -62,10 +62,6 @@ export function showReceipt(next: Receipt, holdMs?: number): void {
   timer = window.setTimeout(() => close(), holdMs ?? EVENT_HOLD_MS)
 }
 
-export function dismissReceipt(): void {
-  close()
-}
-
 export const transitionReceipt = {
   open: readonly(open),
   receipt: readonly(receipt),

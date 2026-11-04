@@ -491,9 +491,6 @@ PREF_ORDERS_PAGE_DEFAULT = 5
 PREF_ORDERS_PAGE_MIN = 3
 PREF_ORDERS_PAGE_MAX = 20
 
-# 免打扰时段最长与格式说明（校验用；真正的解析在 prefs.parse_clock）
-QUIET_FORMAT_HINT = 'HH:MM'
-
 ST_UNPRICED = '待计费'
 
 ST_PENDING = '待打印'
@@ -628,27 +625,10 @@ ORDER_PRESET_FILTER_NONE = 'none'
 # 系统往里面写字，订单台上就再也分不清哪句是人写的、哪句是机器写的
 # （用户实测报上来的就是这个）。
 #
-# 取值是稳定标识，界面上的中文由 ORDER_SOURCE_LABELS 翻 —— 沿状态那一套的惯例：
+# 取值是稳定标识，界面上的中文由前端自己翻 —— 沿状态那一套的惯例：
 # 存进库里的东西不跟着展示文案走，改文案不用改数据。
 ORDER_SOURCE_WEB = 'web'
 ORDER_SOURCE_BOT = 'bot'
-
-ORDER_SOURCES = (ORDER_SOURCE_WEB, ORDER_SOURCE_BOT)
-
-ORDER_SOURCE_LABELS = {
-    ORDER_SOURCE_WEB: '网页端',
-    ORDER_SOURCE_BOT: 'QQ 机器人',
-}
-
-
-def order_source_label(value):
-    """把来源标识翻成给人看的中文；认不出的（老数据/脏数据）一律当网页端。
-
-    不返回「未知」：订单台那一列是给打印员扫一眼用的，冒出一句「未知来源」
-    只会让人停下来琢磨它什么意思，而它没有任何可操作的后续动作。
-    """
-    return ORDER_SOURCE_LABELS.get(value, ORDER_SOURCE_LABELS[ORDER_SOURCE_WEB])
-
 
 # ---- 自动估价（pricing.py）--------------------------------------------------
 # 下单时按文件页数算一个**预估**价给学生看；最终价永远由管理员接单后自己确认。
@@ -749,8 +729,6 @@ ROLE_USER = 'user'
 ROLE_ADMIN = 'admin'
 
 ROLE_SUPER = 'super'
-
-ROLES = (ROLE_USER, ROLE_ADMIN, ROLE_SUPER)
 
 # 中文名：只在写日志、做审计、排查故障时用，要求能精确到是哪一类账号。
 ROLE_LABELS = {ROLE_USER: '普通用户', ROLE_ADMIN: '管理员', ROLE_SUPER: '管理端'}

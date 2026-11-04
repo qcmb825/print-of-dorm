@@ -632,38 +632,6 @@ def _send_card_or_text(client, qq, kind, fallback):
             log.exception('发卡片失败（%s），这条改发文本', kind)
     client.send_private_msg(qq, fallback())
 
-# 份数上限：搬到 config.py 了（nlu / llm 也要用它判越界），这里留个别名，
-# 老代码里的 COPY_MAX 与提示文案照旧。
-COPY_MAX = config.COPY_MAX
-
-
-def _items_menu(items, name=None, intro=None, defaults=None):
-    """价目项菜单：**下单要选的就是这一条**（纸张 + 类型，自带单价）。
-
-    现在它只在两种场合出现：学生明确说要看（「价目表」走卡片），
-    以及**他的要求落不到任何一档**时（说了「A3」而管理员没配 A3）——
-    那时把现有档位摆出来，比一句「没有这一档」有用得多。
-
-    `defaults` 是用户的偏好（「默认 3 2份」设过的那份）。设过就在对应那条后面
-    标一句「你的默认」—— 回执里写着「下次下单时当默认值」，这里要认得出它。
-
-    每行把**单价**写出来：这一屏是学生下单时唯一一次看到价格的地方，
-    不写的话他只能盲选（价目表本身是另一条命令，不是每个人都会去发）。
-    """
-    intro = intro or '收到「%s」。'
-    default_id = (defaults or {}).get('default_price_item_id')
-    rows = []
-    for item in items:
-        mark = '（你的默认）' if default_id and item['price_item_id'] == default_id else ''
-        price = '单面 %.2f' % item['price_single']
-        if item.get('price_double') is not None:
-            price += ' / 双面 %.2f' % item['price_double']
-        rows.append(' %s. %s（%s）%s'
-                    % (item['price_item_id'], item['label'], price, mark))
-    head = intro % name if name else ''
-    tail = '要打哪一档？（回复编号；发「价目表」看完整价目，发「取消」可以放弃）'
-    return '\n'.join([head, tail] + rows).strip()
-
 
 def _human_bytes(num):
     """把字节数说成人话（设置页的用量、网页端也是这个口径）。"""
@@ -753,16 +721,6 @@ def extract_attachments(message):
         if isinstance(seg, dict) and seg.get('type') in ('file', 'image'):
             found.append((seg.get('type'), (seg.get('data') or {})))
     return found
-
-
-def extract_file(message):
-    """取消息里的**第一个**附件段，返回 (段类型, 段数据)；没有就 (None, None)。
-
-    保留这个「只取一个」的口径给还在用它的调用方（回归脚本、以及
-    「这条消息里有没有附件」这类只关心有无的判断）。
-    """
-    found = extract_attachments(message)
-    return found[0] if found else (None, None)
 
 
 def extract_reply(message):

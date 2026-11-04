@@ -11,10 +11,6 @@ import type { ApiEnvelope } from './types'
 
 let csrfToken = ''
 
-export function getCsrf(): string {
-  return csrfToken
-}
-
 export function setCsrf(token: string | undefined): void {
   if (token) csrfToken = token
 }
@@ -92,16 +88,6 @@ export class ApiError extends Error {
     this.code = code
     this.status = status
     this.detail = detail
-  }
-
-  /** 会话失效（未登录 / 账号被禁用）。 */
-  get isAuthError(): boolean {
-    return this.status === 401
-  }
-
-  /** 网络没通，或者请求根本没到服务器。 */
-  get isNetworkError(): boolean {
-    return this.status === 0
   }
 
   /** 这次失败是有正经出路的：可以提交身份审核申请。目前只有注册会给这个标记。 */

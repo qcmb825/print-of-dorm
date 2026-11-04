@@ -2,7 +2,6 @@ import { CONTACT_LABELS } from '@/api/types'
 import type {
   ColorType,
   ContactType,
-  Duplex,
   OrderLogAction,
   OrderStatus,
   Role,
@@ -21,11 +20,6 @@ export function shortTime(value: string | null | undefined): string {
 export function fullTime(value: string | null | undefined): string {
   if (!value) return '—'
   return value.replace('T', ' ').slice(0, 19)
-}
-
-export function fileExtension(filename: string): string {
-  const index = filename.lastIndexOf('.')
-  return index > 0 ? filename.slice(index + 1).toUpperCase() : '文件'
 }
 
 /** 订单状态 → 令牌色（对应 tokens.css 里的 --status-*）。
@@ -62,7 +56,6 @@ export const ROLE_BG_VAR: Record<Role, string> = {
 }
 
 export const COLOR_TYPE_LABEL: Record<ColorType, string> = { black: '黑白', color: '彩色' }
-export const DUPLEX_LABEL: Record<Duplex, string> = { single: '单面', double: '双面' }
 
 /** 份数。null **不等于** 1 —— 本次升级前的老订单后端刻意没回填，
  *  因为分不清「当时真的要 1 份」和「我们猜的 1 份」。

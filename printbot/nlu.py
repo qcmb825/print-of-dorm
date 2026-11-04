@@ -625,21 +625,3 @@ def describe(resolved, with_copies=True):
         parts.append('%s 份' % (resolved.get('copies') or 1))
     parts.append('双面' if resolved.get('duplex') == 'double' else '单面')
     return ' · '.join(part for part in parts if part)
-
-
-def default_item_id(items, preferred=None):
-    """默认档：学生自己设过的（若还在售）> 排在最前的那一档。
-
-    与 resolve_spec 的第③步是同一个判据，单独抽出来是给「只发文件、
-    一个字都没说」那条路用的 —— 那一条也要知道自己会落到哪一档，
-    好在提问时把它写出来。
-    """
-    items = [item for item in (items or []) if item]
-    if not items:
-        return None
-    if preferred:
-        found = next((item for item in items
-                      if item.get('price_item_id') == preferred), None)
-        if found:
-            return preferred
-    return items[0].get('price_item_id')

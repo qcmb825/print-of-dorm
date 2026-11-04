@@ -40,9 +40,8 @@ export const ORDER_PRESET_FILTER_NONE = 'none'
  *  哪句是人写的、哪句是机器写的。现在它是独立字段，备注只放学生的原话。 */
 export type OrderSource = 'web' | 'bot'
 
-/** 与后端 config.ORDER_SOURCE_WEB / ORDER_SOURCE_BOT 一一对应。
- *  加来源时这三处（类型 / 两个常量 / 标签表）一起加。 */
-export const ORDER_SOURCE_WEB: OrderSource = 'web'
+/** 与后端 config.ORDER_SOURCE_BOT 一一对应。
+ *  加来源时这几处（类型 / 常量 / 标签表）一起加。 */
 export const ORDER_SOURCE_BOT: OrderSource = 'bot'
 
 export const ORDER_SOURCE_LABELS: Record<OrderSource, string> = {
@@ -85,8 +84,6 @@ export const CONTACT_LABELS: Record<ContactType, string> = {
  *  硬套「QQ 必填」等于先把他挡在门外 —— 而那正是审核通道要解决的事。
  */
 export type OtherContactType = 'wechat' | 'email'
-
-export const OTHER_CONTACT_TYPES: OtherContactType[] = ['wechat', 'email']
 
 export const OTHER_CONTACT_LABELS: Record<OtherContactType, string> = {
   wechat: '微信号',
@@ -760,12 +757,6 @@ export interface PriceRules {
   notes: string
 }
 
-export interface PriceRulesResponse extends ApiEnvelope {
-  rules: PriceRules
-  /** 服务端翻好的几句人话（公式说明）。前端不自己拼：两边各写一套必然漂移。 */
-  lines: string[]
-}
-
 export interface PricePreviewResponse extends ApiEnvelope {
   /** 试算出来的金额；null = 这组参数算不出价（note 里写着原因） */
   price: number | null
@@ -930,12 +921,6 @@ export interface PreparedOrderFile {
   copies?: number
   /** 这一份自己的单双面；不给就落到 group 级。 */
   duplex?: Duplex
-}
-
-/** 预上传时的进度回调（大文件走分片，这里回的是整份的百分比）。 */
-export interface PrepareProgress {
-  percent: number
-  uploaded: number
 }
 
 /** 下单时选的打印选项，直传、分片、预设三条路共用。

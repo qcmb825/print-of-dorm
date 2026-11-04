@@ -71,7 +71,12 @@ import type {
   PriceItem,
   PrintPreset,
 } from '@/api/types'
-import { pendingUploads, prettySize, prepareUpload } from '@/utils/chunkedUpload'
+import {
+  CHUNK_THRESHOLD,
+  pendingUploads,
+  prettySize,
+  prepareUpload,
+} from '@/utils/chunkedUpload'
 import { pickupCodeLabel } from '@/utils/format'
 import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
 
@@ -200,7 +205,8 @@ const priceItemOptions = computed(() =>
       ? `单面 ¥${item.price_single.toFixed(2)} · 不支持双面`
       : `单面 ¥${item.price_single.toFixed(2)} / 双面 ¥${item.price_double.toFixed(2)}`
     const note = item.note ? ` · ${item.note}` : ''
-    return { label: `${item.paper} · ${item.kind}（${price}${note}）`, value: item.id }
+    const name = item.label ?? `${item.paper} · ${item.kind}`
+    return { label: `${name}（${price}${note}）`, value: item.id }
   }),
 )
 
@@ -235,16 +241,8 @@ const duplexAllowed = computed(() => {
   return duplexAllowedFor(priceItemId.value)
 })
 
-/** 分片阈值：**必须与 utils/chunkedUpload.ts 的 CHUNK_THRESHOLD 是同一个数**
- *  （那里决定真的走不走分片，这里只负责念「会分几片」）。
- *
- *  本来该 import 那个常量，但它没有 export，而那个文件不在这次改动的白名单里，
- *  所以只能在这里再写一份。两个数一分叉，界面就会说一套、上传做另一套，
- *  而且两边都不报错 —— 改阈值时这两处要一起改。 */
-const CHUNK_THRESHOLD = 8 * 1024 * 1024
-
 /** 大文件才会走分片：把这一批里所有要走分片的文件加起来，告诉学生「会分几片」，
- *  免得他以为卡住了。 */
+ *  免得他以为卡住了。阈值取 utils/chunkedUpload 导出的那一个 —— 那里决定真的走不走分片。 */
 const chunkCount = computed(() =>
   rows.value.reduce((total, row) => {
     if (row.size <= CHUNK_THRESHOLD) return total

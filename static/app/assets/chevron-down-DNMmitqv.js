@@ -1,1 +1,0 @@
-import{c as e}from"./motion-B_h_1Mmt.js";var t=e({name:`chevron-down`,size:24,node:[[`path`,{d:`m6 9 6 6 6-6`,key:`qrunsl`}]]});export{t};

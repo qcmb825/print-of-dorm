@@ -22,22 +22,9 @@ import {
   priceLabel,
   shortTime,
 } from '@/utils/format'
+import { statusChanged } from '@/utils/orderList'
 import { confirmAction, notify } from '@/composables/feedback'
 import { pulseDecor, useValueTick } from '@/composables/motion'
-
-/** 两张订单列表之间有没有**状态**变化（数据回响的判据）。
- *  只看 id → status 的映射：新出现的单不计 —— 刚下的那一单会立刻出现在列表里，
- *  为它让整页装饰动一次等于"每下一单页面都抖一下"。
- *  这一页的装饰件只有全站那几件（水印/刻度），它们是"页面在报状态"，
- *  不该被一次普通的列表刷新惊动。 */
-function statusChanged(before: Order[], after: Order[]): boolean {
-  if (!before.length || !after.length) return false
-  const previous = new Map(before.map((order) => [order.id, order.status]))
-  return after.some((order) => {
-    const old = previous.get(order.id)
-    return old !== undefined && old !== order.status
-  })
-}
 
 const orders = ref<Order[]>([])
 // 站点取件信息随列表一起到（后端顶层 `site`）。默认全空：卡片块自己判有没有。

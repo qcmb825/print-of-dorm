@@ -590,10 +590,10 @@ def batch_order_filename(entries):
 def insert_order_files_with_options(conn, order_id, files):
     """登记这一单的文件清单，**连每份自己的打印参数一起写**（不 commit，事务归调用方）。
 
-    `db.insert_order_files` 只写文件清单那几列（v23 的形状），v24 加的
-    color_type / duplex / copies / 价目项 / 纸张快照它不认识 —— 用它的话那七列
-    会静默是 NULL，而 NULL 在这里的意思是「沿用订单级」，于是「两份彩色三份黑白」
-    会被读成一整单同一档，一个字都不报。所以这张单的清单在这里一条 INSERT 写完。
+    每份自己的参数（v24 加的那七列）必须和清单一起写：分两处写、或者漏写其中一列，
+    那七列会静默是 NULL，而 NULL 在这里的意思是「沿用订单级」，于是
+    「两份彩色三份黑白」会被读成一整单同一档，一个字都不报。
+    所以这张单的清单在这里一条 INSERT 写完。
 
     files = [{'filename', 'file_path', 'size', 'pages', 'color_type', 'duplex',
               'copies', 'price_item_id', 'price_item_name', 'paper_name',

@@ -6,7 +6,7 @@
 重试口径（想清楚了再改）：
   - **只读接口**（ping / orders / code / presets / events）连接层失败
     重试一次。跨太平洋链路上丢包是常态不是异常；
-  - **会建单的 POST**（order_preset / order_file）**绝不自动重试**：
+  - **会建单的 POST**（order_preset / order_prepared）**绝不自动重试**：
     第一次请求可能已经到了服务器、单已经建成了，只是响应没回来 ——
     重试一次就是重复下单。宁可把失败报给学生让他重发，
     也不替他做「可能多收一次钱」的决定。
@@ -225,7 +225,7 @@ def order_preset(qq, preset_id, duplex='single', copies=1,
     """用预设下单。不重试（见模块注释）。
 
     打印参数与文件下单同一套：网页端用预设下单时也能选单双面/份数/价目项，
-    bot 这边的追问流程问的就是这几个，所以一并带上（空值不传，同 order_file）。
+    bot 这边的追问流程问的就是这几个，所以一并带上（空值不传）。
     """
     payload = {'qq': qq, 'preset_id': preset_id,
                'duplex': duplex, 'copies': copies}
@@ -251,27 +251,6 @@ def ticket_reply(qq, ticket_id, body):
     """回复自己的工单。不重试：重复发一条消息比丢一条更烦人。"""
     return _request('POST', '/api/bot/ticket/reply',
                     {'qq': qq, 'ticket_id': ticket_id, 'body': body}, retries=0)
-
-
-def order_file(qq, file_name, file_bytes, duplex='single',
-               copies=1, price_item_id=None, remark=None):
-    """把 QQ 里收到的文件传给服务器建单。不重试（见模块注释）。
-
-    打印参数随表单一起传（服务端 /api/bot/order/file 与网页上传同一套校验）：
-    duplex / copies 必带，价目项与学生备注选填 —— 空值的字段**不 append**，
-    让「没填」和「填了个空串」在服务端是同一种输入形状（与网页端 orderApi.upload 同规矩）。
-    ⚠️ v20 起**没有 color 了**：颜色由价目项本身决定（「A4 70g · 黑白」这一条就是黑白）。
-    """
-    fields = {'qq': qq, 'duplex': duplex, 'copies': str(copies)}
-    if price_item_id:
-        fields['price_item_id'] = str(price_item_id)
-    if remark:
-        fields['remark'] = remark
-    return _request_multipart('/api/bot/order/file',
-                              fields=fields,
-                              file_field='file',
-                              file_name=file_name,
-                              file_bytes=file_bytes)
 
 
 def upload_prepare(qq, file_name, file_bytes):

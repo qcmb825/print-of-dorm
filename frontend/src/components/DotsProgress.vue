@@ -18,21 +18,19 @@
  */
 import { computed } from 'vue'
 
-const props = withDefaults(
-  defineProps<{
-    /** 0~100，超出范围会被夹到两端（服务端偶尔会回 100.4 这类值）。 */
-    percent: number
-    /** 格子总数。默认 20：一行二十格在窄屏上仍有 2px 以上的缝隙。 */
-    cells?: number
-  }>(),
-  { cells: 20 },
-)
+/** 格子总数固定为 20：一行二十格在窄屏上仍有 2px 以上的缝隙。 */
+const CELLS = 20
+
+const props = defineProps<{
+  /** 0~100，超出范围会被夹到两端（服务端偶尔会回 100.4 这类值）。 */
+  percent: number
+}>()
 
 const clamped = computed(() => Math.min(100, Math.max(0, props.percent)))
 
 /** 亮格数**向上取整**：0% 时一格都不亮，但一旦开始就至少亮一格 ——
  *  否则 1% 与 0% 看起来是同一件事（"是不是卡住了"）。 */
-const lit = computed(() => (clamped.value <= 0 ? 0 : Math.ceil((clamped.value / 100) * props.cells)))
+const lit = computed(() => (clamped.value <= 0 ? 0 : Math.ceil((clamped.value / 100) * CELLS)))
 </script>
 
 <template>
@@ -44,12 +42,12 @@ const lit = computed(() => (clamped.value <= 0 ? 0 : Math.ceil((clamped.value / 
     aria-valuemax="100"
   >
     <span
-      v-for="i in cells"
+      v-for="i in CELLS"
       :key="i"
       class="dots-progress__cell"
       :class="[
         i <= lit && 'dots-progress__cell--on',
-        i === lit && lit > 0 && lit < cells && 'dots-progress__cell--head',
+        i === lit && lit > 0 && lit < CELLS && 'dots-progress__cell--head',
       ]"
       aria-hidden="true"
     />

@@ -129,24 +129,6 @@ def insert_order_row(conn, values):
     raise RuntimeError('单号连续 5 次都与其他订单重复')
 
 
-def insert_order_files(conn, order_id, files):
-    """给一张订单登记它的文件清单（一单多份），**不 commit**（事务归调用方）。
-
-    files 是 [{'filename':.., 'file_path':.., 'size':.., 'pages':..}, ...]，
-    顺序就是展示顺序（sort_order 取下标）。
-
-    与 insert_order_row 一样只写一份：网页直传、预上传批量、机器人批量
-    三条路都走它。各写各的话，哪天加了列（比如以后要记单份文件的旋转角度），
-    漏掉的那条路会安静地少写一个字段，而界面上看起来只是那一格空着。
-    """
-    for index, item in enumerate(files):
-        conn.execute('''
-            INSERT INTO order_files (order_id, filename, file_path, size, pages, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (order_id, item.get('filename') or '', item.get('file_path') or '',
-              item.get('size'), item.get('pages'), index))
-
-
 def files_for_orders(conn, order_ids):
     """一次取回多张订单的文件清单，返回 {order_id: [行, ...]}。
 

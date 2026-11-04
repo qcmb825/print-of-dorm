@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { authApi } from '@/api/endpoints'
 import { setUnauthorizedHandler } from '@/api/client'
-import type { ProfileUpdateResponse, Role, User } from '@/api/types'
+import type { ProfileUpdateResponse, User } from '@/api/types'
 
 /** 高级视图开关记忆在 sessionStorage 里，不是 localStorage：
  *  浏览器一关就忘，正好对上「本人盯着这一会儿屏幕」的意思。
@@ -16,8 +16,9 @@ export const useAuthStore = defineStore('auth', () => {
   const ready = ref(false)
 
   const isLoggedIn = computed(() => user.value !== null)
-  const role = computed<Role>(() => user.value?.role ?? 'user')
-  const isStaff = computed(() => role.value === 'admin' || role.value === 'super')
+  const isStaff = computed(
+    () => user.value?.role === 'admin' || user.value?.role === 'super',
+  )
 
   /** 这个账号有没有资格进高级视图。
    *
@@ -152,7 +153,6 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     ready,
     isLoggedIn,
-    role,
     isStaff,
     advancedAllowed,
     advanced,

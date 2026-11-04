@@ -572,11 +572,6 @@ def _chip(draw, x, y, text, ink, min_width=CHIP_MIN_W, filled=False, dot=False):
     return w
 
 
-def _chip_next_x(x):
-    """胶囊后面那列文字的起点（胶囊宽度恒定，可以直接算出来）。"""
-    return int(x) + CHIP_MIN_W + 16
-
-
 def _rule(draw, x0, x1, y):
     """粗规线 + 细线（官方 6px 实线下方常跟一条 1px 细线）。"""
     draw.rectangle([x0, y, x1, y + 4], fill=RULE_HEAVY)

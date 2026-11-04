@@ -70,19 +70,8 @@ import {
   priceLabel,
   shortTime,
 } from '@/utils/format'
+import { statusChanged } from '@/utils/orderList'
 import { pulseDecor } from '@/composables/motion'
-
-/** 两张订单列表之间有没有**状态**变化（数据回响的判据）。
- *  只看 id → status 的映射：新出现的单、消失的单（翻页/筛选）都不算 ——
- *  翻一页就让整页装饰动一次，读到的会是"页面在抖"，而不是"有货进来了"。 */
-function statusChanged(before: Order[], after: Order[]): boolean {
-  if (!before.length || !after.length) return false
-  const previous = new Map(before.map((order) => [order.id, order.status]))
-  return after.some((order) => {
-    const old = previous.get(order.id)
-    return old !== undefined && old !== order.status
-  })
-}
 
 /** 待计费。单独提成常量是因为它在这个文件里到处要判：计费按钮能不能点、
  *  改状态要不要置灰、计费按钮是「计费」还是「改价」。 */
@@ -1014,9 +1003,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
           h(
             'span',
             { class: 'truncate text-sm font-semibold' },
-            // DUPLEX_LABELS 才认 'mixed'（各份不同）：拿只含 single/double 的
-            // DUPLEX_LABEL 去索引，混合单会取到空值 —— 界面上就是一片空白，
-            // 而「双面」也不能替它顶上（那是在替这一单瞎猜）。
+            // DUPLEX_LABELS 认 'mixed'（各份不同）：混合单不能用「双面」替它顶上
+            // （那是在替这一单瞎猜）。
             row.duplex ? DUPLEX_LABELS[row.duplex] : '单面',
           ),
         ]),

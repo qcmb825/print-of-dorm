@@ -23,7 +23,6 @@ import { useClock } from '@/composables/clock'
 const props = defineProps<{
   title: string
   subtitle?: string
-  code?: string
   heading?: 'lg' | 'md'
   /** 数据通道的健康度。挂在校时基光标上：
    *  · live  正常（默认）—— 1.1s 单闪，与全站一致；
@@ -35,7 +34,7 @@ const props = defineProps<{
 }>()
 
 const route = useRoute()
-const pageCode = computed(() => props.code ?? (route.meta.code as string | undefined))
+const pageCode = computed(() => route.meta.code as string | undefined)
 const headingClass = computed(() =>
   props.heading === 'md' ? 'text-xl sm:text-3xl' : 'text-3xl sm:text-4xl',
 )

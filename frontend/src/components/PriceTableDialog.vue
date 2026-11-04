@@ -16,6 +16,7 @@ import { NButton, NModal, NSkeleton } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { printOptionsApi } from '@/api/endpoints'
 import type { PriceItem } from '@/api/types'
+import { priceLabel } from '@/utils/format'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [boolean] }>()
@@ -46,11 +47,6 @@ watch(
     if (open) void load()
   },
 )
-
-/** 金额显示成两位小数。与站内 priceLabel 同一个口径。 */
-function money(value: number): string {
-  return `¥${value.toFixed(2)}`
-}
 </script>
 
 <template>
@@ -106,10 +102,10 @@ function money(value: number): string {
               </td>
               <td class="tnum border-b py-2 pr-3 text-right align-top font-semibold"
                   style="border-color: var(--border)">
-                {{ money(item.price_single) }}
+                {{ priceLabel(item.price_single) }}
               </td>
               <td class="tnum border-b py-2 text-right align-top" style="border-color: var(--border)">
-                <span v-if="item.price_double !== null">{{ money(item.price_double) }}</span>
+                <span v-if="item.price_double !== null">{{ priceLabel(item.price_double) }}</span>
                 <span v-else class="text-xs text-ink-3">不支持</span>
               </td>
             </tr>

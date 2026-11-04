@@ -20,10 +20,8 @@ import { CircleAlert, PackageCheck, Search } from '@lucide/vue'
 import { NAlert, NButton, NInput, NModal, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
-//    v24：订单级单双面可能是 'mixed'（一单里几份不一样）。
-//    utils/format 里的 DUPLEX_LABEL 只认 single/double，用它索引 mixed 会拿到
-//    undefined（TS 也会报「不能用 OrderDuplex 索引 Record<Duplex, string>」），
-//    所以这里直接用 api/types 的那一份（它含 'mixed': '混合'）。
+//    v24：订单级单双面可能是 'mixed'（一单里几份不一样），
+//    所以这里用 api/types 的 DUPLEX_LABELS（它含 'mixed': '混合'）。
 import { DUPLEX_LABELS } from '@/api/types'
 import type { PickupOrder } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'

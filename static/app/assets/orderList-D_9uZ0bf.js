@@ -1,0 +1,1 @@
+function e(e,t){if(!e.length||!t.length)return!1;let n=new Map(e.map(e=>[e.id,e.status]));return t.some(e=>{let t=n.get(e.id);return t!==void 0&&t!==e.status})}export{e as t};

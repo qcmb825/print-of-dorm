@@ -93,7 +93,7 @@ const editingPreset = computed(() =>
  *  用它补一条兜底选项，显示词与列表那行保持一致。 */
 const priceItemOptions = computed(() => {
   const options = priceItems.value.map((item) => ({
-    label: `${item.paper} · ${item.kind}`,
+    label: item.label ?? `${item.paper} · ${item.kind}`,
     value: item.id,
   }))
   const bound = presetForm.priceItemId
