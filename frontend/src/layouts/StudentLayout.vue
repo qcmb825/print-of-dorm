@@ -8,7 +8,6 @@ import DecorStrip from '@/components/DecorStrip.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import BotHintCard from '@/components/BotHintCard.vue'
-import ChromeActions from '@/components/ChromeActions.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
@@ -144,7 +143,6 @@ onMounted(() => {
           </RouterLink>
         </nav>
         <div class="ml-auto flex items-center gap-2">
-          <ChromeActions />
           <!-- 终端读数：与学生端这一页的编号同源，也是四角装饰里"右上角那一件"。
                窄屏藏起来 —— 顶栏在 375px 上已经很挤。 -->
           <span class="readout hidden lg:inline" aria-hidden="true">STUDENT TERMINAL</span>

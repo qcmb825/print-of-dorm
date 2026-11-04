@@ -26,7 +26,7 @@
 <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white" alt="Platform" />
 <img src="https://img.shields.io/badge/%E9%83%A8%E7%BD%B2-%E5%8D%95%E6%9C%BA%E5%8D%B3%E5%8F%AF-brightgreen?style=flat-square" alt="部署" />
 <img src="https://img.shields.io/badge/%E5%89%8D%E7%AB%AF%E4%BA%A7%E7%89%A9-%E5%B7%B2%E5%85%A5%E5%BA%93%EF%BC%8C%E9%83%A8%E7%BD%B2%E6%9C%BA%E6%97%A0%E9%9C%80%20Node-D4A017?style=flat-square" alt="前端产物" />
-<img src="https://img.shields.io/badge/%E4%B8%BB%E9%A2%98-%E6%98%8E%E6%9A%97%E5%8F%8C%E5%A5%97-008FA6?style=flat-square" alt="主题" />
+<img src="https://img.shields.io/badge/%E4%B8%BB%E9%A2%98-%E9%94%81%E5%AE%9A%E4%BA%AE%E8%89%B2-008FA6?style=flat-square" alt="主题" />
 <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome" />
 <img src="https://img.shields.io/badge/License-All%20Rights%20Reserved-red?style=flat-square" alt="License" />
 
@@ -77,8 +77,8 @@
 想固定成某套或者随时切过去看，见[「两套前端，怎么选」](#两套前端怎么选)。
 前端构建产物已随仓库提供，**部署端不需要 Node**，也没有数据库服务要装——装好 Python 依赖、启动，就能用。
 
-界面是响应式的（手机、平板、桌面各一套布局）。**界面锁定亮色**（2026-09-21 起：
-不再跟随系统、也不提供切换入口）—— 令牌里那套深色仍在，只是没有入口。
+界面是响应式的（手机、平板、桌面各一套布局）。**界面锁定亮色**（2026-09-21 的产品决定：
+不跟随系统、也不提供切换入口，暗色令牌已从代码中移除）。
 视觉语言是克制的黄 + 青、细边框、磨砂面板，动效只用在真正需要提示变化的地方。
 
 ---
@@ -246,8 +246,7 @@
 <td>
 
 - 顶部悬浮公告栏，可设字体、字号、颜色
-- 正文颜色会按 **WCAG 对比度**兜底：和当前主题的纸面撞车时自动换成可读的颜色，
-  深浅两套主题下都看得清（管理页预览同时给出两套效果）
+- 正文颜色会按 **WCAG 对比度**兜底：和纸面撞车时自动换成可读的颜色（管理页有实时预览）
 - 同一时间只有一条生效，历史公告留存，可随时切回或再编辑
 
 </td>
@@ -258,9 +257,9 @@
 
 - 全站只跑**新版界面**（Vue 3）。经典版代码与模板仍然保留在仓库里，但已经路由不到，
   界面切换的总开关在 `app.py` 的 `UI_SWITCH_ENABLED`
-- 明暗两套主题，默认跟随系统偏好
+- 界面锁定亮色（不跟随系统、无切换入口）
 - 响应式布局：桌面有侧栏、窄屏切成顶栏 + 抽屉，手机上不会横向溢出
-- 公告、图表、表格都跟着主题换色，深色下不会留一块刺眼的白纸
+- 公告、图表、表格共用同一套令牌推导配色
 - 尊重系统的「减少动效」偏好，开启后动效退化而不是硬放
 
 </td>
@@ -358,7 +357,7 @@
 | 密码加密 | cryptography |
 | 前端框架 | Vue 3 + Vue Router + Pinia |
 | 前端组件库 | Naive UI |
-| 前端样式 | Tailwind CSS v4（设计令牌驱动，明暗双主题） |
+| 前端样式 | Tailwind CSS v4（设计令牌驱动，单一亮色主题） |
 | 前端图标 | Lucide |
 | 字体（拉丁） | Space Grotesk（标题）/ DM Sans（正文）/ JetBrains Mono（数字、单号），@fontsource 随产物自带，不走外部 CDN |
 | 字体（中文） | 思源黑体（OFL-1.1），由 `cn-font-split` 切成带 `unicode-range` 的分片放在 `src/assets/fonts/`（数 MB，随产物入库；中文覆盖广，首次访问就会取到全部分片） |
@@ -366,8 +365,8 @@
 | 图表 | ECharts（按需引入，只有看板页会加载） |
 | QQ 卡片渲染 | Pillow（`botcard.py`，只画固定版式的列表卡；不引无头浏览器） |
 
-> 主题只有一处事实来源：颜色和动效曲线都写在 CSS 变量里，Tailwind 工具类和 Naive UI 的
-> 主题覆盖都从这些变量反读，所以换主题时组件库和手写样式不会各说一套。
+> 配色只有一处事实来源：颜色和动效曲线都写在 CSS 变量里，Tailwind 工具类和 Naive UI 的
+> 主题覆盖都从这些变量反读，所以改配色时组件库和手写样式不会各说一套。
 
 > 前端产物已入库，**部署机不需要 Node**；本机只有改前端时才需要 Node 20+。
 
@@ -972,13 +971,13 @@ print-of-dorm/
 │   ├── img/               # 经典版页面图片：背景照片、樱花花瓣、插画
 │   └── app/               # 新版前端构建产物（入库，Flask 直接托管，部署机不需要 Node）
 ├── frontend/              # 新版前端源码（Vue 3 + TypeScript，只有改界面时才需要动）
-│   ├── index.html         #   Vite 入口：首屏前先定好主题，避免刷新时闪白底
+│   ├── index.html         #   Vite 入口（界面锁定亮色，没有首屏主题脚本）
 │   ├── vite.config.ts     #   构建配置：outDir 指向 ../static/app，base 为 /static/app/
 │   ├── public/            #   静态直通资源（favicon.svg，原样复制，文件名不带 hash）
 │   ├── src/
 │   │   ├── api/           #   接口层：axios 实例（CSRF / 令牌轮换 / 错误归一）+ DTO 类型
-│   │   ├── styles/        #   设计令牌与基础样式（明暗双主题、动效曲线与时长）
-│   │   ├── theme/         #   从 CSS 令牌反读 Naive UI 主题、公告正文色的对比度兜底
+│   │   ├── styles/        #   设计令牌与基础样式（单一亮色主题、动效曲线与时长）
+│   │   ├── theme/         #   从 CSS 令牌反读 Naive UI 覆盖、公告正文色的对比度兜底
 │   │   ├── layouts/       #   学生端布局 / 管理端布局
 │   │   ├── views/         #   各页面
 │   │   │   ├── staff/     #     订单台、看板、公告、用户、工单、身份审核
@@ -1089,9 +1088,9 @@ UI_SWITCH_ENABLED = False   # 总开关：关掉之后 _pick_ui() 永远返回 v
 > 因为新版用了 history 路由，`app.py` 对非 `/api`、非 `/favicon.ico` 的未知路径统一回页面入口，
 > 否则用户刷新 `/my-orders` 这类深层链接会拿到 404 —— 这一条改动过就别再退回去。
 
-> 主题切换入口（右上角的明暗切换按钮）也已经拆掉，**主题现在固定跟随系统偏好**。
-> `.dark` 令牌、Naive UI 反读、图表与公告取色全都保留着 —— 它们服务的是系统深色偏好，
-> 不是那个按钮。
+> 界面**锁定亮色**：没有切换入口，暗色令牌与 Naive 的 darkTheme 已整簇删除。
+> `scripts/check-theme-lock.mjs` 会在构建时拦住任何重新引入（`isDark` / `darkTheme` /
+> `.dark` / `pod-theme` / `dark:`）。
 
 ---
 

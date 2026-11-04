@@ -31,14 +31,15 @@ export function mix(a: string, b: string, ratio: number): string {
   ])
 }
 
-/** 主题色派生：浅色主题下 hover 变暗，深色主题下 hover 变亮。 */
-export function derive(color: string, isDark: boolean) {
-  const toward = isDark ? '#ffffff' : '#000000'
+/** 主题色派生：hover / pressed 向**黑**混合（界面锁定亮色，底色都是浅的）。
+ *  这三个比例是亮的底色上"看得出状态、又不会变成另一种颜色"的档位。 */
+export function derive(color: string) {
+  const toward = '#000000'
   return {
     base: color,
-    hover: mix(color, toward, isDark ? 0.16 : 0.12),
-    pressed: mix(color, toward, isDark ? 0.3 : 0.24),
-    suppl: mix(color, toward, isDark ? 0.1 : 0.08),
+    hover: mix(color, toward, 0.12),
+    pressed: mix(color, toward, 0.24),
+    suppl: mix(color, toward, 0.08),
   }
 }
 

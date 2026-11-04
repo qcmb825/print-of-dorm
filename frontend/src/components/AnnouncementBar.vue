@@ -5,20 +5,18 @@
  *  当成 HTML 渲染就是一个存储型 XSS 入口。
  *  字体走后端白名单键 → 前端 CSS 栈的映射，与 config.ANNOUNCE_FONTS 对齐。
  *
- *  纸面颜色跟主题走，正文颜色是管理员选的，两者可能撞车，所以正文色要过一道
- *  对比度检查（readableInk）—— 管理员选了浅色、或者深色主题下的深色，都会在这里回落。
+ *  纸面颜色由令牌决定，正文颜色是管理员选的，两者可能撞车，所以正文色要过一道
+ *  对比度检查（readableInk）—— 管理员选了浅色时在这里回落。
  */
 import { computed } from 'vue'
 import { Megaphone, X } from '@lucide/vue'
 import { NButton } from 'naive-ui'
 import { ANNOUNCE_FONTS, type AnnounceFont } from '@/api/types'
 import { useAnnouncementStore } from '@/stores/announcement'
-import { useThemeStore } from '@/stores/theme'
 import { readableInk } from '@/theme/color'
-import { paperFor } from '@/theme/paper'
+import { readPaperTokens } from '@/theme/paper'
 
 const store = useAnnouncementStore()
-const theme = useThemeStore()
 
 const announcement = computed(() => store.current)
 
@@ -27,7 +25,7 @@ const bodyStyle = computed(() => {
   if (!item) return {}
   const font = ANNOUNCE_FONTS[item.font_family as AnnounceFont] ?? ANNOUNCE_FONTS.system
   const size = Math.min(Math.max(item.font_size, 12), 28)
-  const paper = paperFor(theme.isDark)
+  const paper = readPaperTokens()
   return {
     fontFamily: font.css,
     fontSize: `${size}px`,

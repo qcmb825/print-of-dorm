@@ -21,24 +21,21 @@
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
 
-@custom-variant dark (&:where(.dark, .dark *));
-
-/* ============ 浅色（默认） ============
+/* ============ 亮色（唯一一套） ============
  *
- * 除 :root 外还挂了一个 .light 类：:root 就是 <html> 本身，想在一个页面里同时拿到
- * 深浅两套令牌（公告预览要做对比度检查，见 theme/paper.ts）就必须有一个能套在子树上的
- * 选择器。值只有这一份，两个选择器共用，不是抄了两遍。
+ * 界面锁定亮色是 2026-09-21 的产品决定，所以这里只有一套令牌：
+ * 没有 .dark 块、没有可切换的开关、也不跟随系统偏好。
+ * 想加暗色之前先读 stores/theme.ts 顶部的注释 —— 那不是"把开关打开"的事。
  */
-:root,
-.light {
+:root {
   color-scheme: light;
 
   --background: #f9f9f9;
   --foreground: #111111;
   --card: #ffffffcc;
   --card-foreground: #111111;
-  /* 主色指向原始层的 --industrial-yellow（见文件末尾的「原始层」一节）。
-   * 深色主题那一支也指向同一个名字，改强调色只需要动 --industrial-yellow 一处。 */
+  /* 主色指向原始层的 --industrial-yellow（见下面的「原始层」一节）。
+   * 改强调色只需要动 --industrial-yellow 一处。 */
   --primary: var(--industrial-yellow);
   --primary-foreground: #000000;
   --secondary: var(--tech-cyan);
@@ -63,14 +60,14 @@
    * accent-tint(10% 荧光黄叠页底) 上 5.16:1、accent-tint-soft(13%) 上 5.14:1、
    * accent-tint-soft 叠在 --muted 上 4.97:1。小字（≥4.5）与大号字（≥3）都过 AA。
    *
-   * 深色主题不需要这一支：那儿的 --primary 本身就是 #fffa00，在 #050505 上有 18.37:1，
-   * 文字、描边、图表线直接沿用它（见 .dark 块的 --accent-text: var(--primary)）。 */
+   * 这一支是亮色下的**唯一可见形态**：没有它，强调色当文字/描边/图表线全都看不见。
+   * 想换成 --primary 之前先看它在页底上的实测值（1.01~1.10:1）。 */
   --accent-text: #756a00;
   --border: var(--technical-grey);
-  /* 浅色下 --border(#e2e2e2) 与 --border-subtle(#00000014 合成 ≈#e5e5e5) 实测不可分辨，
-   * RGB 距离只有 3/255、对比度 1.230 vs 1.191。深色那侧差 13/255 是可分辨的。
-   * 这一档在浅色下等于不存在 —— 保留名字是为了两套主题的令牌清单对齐，
-   * 但不要在浅色下指望「subtle 比 border 更淡」能看出层次。 */
+  /* --border(#e2e2e2) 与 --border-subtle(#00000014 合成 ≈#e5e5e5) 实测不可分辨，
+   * RGB 距离只有 3/255、对比度 1.230 vs 1.191。
+   * 这一档等于不存在 —— 留名字只是因为还有组件在引用它，
+   * 但不要指望「subtle 比 border 更淡」能看出层次。 */
   --border-subtle: #00000014;
   --input: var(--technical-grey);
   --input-foreground: #111111;
@@ -83,13 +80,7 @@
 
   /* ── 原始层 ────────────────────────────────────────────────
    * 这四个是「色调来源」，只在这里定值，上面那些语义令牌指向它们。
-   * 强调色要换色，改 --industrial-yellow 一处即可（两套主题各一个值）。
-   *
-   * 注意 --deep-void / --technical-grey 这两支在深浅两套主题里承担的**角色不同**：
-   *   浅色：--deep-void 是「比页底稍暗的凹陷面」= --muted；--technical-grey 是分隔线 = --border
-   *   深色：--deep-void 是「最底层」= --background（也是换场面板 --veil-mat）；--technical-grey 是凹陷面 = --muted
-   * 这是有意为之，不是写错了：同一支中性色在浅色下最该当边框、在深色下最该当暗面。
-   * 所以别把它们当成「同一个灰的两个主题版本」来用，改值前先确认落在哪个角色上。 */
+   * 强调色要换色，改 --industrial-yellow 一处即可。 */
   --industrial-yellow: #fffa00;
   --tech-cyan: #008fa6;
   --deep-void: #f4f4f4;
@@ -189,9 +180,8 @@
    * 弹层（Dialog / Drawer / Dropdown / Select / Message）现在靠**遮罩压暗下层 + 1px 硬描边**
    * 与背景分离，而不是给上层加投影。 */
   /* 危险斜纹的墨色。鹰角官网实测是 `#1f1f22`（**近黑**，不是通用工业符号那种亮黄黑），
-   * 铺在中性面上只是「这块有约束」的暗示。这里从 --foreground 派生而不是写死：
-   * 浅色主题得到近黑条纹（同官网），深色主题得到近白条纹 —— 写死 #1f1f22 的话
-   * 在深色面板上等于看不见。 */
+   * 铺在中性面上只是「这块有约束」的暗示。从 --foreground 派生而不是写死：
+   * 这样它跟着文字色走，改 --foreground 时不会留下一条对不上的墨色。 */
   --hazard-ink: color-mix(in srgb, var(--foreground) 34%, transparent);
 
   /* 背景网格的两档线色。原来只有一档（直接借 --border-subtle），而单一密度的重复图案
@@ -266,15 +256,14 @@
     Consolas, 'Courier New', monospace;
 
   /* 换场扫描/网点专用的青色。
-   * 这条令牌原先只在 .dark 里定义过 —— 浅色下引用它会静默变成无效值（图层凭空消失或
-   * 回落到继承色，且不报错）。这里用 --status-printing 补齐浅色值：它本来就是这套暖黄 + 青
-   * 双色里的青，深色下是 #22d3ee 那一族，不需要再引入第三种色相。
-   * 引用处仍写 var(--scan-line, var(--secondary)) 兜底。 */
+   * 用 --status-printing 取这一支：它本来就是这套暖黄 + 青双色里的青，
+   * 不需要再引入第三种色相。引用处仍写 var(--scan-line, var(--secondary)) 兜底 ——
+   * 自定义属性缺失时会静默回落到继承色，不报错。 */
   --scan-line: var(--status-printing);
 
   /* 换场面板的材质（RouteVeil）。
    *
-   * 两个主题都用「暗面」而不是各自的 --background：浅色的 --background 是 #f9f9f9，
+   * 面板恒用「暗面」而不是 --background：--background 是 #f9f9f9，
    * 面板滑到盖住那一刻就是一次全屏白闪 —— 整场最亮的事件反而落在峰值上，跟「闭黑换手」
    * 的意图正好相反，站点里唯一的近黑表面先例是 --surface-tooltip。深色那边直接取
    * --deep-void。
@@ -295,141 +284,12 @@
   --veil-accent-tint: rgb(255 250 0 / 0.34);
 
   /* 中心读数里的青色一支（英文引导行、页名代号）。**不能直接用 --secondary**：
-     面板在两个主题下都是暗底，而浅色的 --secondary 是 #008fa6，铺在 #262627 上只有约
-     3.85:1 —— 11px 小字不达 WCAG AA（要 4.5:1）。深色那一支本来就是 #00f0ff，在同一个底
-     上有 10:1，所以只有浅色需要单独给值，直接取深色主题用的那支 cyan-300 即可，
+     面板恒为暗底，而 --secondary 是 #008fa6，铺在 #262627 上只有约 3.85:1 ——
+     11px 小字不达 WCAG AA（要 4.5:1）。这里直接取 cyan-300，在同一个底上有 10:1，
      不引入新色相。 */
   --veil-ink-code: #67e8f9;
 }
 
-/* ============ 深色 ============ */
-.dark {
-  color-scheme: dark;
-
-  --background: var(--deep-void);
-  --foreground: #ffffff;
-  --card: #ffffff05;
-  --card-foreground: #ffffff;
-  --primary: var(--industrial-yellow);
-  --primary-foreground: #000000;
-  --secondary: var(--tech-cyan);
-  --secondary-foreground: #000000;
-  --muted: var(--technical-grey);
-  --muted-foreground: #a1a1aa;
-  --accent: var(--primary);
-  --accent-foreground: #000000;
-  /* 深色下 --primary 的 #ffd000 铺在任何深色底上都远超 AA（#27272a 上 10.1:1、
-   * #050505 上 13.9:1），文字直接沿用它就够了，不需要另造一个更深的值。
-   * 这里刻意取 --primary 而不是 --accent：改动前读 --primary 的那几处（侧栏激活项、
-   * KPI 数字）在深色下的渲染因此与改动前**逐像素一致**，深色端一个字都没变。 */
-  --accent-text: var(--primary);
-  --border: #ffffff1a;
-  --border-subtle: #ffffff0d;
-  --input: #ffffff1a;
-  --input-foreground: #ffffff;
-
-  --text-primary: #ffffff;
-  --text-secondary: #ffffffcc;
-  --text-tertiary: #ffffff99;
-  --text-quaternary: #ffffff66;
-  --text-disabled: #ffffff4d;
-
-  --industrial-yellow: #fffa00;
-  --tech-cyan: #00f0ff;
-  --deep-void: #050505;
-  --technical-grey: #27272a;
-
-  --status-pending: #a1a1aa;
-  --status-pending-bg: #ffffff0f;
-  --status-printing: #22d3ee;
-  --status-printing-bg: #00f0ff1a;
-  --status-ready: var(--primary);
-  --status-ready-bg: #fffa001f;
-  --status-done: #4ade80;
-  --status-done-bg: #4ade801f;
-  --status-unpriced: #c084fc;
-  --status-unpriced-bg: #c084fc1f;
-
-  /* 未取件：深色底下用亮一点的红（同 --err 那一档），压在 #101110 上仍是 7:1。 */
-  --status-unclaimed: #ff5c5c;
-  --status-unclaimed-bg: #ff5c5c24;
-
-  --role-user: #22d3ee;
-  --role-user-bg: #00f0ff1a;
-  --role-admin: var(--primary);
-  --role-admin-bg: #fffa001f;
-  /* 同浅色那套：跟 admin 完全一致，不靠颜色区分。 */
-  --role-super: var(--role-admin);
-  --role-super-bg: var(--role-admin-bg);
-
-  --ok: #4ade80;
-  --err: #f87171;
-  --warn: #fbbf24;
-  --info: #22d3ee;
-  --err-bg: #f871711f;
-
-  /* 深色下填充与描边都用荧光黄本身：#fffa00 在 #050505 上有 18.37:1、
-   * 在 --muted(#27272a) 上 13.42:1，文字/描边/图表线全都够用（见 --accent-text）。 */
-  --accent-tint: rgb(255 250 0 / 0.12);
-  --accent-tint-soft: rgb(255 250 0 / 0.15);
-  --accent-tint-border: rgb(255 250 0 / 0.34);
-  --warn-tint: rgb(251 191 36 / 0.12);
-  --warn-tint-border: rgb(251 191 36 / 0.38);
-
-  /* 浮层底在暗色下要**比页面亮一档**，不能只靠那圈发丝线。
-     #111113 与页底 #050505 只有 1.08:1，弹层（下拉/对话框/抽屉都没有投影）
-     在这种差值下就是"同一片黑上多了一圈线"；提到 #1c1c1f 之后是 1.22:1，
-     正好落在既有的表面阶梯上（表格头 #18181b、凹陷面 #27272a）。
-     浅色那边不用动：白面板压 #f9f9f9 本来就是同一档差。 */
-  --surface-overlay: #1c1c1f;
-  --surface-table-head: #18181b;
-  --surface-input: #0f0f11;
-  --surface-tooltip: #18181b;
-
-  /* 公告纸面在深色下换成深色表面（跟 --surface-overlay 同族），不再是刺眼的白块。
-   * 管理员选的颜色由 readableInk() 决定用不用得上，这里的 --paper-ink 是它的兜底值。
-   * --paper-accent / --paper-muted 也一并换成深色那套，否则公告条上的图标和关闭按钮
-   * 会沿用浅色配色 —— 深色下关闭按钮的悬停是 12% 白盖在深纸上，那是看得见的；
-   * 反过来（深色配色盖在白纸上）才是完全看不见的。 */
-  --paper: #111113;
-  --paper-line: #ffffff1a;
-  --paper-ink: #ffffff;
-  --paper-accent: var(--primary);
-  --paper-muted: #a1a1aa;
-
-  /* 背景网格两档线色与对角打光：深色下要反过来（浅色主题那套是黑线，
-   * 压在 #050505 上等于没有）。 */
-  --grid-line: #ffffff06;
-  --grid-major: #ffffff12;
-  /* 深色下的背光是"屏幕自身在发光"，所以顶部那一段比浅色下更亮一档；
-     底部压得更黑，让内容区看起来是被一块屏托着而不是悬在虚空里。 */
-  --surface-sheen: linear-gradient(
-    180deg,
-    rgb(255 255 255 / 0.05) 0%,
-    transparent 36%,
-    rgb(0 0 0 / 0.3) 100%
-  );
-  /* 像元栅格在深色下换成浅点（浅色主题那套是暗点，压在 #050505 上等于没有）。 */
-  --raster-dot: rgb(255 255 255 / 0.03);
-  /* 图纸墨色：同一组表达式，深色下从 --foreground 派生的两支自动变亮、
-     --accent-text 自动取荧光黄。 */
-  /* 深色下墨的透明度要比浅色低一档：白墨压在近黑底上会明显变浅，
-     正文压上去的兜底对比度刚好卡不过 4.5（audit 的 @blueprint 那条会拦）。 */
-  --blueprint-ink: color-mix(in srgb, var(--foreground) 40%, transparent);
-  --blueprint-ink-fine: color-mix(in srgb, var(--foreground) 19%, transparent);
-  --blueprint-accent: color-mix(in srgb, var(--accent-text) 58%, transparent);
-
-  /* 遮罩阶梯、投影与发光都不在这里声明：前者主题无关（见浅色块），后两组已删除。 */
-
-  /* 路由转场扫描线专用颜色（深色下降低饱和度，避免霓虹色过于刺眼） */
-  --scan-line: #67e8f9;
-
-  /* 深色下就是一次全黑保持。 */
-  --veil-mat: var(--deep-void);
-
-  /* 深色的 --secondary 就是霓虹青，在 #050505 上有 10:1，不需要另给值。 */
-  --veil-ink-code: var(--secondary);
-}
 
 /* ============ 动效（与主题无关，深浅共用一套） ============
  *

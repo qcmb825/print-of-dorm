@@ -294,23 +294,35 @@ const TRIP_MS = 600
  *  `trip()` 只置一个布尔，视觉全在 CSS（`.trip--on`）。连续失败时每次都重播 ——
  *  跳闸是"这一下坏了"，不是"一直坏着"，所以它必须每次都能重新触发。
  *  减少动效下不置位：错误本身由文案与颜色承担，动画只是加粗。
+ *
+ *  重播**不靠 rAF 切类**：那种写法在 rAF 被冻结的环境里一次都不播（不报错）。
+ *  这里改成：置位后直接用 WAAPI 在宿主上跑一遍，动画本身不依赖 rAF 调度。
+ *  类名仍然保留，因为斜纹带是伪元素画的 —— WAAPI 碰不到伪元素，
+ *  所以那条带子走 CSS transition（transition 由样式引擎驱动，不靠 rAF）。
  */
-export function useBreakerTrip(): { tripped: Ref<boolean>; trip: () => void } {
+export function useBreakerTrip(): {
+  tripped: Ref<boolean>
+  trip: (host?: HTMLElement | null) => void
+} {
   const tripped = ref(false)
   let timer: ReturnType<typeof setTimeout> | undefined
-  let raf = 0
 
-  function trip(): void {
+  function trip(host?: HTMLElement | null): void {
     if (prefersReducedMotion.value) return
     if (timer !== undefined) clearTimeout(timer)
-    if (raf) cancelAnimationFrame(raf)
-    // 先归零再在下一帧置位：类名从"有"到"有"不会重播动画，
-    // 必须真的经历一次"没有"（与 route-veil 靠 out→in→idle 三态轮转重触发同一原理）。
+    // 先归零再在**同步的下一拍**置位：同一帧内 true→true 不会重播 transition，
+    // 必须真的经历一次 false。用微任务而不是 rAF —— 后者在后台会停。
     tripped.value = false
-    raf = requestAnimationFrame(() => {
-      raf = 0
+    void Promise.resolve().then(() => {
       tripped.value = true
     })
+    // 边框闪一下（伪元素之外的那一圈）。WAAPI 在这里可用，且不依赖 rAF。
+    if (host && typeof host.animate === 'function') {
+      host.animate(
+        [{ borderColor: 'var(--err)' }, { borderColor: '' }],
+        { duration: 240, easing: 'ease-out' },
+      )
+    }
     timer = setTimeout(() => {
       timer = undefined
       tripped.value = false
@@ -319,7 +331,6 @@ export function useBreakerTrip(): { tripped: Ref<boolean>; trip: () => void } {
 
   onBeforeUnmount(() => {
     if (timer !== undefined) clearTimeout(timer)
-    if (raf) cancelAnimationFrame(raf)
   })
 
   return { tripped, trip }
@@ -331,22 +342,21 @@ export function useBreakerTrip(): { tripped: Ref<boolean>; trip: () => void } {
  *  切页时"整页换了一口气"，数据更新时"有货进来了"。两条通道各自独立，
  *  同时发生也只是各播各的（不同属性、不同元素集合，不互相顶掉）。
  *
- *  实现上靠**类名的移除 → 下一帧加回**强制重播。不能只靠 data-* 属性赋值：
+ *  实现上靠**类名的移除 → 同步的下一拍加回**强制重播。不能只靠 data-* 属性赋值：
  *  属性值变了但选择器始终匹配时，CSS 动画不会重新开始。
+ *  用微任务而不是 rAF：后者在后台标签页里会停，而数据回响最常发生的时刻
+ *  恰好就是"用户切回来、页面刚刷新"那一拍。
  *  减少动效下直接不挂 —— 这是纯装饰，没有它信息一字不少。
  */
 const PULSE_CLASS = 'decor-pulse'
 let pulseTimer: ReturnType<typeof setTimeout> | undefined
-let pulseRaf = 0
 
 export function pulseDecor(): void {
   if (typeof document === 'undefined' || prefersReducedMotion.value) return
   const root = document.documentElement
   root.classList.remove(PULSE_CLASS)
   if (pulseTimer !== undefined) clearTimeout(pulseTimer)
-  if (pulseRaf) cancelAnimationFrame(pulseRaf)
-  pulseRaf = requestAnimationFrame(() => {
-    pulseRaf = 0
+  void Promise.resolve().then(() => {
     root.classList.add(PULSE_CLASS)
   })
   pulseTimer = setTimeout(() => {
@@ -442,10 +452,11 @@ export function useNavSlider(
   })
 
   watch(activeKey, () => {
-    // 下一帧再量：激活类与布局都要先落定（RouterLink 的 active 样式是同步的，
-    // 但窄屏抽屉里的导航要等它渲染出来）。
-    // rAF 之外补一条 setTimeout：rAF 在后台标签页里不跑，只挂 rAF 的话
+    // 先同步量一次（激活类在同一个 tick 里就落好了），再等一帧重量一次：
+    // 窄屏抽屉里的导航要等它渲染出来才量得准。
+    // 两条路径并存是刻意的 —— rAF 在后台标签页里不跑，只挂 rAF 的话
     // 切回前台时滑块会停在上一个位置，直到下一次导航才纠正。
+    place()
     requestAnimationFrame(place)
     setTimeout(place, 90)
   })

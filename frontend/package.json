@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && node scripts/check-theme-lock.mjs && vite build",
     "build:only": "vite build",
     "typecheck": "vue-tsc --noEmit",
     "audit:contrast": "node scripts/contrast-audit.mjs",
+    "guard:theme": "node scripts/check-theme-lock.mjs",
     "fonts:build": "node scripts/build-cn-font.mjs",
     "preview": "vite preview"
   },

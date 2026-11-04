@@ -30,32 +30,50 @@ const style = computed(() => ({
   borderColor: STATUS_COLOR_VAR[props.status],
 }))
 
-/** 落章只在"用户眼前这个状态变了"时播。首帧是数据到达，不播。 */
-const stamped = ref(false)
+/** 落章只在"用户眼前这个状态变了"时播。首帧是数据到达，不播。
+ *
+ *  用 Web Animations API 而不是切类名：切类名要靠"先摘、下一帧再挂"才会重播，
+ *  而那一步依赖 rAF —— 内嵌 WebView / 后台标签页里 rAF 会整个冻住，
+ *  结果是动画一次都不播、也不报错。WAAPI 每次新建一个动画，天然可重入，
+ *  而且 cancel 掉旧的那个就不会叠加。
+ *  曲线与时长仍然读 CSS 变量（令牌只有一份事实来源）。 */
+const stampRef = ref<HTMLElement | null>(null)
+let stampAnim: Animation | undefined
 let seen = 0
-let timer: ReturnType<typeof setTimeout> | undefined
+
+function readMs(name: string, fallback: number): number {
+  if (typeof document === 'undefined') return fallback
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(name),
+  )
+  return Number.isFinite(value) ? value : fallback
+}
 
 watch(
   () => props.status,
   () => {
     seen += 1
     if (seen === 1 || prefersReducedMotion.value) return
-    stamped.value = false
-    // 与 useBreakerTrip 同理：类名要先真的消失一帧，动画才会重播。
-    requestAnimationFrame(() => {
-      stamped.value = true
-    })
-    if (timer !== undefined) clearTimeout(timer)
-    // 动画本身 180ms（--motion-dur-base），这里留足再摘类。
-    timer = setTimeout(() => {
-      timer = undefined
-      stamped.value = false
-    }, 400)
+    const el = stampRef.value
+    if (!el || typeof el.animate !== 'function') return
+    stampAnim?.cancel()
+    stampAnim = el.animate(
+      [
+        { opacity: 0.35, transform: 'scale(1.14)' },
+        { opacity: 1, transform: 'scale(1)' },
+      ],
+      {
+        duration: readMs('--motion-dur-base', 180),
+        // 与 CSS 里的 --motion-ease-back 同一个值。Easing 在 WAAPI 里只能写字面量，
+        // 读不到 CSS 变量 —— 所以只在这里写一次，改曲线时两处一起看。
+        easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+      },
+    )
   },
 )
 
 onBeforeUnmount(() => {
-  if (timer !== undefined) clearTimeout(timer)
+  stampAnim?.cancel()
 })
 
 </script>
@@ -67,6 +85,6 @@ onBeforeUnmount(() => {
     :style="style"
   >
     <span class="size-1.5 bg-current" aria-hidden="true" />
-    <span class="stamp-in" :class="stamped && 'stamp-in--on'">{{ status }}</span>
+    <span ref="stampRef" class="stamp-in">{{ status }}</span>
   </span>
 </template>

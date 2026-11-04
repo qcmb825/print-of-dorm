@@ -78,6 +78,8 @@ import { COPIES_DEFAULT, COPIES_MAX, COPIES_MIN } from '@/utils/validators'
 const message = useMessage()
 /** 提交失败的跳闸（见 base.css 的 .trip）。 */
 const { tripped: submitTripped, trip: tripSubmit } = useBreakerTrip()
+/** 下单表单本体：跳闸的边框闪要打在它身上。 */
+const submitPanel = ref<HTMLElement | null>(null)
 
 /** 与后端 config.ALLOWED_EXTENSIONS 对齐；只用于提前拦掉白名单外的文件，省一次大文件上传。
  *  真正的把关在服务端（上传接口会再校验一次）。 */
@@ -827,7 +829,7 @@ async function submit(): Promise<void> {
   } catch (error) {
     // 提交失败 = 一次跳闸。上传失败（逐份）不跳：那是单份文件的问题，
     // 行内已经写着原因和重试按钮，整块面板跳一下反而盖住了那行字。
-    tripSubmit()
+    tripSubmit(submitPanel.value)
     if (error instanceof ApiError && error.status === 429) {
       // 额度已满：刷新 pending 列表，让顶部的「放弃这次上传」入口可见
       void refreshPending()
@@ -1019,7 +1021,11 @@ onMounted(async () => {
 
     <!-- 下单表单。跳闸反馈挂在**这一块**上：失败的是"提交这一单"这件事，
          不是页面上别的地方（见 base.css 的 .trip）。 -->
-    <div class="relative p-4 sm:p-5" :class="submitTripped && 'trip trip--on'">
+    <div
+      ref="submitPanel"
+      class="relative p-4 sm:p-5"
+      :class="submitTripped && 'trip trip--on'"
+    >
 
       <!-- ① 选择文件 -->
       <StageHead code="01" title="选择文件" step="STEP 1/3" class="mb-3" />

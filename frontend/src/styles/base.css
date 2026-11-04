@@ -55,7 +55,7 @@
    *
    * 项目刻意不引 tailwind preflight（免得 reset 掉 Naive 的组件样式），代价是没有任何规则
    * 给 <a> 定色 —— 于是盒子里的文件名链接拿的是**浏览器默认链接蓝**：浅色下 #0000EE，
-   * 深色下由 UA 的 color-scheme 给一个浅蓝。它既不在调色板里，深色下 #0000EE 压在 #050505 上
+   * UA 的默认链接蓝不在调色板里，压在深底上读不出来（开屏层与换场面板是恒暗的），
    * 只有约 1.6:1，几乎读不出来。受影响的是订单台 / 账号管理表格里那些「→ 详情」的 router-link。
    *
    * 只在 @layer base 里定色，所以任何写了颜色工具类的链接（侧栏 .nav-link、品牌区那个
@@ -69,7 +69,7 @@
    *
    * 与上面 <a> 那条同一个根源：项目刻意不引 tailwind preflight，于是**没接 Naive 的
    * 原生 <button>** 全都带着浏览器默认的按钮皮肤 —— 浅色下是一块灰底、一圈描边、
-   * 还有 Win32 时代那种凸起的斜面（管理端窄屏顶栏的菜单键与主题键当时就是这个样子，
+   * 还有 Win32 时代那种凸起的斜面（管理端窄屏顶栏的菜单键当时就是这个样子，
    * 用户截图报的"太丑"就是它）。凡是这类按钮，模板里都只写了布局与颜色，
    * 没人写背景 —— 因为谁都没想起来 UA 皮肤的存在。
    *
@@ -303,8 +303,8 @@
      半截小字，扫视一整屏订单时很容易整个略过（拿错份数比拿错文件更麻烦，
      因为纸已经过机了）。
 
-     做成一个牌子而不是单纯加粗：颜色上下两套主题都由令牌给，
-     组件里不写死色值，深色偏好下不会变成一块看不清的深黄。
+     做成一个牌子而不是单纯加粗：颜色一律由令牌给，
+     组件里不写死色值，改强调色时它跟着走。
 
      文字色走 --accent-text 而不是 --accent：牌子上的字只有 13px，
      --accent(#c49102) 铺在 accent-tint 上只有 2.61:1，够不上小字的 4.5:1；
@@ -1023,8 +1023,8 @@
   /* 尺条：带刻度的进度条（榜单里"谁下了多少单"那一根）。
    * 填充与轨道各画一层**同相位**（都从各自左边缘起算、都是 8px）的竖刻度，
    * 所以看上去是"同一把尺子被填满了多少"，而不是"一根彩条"。
-   * 填充上的刻度走 --background 的混色：浅色下是白线压在黄条上，深色下是黑线，
-   * 两个主题都不需要另给一支颜色。 */
+   * 填充上的刻度走 --background 的混色：它自动和底色反相，
+   * 不需要另给一支颜色。 */
   .ruler {
     height: 6px;
     background-color: var(--muted);
@@ -1059,12 +1059,12 @@
 
   /* ══ 落章 ══════════════════════════════════════════════════════
    * 状态真的变了时，文字块自己盖下来一次（见 StatusTag.vue 的注释）。
-   * 只写 from：动画结束后回到元素本来的样式，不留残余 transform。
-   * 过冲曲线（--motion-ease-back）只在这一件上用 —— 面积是几个字，
-   * 越过终点的那一点距离不会读成"抖"。
    *
-   * 用 animation 而不是 transition：这是一次性播放，且类名摘掉后要立刻复位；
-   * transition 在"类被摘掉"和"类被加上"两个方向都会跑，读到的是两次动作。 */
+   * 关键帧写在这里，但**不靠切类名播放**：组件用 Web Animations API
+   * 直接 element.animate()。原因是"先摘类、下一帧再挂上"这套重播手法
+   * 依赖 rAF —— rAF 在内嵌 WebView / 后台标签页里会整个冻住，
+   * 那时动画一次都不播，而且不报错。WAAPI 从当前状态起播，天然可重入。
+   * 下面这条类只为「没有 JS 参与时的静态形态」保底（也方便 DevTools 手验）。 */
   .stamp-in {
     display: inline-block;
   }
@@ -1082,7 +1082,7 @@
 
   /* ══ 跳闸 ══════════════════════════════════════════════════════
    * 请求失败的一次性反馈（配套 useBreakerTrip）：面板顶边压一条 hazard 细带，
-   * 从右往左"合闸"，同时整块边框闪一次 err 色。
+   * 从右往左"合闸"。
    *
    * 为什么不是 shake：抖动是通用语汇，任何网站都能用；这条机器上"出事"的动作
    * 是断路器跳闸 —— 一条斜纹带盖下来，边界还在，只是被标出来了。
@@ -1090,7 +1090,12 @@
    * 只动 transform/opacity：斜纹带是一个独立伪元素，scaleX 从 0 到 1 是合成属性。
    * **不占用 ::after**：.login-card 已经用掉它了；这里统一用 ::before，
    * 并要求宿主自己不是 .gauge（.gauge::before 也被占了）。
-   * 宿主必须有 position: relative（.panel / .login-card 本来就有）。 */
+   * 宿主必须有 position: relative（.panel / .login-card 本来就有）。
+   *
+   * 用 animation 而不是 transition：transition 在"摘掉类"时还会原路慢慢退回去，
+   * 而跳闸是**一次性**的 —— 盖上来、停一拍、直接消失。animation 只负责进场，
+   * 退场交给类被摘掉（瞬时），这正是要的。
+   */
   .trip::before {
     position: absolute;
     top: 0;
@@ -1111,11 +1116,18 @@
   }
 
   .trip--on::before {
-    opacity: 1;
-    transform: scaleX(1);
-    transition:
-      transform var(--motion-dur-base) var(--motion-ease-out),
-      opacity var(--motion-dur-fast) linear;
+    animation: trip-band var(--motion-dur-base) var(--motion-ease-out) forwards;
+  }
+
+  @keyframes trip-band {
+    from {
+      opacity: 0;
+      transform: scaleX(0);
+    }
+    to {
+      opacity: 1;
+      transform: scaleX(1);
+    }
   }
 
   /* ══ 点阵走纸 ═══════════════════════════════════════════════════
@@ -1227,7 +1239,7 @@
   /* ══ 开机自检（登录成功）════════════════════════════════════════
    * 整站唯一一次"上电"的报告屏（components/BootSequence.vue）。
    * 样式放在这里而不是组件里，是因为全站组件都不带 <style>：视觉规则集中在
-   * base.css / tokens.css，组件只负责结构。颜色仍然全部读令牌，深浅两套自动跟随。
+   * base.css / tokens.css，组件只负责结构。颜色仍然全部读令牌。
    *
    * 层级：90 —— 在布局 chrome(20) 之上、换场覆盖层(100) 之下。
    * 这是刻意的：自检退场之后紧接着就是那次外壳换场，两段动作接力而不是叠着。
@@ -1247,7 +1259,10 @@
     width: 100%;
     height: 100%;
     padding: 24px;
-    color: #fff;
+    /* 这一层脚下永远是暗面板（--veil-mat），所以文字走与换场读数同一组令牌：
+       前面的标签用 --veil-ink-code（青色，暗底上 10:1），
+       值用 --primary（荧光黄）—— 不写 #fff 字面量，那样改配色时它会脱队。 */
+    color: var(--primary);
   }
 
   /* 网格与换场面板同尺度（48px）：这一层是"同一台机器的另一块屏"。
@@ -1291,21 +1306,24 @@
 
   /* 四行固定高度：打字的行在变长，行高不能跟着变 ——
      否则整个自检块会在打字过程中一行一行往下沉，读起来像在抖。 */
+  /* 未完成的行用 --veil-ink-code（青色，暗底上 10:1）而不是 --veil-hairline：
+     后者是 14% 白，压在 --veil-mat 上只有约 1.4:1 —— 它本来只是**发丝线**的墨色，
+     拿它当正文等于让自检读数不可读。 */
   .post__line {
     display: flex;
     align-items: baseline;
     gap: 8px;
     height: 32px;
-    color: var(--veil-hairline);
+    color: var(--veil-ink-code);
   }
 
   .post__line--ok .post__value {
-    color: var(--accent-text);
+    color: var(--primary);
   }
 
   .post__label {
     flex: none;
-    color: var(--veil-hairline);
+    color: var(--veil-ink-code);
   }
 
   .post__dots {
@@ -1520,55 +1538,26 @@
   }
 
   /* ══ 出票（取件核销）════════════════════════════════════════════
-   * 核销成功的那一下，从取件弹窗里"吐"出一张票根：顶端一条锯齿撕线，
+   * 核销成功的那一下，从取件弹窗里"吐"出一张票根：顶端一条撕线，
    * 下面一行编号读数 + 取件码 + 一句结论。
    *
-   * 锯齿用 clip-path —— 按第 3 节，它只用在**不载文字的装饰件**上，
-   * 所以锯齿单独一层（.ticket-stub__teeth），内容在它的下一层，不被裁。
-   * 也不能给它 border：clip-path 会裁掉描边（第 3 节第 1 条），
-   * 撕线的"齿"靠两个伪元素错位画出来，不靠 border。
+   * 撕线用**虚线**而不是锯齿 clip-path。两个理由：
+   * 1. 锯齿只能在固定宽度下按百分比摆齿，卡片一窄齿就挤成噪点、一宽就拉稀；
+   *    虚线跟着宽度自然重复，任何宽度都是同一条线。
+   * 2. clip-path 会裁掉描边、并把被裁区域的指针事件一起吃掉（第 3 节）——
+   *    为一条装饰线付这个代价不值。
+   * 真实票据的撕口本来也是一条打孔虚线，不是三角齿。
    *
-   * 吐出的方向是**从下往上**（translateY 100% → 0），像打印机把纸顶出来；
-   * 落定后印章才盖（stamp-in 的 delay）。减少动效下整块直接出现，不吐不盖。 */
+   * 吐出的方向是**从下往上**（translateY → 0），像打印机把纸顶出来；
+   * 减少动效下整块直接出现，不吐。 */
   .ticket-stub {
     position: relative;
     overflow: hidden;
   }
 
   .ticket-stub__teeth {
-    position: relative;
-    height: 8px;
-    /* 齿距 10px：齿 5px、缝 5px。齿形是朝下的三角，铺在纸的顶边。 */
-    background-image: linear-gradient(135deg, var(--muted) 25%, transparent 25%),
-      linear-gradient(225deg, var(--muted) 25%, transparent 25%);
-    background-position: 0 0, 5px 0;
-    background-size: 10px 8px;
-    background-repeat: repeat-x;
-    clip-path: polygon(
-      0 0,
-      100% 0,
-      100% 40%,
-      95% 100%,
-      90% 40%,
-      85% 100%,
-      80% 40%,
-      75% 100%,
-      70% 40%,
-      65% 100%,
-      60% 40%,
-      55% 100%,
-      50% 40%,
-      45% 100%,
-      40% 40%,
-      35% 100%,
-      30% 40%,
-      25% 100%,
-      20% 40%,
-      15% 100%,
-      10% 40%,
-      5% 100%,
-      0 40%
-    );
+    height: 0;
+    border-top: 1px dashed var(--text-quaternary);
   }
 
   .ticket-stub__body {
@@ -1615,7 +1604,7 @@
     left: 22px;
     height: 2px;
     /* 卡顶那条 2px 双色亮线是「线」，走 --accent-text：卡面在浅色下接近纯白，
-       荧光黄铺上去只有 1.11:1，会整条消失。深色下 --accent-text 就等于 --primary。 */
+       荧光黄铺上去只有 1.11:1，会整条消失。 */
     background: linear-gradient(90deg, transparent, var(--accent-text), var(--secondary), transparent);
     content: '';
     opacity: 0.85;
@@ -1826,8 +1815,8 @@
    * 它挂在黑层自己**朝行进方向的那条边**上、跟着一起走，所以重绘面积只有那条窄边
    * （全屏的百分之几），而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘。
    *
-   * 亮度走 --scan-line（浅色主题取 --status-printing，深色是 #67e8f9），
-   * 它在暗面板上是看得见的；光晕用不跟随主题的 --veil-accent-tint。 */
+   * 亮度走 --scan-line（取 --status-printing），它在暗面板上是看得见的；
+   * 光晕用 --veil-accent-tint —— 面板恒暗，所以这一支也固定是暗底上的黄。 */
   .route-veil__wipe::before {
     position: absolute;
     top: 0;
@@ -1926,7 +1915,7 @@
 
   /* 英文引导行。它读起来要是一块"标签"而不是一个词，所以字距拉到 .34em；
      字距会在最后一个字后面留一份空白、整行看着偏左，补等量负边距拉回中线。
-     颜色走 --veil-ink-code 而不是 --secondary：面板在两个主题下都是暗底，
+     颜色走 --veil-ink-code 而不是 --secondary：面板恒为暗底，
      浅色的 --secondary 铺上去只有约 3.85:1，小字不达 WCAG AA。见 tokens.css。 */
   .route-veil__hud-lead {
     font-family: var(--stack-mono);
@@ -1955,7 +1944,7 @@
     letter-spacing: 0.12em;
     margin-right: -0.12em;
     /* 读数是打在暗面板上的「场记板」，用 --primary（荧光黄）而不是 --accent-text：
-       后者在浅色主题是深黄 #756a00，铺到暗面板上读不出来。 */
+       后者是深黄 #756a00，铺到暗面板上读不出来。 */
     color: var(--primary);
   }
 
@@ -2381,7 +2370,7 @@
  *
  * 这一段必须留在 @layer 外面并加 !important：Naive 的样式是运行时插进 <head> 的
  * **无层级** 规则，无层级一律赢过分层样式、与特异度无关 —— 和第 4 行那条注释是同一个坑。
- * 颜色沿用 Naive 自己挂在元素上的 --n-color-*，深浅主题都不用另外适配。 */
+ * 颜色沿用 Naive 自己挂在元素上的 --n-color-*，不需要另外适配。 */
 .n-skeleton {
   position: relative;
   overflow: hidden;
@@ -2752,7 +2741,7 @@
  *
  * 2. **按下去要有回应。** Tailwind 的 preflight 已经把 -webkit-tap-highlight-color
  *    设成透明，于是触摸下按下没有任何反馈：点击要么立刻生效（导航），要么要等一次往返
- *    （提交），中间那段是空的。这里补一层随主题走的按压底色（--muted 的同族），
+ *    （提交），中间那段是空的。这里补一层按压底色（--muted 的同族），
  *    不改尺寸也不加动画 —— 手指覆盖的本来就是那块地方。
  *
  * 3. **touch-action: manipulation。** 去掉双击缩放的判定窗口：连点两颗开关，

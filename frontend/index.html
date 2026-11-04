@@ -3,8 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <!-- color-scheme 由下面那段首屏脚本按存下的主题写，这里不写死：
-         它决定浏览器自带控件（滚动条、表单）跟哪一套走。 -->
+    <!-- 界面锁定亮色（2026-09-21 的产品决定）：声明成 light，浏览器自带的控件
+         （滚动条、表单、日期选择器）才跟着亮 —— 否则系统是暗色时它们会自己变暗，
+         在一片浅色里格外突兀。这里不再有首屏主题脚本：没有可切换的主题，
+         也就没有"先落 class 再防闪"这回事。 -->
+    <meta name="color-scheme" content="light" />
     <!-- 地址栏/状态栏的颜色跟着**开屏层**走（那一层是刻意的恒暗设计），
          不是跟主题走 —— 开屏结束时它已经被浏览器取过一次了。 -->
     <meta name="theme-color" content="#050505" />
@@ -12,22 +15,6 @@
          少了这一行，每次整页加载都会留下一条 404（被打成 WARNING 记进访问日志）。 -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>猫娘打印服务</title>
-    <script>
-      // 首屏防闪：这一段必须在 CSS 之前跑。
-      // 它读的是 localStorage 的 pod-theme（与 stores/theme.ts 用的同一个键），
-      // 有 dark 就先把 class 落上 —— 等应用挂载再落的话，暗色用户会先看到
-      // 一整屏浅色再翻黑，那一次全屏亮度反转比没有暗色更难接受。
-      // **不跟随系统**：整套界面是同一间屋子里的一块屏，明暗不该随各自的夜间模式分家。
-      try {
-        var saved = localStorage.getItem('pod-theme')
-        if (saved === 'dark') {
-          document.documentElement.classList.add('dark')
-          document.documentElement.style.colorScheme = 'dark'
-        } else {
-          document.documentElement.style.colorScheme = 'light'
-        }
-      } catch (e) {}
-    </script>
 
     <!-- ══ 开屏层 ══════════════════════════════════════════════════════════════
          整站启动时盖住屏幕的那一块：把首屏盖住、把启动进度读出来，最后像换场那样

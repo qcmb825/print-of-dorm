@@ -85,7 +85,6 @@ const shellLabel = computed(() => {
 
 <template>
   <NConfigProvider
-    :theme="theme.naiveTheme"
     :theme-overrides="theme.naiveOverrides"
     :locale="zhCN"
     :date-locale="dateZhCN"

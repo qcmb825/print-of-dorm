@@ -55,6 +55,7 @@ import { authApi, printOptionsApi } from '@/api/endpoints'
 import { OTHER_CONTACT_LABELS } from '@/api/types'
 import type { MeOverviewResponse, OtherContactType, UserPrefs } from '@/api/types'
 import { confirmAction, notify } from '@/composables/feedback'
+import { useBreakerTrip } from '@/composables/motion'
 import { useAuthStore } from '@/stores/auth'
 import { formatBytes, priceLabel, shortTime } from '@/utils/format'
 import {
@@ -78,6 +79,12 @@ const loading = ref(true)
 const savingProfile = ref(false)
 const savingPassword = ref(false)
 const loggingOut = ref(false)
+/** 保存失败的跳闸反馈：资料保存与偏好保存各挂一次（见 base.css 的 .trip）。
+ *  读取出错不跳 —— 那一屏本来就空着，没有"这块面板刚刚出了事"可言。 */
+const { tripped: profileTripped, trip: tripProfile } = useBreakerTrip()
+const { tripped: prefsTripped, trip: tripPrefs } = useBreakerTrip()
+const profilePanel = ref<HTMLElement | null>(null)
+const prefsPanel = ref<HTMLElement | null>(null)
 
 const account = computed(() => overview.value?.account)
 const orders = computed(() => overview.value?.orders)
@@ -255,6 +262,7 @@ async function saveProfile(): Promise<void> {
     }
     notify.success('资料已更新')
   } catch (error) {
+    tripProfile(profilePanel.value)
     notify.error(error instanceof ApiError ? error.message : '资料未写入 · 稍后重试')
   } finally {
     savingProfile.value = false
@@ -410,6 +418,7 @@ async function savePrefs(): Promise<void> {
     prefsLines.value = response.lines
     notify.success('偏好已保存')
   } catch (error) {
+    tripPrefs(prefsPanel.value)
     notify.error(error instanceof ApiError ? error.message : '偏好未写入 · 稍后重试')
   } finally {
     savingPrefs.value = false
@@ -671,7 +680,11 @@ onMounted(() => {
       </section>
 
       <!-- 账号资料 -->
-      <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
+      <section
+        ref="profilePanel"
+        class="panel panel-raised relative mb-3 p-3.5 sm:p-4"
+        :class="profileTripped && 'trip trip--on'"
+      >
         <h2 class="mb-3 flex items-center gap-1.5 font-heading text-base font-bold">
           <UserCog :size="15"  />
           账号资料
@@ -826,7 +839,11 @@ onMounted(() => {
       <!-- 通知与偏好。放在「取件提醒」后面是有意的顺序：上一块讲「信怎么发」，
            这一块讲「要不要发、什么时候发、列表给我看什么」——
            两个问题挨着，人才不会以为上一块那些设置改不了。 -->
-      <section class="panel panel-raised mb-3 p-3.5 sm:p-4">
+      <section
+        ref="prefsPanel"
+        class="panel panel-raised relative mb-3 p-3.5 sm:p-4"
+        :class="prefsTripped && 'trip trip--on'"
+      >
         <h2 class="mb-1 flex items-center gap-1.5 font-heading text-base font-bold">
           <BellRing :size="15" />
           通知与偏好

@@ -55,24 +55,28 @@ const current = ref(0)
 const finished = ref(false)
 
 let timers: ReturnType<typeof setTimeout>[] = []
+/** 收尾之后那一拍的交棒定时器（与 timers 分开，理由见 finish()）。 */
+let handoff: ReturnType<typeof setTimeout> | undefined
 
 function clearTimers(): void {
   for (const timer of timers) clearTimeout(timer)
   timers = []
 }
 
-/** 收尾只做一次。done 是幂等的闸门 —— 看门狗和正常路径可能同时到。 */
+/** 收尾只做一次。finished 是幂等的闸门 —— 看门狗和正常路径可能同时到。 */
 function finish(): void {
   if (finished.value) return
   finished.value = true
   clearTimers()
   // 让最后一帧（AUTH ACCEPTED 亮起）被看见，再交棒。
-  timers.push(
-    setTimeout(() => {
-      visible.value = false
-      emit('done')
-    }, 220),
-  )
+  // 这个 timer **不进 timers 数组**：它属于"已经收尾之后"的那一拍，
+  // 而 clearTimers() 是给"中途取消"用的 —— 放进数组会被卸载一起清掉，
+  // done 就永远不发、调用方的 Promise 悬住。
+  handoff = setTimeout(() => {
+    handoff = undefined
+    visible.value = false
+    emit('done')
+  }, 220)
 }
 
 /** 逐字打一行。**链式 setTimeout** 而不是 setInterval：页面被挂起时不积压回调，
@@ -126,7 +130,17 @@ onMounted(() => {
   timers.push(setTimeout(finish, HARD_LIMIT_MS))
 })
 
-onBeforeUnmount(clearTimers)
+onBeforeUnmount(() => {
+  clearTimers()
+  // 已经收尾、还没交棒就卸载了：当场兑现，别让调用方的 Promise 悬住。
+  // （这不是理论情况：登录后如果用户在这 220ms 里按了浏览器后退，
+  //   LoginView 会被换掉，组件随之卸载。）
+  if (handoff !== undefined) {
+    clearTimeout(handoff)
+    handoff = undefined
+    emit('done')
+  }
+})
 </script>
 
 <template>

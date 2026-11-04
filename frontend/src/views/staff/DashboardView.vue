@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 数据看板：聚合统计 + 四张图。
- *  图表配色全部从主题令牌推导（canvas 用不了 CSS 变量，所以取的是 hex），
- *  因此切换明暗主题时图表跟着换，不需要重画两套。 */
+ *  图表配色全部从令牌推导（canvas 用不了 CSS 变量，所以取的是 hex）：
+ *  改 tokens.css 的配色，图表跟着走，不需要在两处各改一遍。 */
 import { computed, onMounted, ref } from 'vue'
 import {
   CheckCircle2,
@@ -39,14 +39,14 @@ const palette = computed<ChartPalette>(() => {
     /* 图表序列色属于「线」：它画在图表自己的底上，浅色下是白/近白，
        荧光黄 #fffa00 铺上去只有 1.11:1 会整条消失。走 --accent-text。
        注意 options.ts 会在这串色值后面拼十六进制 alpha（如 `${p.primary}59`），
-       所以它必须是 6 位 hex —— --accent-text 在两套主题下都是字面 hex，成立。 */
+       所以它必须是 6 位 hex —— --accent-text 本来就是字面 hex，成立。 */
     primary: t.accentText,
     secondary: t.secondary,
     ok: t.ok,
     err: t.err,
     warn: t.warn,
     info: t.info,
-    // 提示框要实心，半透明的 --card 在深色下几乎全透
+    // 提示框要实心：半透明的 --card 会让下层内容透上来
     surface: t.surfaceOverlay,
   }
 })

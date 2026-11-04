@@ -7,7 +7,7 @@
  *  只有两类例外，都留在这里算：hover/pressed 这类**派生色**（在 color.ts 里混合），
  *  以及纯 alpha 的**阴影**（不属于令牌体系，深浅两套写在本文件内）。
  */
-import { darkTheme, type GlobalTheme, type GlobalThemeOverrides } from 'naive-ui'
+import type { GlobalThemeOverrides } from 'naive-ui'
 import { derive } from './color'
 
 export interface Tokens {
@@ -108,11 +108,11 @@ export function readTokens(): Tokens {
 /** 卡片是半透明的，浮层必须是不透明的，否则底下内容会透上来。
  *  具体值来自 --surface-overlay 令牌（tokens.css 里深浅各一套）。 */
 
-export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides {
-  const p = derive(t.primary, isDark)
+export function buildOverrides(t: Tokens): GlobalThemeOverrides {
+  const p = derive(t.primary)
   /* 「线」用途的派生色。强调色的描边/细线一律走 --accent-text，不走 primary —— 理由见
    * Tokens.accentText 的注释。 */
-  const at = derive(t.accentText, isDark)
+  const at = derive(t.accentText)
   const panel = t.surfaceOverlay
   const brandFont = '17px'
   /* 聚焦光晕。原先是写死的 #d4a01726 / #ffd00026，等于把 primary 的 hex 抄了一份 ——
@@ -129,21 +129,21 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       primaryColorPressed: p.pressed,
       primaryColorSuppl: p.suppl,
       infoColor: t.info,
-      infoColorHover: derive(t.info, isDark).hover,
-      infoColorPressed: derive(t.info, isDark).pressed,
-      infoColorSuppl: derive(t.info, isDark).suppl,
+      infoColorHover: derive(t.info).hover,
+      infoColorPressed: derive(t.info).pressed,
+      infoColorSuppl: derive(t.info).suppl,
       successColor: t.ok,
-      successColorHover: derive(t.ok, isDark).hover,
-      successColorPressed: derive(t.ok, isDark).pressed,
-      successColorSuppl: derive(t.ok, isDark).suppl,
+      successColorHover: derive(t.ok).hover,
+      successColorPressed: derive(t.ok).pressed,
+      successColorSuppl: derive(t.ok).suppl,
       warningColor: t.warn,
-      warningColorHover: derive(t.warn, isDark).hover,
-      warningColorPressed: derive(t.warn, isDark).pressed,
-      warningColorSuppl: derive(t.warn, isDark).suppl,
+      warningColorHover: derive(t.warn).hover,
+      warningColorPressed: derive(t.warn).pressed,
+      warningColorSuppl: derive(t.warn).suppl,
       errorColor: t.err,
-      errorColorHover: derive(t.err, isDark).hover,
-      errorColorPressed: derive(t.err, isDark).pressed,
-      errorColorSuppl: derive(t.err, isDark).suppl,
+      errorColorHover: derive(t.err).hover,
+      errorColorPressed: derive(t.err).pressed,
+      errorColorSuppl: derive(t.err).suppl,
 
       textColorBase: t.foreground,
       textColor1: t.textPrimary,
@@ -165,8 +165,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       popoverColor: panel,
       tableColor: 'transparent',
       tableHeaderColor: t.surfaceTableHead,
-      tableColorHover: isDark ? '#ffffff0f' : '#00000005',
-      tableColorStriped: isDark ? '#ffffff05' : '#00000002',
+      tableColorHover: '#00000005',
+      tableColorStriped: '#00000002',
       inputColor: t.surfaceInput,
       inputColorDisabled: t.muted,
       actionColor: t.muted,
@@ -174,8 +174,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       avatarColor: t.muted,
       progressRailColor: t.muted,
       railColor: t.muted,
-      scrollbarColor: isDark ? '#ffffff26' : '#00000026',
-      scrollbarColorHover: isDark ? '#ffffff40' : '#00000040',
+      scrollbarColor: '#00000026',
+      scrollbarColorHover: '#00000040',
       dividerColor: t.border,
       borderColor: t.border,
       closeIconColor: t.textTertiary,
@@ -275,8 +275,8 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       thColor: t.surfaceTableHead,
       thTextColor: t.textTertiary,
       thFontWeight: '700',
-      tdColorHover: isDark ? '#ffffff0d' : '#00000005',
-      tdColorStriped: isDark ? '#ffffff05' : '#00000002',
+      tdColorHover: '#00000005',
+      tdColorStriped: '#00000002',
       thPaddingMedium: '10px 14px',
       tdPaddingMedium: '12px 14px',
       fontSizeMedium: '13px',
@@ -388,8 +388,4 @@ export function buildOverrides(t: Tokens, isDark: boolean): GlobalThemeOverrides
       textColor: t.textTertiary,
     },
   }
-}
-
-export function naiveThemeFor(isDark: boolean): GlobalTheme | null {
-  return isDark ? darkTheme : null
 }

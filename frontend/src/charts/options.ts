@@ -1,5 +1,5 @@
 /** 看板图表的 option 构造函数。放在组件外，纯函数，方便单测和复用。
- *  每张图都接收调色板，因此天然跟随明暗主题。 */
+ *  每张图都接收调色板，因此配色只由那一处决定。 */
 import type { EChartsOption } from 'echarts'
 import { baseOption, type ChartPalette } from './setup'
 

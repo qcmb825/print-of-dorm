@@ -57,8 +57,7 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       <span class="route-veil__hud">
         <span class="route-veil__read">
           <span class="hazard route-veil__hazard" />
-          <!-- 引导词默认是换场用的，也可以由 target 自带（主题切换这类非路由事件）。 -->
-          <span class="route-veil__hud-lead">{{ target.lead ?? 'REDIRECTING TO:' }}</span>
+          <span class="route-veil__hud-lead">REDIRECTING TO:</span>
           <span class="route-veil__hud-line">
             <span class="route-veil__hud-title">{{ target.title }}</span>
             <span v-if="target.code" class="route-veil__hud-code">{{ target.code }}</span>

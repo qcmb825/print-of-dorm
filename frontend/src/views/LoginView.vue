@@ -48,6 +48,8 @@ const route = useRoute()
 const message = useMessage()
 /** 请求失败的跳闸反馈（见 base.css 的 .trip）。 */
 const { tripped: breakerTripped, trip: tripBreaker } = useBreakerTrip()
+/** 登录卡本体：跳闸的边框闪要打在它身上（见 useBreakerTrip 的 host 参数）。 */
+const loginCard = ref<HTMLElement | null>(null)
 
 /** 开机自检：登录成功后、跳转前演一场。
  *
@@ -70,8 +72,10 @@ function runBootSequence(target: string): Promise<void> {
   bootActive.value = true
   return new Promise((resolve) => {
     bootDone = () => {
-      bootActive.value = false
+      // 先解引用再改状态：bootActive=false 会触发组件卸载，
+      // 而卸载路径里还会再 emit 一次 done —— 顺序反了就是一次重入。
       bootDone = null
+      bootActive.value = false
       resolve()
     }
   })
@@ -326,7 +330,7 @@ async function submitLogin(): Promise<void> {
   } catch (error) {
     // 跳闸只给**服务端拒绝**这一种失败（凭据错、服务没起来）。
     // 前端校验失败不跳：那不是"机器坏了"，是"东西没填对"，字段下方的红字已经说清。
-    tripBreaker()
+    tripBreaker(loginCard.value)
     message.error(error instanceof ApiError ? error.message : '登录未完成 · 稍后重试')
   } finally {
     submitting.value = false
@@ -543,7 +547,13 @@ onMounted(async () => {
            配色分工（全站唯一一处）：这里让青色主导（仪器/核验语汇），
            黄色只留给**动作**（登录按钮、强调数）。进到业务区仍然只有一种强调色，
            所以这条分工不会渗出去。 -->
-      <div class="panel login-card" :class="breakerTripped && 'trip trip--on'" data-parallax style="--depth: 10px">
+      <div
+        ref="loginCard"
+        class="panel login-card"
+        :class="breakerTripped && 'trip trip--on'"
+        data-parallax
+        style="--depth: 10px"
+      >
         <div
           class="flex items-center justify-between gap-3 border-b px-5 py-2"
           style="border-color: var(--border)"

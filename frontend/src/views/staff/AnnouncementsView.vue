@@ -51,23 +51,19 @@ const previewFont = computed(() => ({
   fontSize: `${form.font_size}px`,
 }))
 
-/** 预览要同时给出深浅两套。
- *  正文颜色是管理员选的、纸面颜色跟主题走，只预览当前主题的话，落在另一套主题上
- *  被对比度兜底换掉的颜色就成了「惊喜」—— 所见即所得才算数。 */
-const previews = computed(() =>
-  (['light', 'dark'] as const).map((key) => {
-    const tokens = readPaperTokens()[key]
-    const overridden = needsInkFallback(tokens.paper, form.font_color, form.font_size)
-    return {
-      key,
-      label: key === 'dark' ? '深色主题' : '浅色主题',
-      paper: tokens.paper,
-      line: tokens.line,
-      ink: overridden ? tokens.ink : form.font_color,
-      overridden,
-    }
-  }),
-)
+/** 预览就一张：界面锁定亮色，纸面只有一套。
+ *  曾经渲染深浅两张 —— 那是暗色还在时为了「落在另一套主题上被兜底换掉的颜色
+ *  不能成惊喜」；暗色废弃后第二张永远是第一张的副本。 */
+const preview = computed(() => {
+  const tokens = readPaperTokens()
+  const overridden = needsInkFallback(tokens.paper, form.font_color, form.font_size)
+  return {
+    paper: tokens.paper,
+    line: tokens.line,
+    ink: overridden ? tokens.ink : form.font_color,
+    overridden,
+  }
+})
 
 const canSubmit = computed(() => form.content.trim().length > 0 && !saving.value)
 
@@ -255,27 +251,24 @@ onMounted(() => {
           <NColorPicker v-model:value="form.font_color" :show-alpha="false" :modes="['hex']" />
         </NFormItem>
 
-        <!-- 实时预览：深浅两套都给出，与顶部公告条共用同一套字体映射和同一道对比度判定 -->
+        <!-- 实时预览：与顶部公告条共用同一套字体映射和同一道对比度判定 -->
         <div class="mb-3">
           <div class="tech-label mb-1.5 flex items-center gap-1.5 text-ink-3 tech-label--cn text-xs">
             <Eye :size="12" />
             预览
           </div>
-          <div class="grid gap-2 sm:grid-cols-2">
-            <div v-for="item in previews" :key="item.key">
-              <div class="tech-label mb-1 text-ink-3 tech-label--cn text-xs">{{ item.label }}</div>
-              <div
-                class="border p-3"
-                :style="{ backgroundColor: item.paper, borderColor: item.line }"
-              >
-                <p class="whitespace-pre-wrap break-words" :style="[previewFont, { color: item.ink }]">
-                  {{ form.content.trim() || '公告内容将在此预览' }}
-                </p>
-              </div>
-              <p v-if="item.overridden" class="mt-1 text-xs text-ink-3">
-                对比度不足 · 已回退至主题文字色
+          <div>
+            <div
+              class="border p-3"
+              :style="{ backgroundColor: preview.paper, borderColor: preview.line }"
+            >
+              <p class="whitespace-pre-wrap break-words" :style="[previewFont, { color: preview.ink }]">
+                {{ form.content.trim() || '公告内容将在此预览' }}
               </p>
             </div>
+            <p v-if="preview.overridden" class="mt-1 text-xs text-ink-3">
+              对比度不足 · 已回退至主题文字色
+            </p>
           </div>
         </div>
 

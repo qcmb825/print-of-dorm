@@ -114,25 +114,20 @@ const toCss = (c) =>
  * ------------------------------------------------------------------ */
 
 /**
- * @param decls    当前主题的声明
- * @param fallback 另一主题的声明。tokens.css 里有少数令牌（--veil-grid /
- *                 --veil-hairline / --veil-accent-tint）刻意只在浅色块声明一次、
- *                 两主题共用，因为它们脚下永远是暗面板。这里允许回落到另一主题，
- *                 但会把回落过的名字记进 shared，最后提示出来 ——
- *                 「缺失就悄悄用对面的值」正是本项目最怕的那类静默错位。
+ * @param decls 令牌声明（亮色，唯一一套）
+ *
+ * 曾经还有第二个参数 `fallback`：暗色块里没重声明的令牌回落到浅色，并把回落过的
+ * 名字记进 shared 最后提示出来。暗色块删掉之后没有"对面的值"可回落 ——
+ * **缺一个令牌就该报错**，这才是想要的行为（静默回落正是本项目最怕的那类错位）。
  */
-function makeResolver(decls, fallback, shared) {
+function makeResolver(decls) {
   const cache = new Map()
 
   function resolve(name, seen = new Set()) {
     if (cache.has(name)) return cache.get(name)
     if (seen.has(name)) throw new Error(`令牌自引用：--${name}`)
     seen.add(name)
-    let raw = decls.get(name)
-    if (raw === undefined && fallback) {
-      raw = fallback.get(name)
-      if (raw !== undefined) shared.add(name)
-    }
+    const raw = decls.get(name)
     if (raw === undefined) return null
     const val = resolveValue(raw, seen)
     cache.set(name, val)
@@ -273,6 +268,7 @@ const CHECKS = [
   // —— 换场覆盖层（脚下永远是暗面板，所以按暗底检查）——
   ['veil-ink-code', 'veil-mat', 4.5, 'must', '中心读数里的英文引导行与页名代号'],
   ['primary', 'veil-mat', 4.5, 'must', '中心读数的页名与三角阵列（这里刻意用 primary 而非 accent-text）'],
+  ['primary', 'veil-mat', 4.5, 'must', '开机自检里打完的读数（AUTH ACCEPTED），也是暗面板上的强调文字'],
   [
     'veil-accent-tint',
     'veil-mat',
@@ -305,20 +301,18 @@ const CHECKS = [
  * ------------------------------------------------------------------ */
 
 /* 行尾先归一化成 LF：仓库里有 .gitattributes，不同机器取出来的可能是 CRLF，
- * 而下面按 `:root,\n.light` 这种带换行的字符串找块，用 CRLF 会一个都找不到。 */
+ * 按带换行的字符串找块时，CRLF 会一个都找不到。 */
 const css = stripComments(readFileSync(TOKENS_PATH, 'utf8')).replace(/\r\n?/g, '\n')
-const lightDecls = parseDeclarations(readBlock(css, ':root,\n.light'))
-const darkDecls = parseDeclarations(readBlock(css, '\n.dark'))
+/* 界面锁定亮色（2026-09-21 的产品决定），tokens.css 里只有一套令牌。
+ * 这里曾经跑浅/深两遍 pass —— 暗色令牌删掉之后，深色那一遍只会拿浅色值
+ * 自证一遍，那种"通过"是假的，所以整段一起删掉。 */
+const lightDecls = parseDeclarations(readBlock(css, ':root'))
 
-const sharedAcrossThemes = new Set()
 let failures = 0
 const rows = []
 
-for (const [themeName, decls, fallback] of [
-  ['light', lightDecls, darkDecls],
-  ['dark', darkDecls, lightDecls],
-]) {
-  const resolve = makeResolver(decls, fallback, sharedAcrossThemes)
+for (const [themeName, decls] of [['light', lightDecls]]) {
+  const resolve = makeResolver(decls)
   const page = resolve('background')
 
   /** 解析背景；带 alpha 的先合成到页底。 */
@@ -396,14 +390,8 @@ const mustRows = rows.filter((r) => r.level === 'must')
 const knownGroups = rows.filter((r) => r.level === 'known' && r.ok === false).length
 console.log(
   `\n汇总：must ${mustRows.length} 条，通过 ${mustRows.filter((r) => r.ok).length} 条；` +
-    `已登记例外 ${knownGroups} 条（深浅各算一次）。`,
+    `已登记例外 ${knownGroups} 条。`,
 )
-if (sharedAcrossThemes.size) {
-  console.log(
-    `\n跨主题共用（只在浅色块声明、深色回落到它）：${[...sharedAcrossThemes].sort().join(', ')}`,
-  )
-  console.log('  这几支脚下永远是暗面板，所以刻意不跟随主题 —— 是本文件的既定写法，不是漏写。')
-}
 
 if (failures > 0) {
   console.error(`\n出现 ${failures} 条未达标且未登记的检查，需要修。`)
