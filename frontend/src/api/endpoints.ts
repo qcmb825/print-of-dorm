@@ -27,6 +27,10 @@ import type {
   OrderListResponse,
   OrderStatus,
   OtherContactType,
+  PrinterInput,
+  PrinterListResponse,
+  PrinterProbeResponse,
+  PrinterStatusListResponse,
   PaperTypeListResponse,
   PickupLookupResponse,
   PreparedOrderRequest,
@@ -338,6 +342,21 @@ export const staffOrderApi = {
    *  首次计费会顺带把单从「待计费」推到「待打印」（后端一个原子 UPDATE 完成）。 */
   price: (id: number, price: string) =>
     post<{ code: number; msg: string; price: number }>(`/api/order/${id}/price`, { price }),
+  /** 下发打印机。printerId 是**每单手选**的目标（发往哪台）；params 是逐份的
+   *  参数覆盖（黑白/彩色、单/双面，整行显式发送——后端把这份记进 print_jobs，
+   *  偏离订单参数的部分写进时间线）。文件排进该台的后台串行队列，真正送达由
+   *  轮询看到的「打印中」状态表达；这里的 202 只说明「已交给这台的打印队列」。
+   *  已成功下发过的单，后端要求 force=1 才收（防多印，换台也一样）——
+   *  前端在 409 + confirm 的回应上把话问清楚再带 force 重发。 */
+  print: (id: number, printerId: number, force = false,
+          params?: { file_id: number; color_type: 'black' | 'color'; duplex: 'single' | 'double' }[]) =>
+    post<{ code: number; msg: string }>(`/api/order/${id}/print`, {
+      printer_id: printerId,
+      ...(force ? { force: 1 } : {}),
+      ...(params ? { params } : {}),
+    }),
+  /** 启用中的打印机逐台实时状态（下发确认框的选择器与设备徽标共用这一份）。 */
+  printerStatus: () => get<PrinterStatusListResponse>('/api/admin/printers/status'),
   /** 下载订单文件。sizeBytes 用于计算超时：大文件在慢链路上 30 秒会被掐断。
    *  fileId 是**这一单里的哪一份**（一单多文件时必传；不传就是第一份 ——
    *  那是老链接的兼容口径，新的界面一律带着 fileId 下）。 */
@@ -488,6 +507,22 @@ export const staffPrintOptionsApi = {
   setPaperActive: (id: number, active: boolean) =>
     put<{ code: number; msg: string }>(`/api/admin/paper-types/${id}/active`, { active }),
   removePaper: (id: number) => del<{ code: number; msg: string }>(`/api/admin/paper-types/${id}`),
+}
+
+/** 打印机管理（数据库实体，有两台就配两台）。
+ *  增删改启停的形状与上面的预设/纸张五件套完全同款；probe 是表单的
+ *  「探测」按钮——给主机地址，回协议/端口/队列路径/型号供回填。 */
+export const printersApi = {
+  list: () => get<PrinterListResponse>('/api/admin/printers'),
+  create: (payload: PrinterInput) =>
+    post<{ code: number; msg: string; id: number }>('/api/admin/printers', payload),
+  update: (id: number, payload: PrinterInput) =>
+    put<{ code: number; msg: string }>(`/api/admin/printers/${id}`, payload),
+  setActive: (id: number, active: boolean) =>
+    put<{ code: number; msg: string }>(`/api/admin/printers/${id}/active`, { active }),
+  remove: (id: number) => del<{ code: number; msg: string }>(`/api/admin/printers/${id}`),
+  probe: (host: string) =>
+    post<PrinterProbeResponse>('/api/admin/printers/probe', { host }),
 }
 
 /* 价目表（管理端）。

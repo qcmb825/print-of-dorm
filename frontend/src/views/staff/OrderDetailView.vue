@@ -12,7 +12,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Download, FileWarning, RefreshCw } from '@lucide/vue'
+import { ArrowLeft, Download, FileWarning, Printer, RefreshCw } from '@lucide/vue'
 import { NAlert, NButton, NSkeleton, NTimeline, NTimelineItem, useMessage } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { staffOrderApi } from '@/api/endpoints'
@@ -23,9 +23,11 @@ import {
   type OrderDetailFile,
   type OrderLog,
   type OrderSource,
+  type PrinterStatus,
 } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PrintDispatchDialog from '@/components/PrintDispatchDialog.vue'
 import RoleTag from '@/components/RoleTag.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -214,6 +216,43 @@ async function load(): Promise<void> {
   }
 }
 
+/* ---------- 打印机下发 ----------
+ *  与订单台共用 PrintDispatchDialog（打印机手选 + 文件逐份过目都在组件里）：
+ *  这里只是详情页上的同一颗按钮 —— 管理员核对完每一份的参数之后，
+ *  往往就是在这里决定「就是它，打」。 */
+
+const printerStatuses = ref<PrinterStatus[]>([])
+const printerEnabled = computed(() => printerStatuses.value.length > 0)
+const printTarget = ref<OrderDetail | null>(null)
+
+const canPrint = computed(() => {
+  const item = order.value
+  if (!item || !printerEnabled.value) return false
+  // 预设单没有文件可发；权限口径与 canDownload 相同（接单人本人或默认管理员）。
+  if (isPreset.value || !item.filename) return false
+  if (item.claimed_by === null) return false
+  if (!(isDefaultAdmin.value || item.claimed_by === currentUserId.value)) return false
+  return item.status === '待打印' || item.status === '打印中'
+})
+
+async function loadPrinterStatus(): Promise<void> {
+  try {
+    const resp = await staffOrderApi.printerStatus()
+    printerStatuses.value = resp.printers
+  } catch {
+    printerStatuses.value = []
+  }
+}
+
+function openPrint(): void {
+  if (order.value && printerEnabled.value) printTarget.value = order.value
+}
+
+async function onPrintDispatched(): Promise<void> {
+  printTarget.value = null
+  await load()
+}
+
 /** 下载**这一单里的某一份**。
  *
  *  一单可以有几份文件（2026-09-28 起的批量打印），所以这里带上 file_id ——
@@ -247,7 +286,10 @@ function back(): void {
   void router.push('/staff/orders')
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadPrinterStatus()
+})
 </script>
 
 <template>
@@ -482,6 +524,35 @@ onMounted(load)
             <p v-else-if="order.claimed_by === null" class="mt-3 text-xs text-ink-3">
               尚未接单 · 接单后可下载文件
             </p>
+
+            <!-- 下发打印机：核对完上面的逐份参数，往往就是在这里决定「就是它，打」。
+                 成功反馈走事件回执（showReceipt），与订单台/下单成功同一条语言。 -->
+            <div v-if="canPrint" class="mt-4 border-t pt-3" style="border-color: var(--border)">
+              <div class="flex flex-wrap items-center gap-2">
+                <!-- 未下发过：实心黄底黑字（本区块的主推动作）；已下发过：降级成
+                     quaternary 黑字 —— 重打是有代价的动作，不该长得像首选。 -->
+                <NButton
+                  size="small"
+                  :type="order.print_sent_time && !order.print_error ? 'default' : 'primary'"
+                  :quaternary="!!(order.print_sent_time && !order.print_error)"
+                  @click="openPrint"
+                >
+                  <template #icon><Printer :size="14" /></template>
+                  {{ order.print_sent_time && !order.print_error ? '重新下发到打印机' : '下发打印机' }}
+                </NButton>
+                <span v-if="order.print_sent_time" class="tnum text-2xs text-ink-3">
+                  上次下发 {{ fullTime(order.print_sent_time) }}
+                  <template v-if="order.print_job_id">· 任务号 {{ order.print_job_id }}</template>
+                </span>
+              </div>
+              <p
+                v-if="order.print_error"
+                class="mt-2 border p-2.5 text-xs leading-5"
+                style="border-color: var(--warn); color: var(--warn)"
+              >
+                上次下发失败：{{ order.print_error }}
+              </p>
+            </div>
           </section>
         </div>
       </div>
@@ -524,5 +595,14 @@ onMounted(load)
 
       <p class="tech-label mt-3 text-ink-3 tech-label--cn text-xs">最后更新 {{ shortTime(order.update_time) }}</p>
     </template>
+
+    <!-- 下发确认：与订单台共用 PrintDispatchDialog（打印机手选 + 文件逐份过目）。 -->
+    <PrintDispatchDialog
+      :show="printTarget !== null"
+      :order="printTarget"
+      :printers="printerStatuses"
+      @close="printTarget = null"
+      @dispatched="onPrintDispatched"
+    />
   </div>
 </template>

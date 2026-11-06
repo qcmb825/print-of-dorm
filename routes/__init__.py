@@ -4,7 +4,7 @@
 所以不会出现循环导入。
 """
 from . import (account, admin, announcements, bot, bot_hint, history, order_options, orders,
-               price_table, tickets)
+               price_table, printers, tickets)
 # password_reset 是「忘记密码」（学号 -> QQ 邮箱验证码 -> 换新密码）。
 # 它和 account 是两条独立的链（这条路不需要登录），所以单独一个模块，
 # 只在 BLUEPRINTS 里排在 account 之后，见 routes/password_reset.py 开头那段。
@@ -36,6 +36,9 @@ BLUEPRINTS = (
     tickets.bp,
     audit.bp,
     order_options.bp,
+    # printers 是打印机管理（数据库实体：增删改启停 + 设备状态 + 表单探测），
+    # 下发入口在 orders 的 /api/order/<id>/print，见 routes/printers.py 开头那段。
+    printers.bp,
     # price_table 是价目表（一条 = 纸张 + 类型 + 单面/双面单价），只影响预估价、
     # 不影响最终金额，见 routes/price_table.py 开头那段。
     price_table.bp,

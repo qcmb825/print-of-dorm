@@ -13,6 +13,7 @@ import {
   Inbox,
   Lock,
   Package,
+  Printer,
   RefreshCw,
   ScanLine,
   Search,
@@ -50,10 +51,12 @@ import {
   type OrderStatus,
   type PriceItem,
   type PrintPreset,
+  type PrinterStatus,
 } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PickupCheckDialog from '@/components/PickupCheckDialog.vue'
+import PrintDispatchDialog from '@/components/PrintDispatchDialog.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -550,6 +553,9 @@ const poolSummary = computed(() => ({
 }))
 
 async function load(silent = false): Promise<void> {
+  // 设备徽标搭这趟车刷新（后端带 30 秒缓存，多问不构成对打印机的压力）；
+  // 内部吞错，联动相关的一切失败都不会影响订单列表本身。
+  void loadPrinterStatus()
   if (!silent) loading.value = true
   // 本次请求的序号：回来时若已有更新的请求发出，就丢弃这份响应。
   // 轮询（10s）与用户操作触发的刷新会并发，先发的慢响应后到会覆盖新数据
@@ -787,6 +793,96 @@ async function downloadFile(
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '下载未完成 · 稍后重试')
   }
+}
+
+/* ---------- 打印机下发 ----------
+ *  「送文件」这一步交给系统：入队后后台线程串行发往打印机，
+ *  真正送达由轮询看到的「打印中」状态戳表达。「可取件」仍然留给人工 ——
+ *  卡纸、印坏都要人来看一眼。这里每条分支都跟后端 api_dispatch_print 对应。 */
+
+/** 联动开了没有 = 启用中的打印机 ≥ 1 台（打印机是数据库实体，「打印选项」页管理）。
+ *  查询失败就当没开 —— 静默而不是喊错：订单台不是设备管理页，
+ *  为一颗按钮的缺席弹一个全局报错，比按钮本身还吵。 */
+const printerStatuses = ref<PrinterStatus[]>([])
+const printerEnabled = computed(() => printerStatuses.value.length > 0)
+
+const printTarget = ref<Order | null>(null)
+
+async function loadPrinterStatus(): Promise<void> {
+  try {
+    const resp = await staffOrderApi.printerStatus()
+    printerStatuses.value = resp.printers
+  } catch {
+    printerStatuses.value = []
+  }
+}
+
+/** 设备徽标：**每台一枚**（有两台就两枚并排）。三种面貌 ——
+ *  在线 → 接单中（ok）；打印机自报不接受任务 → 暂停接单（warn）；
+ *  问不到 → 未连接（warn）。printer-state-reasons 是打印机自己的行话
+ *  （media-empty 之类），进 tooltip 不进徽标。 */
+const printerBadges = computed(() => {
+  const first = (value: string | string[] | undefined): string | undefined =>
+    Array.isArray(value) ? value[0] : value
+  return printerStatuses.value.map((status) => {
+    const state = status.state
+    if (!state) {
+      return { id: status.id, tone: 'warn' as const, label: `${status.name} · 未连接`, title: status.error ?? undefined }
+    }
+    const model = first(state['printer-make-and-model']) ?? first(state['printer-name'])
+    const reasons = state['printer-state-reasons']
+    const reasonText = Array.isArray(reasons)
+      ? reasons.filter((r) => r !== 'none').join(' / ')
+      : reasons && reasons !== 'none' ? reasons : undefined
+    if (state['printer-is-accepting-jobs'] === false) {
+      return {
+        id: status.id,
+        tone: 'warn' as const,
+        label: `${status.name} · 暂停接单`,
+        title: [model, reasonText && `原因：${reasonText}`].filter(Boolean).join(' · ') || undefined,
+      }
+    }
+    return {
+      id: status.id,
+      tone: 'ok' as const,
+      label: `${status.name} · 接单中`,
+      title: [model, reasonText && `提示：${reasonText}`].filter(Boolean).join(' · ') || undefined,
+    }
+  })
+})
+
+/** 下发按钮出现的条件。与后端一致：待打印/打印中、归自己管。
+ *  预设单没有文件可发，按钮缺席（后端那条 400 是给脚本和缓存页面的兜底）；
+ *  v24 前的老单 files 为空但 file_path 还在，照样能发 —— 用「不是预设单」判，
+ *  而不是只看 file_count。 */
+function canPrint(order: Order): boolean {
+  const isPreset = !!order.preset_content
+  const hasFiles = (order.file_count ?? 0) > 0
+  return (
+    printerEnabled.value &&
+    canReachOrder(order) &&
+    (order.status === '待打印' || order.status === '打印中') &&
+    (hasFiles || (!isPreset && !!order.filename))
+  )
+}
+
+/** 「下发打印」的主推态：还没发过、且正停在待打印 —— 这是柜台下一步最该点的按钮。
+ *  宽屏表格、窄屏卡片的 type 与 .btn-accent-ink 挂载读同一个判定，
+ *  两套渲染必须给同一个答案（宽屏黄、窄屏黑的那种分叉看着像抽风）。 */
+function printIsPrimary(order: Order): boolean {
+  return order.status === '待打印' && !order.print_sent_time
+}
+
+function openPrint(order: Order): void {
+  // 与 openPrice 同一个挡法：入口不止一处，条件在这里再判一道。
+  if (!printerEnabled.value) return
+  printTarget.value = order
+}
+
+/** 弹窗派发完（成功入队或被后端拒绝后刷新事实）——列表总要拉一次新的。 */
+async function onPrintDispatched(): Promise<void> {
+  printTarget.value = null
+  await load(true)
 }
 
 function statusButton(order: Order) {
@@ -1070,7 +1166,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
                 {
                   size: 'tiny',
                   quaternary: true,
-                  class: '!h-7 !w-7 !p-0',
+                  // primary 态的黄图标修正，见 base.css 的 .btn-accent-ink。
+                  class: hasGroup(row) ? 'btn-accent-ink !h-7 !w-7 !p-0' : '!h-7 !w-7 !p-0',
                   type: hasGroup(row) ? 'primary' : 'default',
                   disabled: busyIds.value.has(row.id) || noPresets,
                   title: noPresets
@@ -1106,7 +1203,24 @@ const columns = computed<DataTableColumns<Order>>(() => [
     key: 'status',
     // 「待计费」是最长的状态名（3 个字 + 标签内边距），88 够；从 92 收 4px。
     width: 84,
-    render: (row) => h(StatusTag, { status: row.status, size: 'sm' }),
+    render: (row) => {
+      const tag = h(StatusTag, { status: row.status, size: 'sm' })
+      if (!row.print_error) return tag
+      // 下发失败必须**看得见**，不能只藏在按钮的 title 里（触摸端连 hover 都没有，
+      // 撤回按钮那次的教训）。行上给一句短的，完整原因在下发弹窗里展开。
+      return h('div', { class: 'min-w-0' }, [
+        tag,
+        h(
+          'span',
+          {
+            class: 'mt-0.5 block truncate text-2xs',
+            style: 'color: var(--warn)',
+            title: row.print_error,
+          },
+          '下发失败',
+        ),
+      ])
+    },
   },
   {
     title: '费用',
@@ -1187,6 +1301,9 @@ const columns = computed<DataTableColumns<Order>>(() => [
             size: 'tiny',
             quaternary: true,
             type: row.price === null || row.price === undefined ? 'primary' : 'default',
+            // primary 态没有黄底可铺，Naive 会把文字染成荧光黄（浅底 ~1.1:1），
+            // 类修正见 base.css 的 .btn-accent-ink（三处 quaternary primary 共用）。
+            class: row.price === null || row.price === undefined ? 'btn-accent-ink' : undefined,
             loading: busyIds.value.has(row.id) && !priceOrder.value,
             disabled: !canPrice(row),
             // 灰着的原因直接写在按钮上：否则管理员只看到一颗按不动的按钮，
@@ -1210,6 +1327,29 @@ const columns = computed<DataTableColumns<Order>>(() => [
               },
               { default: () => '改参数' },
             ),
+        // 下发打印：文件直接送进内网打印机（联动未配置时不出现这颗按钮）。
+        // 打印中且已发过的单是「重新下发」——文案先打一次预防针，
+        // 点开后的弹窗会把「会整单重打」再说一遍。
+        canPrint(row)
+          ? h(
+              NButton,
+              {
+                size: 'tiny',
+                quaternary: true,
+                type: printIsPrimary(row) ? 'primary' : 'default',
+                // primary 态的文字色修正，见 base.css 的 .btn-accent-ink。
+                class: printIsPrimary(row) ? 'btn-accent-ink' : undefined,
+                title: row.print_sent_time
+                  ? '重新下发到打印机（整单会重打一遍）'
+                  : '发送到打印机（逐份带参数）',
+                onClick: () => openPrint(row),
+              },
+              {
+                default: () =>
+                  row.print_sent_time && !(row.print_error ?? '').trim() ? '重新下发' : '下发打印',
+              },
+            )
+          : null,
         canRelease(row)
           ? h(
               NButton,
@@ -1447,7 +1587,8 @@ watch(autoRefresh, (enabled) => {
 
 onMounted(async () => {
   // 两份清单并行取：打印服务名单不是首屏必要数据，串行等它只会
-  // 把订单列表的出来时间往后拖。
+  // 把订单列表的出来时间往后拖。打印机联动开关与设备徽标搭 load()
+  // 那趟车（见 load 开头），这里不再单独发一次。
   await Promise.all([load(), loadPresets()])
   // 挂载时页面可能藏在后台标签页（中键/Ctrl+点开、会话恢复）：
   // 可见性没确认就 resume，10 秒轮询会在后台一直空转 ——
@@ -1471,6 +1612,23 @@ onBeforeUnmount(() => {
       :channel="loadFailures >= 2 ? 'alarm' : 'live'"
     >
       <template #actions>
+        <!-- 设备徽标：**每台一枚**（有两台就两枚并排），联动一台都没配时整组不存在。
+             读数语言与旁边的「自动刷新 10s」同款；色只分两档 —— ok 接单中、
+             warn 未连接/暂停接单，出错的原因进 tooltip，不占这排宽度。 -->
+        <span
+          v-for="badge in printerBadges"
+          :key="badge.id"
+          class="flex items-center gap-1.5"
+          :title="badge.title"
+        >
+          <Printer :size="14" :style="{ color: badge.tone === 'ok' ? 'var(--ok)' : 'var(--warn)' }" />
+          <span
+            class="tech-label tech-label--cn text-xs"
+            :style="{ color: badge.tone === 'ok' ? 'var(--ok)' : 'var(--warn)' }"
+          >
+            {{ badge.label }}
+          </span>
+        </span>
         <!-- 取件核对是柜台最常用的那个动作，所以它是主按钮（这一排里唯一的实心按钮）。
              它是个弹窗而不是路由页：交件时手不能离开这一屏，跳走再跳回来会把
              后面的列表翻页和筛选全部重置掉。 -->
@@ -1730,6 +1888,18 @@ onBeforeUnmount(() => {
             <span class="text-ink-3">没有可用邮箱 · 取件邮件发不出去，需手动联系</span>
           </p>
 
+          <!-- 下发失败。口径同宽屏状态列：行上必须看得见（触摸端连 hover 都没有），
+               窄屏空间宽裕，把完整原因直接写出来，不靠 title。 -->
+          <p v-if="order.print_error" class="mt-2 flex flex-wrap items-center gap-1.5 text-xs leading-5">
+            <span
+              class="inline-flex items-center border px-1.5 py-[1px] text-xs font-bold whitespace-nowrap"
+              :style="'color: var(--warn); border-color: var(--warn)'"
+            >
+              下发失败
+            </span>
+            <span class="min-w-0 flex-1 break-words">{{ order.print_error }}</span>
+          </p>
+
           <!-- 规格。本来是宽屏表格里才有的一列，窄屏哪都没有 —— 于是管理员拿手机接单时
                完全看不到「几份、什么纸」，这两样恰恰是他最需要知道的。
                口径与宽屏那两行完全一致：份数是牌子、单双面加粗，颜色和纸张退到后面。 -->
@@ -1834,6 +2004,21 @@ onBeforeUnmount(() => {
                 改状态
               </NButton>
             </NDropdown>
+            <!-- 下发打印：与宽屏同一颗按钮、同一个确认弹窗（弹窗在两套渲染之外共享）。
+                 主推态也和宽屏同一份判定（printIsPrimary），两套渲染一个答案。 -->
+            <NButton
+              v-if="canPrint(order)"
+              size="tiny"
+              quaternary
+              :type="printIsPrimary(order) ? 'primary' : 'default'"
+              :class="printIsPrimary(order) ? 'btn-accent-ink' : undefined"
+              :title="order.print_sent_time
+                ? '重新下发到打印机（整单会重打一遍）'
+                : '发送到打印机（逐份带参数）'"
+              @click="openPrint(order)"
+            >
+              {{ order.print_sent_time && !order.print_error ? '重新下发' : '下发打印' }}
+            </NButton>
             <NButton
               v-if="canRelease(order)"
               size="tiny"
@@ -1943,6 +2128,15 @@ onBeforeUnmount(() => {
       </template>
     </NModal>
 
+    <!-- 下发确认（与详情页共用 PrintDispatchDialog）：打印机手选 + 文件与参数
+         逐份过目 —— 这是「送进打印机」前的最后一道人工闸。 -->
+    <PrintDispatchDialog
+      :show="printTarget !== null"
+      :order="printTarget"
+      :printers="printerStatuses"
+      @close="printTarget = null"
+      @dispatched="onPrintDispatched"
+    />
     <NModal
       :show="priceOrder !== null"
       preset="card"

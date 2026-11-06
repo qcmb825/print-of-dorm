@@ -27,6 +27,7 @@ import {
   Printer,
   ReceiptText,
   RefreshCw,
+  Search,
   Trash2,
   Upload,
 } from '@lucide/vue'
@@ -41,8 +42,8 @@ import {
   useMessage,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
-import { printOptionsApi, staffPrintOptionsApi } from '@/api/endpoints'
-import type { PresetInput, PriceItem, PrintPreset } from '@/api/types'
+import { printersApi, printOptionsApi, staffPrintOptionsApi } from '@/api/endpoints'
+import type { PresetInput, PriceItem, Printer as PrinterEntity, PrintPreset } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PresetDocViewer from '@/components/PresetDocViewer.vue'
@@ -55,6 +56,8 @@ const message = useMessage()
 const presets = ref<PrintPreset[]>([])
 /** 启用中的价目项 —— 预设只能绑这些（绑一档停用的纸，学生下单时那档根本不在清单里）。 */
 const priceItems = ref<PriceItem[]>([])
+/** 打印机实体（v27）：订单台「下发打印」发往哪台，就在下面的区块里配置。 */
+const printers = ref<PrinterEntity[]>([])
 const loading = ref(true)
 const saving = ref(false)
 
@@ -166,16 +169,143 @@ async function removePreset(item: PrintPreset): Promise<void> {
 async function load(silent = false): Promise<void> {
   if (!silent) loading.value = true
   try {
-    const [data, options] = await Promise.all([
+    const [data, options, printerList] = await Promise.all([
       staffPrintOptionsApi.presets(),
       printOptionsApi.load(),
+      printersApi.list(),
     ])
     presets.value = data.presets ?? []
     priceItems.value = options.price_items ?? []
+    printers.value = printerList.printers ?? []
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '预设读取失败')
   } finally {
     loading.value = false
+  }
+}
+
+/* ---------- 打印机（v27：数据库实体，订单台每单手选发往哪台）----------
+ *  有两台就配两台。协议/端口/队列路径可以先手填，也可以输 IP 点「探测」
+ *  让后端实测回填 —— 探测与 scripts/probe_printer.py 的 CLI 共用一份逻辑。 */
+
+const editingPrinterId = ref<number | null>(null)
+const savingPrinter = ref(false)
+const probing = ref(false)
+/** 探测到的型号 —— 纯展示（表单里没有这个字段），让人知道探到的是哪台。 */
+const probeModel = ref<string | null>(null)
+
+const printerForm = reactive({
+  name: '',
+  host: '',
+  mode: 'ipp' as 'ipp' | 'raw9100',
+  port: '',
+  ipp_path: '/ipp/print',
+})
+
+const canSubmitPrinter = computed(
+  () => printerForm.name.trim().length >= 2
+    && printerForm.host.trim().length >= 3
+    && !savingPrinter.value,
+)
+
+const modeOptions = [
+  { label: 'ipp（推荐：带份数/单双面/彩黑参数，拿得到任务号）', value: 'ipp' },
+  { label: 'raw9100（兜底：无任务回报，参数只有单双面/份数）', value: 'raw9100' },
+]
+
+function resetPrinterForm(): void {
+  editingPrinterId.value = null
+  printerForm.name = ''
+  printerForm.host = ''
+  printerForm.mode = 'ipp'
+  printerForm.port = ''
+  printerForm.ipp_path = '/ipp/print'
+  probeModel.value = null
+}
+
+function startEditPrinter(printer: PrinterEntity): void {
+  editingPrinterId.value = printer.id
+  printerForm.name = printer.name
+  printerForm.host = printer.host
+  printerForm.mode = printer.mode
+  printerForm.port = printer.port === 0 ? '' : String(printer.port)
+  printerForm.ipp_path = printer.ipp_path
+  probeModel.value = null
+}
+
+async function probePrinter(): Promise<void> {
+  const host = printerForm.host.trim()
+  if (!host) {
+    message.warning('先填主机地址再探测')
+    return
+  }
+  probing.value = true
+  probeModel.value = null
+  try {
+    const result = await printersApi.probe(host)
+    printerForm.mode = result.mode
+    printerForm.port = result.port === 631 && result.ipp_path === '/ipp/print' ? '' : String(result.port)
+    printerForm.ipp_path = result.ipp_path ?? printerForm.ipp_path
+    probeModel.value = result.model
+    message.success(result.model ? `探到了：${result.model}` : '探到了，参数已回填')
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '探测未完成')
+  } finally {
+    probing.value = false
+  }
+}
+
+async function submitPrinter(): Promise<void> {
+  savingPrinter.value = true
+  const payload = {
+    name: printerForm.name.trim(),
+    host: printerForm.host.trim(),
+    mode: printerForm.mode,
+    port: printerForm.port.trim(),
+    ipp_path: printerForm.ipp_path.trim(),
+  }
+  try {
+    if (editingPrinterId.value === null) {
+      await printersApi.create(payload)
+      message.success('打印机已创建')
+    } else {
+      await printersApi.update(editingPrinterId.value, payload)
+      message.success('打印机已更新')
+    }
+    resetPrinterForm()
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '保存未生效')
+  } finally {
+    savingPrinter.value = false
+  }
+}
+
+async function togglePrinterActive(printer: PrinterEntity): Promise<void> {
+  try {
+    await printersApi.setActive(printer.id, printer.is_active !== 1)
+    message.success(printer.is_active === 1 ? '已停用' : '已启用')
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '切换未生效')
+  }
+}
+
+async function removePrinter(printer: PrinterEntity): Promise<void> {
+  const action = await confirmAction({
+    title: '删除打印机',
+    content: `「${printer.name}」将从下发选择器里消失。历史下发记录（print_jobs）不跟着删，仍可在数据库里查到。`,
+    positiveText: '删除',
+    dangerous: true,
+  })
+  if (!action) return
+  try {
+    await printersApi.remove(printer.id)
+    message.success(`打印机「${printer.name}」已删除`)
+    if (editingPrinterId.value === printer.id) resetPrinterForm()
+    await load(true)
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '删除未生效')
   }
 }
 
@@ -572,6 +702,130 @@ onMounted(load)
         </div>
       </section>
     </div>
+
+    <!-- ============ 打印机（v27：数据库实体）============
+         有两台就配两台；订单台每单手选发往哪台。表单里输 IP 点「探测」，
+         后端实测回填协议/端口/队列路径——免翻说明书，也免抄错一个字符。
+         改完地址即刻生效：下发时以库里最新值为准，不用重启服务。 -->
+    <section class="panel mt-4 p-4">
+      <h3 class="mb-3 flex items-center gap-2 font-heading text-base font-bold">
+        <component
+          :is="editingPrinterId === null ? Plus : Pencil"
+          :size="15"
+          style="color: var(--accent-text)"
+        />
+        {{ editingPrinterId === null ? '添加打印机' : `编辑打印机 #${editingPrinterId}` }}
+        <span class="tech-label ml-2 text-ink-3 tech-label--cn text-xs">
+          启用 {{ printers.filter((p) => p.is_active === 1).length }} 台 / 共 {{ printers.length }} 台
+        </span>
+      </h3>
+
+      <div class="grid gap-3 lg:grid-cols-[1fr_1fr_auto]">
+        <NFormItem label="名称" :show-feedback="false" class="!mb-0">
+          <NInput
+            v-model:value="printerForm.name"
+            :maxlength="40"
+            placeholder="例：黑白机 / 彩机（订单台按它显示）"
+          />
+        </NFormItem>
+        <NFormItem label="主机地址（IP 或主机名）" :show-feedback="false" class="!mb-0">
+          <NInput
+            v-model:value="printerForm.host"
+            :maxlength="120"
+            placeholder="打印机面板的网络设置里能查到"
+          />
+        </NFormItem>
+        <div class="flex items-end">
+          <NButton :loading="probing" :disabled="printerForm.host.trim().length < 3" @click="probePrinter">
+            <template #icon><Search :size="14" /></template>
+            探测
+          </NButton>
+        </div>
+      </div>
+      <p class="mt-1.5 text-xs text-ink-3">
+        探测会实测这台机器说哪种协议、队列路径是什么、型号叫什么，并回填下面三项。
+        <template v-if="probeModel"> —— 探到的型号：<span class="font-semibold">{{ probeModel }}</span></template>
+      </p>
+
+      <div class="mt-3 grid gap-3 sm:grid-cols-3">
+        <NFormItem label="协议(模式)" :show-feedback="false" class="!mb-0">
+          <NSelect v-model:value="printerForm.mode" :options="modeOptions" />
+        </NFormItem>
+        <NFormItem label="端口（留空 = 协议默认 631/9100）" :show-feedback="false" class="!mb-0">
+          <NInput v-model:value="printerForm.port" placeholder="留空 = 默认" />
+        </NFormItem>
+        <NFormItem label="IPP 队列路径" :show-feedback="false" class="!mb-0">
+          <NInput
+            v-model:value="printerForm.ipp_path"
+            :disabled="printerForm.mode !== 'ipp'"
+            placeholder="/ipp/print"
+          />
+        </NFormItem>
+      </div>
+
+      <div class="mt-3 flex items-center gap-2">
+        <NButton
+          type="primary"
+          class="!font-bold"
+          :loading="savingPrinter"
+          :disabled="!canSubmitPrinter"
+          @click="submitPrinter"
+        >
+          <template #icon><Printer :size="15" /></template>
+          {{ editingPrinterId === null ? '添加打印机' : '保存修改' }}
+        </NButton>
+        <NButton v-if="editingPrinterId !== null" quaternary @click="resetPrinterForm">
+          取消编辑
+        </NButton>
+        <span class="text-xs text-ink-3">
+          只收网络打印机（IPP / RAW 9100）· 地址必须与服务器同网段 · 停用只影响新下发
+        </span>
+      </div>
+
+      <div v-if="loading" class="mt-4 space-y-2">
+        <NSkeleton height="52px" />
+        <NSkeleton height="52px" />
+      </div>
+      <EmptyState
+        v-else-if="printers.length === 0"
+        class="mt-4"
+        code="00"
+        title="还没有配置打印机"
+        hint="上面填好地址（可以先探测）→ 添加。一台都没配时，订单台不出现「下发打印」，照旧人工打印"
+      />
+      <div v-else class="mt-4 space-y-2">
+        <div
+          v-for="printer in printers"
+          :key="printer.id"
+          class="flex flex-wrap items-center gap-x-3 gap-y-1.5 border p-2.5"
+          style="border-color: var(--border)"
+        >
+          <span class="text-sm font-bold">{{ printer.name }}</span>
+          <span class="tnum text-xs text-ink-2">{{ printer.host }}</span>
+          <span class="tech-label tech-label--cn text-2xs text-ink-3 tech-label--cn">{{ printer.mode }}</span>
+          <span v-if="printer.is_active === 1" class="tech-label tech-label--cn text-2xs" style="color: var(--ok)">启用</span>
+          <span v-else class="tech-label tech-label--cn text-2xs" style="color: var(--warn)">停用</span>
+          <span class="ml-auto flex items-center gap-1">
+            <NSwitch
+              :round="false"
+              size="small"
+              :value="printer.is_active === 1"
+              :aria-label="`启用 ${printer.name}`"
+              @update:value="() => togglePrinterActive(printer)"
+            />
+            <NButton size="tiny" quaternary @click="startEditPrinter(printer)">
+              <template #icon><Pencil :size="13" /></template>
+            </NButton>
+            <NButton size="tiny" quaternary @click="removePrinter(printer)">
+              <template #icon><Trash2 :size="13" /></template>
+            </NButton>
+          </span>
+          <p class="tnum w-full text-2xs text-ink-3">
+            #{{ printer.id }} · {{ printer.mode === 'ipp' ? `IPP ${printer.host}:${printer.port || 631}${printer.ipp_path}` : `RAW ${printer.host}:${printer.port || 9100}` }} · 添加人 {{ printer.author ?? '—' }}
+          </p>
+        </div>
+      </div>
+    </section>
 
     <!-- 文档预览。管理端先看一眼自己传上去的是什么 —— 学生端看到的是同一份
          （同一个接口、同一个渲染组件），所以这里能过，那边就能过。 -->

@@ -1,1 +1,0 @@
-import{c as e}from"./motion-CI5wB-09.js";var t=e({name:`arrow-left`,size:24,node:[[`path`,{d:`m12 19-7-7 7-7`,key:`1l729n`}],[`path`,{d:`M19 12H5`,key:`x3x0zl`}]]});export{t};

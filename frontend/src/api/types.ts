@@ -318,6 +318,13 @@ export interface Order {
   claimer_nickname?: string | null
   /** 计费人昵称，仅管理端列表返回 */
   pricer_nickname?: string | null
+  /* ---- 打印机下发凭证（v26）----
+   * sent 非空 = 这单真的被送进过打印机（防重复下发的判据）；
+   * error 非空 = 上一次下发失败，**要印成看得见的文字**，不能只放在 title 里。
+   * 两者并存是常态：成功过之后重打失败，sent 仍是上一次成功的时间。 */
+  print_sent_time?: string | null
+  print_error?: string | null
+  print_job_id?: string | null
   /** 仅管理端列表返回 */
   is_mine?: boolean
   /** 仅管理端列表返回：当前账号能否改这单的状态 */
@@ -422,6 +429,65 @@ export interface SitePickup {
   pickup_hours: string | null
 }
 
+/** 打印机实体（v27，printers 表）：管理员在「打印选项 → 打印机」页增删改启停，
+ *  下发确认框里每单手选发往哪台。port=0 表示「按协议取公认端口」（ipp 631 / raw9100 9100）。 */
+export interface Printer {
+  id: number
+  name: string
+  host: string
+  mode: 'ipp' | 'raw9100'
+  port: number
+  ipp_path: string
+  is_active?: number
+  create_time?: string | null
+  update_time?: string | null
+  /** 仅管理端列表返回 */
+  author?: string | null
+}
+
+export interface PrinterListResponse extends ApiEnvelope {
+  printers: Printer[]
+}
+
+/** 新建 / 编辑打印机表单的载荷。端口空串 = 取协议默认。 */
+export interface PrinterInput {
+  name: string
+  host: string
+  mode: 'ipp' | 'raw9100'
+  port: string
+  ipp_path: string
+}
+
+/** 探测结论：mode/port/ipp_path 可直接回填表单，model 是打印机自报的型号。 */
+export interface PrinterProbeResponse extends ApiEnvelope {
+  mode: 'ipp' | 'raw9100'
+  port: number
+  ipp_path: string | null
+  model: string | null
+}
+
+/** 一台启用中的打印机的实时状态（订单台轮询拉，逐台一条）。
+ *
+ *  online=false（或 error 非空）= 问不到这台（离线/不支持查询）：下发按钮照给，
+ *  设备徽标显示「未连接」，原因在 error 原文里。 */
+export interface PrinterStatus {
+  id: number
+  name: string
+  online: boolean
+  state: {
+    'printer-name'?: string | string[]
+    'printer-make-and-model'?: string | string[]
+    'printer-state'?: number | string | (number | string)[]
+    'printer-state-reasons'?: string | string[]
+    'printer-is-accepting-jobs'?: boolean
+  } | null
+  error: string | null
+}
+
+export interface PrinterStatusListResponse extends ApiEnvelope {
+  printers: PrinterStatus[]
+}
+
 export interface MyOrdersResponse extends ApiEnvelope {
   orders: Order[]
   site: SitePickup
@@ -449,6 +515,9 @@ export type OrderLogAction =
   | 'pickup'
   /** 管理员把这一单归入某条打印服务分组（不是下单时选的预设）。 */
   | 'group'
+  /** 打印机下发。成败各有一条（detail 里说清哪样）——
+   *  它和 'download' 同族，都是「文件离开服务器」的动作。 */
+  | 'print'
 
 /** 一条订单操作记录。actor_* 是**动作发生当时**的身份 ——
  *  事后拿 users.role 反推的话，历史记录会跟着账号现状一起变。 */
@@ -559,6 +628,11 @@ export interface OrderDetail {
   preset_group_id?: number | null
   /** 分组名（服务端取的是这条预设的现值） */
   preset_group_content?: string | null
+  /** 打印机下发凭证（含义见 Order.print_sent_time）。详情页要多给一样东西：
+   *  print_job_id —— 卡纸缺纸时对着打印机面板上的作业号查，这里是唯一的钥匙。 */
+  print_sent_time?: string | null
+  print_error?: string | null
+  print_job_id?: string | null
 }
 
 /** 凭单号核对的响应。就是列表那一行订单，外加两个只在柜台核对时给的字段。

@@ -53,6 +53,7 @@ from mail import mask_address
 from notifier import start_claim_watcher
 from pickup_notifier import start_pickup_watcher
 from archiver import start_archive_watcher
+from printer_worker import start_printer_worker
 from security import actor_label, client_ip, ensure_csrf_token, sanitize_log, security_event
 
 from routes import register_blueprints
@@ -728,4 +729,8 @@ if __name__ == '__main__':
     # 它与上面两条的判据完全不同 —— 上面两条是「该发提醒了」，这条是「该挪下柜台了」，
     # 各自扫各自的列（ready_notify_time / ready_at），互不影响。
     start_archive_watcher()
+    # 第四条：打印机下发。打印机是数据库实体（打印选项页管理），下发线程按台惰性起
+    # ——启动时一台都还没有也照常就绪。其余三条都不碰打印机，
+    # 这条是唯一把文件送出服务器的（下载不算 —— 那是人拉走的）。
+    start_printer_worker()
     start_server(os.getenv('HOST', '0.0.0.0'), env_int('PORT', 8080))

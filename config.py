@@ -579,11 +579,16 @@ ORDER_LOG_GROUP = 'group'        # 管理员把订单归入某条打印服务分
 # 学生事后问「为什么我的单变成双面了」，靠时间线上这一条才答得出来。
 ORDER_LOG_EDIT = 'edit'
 
+# 打印机下发 —— 与「下载文件」同族的「文件离开服务器」动作。
+# 下发成败各写一条（成败由 detail 里的那句话说清），时间线上要能回答
+# 「这一单是什么时候、被谁送进打印机的」—— 打印机卡纸扯皮时，这条就是凭据。
+ORDER_LOG_PRINT = 'print'
+
 ORDER_LOG_ACTIONS = (
     ORDER_LOG_CREATE, ORDER_LOG_CLAIM, ORDER_LOG_RELEASE,
     ORDER_LOG_PRICE, ORDER_LOG_REPRICE, ORDER_LOG_STATUS,
     ORDER_LOG_WITHDRAW, ORDER_LOG_DOWNLOAD, ORDER_LOG_PICKUP, ORDER_LOG_GROUP,
-    ORDER_LOG_EDIT,
+    ORDER_LOG_EDIT, ORDER_LOG_PRINT,
 )
 
 # 动作的中文名由**服务端**给（响应里带 action_label），前端只管拿来显示。
@@ -603,10 +608,33 @@ ORDER_LOG_LABELS = {
     # 和「有人在下拉框里把状态改成了已取件」是两件事，时间线上要分得清。
     ORDER_LOG_PICKUP: '取件',
     ORDER_LOG_GROUP: '归入服务',
+    ORDER_LOG_PRINT: '下发打印',
 }
 
 # detail 是给人看的一句话，不是给程序解析的字段，所以卡个长度就够了。
 ORDER_LOG_DETAIL_MAX = 200
+
+# ---- 打印机下发（printer.py / printer_worker.py）----
+# 打印机是**数据库实体**（printers 表，管理员在「打印选项」页增删改启停，有两台、
+# 每单手选发往哪台）。联动开关 = 启用中的打印机数量 ≥ 1，不再吃环境变量。
+# 这里只留**跨打印机通用**的三件事：超时/重试/纸型映射。
+# 连接/发送超时（秒）。下发在后台线程里跑，慢一点不挡界面；
+# 但不能太长 —— 对着一台关着的打印机，要等满超时才报得出失败。
+PRINTER_TIMEOUT = env_float('PRINTER_TIMEOUT', 30.0)
+
+# 连接类瞬时失败（超时/拒连）的自动重试次数。0 = 不重试，失败直接记 print_error 等人工重发。
+PRINTER_RETRIES = env_int('PRINTER_RETRIES', 2)
+
+# 纸型 → IPP media 关键字：订单上的 paper_name 是管理员自己起的文本（「A4」「B5 80g」），
+# 打印机不认识它。逗号分隔的 `名字=关键字` 对；没配的纸型一律按 PRINTER_MEDIA_DEFAULT 发。
+# 映射缺了的后果只是打印机挑它自己的默认纸 —— 可接受；为了「映射全」把下发卡住，不可接受。
+PRINTER_MEDIA_DEFAULT = os.getenv('PRINTER_MEDIA_DEFAULT', 'A4').strip() or 'A4'
+PRINTER_MEDIA_MAP = {}
+for _media_item in os.getenv('PRINTER_MEDIA_MAP', '').split(','):
+    if '=' in _media_item:
+        _paper_name, _media_key = _media_item.split('=', 1)
+        if _paper_name.strip() and _media_key.strip():
+            PRINTER_MEDIA_MAP[_paper_name.strip()] = _media_key.strip()
 
 # ---- 订单台检索 ----
 # 搜索框的输入长度上限。这不是防注入（查询全部走参数绑定），

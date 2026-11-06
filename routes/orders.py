@@ -48,10 +48,11 @@ from config import (
     public_role,
     public_role_label,
 )
-from db import (db_conn, files_for_orders, find_preset, get_db,
+from db import (db_conn, files_for_orders, find_preset, find_printer, get_db,
                 get_pickup_info, insert_order_row, log_order_event)
 from mail import user_mailbox
 import pricing
+from printer_worker import enqueue_dispatch
 from security import audit_action, client_ip, hit_limit, rate_limited, security_event
 from utils import (allowed_file, content_signature_error, display_name, mask_nickname,
                    parse_copies, parse_price, positive_int, resolve_contained_file)
@@ -318,6 +319,8 @@ _ORDER_SELECT = '''
            o.price_item_id, o.price_item_name,
            o.preset_id, o.preset_content, o.copies,
            o.paper_type_id, o.paper_name, o.paper_remark,
+           o.print_job_id, o.print_error,
+           datetime(o.print_sent_time, 'localtime') AS print_sent_time,
            COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
            pg.content AS preset_group_content,
            datetime(o.create_time, 'localtime') AS create_time,
@@ -1408,6 +1411,8 @@ def api_order_detail(order_id):
                    o.price_item_id, o.price_item_name,
                    o.preset_id, o.preset_content, o.copies,
                    o.paper_type_id, o.paper_name, o.paper_remark,
+                   o.print_job_id, o.print_error,
+                   datetime(o.print_sent_time, 'localtime') AS print_sent_time,
                    COALESCE(o.preset_group_id, o.preset_id) AS preset_group_id,
                    pg.content AS preset_group_content,
                    datetime(o.create_time, 'localtime') AS create_time,
@@ -1896,6 +1901,105 @@ def api_update_status(order_id):
     logger.info('订单 #%s 状态「%s」->「%s」 操作人=%s(%s) ip=%s',
                 order_id, row['status'], new_status, g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': f'订单 {order_id} 已更新为「{new_status}」'})
+
+
+# ---- 打印机下发（2026-11-07，阶段 D；v27 起两台实体、每单手选）------------------
+#
+# 在此之前「打印」是纯人工的：柜台把文件下载到自己电脑，再凭记忆和手感操作打印机，
+# 打完了回来手工把状态点成打印中。这个端点把「送文件」这一步交给系统：
+# 选一台启用的打印机 → 入队 → printer_worker 按台串行发往 → 成功自动转「打印中」。
+# 「可取件」仍然留给人工 —— 卡纸、印坏、印错都要人来看一眼，
+# 取件邮件也由那个状态触发，这里不抢它的活。
+#
+# 权限与「改状态」同一条线：接单人本人，或 super。理由也一样 ——
+# 「谁接的单谁负责」，但不该把柜台其他人全部挡在门外。
+@bp.route('/api/order/<int:order_id>/print', methods=['POST'])
+@roles_required(ROLE_ADMIN, ROLE_SUPER)
+def api_dispatch_print(order_id):
+    data = request.get_json(silent=True) or {}
+    force = str(data.get('force') or '').strip().lower() in ('1', 'true')
+    printer_id = data.get('printer_id')
+
+    with db_conn() as conn:
+        row = conn.execute(
+            'SELECT status, claimed_by, file_path, pickup_code, print_sent_time, print_error '
+            'FROM orders WHERE id = ?', (order_id,)).fetchone()
+        if row is None:
+            return jsonify({'code': 404, 'msg': '没找到这个订单'}), 404
+        if g.user['role'] != ROLE_SUPER:
+            if row['claimed_by'] is None:
+                security_event('print_denied',
+                               '订单 #%s 尚未被接取，操作人试图直接下发打印' % order_id)
+                return jsonify({'code': 403, 'msg': '请先接单，再下发打印'}), 403
+            if row['claimed_by'] != g.user['id']:
+                security_event('print_denied',
+                               '订单 #%s 接单人 uid=%s，操作人越权下发打印'
+                               % (order_id, row['claimed_by']))
+                return jsonify({'code': 403, 'msg': '该订单已被他人接取，你无权下发打印'}), 403
+        if row['status'] not in (ST_PENDING, ST_PRINTING):
+            return jsonify({
+                'code': 400,
+                'msg': '只有「待打印 / 打印中」的订单能下发（当前：「%s」）' % row['status']
+            }), 400
+        # 目标打印机是表单里选的：必须存在且启用（每单手选，不做自动路由——
+        # 哪台打彩哪台打黑白是柜台当场判断的事）。
+        printer = find_printer(conn, int(printer_id)) if printer_id is not None else None
+        if printer is None or printer['is_active'] != 1:
+            return jsonify({'code': 400, 'msg': '先选一台启用中的打印机'}), 400
+        # 防重复（订单级）：发成功过（print_sent_time 非空）且没报错的单，再发就是
+        # 「重打」——纸会多出一整套，发往哪台都一样。这里不放行也不直接拒绝，
+        # 回一个 409 让前端把话问清楚；上一发失败的单（print_error 非空）不受这道闸，
+        # 重发本来就是给它准备的——包括换一台再试。
+        if row['print_sent_time'] and not (row['print_error'] or '').strip() and not force:
+            return jsonify({
+                'code': 409, 'confirm': True,
+                'msg': '这单已下发过打印机，重发会整单多印一份。确认要重新下发吗？'
+            }), 409
+        # 预设服务下的单没有文件（file_path 是空串）——在这里就挡住，
+        # 别让操作人等到队列里才看到失败。
+        listed_ids = {entry['id'] for entry in files_for_orders(conn, [order_id]).get(order_id, [])}
+        if not row['file_path'] and not listed_ids:
+            return jsonify({'code': 400, 'msg': '这一单用的是预设服务，没有文件可下发'}), 400
+
+        # 下发时的参数覆盖（确认框逐份改的黑白/彩色、单/双面）。
+        # 份数刻意不收：份数是计过价的，改份数请走「改参数」重新走计费口径 ——
+        # 这也是 D.5 那句「计价按下发参数算」的边界：颜色/双面可以柜台当场定
+        # （系统在时间线上如实记下偏离），钱不动。
+        raw_params = data.get('params') or []
+        if not isinstance(raw_params, list):
+            return jsonify({'code': 400, 'msg': 'params 须是数组'}), 400
+        overrides = {}
+        allowed_ids = listed_ids or {0}  # 老库单没有 order_files 行，覆盖用 0 对号
+        for item in raw_params:
+            if not isinstance(item, dict):
+                return jsonify({'code': 400, 'msg': 'params 项须是对象'}), 400
+            try:
+                file_id = int(item.get('file_id'))
+            except (TypeError, ValueError):
+                return jsonify({'code': 400, 'msg': 'params 里的 file_id 不合法'}), 400
+            if file_id not in allowed_ids:
+                return jsonify({'code': 400, 'msg': 'params 里混入了不属于这一单的文件'}), 400
+            override = {}
+            for key, allowed in (('color_type', ('black', 'color')),
+                                 ('duplex', ('single', 'double'))):
+                value = item.get(key)
+                if value is None:
+                    continue
+                if value not in allowed:
+                    return jsonify({'code': 400, 'msg': '%s 只认 %s'
+                                    % (key, ' / '.join(allowed))}), 400
+                override[key] = value
+            if override:
+                overrides[file_id] = override
+
+    if not enqueue_dispatch(order_id, printer['id'], g.user['id'], g.user['role'], overrides):
+        # 同一单对这台已经在队列里/正在发：不是错误，是提醒别连点。
+        return jsonify({'code': 409, 'msg': '这单已经在「%s」的下发队列里了，稍等看状态'
+                        % printer['name']}), 409
+
+    logger.info('订单 #%s 请求下发打印机「%s」 操作人=%s(%s) ip=%s',
+                order_id, printer['name'], g.user['nickname'], g.user['role'], client_ip())
+    return jsonify({'code': 0, 'msg': '已交给「%s」的打印队列' % printer['name']}), 202
 
 
 # ---- 修改打印参数（2026-10-25）------------------------------------------------

@@ -146,8 +146,12 @@ def files_for_orders(conn, order_ids):
     for start in range(0, len(ids), 400):
         chunk = ids[start:start + 400]
         placeholders = ','.join('?' * len(chunk))
+        # v26 起多带每份文件自己的参数三列（color_type / duplex / copies）：
+        # 打印机下发按行拆任务时要读它们；订单台的「下发确认」弹窗也直接用同一份。
+        # 别的消费者不读这几列，多出来不碍事 —— 各查各的 SELECT 才是要出事的写法。
         rows = conn.execute(
-            'SELECT id, order_id, filename, file_path, size, pages, sort_order '
+            'SELECT id, order_id, filename, file_path, size, pages, sort_order, '
+            'color_type, duplex, copies '
             'FROM order_files WHERE order_id IN (%s) ORDER BY order_id, sort_order, id'
             % placeholders, chunk).fetchall()
         for row in rows:
@@ -165,6 +169,18 @@ def find_preset(conn, preset_id):
     把结论写进这个函数里就必然有一边是错的。
     """
     return conn.execute('SELECT * FROM print_presets WHERE id = ?', (preset_id,)).fetchone()
+
+
+def find_printer(conn, printer_id):
+    """按 id 取一台打印机（含停用的）——「能不能用」留给调用方判断，理由同 find_preset。"""
+    return conn.execute('SELECT * FROM printers WHERE id = ?', (printer_id,)).fetchone()
+
+
+def find_active_printers(conn):
+    """启用中的打印机，按创建序排（管理页与下发选择器共用同一份顺序）。"""
+    return conn.execute(
+        'SELECT * FROM printers WHERE is_active = 1 ORDER BY id'
+    ).fetchall()
 
 
 
@@ -370,7 +386,14 @@ def get_pickup_info(conn=None, apply_fallback=True):
 #            老单回填：优先取 order_logs 里最近一次「→可取件」的留痕时刻，
 #            没有留痕的退回 update_time / create_time —— 留空的话那些单
 #            会永远挂在可取件里，永远不会被归档。
-SCHEMA_VERSION = '25'
+# v25 -> v26：orders 加三列打印机下发凭证（print_job_id / print_sent_time / print_error）。
+#            纯加列，不回填 —— 「没下发过」就是空，前端拿空说「还没下发」。
+# v26 -> v27：打印机从 .env 单台升级为数据库实体（用户确认有两台、每单手选、网页端配置）。
+#            新表 printers（管理员在「打印选项」页增删改启停）与 print_jobs（逐台逐次
+#            下发明细 —— 两台并行后 orders 那三列只装得下「最近一次」，逐台历史归表）。
+#            orders 的三列凭证保留：print_sent_time = 最近一次成功（防重复判据不变）、
+#            print_error = 最近一次失败原因、print_job_id = 最近任务号。
+SCHEMA_VERSION = '27'
 
 
 
@@ -423,7 +446,8 @@ def _schema_work_pending(cursor, current_version):
                        'copies', 'paper_type_id', 'paper_name', 'paper_remark',
                        'claim_alert_time', 'ready_notify_time', 'preset_group_id',
                        'source', 'est_price', 'est_pages', 'price_item_id',
-                       'price_item_name', 'ready_at'):
+                       'price_item_name', 'ready_at',
+                       'print_job_id', 'print_sent_time', 'print_error'):
             if column not in order_columns:
                 pending.append('orders.' + column)
     if _table_exists(cursor, 'order_logs') and 'to_status' not in _table_columns(cursor, 'order_logs'):
@@ -449,6 +473,12 @@ def _schema_work_pending(cursor, current_version):
         for column in ('pickup_place', 'pickup_hours'):
             if column not in asset_columns:
                 pending.append('site_assets.' + column)
+
+    # v27：打印机实体两新表（缺了就是「老库没升到 27」，必须先备份再建）。
+    if not _table_exists(cursor, 'printers'):
+        pending.append('printers(新表)')
+    if not _table_exists(cursor, 'print_jobs'):
+        pending.append('print_jobs(新表)')
 
     # v24：一单多文件里的「每份文件自己的参数」。
     if _table_exists(cursor, 'order_files'):
@@ -930,7 +960,11 @@ def init_database():
                 est_pages INTEGER,
                 -- v25：进入「可取件」的时刻。超期归档（archiver.py）按它算天数；
                 -- 不能拿 update_time 代替 —— 那列会被任何一次改状态/改金额刷掉。
-                ready_at TIMESTAMP
+                ready_at TIMESTAMP,
+                -- v26：打印机下发凭证（printer_worker.py 写，语义见下面补列那段的注释）。
+                print_job_id TEXT,
+                print_sent_time TIMESTAMP,
+                print_error TEXT
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)')
@@ -1188,6 +1222,23 @@ def init_database():
         if 'ready_at' not in order_columns:
             cursor.execute('ALTER TABLE orders ADD COLUMN ready_at TIMESTAMP')
         order_columns.add('ready_at')
+
+        # v26：打印机下发的三列凭证（printer_worker.py 写）。
+        #   print_sent_time —— 这张单**被送进过打印机**的时刻，同时是防重复下发的判据：
+        #   它非空且没有 print_error 时，再下发就要操作人明确确认「重打」。
+        #   print_error    —— 上一次下发的失败原因；非空 = 人工该来看看。
+        #   两者**必须分列**而不是共用一列：「成功过之后又失败了」是常态
+        #   （重打时打印机没纸），只用一列的话，失败会把「成功过」的事实抹掉，
+        #   防重复的判据就永远分不出「从没送出去过」和「送出去过但这次没成」。
+        #   print_job_id   —— 打印机返回的任务号（raw9100 拿不到，留空）：
+        #   卡纸/缺纸时对照打印机面板上的作业号，这是唯一的钥匙。
+        if 'print_job_id' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN print_job_id TEXT')
+        if 'print_sent_time' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN print_sent_time TIMESTAMP')
+        if 'print_error' not in order_columns:
+            cursor.execute('ALTER TABLE orders ADD COLUMN print_error TEXT')
+        order_columns.update(('print_job_id', 'print_sent_time', 'print_error'))
 
         # ⚠️ paper_types 的补列**不能写在这儿**：这张表是下面一百多行才
         # CREATE TABLE IF NOT EXISTS 的，排在这一段就是「对着还不存在的表 ALTER」——
@@ -1600,6 +1651,54 @@ def init_database():
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_password_resets_user '
             'ON password_resets(user_id, create_time)'
+        )
+
+        # ---- v27：打印机实体与逐台下发明细 ----
+        # 打印机从 .env 升级为数据库实体（管理员在「打印选项」页增删改启停，
+        # 有两台、每单手选）。host/mode/port/ipp_path 是**运行时可改**的配置，
+        # 下发时以库里最新值为准 —— 网页上改完地址，下一次下发就生效，不用重启。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS printers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL COLLATE NOCASE,
+                host TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'ipp',
+                port INTEGER NOT NULL DEFAULT 0,
+                ipp_path TEXT NOT NULL DEFAULT '/ipp/print',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_printers_active ON printers(is_active)')
+
+        # 逐台逐次下发明细。两台并行后，orders 那三列凭证只装得下「最近一次」，
+        # 「这单在黑白机上发过、在彩机上没发过」这类问题只有这张表答得出。
+        # printer_name 存**快照**（照 preset_content 的哲学）：打印机被删除后，
+        # 历史行里的名字仍读得出来，不跟着 printers 表一起消失。
+        # 参数四列是**下发当时的参数快照** —— 订单参数事后能被改，这张表要能
+        # 回答「那一次是按什么参数送出去的」。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS print_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                printer_id INTEGER,
+                printer_name TEXT,
+                job_id TEXT,
+                sent_time TIMESTAMP,
+                error TEXT,
+                color_type TEXT,
+                duplex TEXT,
+                copies INTEGER,
+                paper_name TEXT,
+                actor_id INTEGER,
+                actor_role TEXT,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_print_jobs_order ON print_jobs(order_id, create_time)'
         )
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的

@@ -619,6 +619,14 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 
 > ⚠️ **不要用 `gunicorn`**。它靠 `fork()` 工作，在 **Windows 上根本起不来**；即使在 Linux 上，多进程也会把内存里的限流阈值成倍放宽（见下方「已知不足」）。项目已装 `waitress`，`DEBUG=false` 时会自动启用。
 
+**打印机联动（可选，网页端配置）**：打印机与服务器在同一内网时，管理员在「打印选项 → 打印机」里添加设备（名称/主机/协议/端口/队列路径）即启用订单台的「下发打印」；一台都不配则整条联动不存在，照旧人工打印。型号未知先跑探测（表单里的「探测」按钮，或 CLI）：
+
+```powershell
+.venv\Scripts\python.exe scripts\probe_printer.py <打印机IP>
+```
+
+它探测 IPP（631）/ RAW 9100 哪个可用、队列路径是什么、型号叫什么，结论照抄进表单。每单下发时**手选**发往哪台；打印机必须与服务器同网段。整条联动走数据库配置，改完即生效不用重启；碰打印机的服务实例**只该有一个**（多个实例会各排各的队列）。
+
 ---
 
 ## ⚙️ 配置项
@@ -653,6 +661,7 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `LOG_CONSOLE` | `true` | 是否同时输出到控制台。服务化运行（NSSM / systemd）时建议改 `false` |
 | `LOG_DIR` | `<DATA_DIR>/logs` | 日志目录。跟着 DATA_DIR 走 —— 日志是要跟数据一起带走的那份 |
 | `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` | `5MB` / `10` | 日志轮转大小与保留份数 |
+| `PRINTER_TIMEOUT` / `PRINTER_RETRIES` / `PRINTER_MEDIA_*` | 见 `.env.example` | **打印机下发**的通用项（超时/重试/纸型映射，2026-11 起）。打印机本体是**网页端配置的数据库实体**（「打印选项 → 打印机」，有几台配几台、每单手选），`.env` 里没有任何开关——一项都不配只影响这三类默认值 |
 
 内置超级管理员也在 `.env` 里配置，共 5 项：`SUPER_ADMIN_NICKNAME`、`SUPER_ADMIN_PASSWORD`、
 `SUPER_ADMIN_REALNAME`、`SUPER_ADMIN_STUDENT_ID`、`SUPER_ADMIN_DORM`。
@@ -705,6 +714,8 @@ Linux 上用 systemd 写一个 `.service`，`ExecStart` 指向 `.venv/bin/python
 | `PUT` | `/api/order/<id>/status` | 管理员 | 更新订单状态（普通管理员只能改自己接的单；不接受待计费） |
 | `GET` | `/api/order/<id>/detail` | 管理员 | 订单详情 / 时间线（含 `order_logs` 的操作留痕） |
 | `GET` | `/api/order/<id>/download` | 接单人 / 超管 | 下载订单文件 |
+| `GET`/`POST`/`PUT`/`DELETE` | `/api/admin/printers*` | 管理员 | **打印机管理**（数据库实体）：增删改启停 + 表单探测（`POST .../probe`，回协议/端口/队列路径/型号）+ 设备状态（`GET .../status`，逐台在线态，30 秒缓存）。订单台的下发按钮与设备徽标读这里 |
+| `POST` | `/api/order/<id>/print` | 接单人 / 超管 | **下发打印机**：body 带 `printer_id`（**每单手选**发往哪台）与可选的逐份参数覆盖 `params`（黑白/彩色、单/双面——确认框里改，与订单参数的偏离自动写进时间线；份数不在覆盖之列），文件排进该台的进程内串行队列，后台线程发往内网打印机。成功自动转「打印中」；已成功下发过的单要带 `force=1` 才接受重发（防多印，换台也一样）；失败写在订单的 `print_error` 里，界面可见；逐台逐次明细（含当次参数快照）落 `print_jobs` |
 | `GET` | `/api/order/pickup` | 管理员 | **凭单号核对**（柜台用）：只读，回这一单的完整信息，比列表多 `owner_real_name` / `owner_student_id` 两个字段（核对「来的是不是本人」靠的就是它们）。单号会补零重试，同时命中多单时优先回还没取件的那张 |
 | `POST` | `/api/order/pickup` | 管理员 | **凭单号确认取件**。**只接受「可取件」的单**（打印中的单被柜台取走等于纸没出来就记账）；带条件的原子 UPDATE，同一份件不会被交给两个人；**不要求是接单人**（柜台交件的人常常不是接单那个），留痕里会写明是代谁交接的 |
 | `PUT` | `/api/order/<id>/preset-group` | 管理员 | 把订单**归入 / 移出**某条打印服务分组（`preset_id` 传数字，传 `none` / `null` 取消归类）。改的是 `preset_group_id` 而不是 `preset_id`，因为后者含义是「下单时选了这条预设」；不限制给内置账号，它只动分组、不碰金额与状态 |
@@ -795,12 +806,12 @@ PNG（`botcard.py` + `GET /api/bot/card`），printbot 收到后当图片发出�
 
 ## 🗄️ 数据模型
 
-SQLite 单库，共 13 张表：
+SQLite 单库，共 15 张表：
 
 | 表 | 用途 |
 | :--- | :--- |
 | `users` | 账号（v11 加了 `pay_qr_file`，v13 加了 `session_epoch`，v14 加了独立的 `qq` 取件提醒字段，v15 起 `qq` 上有一条部分唯一索引：`qq <> '' AND status <> 'closed'` 的行里一个 QQ 只能绑一个在用账号） |
-| `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v19 加的 `source`（这一单从哪条路下的：`web` / `bot`，**不再往学生备注里塞占位话**）、`est_price` / `est_pages`（下单时按文件页数算出来的**预估价**与它依据的页数，只是给学生看的参考，`price` 才是要收的钱），v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来） |
+| `orders` | 打印订单（含 `price` / `priced_by` / `price_time` 三个计费列，v19 加的 `source`（这一单从哪条路下的：`web` / `bot`，**不再往学生备注里塞占位话**）、`est_price` / `est_pages`（下单时按文件页数算出来的**预估价**与它依据的页数，只是给学生看的参考，`price` 才是要收的钱），v9 加的选项快照列 `preset_id` / `preset_content` / `copies` / `paper_type_id` / `paper_name` / `paper_remark`，v10 加的 `claim_alert_time`、v11 加的 `ready_notify_time`（两个都是邮件提醒的发信凭证列，前者管「超时没人接」、后者管「可取件了」），v12 加的 `preset_group_id`——管理员把订单归到哪条打印服务分组，NULL 表示未归类，读的时候用 `COALESCE(preset_group_id, preset_id)` 当分组键，所以下单选了预设的单和事后被归进去的单会一起出来，v25 加的 `ready_at`（进入「可取件」的时刻，超期归档按它算天数），v26 加的打印机下发凭证三列 `print_job_id` / `print_sent_time` / `print_error`（送进过打印机的时刻与任务号、上次失败的原因——`print_sent_time` 同时是防重复下发的判据） |
 | `user_prefs` | 用户偏好（v18 加，PRIMARY KEY = `user_id`）：通知开关、免打扰时段、默认打印参数、订单列表显示、机器人是否用卡片回。**没有行 = 全默认**，读的时候由 `prefs.py` 补齐，所以新用户不必先写一行 |
 | `order_logs` | 订单操作留痕（谁、什么时候、把订单改成了什么）。v16 加 `to_status`：这一单被改成了哪个状态，历史记录页据此筛「改成可取件 / 已取件」；**不倒推历史数据**，老留痕按 detail 里的「「旧」→「新」」认 |
 | `audit_requests` | 身份审核申请（学号唯一，只允许提一次） |
@@ -810,6 +821,8 @@ SQLite 单库，共 13 张表：
 | `paper_types` | 纸张类型（管理员自己加，不写死在代码里）。v19 加 `price_delta`：这种纸每页比标准价贵多少（元/页），只进预估价 |
 | `site_assets` | 全站一张的资产（v21 加，只有 `id = 1` 这一行）：目前就 QQ 机器人二维码一个文件名。存**文件名**、目录由 `ASSET_FOLDER` 决定，与收款码同一个道理 —— 换盘改目录时不会静默失联 |
 | `price_rules` | **自动估价的公式系数**（v19 加，全站一份、只有 `id = 1` 那一行）：是否启用、每单基础费、最低消费、四档单价（黑白/彩色 × 单面/双面）。管理员在「计价规则」页改，`pricing.py` 是唯一读它的地方 |
+| `printers` | 打印机实体（v27 加，管理员在「打印选项」页增删改启停）：名称、主机、协议（ipp/raw9100）、端口、IPP 队列路径。启用中的 ≥ 1 台，订单台的下发按钮与设备徽标才出现 |
+| `print_jobs` | 逐台逐次下发明细（v27 加）：订单、打印机（id + **名字快照**，删机后历史照读）、任务号、投递时间/错误、**下发当时的参数快照**（颜色/单双面/份数/纸张）、操作人。`orders` 上的三列凭证（v26）只装「最近一次」，逐台历史在这张表 |
 | `schema_meta` | 结构版本，用于自动建表与升级 |
 
 > `orders` 里那几个选项快照列（`preset_id` / `preset_content` / `copies` / `paper_type_id` /
@@ -997,6 +1010,8 @@ print-of-dorm/
 │   │                      #   llbot-v8.2.1-win-x64.zip —— 上游原样，**不含任何凭据**
 │   └── _retired/          # 退役的框架与安装包（NapCat、旧版 LLBot、几个 zip），不进仓库
 ├── scripts/
+│   ├── probe_printer.py   # 打印机协议探测（下发联动接线前先跑它，见「设成开机自启」一节）
+│   ├── migrate_data_root.py  # 数据目录搬迁（搬文件 + 改库里的绝对路径）
 │   └── 启动服务.bat        # 本机一键起全套：网页服务 → LLBot → printbot（GBK + CRLF，别改编码）
 ├── secrets/               # **整块不进仓库**：真实 .env、几万人的学号姓名导出源
 ├── assets/fonts/          # 数据卡用的字体（随仓库走，部署机不必装字体）
@@ -1009,9 +1024,9 @@ print-of-dorm/
 
 > 根目录**只剩那一批核心 `.py` 加几个配置/说明文件** —— 工具、文档、退役产物都归了目录。
 > 那些 `.py`（`app` / `config` / `db` / `auth` / `security` / `identity` / `utils` / `pricing` /
-> `prefs` / `botcard` / `notifier` / `pickup_notifier`）**必须留在根上**：项目是扁平布局、
-> 全仓按裸名导入（`from config import ...`），搬进子包就得改几十处 import 还要给 `sys.path`
-> 打补丁 —— 「目录整齐」和「能跑」的边界就在这一行。
+> `prefs` / `botcard` / `notifier` / `pickup_notifier` / `archiver` / `printer` / `printer_worker`）
+> **必须留在根上**：项目是扁平布局、全仓按裸名导入（`from config import ...`），搬进子包就得
+> 改几十处 import 还要给 `sys.path` 打补丁 —— 「目录整齐」和「能跑」的边界就在这一行。
 
 本地跑起来之后还会多出这些（**都已在 `.gitignore` 里，不会提交**）：
 
