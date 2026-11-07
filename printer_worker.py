@@ -233,6 +233,15 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
         deviations = []  # 与订单参数不一致的逐份记录（确认框改了黑白/单双面才发生）
         for index, entry in enumerate(entries, 1):
             path = _resolve_order_file(entry['file_path'])
+            # 参数先算：文件缺失的失败也要落一行「这一次本想按什么参数发」的明细，
+            # 与发送失败的行同一口径 —— 逐台逐次的台账不能缺页。
+            dispatched_color, dispatched_duplex, deviated = _dispatch_params(
+                entry, order, overrides, entry['id'])
+            order_color = _pick_param(entry, order, 'color_type', 'black')
+            order_duplex = _pick_param(entry, order, 'duplex', 'single')
+            params = (dispatched_color, dispatched_duplex,
+                      _pick_param(entry, order, 'copies', 1),
+                      order['paper_name'] or '')
             if path is None:
                 # 前面送出去的纸收不回来，如实说清：重发会整单重打。
                 if sent:
@@ -243,14 +252,9 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
                     column_error = ('第 %d/%d 份（%s）文件已不在服务器上'
                                     % (index, len(entries), entry['filename']))
                 log_detail = column_error
+                _record_job(conn, order_id, printer, None, column_error, params,
+                            actor_id, actor_role, sent_time=False)
                 break
-            dispatched_color, dispatched_duplex, deviated = _dispatch_params(
-                entry, order, overrides, entry['id'])
-            order_color = _pick_param(entry, order, 'color_type', 'black')
-            order_duplex = _pick_param(entry, order, 'duplex', 'single')
-            params = (dispatched_color, dispatched_duplex,
-                      _pick_param(entry, order, 'copies', 1),
-                      order['paper_name'] or '')
             if deviated:
                 deviations.append(
                     '第 %d 份按 %s·%s 发送（订单原为 %s·%s）'
