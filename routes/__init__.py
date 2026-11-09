@@ -21,6 +21,10 @@ from . import upload_chunks
 from . import audit
 # pay_qr 是「管理员自己的收款二维码」：上传 / 删除 / 预览，见 routes/pay_qr.py 开头。
 from . import pay_qr
+# lottery 是抽奖（v28，2026-11 加）：学生参与 + 管理端管理，开奖/结余/资格口径
+# 都写在 routes/lottery.py 模块头。它只动 lotteries / lottery_entries 两张
+# 自己的新表，不碰订单与计费，所以排在最后即可。
+from . import lottery
 
 BLUEPRINTS = (
     account.bp,
@@ -46,6 +50,7 @@ BLUEPRINTS = (
     # 见 routes/bot_hint.py 开头那段。
     bot_hint.bp,
     pay_qr.bp,
+    lottery.bp,
 )
 
 

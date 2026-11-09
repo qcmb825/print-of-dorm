@@ -393,7 +393,10 @@ def get_pickup_info(conn=None, apply_fallback=True):
 #            下发明细 —— 两台并行后 orders 那三列只装得下「最近一次」，逐台历史归表）。
 #            orders 的三列凭证保留：print_sent_time = 最近一次成功（防重复判据不变）、
 #            print_error = 最近一次失败原因、print_job_id = 最近任务号。
-SCHEMA_VERSION = '27'
+# v27 -> v28：抽奖（促活新功能）。新表 lotteries（一期活动：奖品、份数、开奖/归档时刻、
+#            状态）与 lottery_entries（参与记录 + 中奖标记 + 中奖邮件通知凭证）。
+#            纯加表，老数据一概不动。结余「同奖品才累计」的口径见 routes/lottery.py。
+SCHEMA_VERSION = '28'
 
 
 
@@ -479,6 +482,12 @@ def _schema_work_pending(cursor, current_version):
         pending.append('printers(新表)')
     if not _table_exists(cursor, 'print_jobs'):
         pending.append('print_jobs(新表)')
+
+    # v28：抽奖两新表（同上：缺了就是「老库没升到 28」，先备份再建）。
+    if not _table_exists(cursor, 'lotteries'):
+        pending.append('lotteries(新表)')
+    if not _table_exists(cursor, 'lottery_entries'):
+        pending.append('lottery_entries(新表)')
 
     # v24：一单多文件里的「每份文件自己的参数」。
     if _table_exists(cursor, 'order_files'):
@@ -1699,6 +1708,56 @@ def init_database():
         ''')
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_print_jobs_order ON print_jobs(order_id, create_time)'
+        )
+
+        # ---- v28：抽奖 ----
+        # 一期活动一张 lotteries 行。份数存**本期总份数（含 carry_in）**：管理端表单
+        # 里管理员改的就是这个总数，结余只是它的一部分，拆开存反而对不上账。
+        # draw_at/archive_at 与全库一致存 UTC 字符串；「可见与否」的比较都用它，
+        # 不在库里存本地时间（展示层统一 datetime(col,'localtime') 转换）。
+        # status 三态：open（可参与）→ drawn（已开奖）→ archived（归档隐藏）。
+        # open/drawn 都算「在架上」，同一时间只允许一个在架（业务校验在路由层）。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS lotteries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prize_name TEXT NOT NULL,
+                prize_image_file TEXT,
+                prize_quantity INTEGER NOT NULL,
+                carry_in INTEGER NOT NULL DEFAULT 0,
+                draw_at TIMESTAMP NOT NULL,
+                archive_at TIMESTAMP,
+                status TEXT NOT NULL DEFAULT 'open',
+                drawn_at TIMESTAMP,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_lotteries_status ON lotteries(status, id)'
+        )
+
+        # 参与记录。(lottery_id, user_id) 唯一索引就是「一人一期一票」本身：
+        # 并发下两个 POST 同时过校验，也只插得进一行（另一个 IntegrityError）。
+        # notify_time/notify_error 是中奖邮件的凭证列 —— 与 claim_alert_time /
+        # ready_notify_time 同一哲学：状态在库里，不在内存，重启不重发。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS lottery_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lottery_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_winner INTEGER NOT NULL DEFAULT 0,
+                notify_time TIMESTAMP,
+                notify_error TEXT
+            )
+        ''')
+        cursor.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_lottery_entries_user '
+            'ON lottery_entries(lottery_id, user_id)'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_lottery_entries_lottery '
+            'ON lottery_entries(lottery_id, is_winner)'
         )
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的

@@ -410,6 +410,33 @@ PRESET_DOC_MAX_BYTES = max(1024 * 1024, env_int('PRESET_DOC_MAX_BYTES', 20 * 102
 PRESET_PRICE_MAX = env_float('PRESET_PRICE_MAX', 999)
 
 
+# ---- 抽奖（v28，2026-11 加）------------------------------------------------
+# 奖品配图：库里存**文件名**，目录由这里决定 —— 与二维码/预设文档同一套路，
+# 换盘或改目录名只改配置；存绝对路径的话，改配置那一刻历史活动的配图会静默失联。
+# 单开一个目录、不塞进 UPLOAD_FOLDER：那是订单附件的家（撤单删文件、运维清理
+# 扫的是整目录），奖品图是活动资产，混进去早晚被顺手清掉，而且是静默清掉。
+LOTTERY_IMAGE_FOLDER = resolve_path(
+    os.getenv('LOTTERY_IMAGE_FOLDER', '').strip() or os.path.join(DATA_DIR, 'lottery_prizes')
+)
+
+os.makedirs(LOTTERY_IMAGE_FOLDER, exist_ok=True)
+
+# 只收浏览器能原样渲染的三种（同预设文档的判据：学生与管理员都要直接看图）。
+LOTTERY_IMAGE_EXTENSIONS = ('jpg', 'jpeg', 'png')
+
+# 奖品图上限与机器人二维码同一档：手机拍的实物照片 PNG 很容易 2-4MB。
+LOTTERY_IMAGE_MAX_BYTES = max(64 * 1024, env_int('LOTTERY_IMAGE_MAX_BYTES', 4 * 1024 * 1024))
+
+# 参与人名单一次最多返回多少条：够一个楼栋级抽奖用，也防着有人把「参与人列表」
+# 当成接口放大器 —— 一次响应拖死移动端。总数另给一行，名单装不下就看总数。
+LOTTERY_PARTICIPANT_LIMIT = max(10, env_int('LOTTERY_PARTICIPANT_LIMIT', 500))
+
+# 抽奖后台线程的轮询间隔。开奖/归档/中奖邮件靠它兜底（读接口里另有惰性触发，
+# 线程没起来也不会永远不开奖）。30 秒对「定时开奖」的准时性够用，不值得为它
+# 常驻一个更密的循环 —— 全站常驻件的预算很紧（见 DESIGN_RULES §7 的同一逻辑）。
+LOTTERY_WORKER_INTERVAL = max(5, env_int('LOTTERY_WORKER_INTERVAL', 30))
+
+
 # 兜底收款码：接单人没传自己的码、内置管理员也没传时，用这一张。
 # 留住它是为了让「还没人上传过」这件事不表现为邮件缺图 ——
 # 部署时把默认管理员那张码丢成 data/pay_qr/default.png 就能立刻跑起来。

@@ -54,6 +54,7 @@ from notifier import start_claim_watcher
 from pickup_notifier import start_pickup_watcher
 from archiver import start_archive_watcher
 from printer_worker import start_printer_worker
+from lottery_worker import start_lottery_watcher
 from security import actor_label, client_ip, ensure_csrf_token, sanitize_log, security_event
 
 from routes import register_blueprints
@@ -733,4 +734,8 @@ if __name__ == '__main__':
     # ——启动时一台都还没有也照常就绪。其余三条都不碰打印机，
     # 这条是唯一把文件送出服务器的（下载不算 —— 那是人拉走的）。
     start_printer_worker()
+    # 第五条：抽奖（v28）。到点开奖、到期归档、给中奖者发邮件。开奖与归档的
+    # 幂等判据都在数据库里（status 条件 UPDATE），读接口里另有一份惰性触发 ——
+    # 这条线程管的是「没人访问页面时也准时」，两路并发也只有一方生效。
+    start_lottery_watcher()
     start_server(os.getenv('HOST', '0.0.0.0'), env_int('PORT', 8080))
