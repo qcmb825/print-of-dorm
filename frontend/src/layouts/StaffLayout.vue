@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   CircleDollarSign,
   ClipboardCheck,
+  Gift,
   History,
   LayoutDashboard,
   Megaphone,
@@ -60,6 +61,9 @@ const navItems = computed(() => [
   // 价目表紧跟打印选项：两者都是「管理员维护的定价相关配置」，
   // 也同样是所有管理员可改（后端 ROLE_ADMIN 起步）。
   { to: '/staff/pricing', label: '价目表', icon: CircleDollarSign },
+  // 抽奖**常驻**（业主要求）：没有活动时这一页就是建活动的地方，
+  // 藏起来反而要多问一句「入口在哪」。同样是所有管理员可用（后端 ROLE_ADMIN 起步）。
+  { to: '/staff/lottery', label: '抽奖', icon: Gift },
   { to: '/staff/users', label: '账号管理', icon: Users },
 ])
 

@@ -73,6 +73,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/student/Print3DView.vue'),
         meta: { title: '3D 打印', code: '06' },
       },
+      {
+        // 抽奖也不进底部标签栏：入口是顶栏品牌标题旁那枚徽标（有活动才出现），
+        // 活动结束后徽标随之消失 —— 低频功能不该在导航里常驻一格。
+        path: 'lottery',
+        name: 'student-lottery',
+        component: () => import('@/views/student/LotteryView.vue'),
+        meta: { title: '抽奖', code: '07' },
+      },
     ],
   },
   {
@@ -155,6 +163,14 @@ const routes: RouteRecordRaw[] = [
         name: 'staff-tickets',
         component: () => import('@/views/staff/TicketsView.vue'),
         meta: { title: '工单处理', code: '08' },
+      },
+      {
+        // 抽奖后台**常驻**导航（业主要求）：没有活动时这一页就是建活动的地方，
+        // 藏起来反而要多问一句「入口在哪」。管理端编号接着 08 排。
+        path: 'lottery',
+        name: 'staff-lottery',
+        component: () => import('@/views/staff/LotteryView.vue'),
+        meta: { title: '抽奖', code: '09' },
       },
     ],
   },

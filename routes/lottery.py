@@ -57,6 +57,22 @@ def _utcnow():
     return datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _to_local(utc_str):
+    """出 API 前把 UTC 串转成本地时间。
+
+    全站的约定是「库里存 UTC，接口返回前用 datetime(col,'localtime') 转成本地」
+    （routes/orders.py 的列表 SELECT、frontend 的 shortTime 都按这个来）。
+    这里用 Python 做同一个转换：datetime.astimezone() 无参时按系统时区解释，
+    与 SQLite 的 'localtime' 用的是同一个来源。"""
+    if not utc_str:
+        return None
+    try:
+        dt = datetime.strptime(utc_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+    except ValueError:
+        return utc_str
+    return dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+
+
 def _to_utc_stamp(ms):
     """前端传来的时刻（本地墙钟的 epoch 毫秒）-> 库里那份 UTC 字符串。
 
@@ -198,9 +214,9 @@ def _payload(conn, lot, user_id):
         'prize_name': lot['prize_name'],
         'prize_quantity': lot['prize_quantity'],
         'carry_in': lot['carry_in'],
-        'draw_at': lot['draw_at'],
-        'archive_at': lot['archive_at'],
-        'drawn_at': lot['drawn_at'],
+        'draw_at': _to_local(lot['draw_at']),
+        'archive_at': _to_local(lot['archive_at']),
+        'drawn_at': _to_local(lot['drawn_at']),
         'has_image': bool(lot['prize_image_file']),
         'participant_count': count,
         'participants': participants,
@@ -427,11 +443,11 @@ def _admin_row(conn, lot):
         'prize_name': lot['prize_name'],
         'prize_quantity': lot['prize_quantity'],
         'carry_in': lot['carry_in'],
-        'draw_at': lot['draw_at'],
-        'archive_at': lot['archive_at'],
+        'draw_at': _to_local(lot['draw_at']),
+        'archive_at': _to_local(lot['archive_at']),
         'status': lot['status'],
-        'drawn_at': lot['drawn_at'],
-        'create_time': lot['create_time'],
+        'drawn_at': _to_local(lot['drawn_at']),
+        'create_time': _to_local(lot['create_time']),
         'has_image': bool(lot['prize_image_file']),
         'participant_count': total,
         'winner_count': winners,
@@ -588,9 +604,9 @@ def api_admin_detail(lottery_id):
                 'student_id': r['student_id'],
                 'dorm': r['dorm'],
                 'qq': r['qq'],
-                'joined_at': r['create_time'],
+                'joined_at': _to_local(r['create_time']),
                 'is_winner': bool(r['is_winner']),
-                'notify_time': r['notify_time'],
+                'notify_time': _to_local(r['notify_time']),
                 'notify_error': r['notify_error'],
             }
             for r in conn.execute('''
