@@ -21,6 +21,8 @@ import BlueprintSheet from '@/components/BlueprintSheet.vue'
 import ForgotPasswordDialog from '@/components/ForgotPasswordDialog.vue'
 import { ApiError } from '@/api/client'
 import BotHintCard from '@/components/BotHintCard.vue'
+import { ADMIN_QQ as ADMIN_QQ_CONTACT } from '@/config/contact'
+import { copyText } from '@/composables/clipboard'
 import { prefersReducedMotion, useBreakerTrip } from '@/composables/motion'
 import BootSequence from '@/components/BootSequence.vue'
 import { useClock } from '@/composables/clock'
@@ -116,35 +118,16 @@ const registerRef = ref<FormInst | null>(null)
  *  按整页 `document.querySelector` 取的话，会摸到隔壁登录栏的错误行。 */
 const registerPaneEl = ref<HTMLElement | null>(null)
 
-/** 站长的 QQ —— 注册卡住时唯一的求助入口。
- *
- *  为什么写在前端常量里、而不是从服务端下发：它是**部署者自己的联系方式**，
- *  全校就这一个，没有「每人一份」的含义；为它加一个接口，等于让这个页面
- *  多一次往返、多一个可能 404 的依赖，而它恰恰要在「别的都不顺」的时候出现。
- *  改号 = 改这一行 + 重新 build（产物入库，不需要部署机装 Node）。 */
-const ADMIN_QQ = '2399344717'
+/** 站长的 QQ —— 注册卡住时唯一的求助入口。号码与「为什么放前端常量」的
+ *  理由都在 config/contact.ts（Print3DView 用同一个号），这里不复制第二份。 */
+const ADMIN_QQ = ADMIN_QQ_CONTACT
 const copiedQq = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 点一下就复制 QQ 号。
- *
- *  不用 `mqqwpa://` 唤起 QQ：那个协议在桌面浏览器里会静默失败（点了没反应），
- *  而「点了没反应」正是这个提示要解决的问题 —— 同一个坑不能自己再踩一遍。
- *  复制是两边（手机 / 桌面）都成立的动作，用户自己粘到 QQ 里加好友。 */
+/** 点一下就复制 QQ 号：复制动作与 execCommand 兜底在 composables/clipboard.ts。
+ *  这里只管「已复制」的回显 —— 复制不了也不挡路，号就写在按钮上。 */
 async function copyAdminQq(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(ADMIN_QQ)
-  } catch {
-    // http 访问（非安全上下文）或老浏览器没有 clipboard API：退回 execCommand。
-    const ta = document.createElement('textarea')
-    ta.value = ADMIN_QQ
-    ta.style.position = 'fixed'
-    ta.style.opacity = '0'
-    document.body.appendChild(ta)
-    ta.select()
-    try { document.execCommand('copy') } catch { /* 复制不了也不挡路，号就写在按钮上 */ }
-    document.body.removeChild(ta)
-  }
+  await copyText(ADMIN_QQ)
   copiedQq.value = true
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copiedQq.value = false }, 2200)

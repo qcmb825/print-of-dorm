@@ -1,0 +1,1 @@
+var e=`2399344717`;async function t(e){try{return await navigator.clipboard.writeText(e),!0}catch{let t=document.createElement(`textarea`);t.value=e,t.style.position=`fixed`,t.style.opacity=`0`,document.body.appendChild(t),t.select();let n=!1;try{n=document.execCommand(`copy`)}catch{}return document.body.removeChild(t),n}}export{e as n,t};

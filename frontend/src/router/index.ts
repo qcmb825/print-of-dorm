@@ -65,6 +65,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/student/SettingsView.vue'),
         meta: { title: '设置', code: '05' },
       },
+      {
+        // 3D 打印是广告页不是流程页：不进导航栏，入口只放在下单页那排方式按钮
+        // 旁边 —— 会不会用 3D，来下单的人一眼就能决定；不占一个常驻标签格。
+        path: '3d',
+        name: 'student-3d',
+        component: () => import('@/views/student/Print3DView.vue'),
+        meta: { title: '3D 打印', code: '06' },
+      },
     ],
   },
   {
