@@ -49,7 +49,8 @@ def help_offline_text():
              '这些命令我认识（服务器恢复后照常可用）：']
     lines += _local_help_lines()
     lines.append('要下单：等服务器恢复后把文件重发一次，要求写在同一条消息里就行，')
-    lines.append('　例「黑白 2份」「第 2 份彩色」「A4 80g 双面」「都双面」。')
+    lines.append('　例「黑白 2份 单面」「第 2 份彩色」「A4 80g 双面」「都双面」。')
+    lines.append('　（单双面每次都要说：写「单面」或「双面」，不会替你默认。）')
     lines.append('网页端也能下单和查单：%s'
                  % (config.SITE_URL or '地址请向管理员索取'))
     return chr(10).join(lines)
@@ -922,10 +923,57 @@ def _file_refs(files):
     return '、'.join('第 %d 份' % index for index, _item in files)
 
 
+def _duplex_choices(entry):
+    """这一批**可选**的单双面，按 ('single', 'double') 这种顺序给。
+
+    为什么要先问一句「有没有得选」：相纸那一档只有单面价，根本没有「双面」
+    这个选项 —— 那时再逼学生说一遍「单面」只是走形式，只有一个答案的问题不该问。
+    反过来，管理员还没配价目表时两种都可能，照问。
+    """
+    if entry.get('kind') == 'preset':
+        item_id = entry.get('preset_item_id')
+        items = ([item for item in (entry.get('items') or [])
+                  if item.get('price_item_id') == item_id] if item_id else [])
+    else:
+        items = entry.get('items') or []
+    if not items:
+        return ('single', 'double')
+    if any(item.get('supports_duplex') for item in items):
+        return ('single', 'double')
+    return ('single',)
+
+
+def _duplex_missing(entry):
+    """还差哪些文件没说单双面（序号口径与 _unspecified 一致）。
+
+    单双面是**必答项**（2026-11 产品决定）：它直接跟钱走 —— 双面按张计、
+    单价本身也不同；更要紧的是翻面打错的纸整份都废。所以它不像份数 / 档位 /
+    颜色那样可以「没说就按默认」，必须让本人点一下。
+    """
+    if len(_duplex_choices(entry)) == 1:
+        return []                       # 只有一种可能：没什么可问的
+    if entry.get('kind') == 'preset':
+        raw = entry.get('raw') or {}
+        return [(1, entry)] if raw.get('duplex') not in ('single', 'double') else []
+    missing = []
+    for index, item in enumerate(entry.get('files') or [], start=1):
+        raw = item.get('raw') or {}
+        if raw.get('duplex') not in ('single', 'double'):
+            missing.append((index, item))
+    return missing
+
+
 def _unspecified(entry):
-    """这一批里还没定下打印要求的文件（带 1 起的序号）。"""
-    return [(index, item) for index, item in enumerate(entry['files'], start=1)
-            if not item.get('raw')]
+    """这一批里还没定下打印要求的文件（带 1 起的序号）。
+
+        判据有两条，缺一不可：**一句要求都没说**，或者**没说单双面**。
+        后者是 2026-11 加的那条必答项：只说「黑白 2份」的文件仍然算「没说完」，
+        还得补一句单面还是双面（见 _duplex_missing）。这样「回好就默认单面」
+        那条老路自然断掉 —— 回「好」不会再把这些文件标成已表态。
+    """
+    missing_duplex = {index for index, _item in _duplex_missing(entry)}
+    return [(index, item) for index, item in enumerate(entry.get('files') or [], start=1)
+            if not item.get('raw') or index in missing_duplex]
 
 
 def _all_specified(entry):
@@ -934,9 +982,11 @@ def _all_specified(entry):
     判据是「有没有原始要求」（raw），不是「能不能算出档位」：
     后者永远为真（没说的地方都能用默认值补齐），拿它当判据会变成
     「文件一到就自动下单」—— 那不是少操作，那是替学生做主。
+    单双面另有一条硬要求：这一批只要还有一份没说单面/双面，就不算说清楚
+    （见 _duplex_missing），预设单同理 —— 它也是要真的印出来的。
     """
     if entry['kind'] == 'preset':
-        return bool(entry.get('raw'))
+        return bool(entry.get('raw')) and not _duplex_missing(entry)
     return bool(entry['files']) and not _unspecified(entry)
 
 
@@ -1169,15 +1219,24 @@ def _remind_text(entry, qq):
     if entry.get('kind') == 'preset':
         head = '「打印服务 %s」还没说要怎么打。' % (entry.get('preset_content') or '')
     else:
+        files = entry.get('files') or []
         missing = _unspecified(entry)
-        if missing:
+        if missing and len(files) == 1:
+            #    只有一份时说「第 1 份还没说要怎么打」是句废话（他自己也就这一份）。
+            head = '「%s」还没说清。' % (files[0].get('name') or '')
+        elif missing:
             head = '%s 还没说要怎么打。' % _file_refs(missing)
         else:
             head = '还在等你的回复。'
     default, error = _default_spec(entry, qq)
+    if _duplex_missing(entry):
+        #    单双面是必答项：这条提醒不能再说「回「好」就下单」——
+        #    学生照做只会被同一句话再挡回来一次，像机器人卡住了。
+        return (head + '\n先说单面还是双面：回「单面」或「双面」；'
+                       '也可以一句话说全（如「黑白 2份 单面」）。')
     if error or default is None:
         return head + '\n回「好」直接下单，或发「取消」放弃。'
-    return (head + '\n回「好」按 %s 下单，或说要怎么打（如「黑白 2份」）。'
+    return (head + '\n回「好」按 %s 下单，或说要怎么打（如「黑白 2份 单面」）。'
             % nlu.describe(default))
 
 
@@ -1280,7 +1339,9 @@ def _resolve_raw(entry, qq, raw):
     """
     if not entry.get('items'):
         prefs = _prefs_cache_get(qq)
-        duplex = (raw or {}).get('duplex') or prefs.get('default_duplex') or 'single'
+        #    单双面**不取偏好默认值**（2026-11 起它是必答项）：这里留 'single'
+        #    只是给「试算/展示」一个占位，真下单前 raw 里一定有本人说过的值。
+        duplex = (raw or {}).get('duplex') or 'single'
         #    份数上限在**这里也要夹**：没有价目项时这一单照样要提交，
         #    不夹的话「80 份」会在最后一步被服务端 400 顶回来（学生只能反复回「好」）。
         asked_copies = (raw or {}).get('copies') or prefs.get('default_copies')
@@ -1300,7 +1361,9 @@ def _resolve_raw(entry, qq, raw):
         raw or {}, entry.get('items') or [],
         default_item_id=entry.get('preset_item_id') or prefs.get('default_price_item_id'),
         default_copies=prefs.get('default_copies'),
-        default_duplex=prefs.get('default_duplex'))
+        #    不传 default_duplex：单双面不再用偏好兜底（必答项，见 _duplex_missing）。
+        #    偏好里那个值现在只用于追问时提一句「你设过默认双面」。
+        default_duplex=None)
 
 
 def _resolve_file(entry, qq, item):
@@ -1338,8 +1401,53 @@ def _ask_text(entry, qq):
             lines.append('收到「%s」。' % names[0] if len(names) == 1
                          else '收到 %d 份文件。' % len(names))
         lines.append('管理员还没配置价目表，这一单按老规矩提交、金额由管理员核定。')
-        lines.append('回「好」直接下单，或发「取消」放弃。')
+        #    这里**不能**再说「回好直接下单」：单双面是必答项，没有价目表时
+        #    两种都可能，回「好」照样会被挡回来一遍。
+        lines.append('先说一句单面还是双面，再回「好」就能提交。')
         return '\n'.join(lines)
+
+    missing_duplex = _duplex_missing(entry)
+    pending = 1 if entry.get('kind') == 'preset' else len(_unspecified(entry))
+    #    只差「单双面」这一项：专门问它，**不念默认档** ——
+    #    念了就像已经替他把单面定下来了，而这一项恰恰要他本人点。
+    if missing_duplex and pending == len(missing_duplex):
+        if entry.get('kind') == 'preset':
+            lines.append('「打印服务 %s」还差一项：单面还是双面？'
+                         % (entry.get('preset_content') or ''))
+        else:
+            files = entry.get('files') or []
+            if len(files) == 1:
+                item = files[0]
+                raw = item.get('raw') or {}
+                head = '收到「%s」' % (item.get('name') or '')
+                if raw:
+                    #    学生刚说过「黑白 2份」时别装作没听见：把他已经说过的那半句
+                    #    复述出来，他知道自己的话生效了、只差最后一项；
+                    #    否则同一句「收到 X」问两遍，看着像机器人没在听。
+                    resolved, _err = _resolve_file(entry, qq, item)
+                    if resolved:
+                        got = nlu.describe(resolved).replace('单面', '').replace('双面', '')
+                        got = got.strip(' ·')
+                        if got:
+                            head += '（%s 已经记下）' % got
+                lines.append(head + '——还差一项：单面还是双面？')
+            else:
+                #    多份时先把「收到了哪几份」列出来：学生一次发三份，
+                #    最想确认的是「你都收到了吗」，而不是「第 1 份、第 2 份」。
+                lines.append('收到 %d 份文件：' % len(files))
+                for index, item in enumerate(files, start=1):
+                    lines.append(' ' + _file_label(index, item))
+                lines.append('还差一项：%s 要单面还是双面？' % _file_refs(missing_duplex))
+        lines.append('回「单面」或「双面」就行（也可以连别的一起说：「双面 2份」）。')
+        hint = _prefs_cache_get(qq).get('default_duplex')
+        if hint in ('single', 'double'):
+            #    偏好里的默认值从此**只是提示**，不再替他生效 —— 说清楚，
+            #    否则设过「默认双面」的人会以为这一单已经按双面走了。
+            lines.append('设置里那个「%s」只是记着的偏好，这一单还是要你自己说一次。'
+                         % ('单面' if hint == 'single' else '双面'))
+        lines.append('单双面每次都要说清楚：翻错了整份纸都废，这事我不替你定。')
+        return '\n'.join(lines)
+
     if entry.get('kind') == 'preset':
         lines.append('「打印服务 %s」还没说要怎么打。' % (entry.get('preset_content') or ''))
     else:
@@ -1359,10 +1467,18 @@ def _ask_text(entry, qq):
         #    管理员还没配价目表：不能装作没这回事（学生选了档却算不出价）。
         #    明说一句，然后**照常下单** —— 金额本来就由管理员核定。
         lines.append('管理员还没配置价目表，这一单按老规矩提交、金额由管理员核定。')
-        lines.append('回「好」直接下单，或发「取消」放弃。')
+        lines.append('先说一句单面还是双面，再回「好」就能提交。')
         return '\n'.join(lines)
-    lines.append('要按 %s 下单吗？' % nlu.describe(default))
-    lines.append('回「好」直接下单，或说要怎么打：「黑白 2份」「第 2 份彩色」「都双面」。')
+    summary = nlu.describe(default)
+    if missing_duplex:
+        #    还没定单双面时不要把假设念成定论：念「单面」等于替他做了决定，
+        #    而他看到的正是「已经按单面算好了」。
+        summary = summary.replace('单面', '单双面待定').replace('双面', '单双面待定')
+    lines.append('要按 %s 下单吗？' % summary)
+    if missing_duplex:
+        lines.append('单双面还没说：回「单面」/「双面」，整批一起就说「都双面」。')
+    else:
+        lines.append('回「好」直接下单，或说要怎么打：「黑白 2份」「第 2 份彩色」「都双面」。')
     return '\n'.join(lines)
 
 
@@ -1381,14 +1497,21 @@ def _after_change(client, qq, entry):
 def _fill_defaults(entry):
     """把还没表态的那些文件标成「按默认来」（学生回了「好」时用）。
 
-    标成一个**非空**的要求字典，是为了让 _all_specified 认为它已经表态 ——
-    这个空壳里没有 color/duplex/copies/paper，resolve 时会逐项落到默认值上，
-    所以它表达的正是「没说，按默认」。
+    **单双面例外**：它是必答项，回「好」不能替学生把「没说」变成「单面」。
+    所以缺单双面的那几份保持原样（`_unspecified` 仍然认它），
+    下一步会就这一项单独追问他一次。
     """
     if entry.get('kind') == 'preset':
-        entry['raw'] = entry.get('raw') or {'default': True}
+        raw = entry.get('raw') or {}
+        #    已经说了单双面：其余按默认补一个非空壳即可；
+        #    没说就什么都不动，交给 _duplex_missing 去问。
+        if raw.get('duplex') in ('single', 'double'):
+            entry['raw'] = raw
         return
-    for item in entry.get('files') or []:
+    missing_duplex = {index for index, _item in _duplex_missing(entry)}
+    for index, item in enumerate(entry.get('files') or [], start=1):
+        if index in missing_duplex:
+            continue                 # 单双面还没说：留空，等他说
         if not item.get('raw'):
             item['raw'] = {'default': True}
 
@@ -1505,6 +1628,11 @@ def _apply_requirement(client, qq, entry, text, scope=None, target_names=None):
                 return True
         elif scope:
             targets = list(scope)
+        elif entry.get('kind') == 'preset':
+            #    预设单没有 files 列表，它的要求挂在 entry['raw'] 上（整单一份）。
+            #    不特判的话，学生回的「单面」在这里会落到空目标上，
+            #    于是什么都写不进去，下一步只会再问一遍同一句。
+            targets = [entry]
         else:
             targets = [item for _index, item in _unspecified(entry)]
             if not targets:

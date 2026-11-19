@@ -111,6 +111,11 @@ _COPIES_PATTERNS = (
 # （调用方本来就是按「全局要求」处理的），列在这里是为了让 is_global 更准。
 _ALL_WORDS = ('都', '全部', '全都', '所有', '每份', '各个', '每个')
 
+#    「1黑白 2彩色 都双面」里的「都双面」：它落在最后一段的文本里，
+#    但说的是**整批**。切分之后要把这一段从段尾剥出去（见 _split_global_tail）。
+_ALL_TAIL_PATTERN = re.compile(
+    '(?:%s)\\s*\\S.*$' % '|'.join(re.escape(word) for word in _ALL_WORDS))
+
 _CN_NUM_RE = re.compile(r'^[一二两三四五六七八九十]{1,3}$')
 
 
@@ -363,11 +368,17 @@ def parse_requirement(text):
 
     for line in re.split(r'[\n；;]+', raw):
         for index, chunk in _split_scoped(line):
-            spec = _spec_of(chunk)
+            #    「1黑白 2彩色 都双面」：最后一个序号后面的「都双面」说的是整批。
+            #    不剥出去的话它会变成「第 3 份双面、前两份照旧」—— 学生说的那个
+            #    「都」被吃掉了一半，而且**不报错**，只是纸翻错了面。
+            chunk, global_tail = _split_global_tail(chunk) if index is not None else (chunk, '')
+            spec = _spec_of(chunk) if chunk else empty_spec()
             if index is None:
                 merge_spec(out['global'], spec)
             elif not spec_is_empty(spec):
                 out['scoped'].append((index, spec))
+            if global_tail:
+                merge_spec(out['global'], _spec_of(global_tail))
     out['empty'] = spec_is_empty(out['global']) and not out['scoped']
     return out
 
@@ -435,6 +446,17 @@ def merge_spec(target, spec):
 # 分句切分器（说明见 _NEGATION_WORDS 下面那段）。`.` 不切：
 # 「0.5」「A4」这种带点的写法更常见，而句号在打印要求里几乎不出现。
 _CLAUSE_SPLIT = re.compile(r'[，,、。;；\n]+')
+
+
+def _split_global_tail(chunk):
+    """把段尾的「都 XX」剥出来，返回 (这一份的要求, 整批的要求)。
+
+    只有带序号的分段才需要剥：序号为 None 时整句本来就是全局要求，剥不剥一样。
+    """
+    match = _ALL_TAIL_PATTERN.search(chunk or '')
+    if not match:
+        return chunk, ''
+    return chunk[:match.start()].strip(), match.group(0).strip()
 
 
 def _split_scoped(line):
