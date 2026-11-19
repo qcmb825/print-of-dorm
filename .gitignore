@@ -63,13 +63,14 @@ vendor/_retired/
 # .md 文档不提交
 *.md
 
-# 例外：这几份要留着
-#   README 与 HANDOVER 是给「下一个打开仓库的人」看的 —— 不进例外就等于白写
-#   （clone 下来根本看不到）。AGENTS.md **故意不在这里**：它是本机 agent 的工作约定
-#   （含运营方的私人偏好），项目一直不把它提交到公开仓库，保持原样。
+# 例外：README 要留着（它是给 clone 下来的人看的门面）。
+#   其余 .md 一律只在本地 —— AGENTS.md（agent 工作约定）、HANDOVER.md（交接书）、
+#   各次交接与方案文档，全部住在 memoryandtest/ 里（整块忽略，见文件开头）。
+#   ⚠️ 根目录的 AGENTS.md 是**符号链接**，真身在 memoryandtest/memory/AGENTS.md：
+#   工具按原位读它，所以链接必须留着；但**不要**把链接或它的目标提交进来
+#   （即便将来这条 *.md 规则被放宽也一样）。
 !README.md
 !vendor/llonebot/README.md
-!HANDOVER.md
 
 # 运行日志里有客户端 IP、账号和操作记录，算隐私数据，不要提交到公开仓库。
 #
