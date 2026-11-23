@@ -212,8 +212,16 @@ def _find_copies(text):
         if not match:
             continue
         value = cn_number(match.group('num'))
-        if value:
-            return value
+        if not value:
+            continue
+        #    份数与颜色/单双面同一条纪律：数字也能被否定（「不要3份」「别打5份」），
+        #    读成正面要求就是实打实的多打纸 —— 多花的钱还是学生的，而且没有任何
+        #    提示。丢掉的代价只是走「没说份数 → 默认 + 回执写明」那条路，两者不对称。
+        #    （「打3份，不要5份」整句会因 3份 挨着后半句的「不要」一起被丢 ——
+        #    宁可多问一句，不冒读反的险；颜色那边同款取舍已经实测过。）
+        if _negated(text, match.group(0).strip()):
+            return None
+        return value
     return None
 
 
@@ -400,7 +408,11 @@ def _spec_of(chunk):
         #    纸张提示**按分句累积**而不是后句覆盖前句：「A4 80g，相纸」两句话
         #    说的是同一件事（规格 + 材质），拼起来交给 resolve_spec 一起比对
         #    才可能命中正确的档；只留最后一句会丢掉前面那句里的规格。
-        if hint and hint not in paper_parts:
+        #    但**被否定的规格不进拼串**：「不要 A4 的，用 A3」里 A4 若留在 hint 里，
+        #    resolve_spec 会同时命中 A4 与 A3 两档、取第一个候选 —— 明确说「不要」
+        #    的那档反而可能被选中。与颜色/份数同一条纪律：宁可丢（落回默认+回执），
+        #    不冒读反的险。
+        if hint and hint not in paper_parts and not _negated(clause, hint):
             paper_parts.append(hint)
     spec['paper'] = ' '.join(paper_parts)[:120] or None
     return spec

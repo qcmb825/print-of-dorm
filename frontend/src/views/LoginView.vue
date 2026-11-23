@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 登录 / 注册。同一个页面用标签切换，登录成功按角色分流。 */
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ArrowRight, CircleAlert, CircleCheck, Loader2, MessageCircle, Printer } from '@lucide/vue'
 import {
   NButton,
@@ -149,6 +149,14 @@ async function copyAdminQq(): Promise<void> {
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copiedQq.value = false }, 2200)
 }
+
+// 组件卸载时把「复制成功」的定时器收掉：LoginView 在登录/注册两栏间切换会整个卸载，
+// 定时器到点仍会写 copiedQq —— 不报错，但与全站「计时器在卸载时清掉」的口径
+// （ForgotPasswordDialog 那条注释）不一致。
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = null
+})
 
 
 const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({

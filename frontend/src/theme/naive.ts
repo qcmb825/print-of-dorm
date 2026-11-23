@@ -47,6 +47,9 @@ export interface Tokens {
   statusPrinting: string
   statusReady: string
   statusDone: string
+  /** 「未取件」（v25：可取件超期自动转入）。第六个状态 —— 少了它，
+   *  看板的状态分布饼图里这一块会掉进兜底色，吃到一个语义体系外的颜色。 */
+  statusUnclaimed: string
   /** 需要不透明的表面：--card 半透明，浮层/输入框用它会透出底色 */
   surfaceOverlay: string
   surfaceTableHead: string
@@ -87,6 +90,7 @@ const VAR_MAP: Record<
   statusPrinting: '--status-printing',
   statusReady: '--status-ready',
   statusDone: '--status-done',
+  statusUnclaimed: '--status-unclaimed',
   surfaceOverlay: '--surface-overlay',
   surfaceTableHead: '--surface-table-head',
   surfaceInput: '--surface-input',

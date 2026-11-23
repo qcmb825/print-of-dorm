@@ -514,7 +514,9 @@ def handle_404(err):
     favicon.ico 跳过，那是浏览器自动请求的，记了只是噪音。
     """
     if request.path != '/favicon.ico':
-        security_event('not_found', '访问了不存在的路径')
+        #    记下 path：留痕的价值在于答出「他在扫哪些路径」，只有次数没有路径的
+        #    留痕答不了这个问题（与 csrf_failed 的 method+path 同一口径）。
+        security_event('not_found', '访问了不存在的路径 path=%s' % request.path)
     return jsonify({'code': 404, 'msg': '接口不存在'}), 404
 
 

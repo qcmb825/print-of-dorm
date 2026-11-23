@@ -218,11 +218,17 @@ def api_admin_audit_review(rid):
         row = conn.execute('SELECT * FROM audit_requests WHERE id = ?', (rid,)).fetchone()
         if row is None:
             return jsonify({'code': 404, 'msg': '申请不存在'}), 404
-        conn.execute('''
+        #    条件 UPDATE（把读到的旧状态写进 WHERE）：两个管理员同时处理同一条
+        #    申请时，无条件 UPDATE 会让后写覆盖先写 —— approve 被翻成 reject、
+        #    reviewed_by 被顶掉。撞了就 409 让后来的人刷新再看，与订单状态机
+        #    同一条纪律；这条记录决定一个人能不能注册，留痕被顶掉可惜。
+        cursor = conn.execute('''
             UPDATE audit_requests
                SET status = ?, review_note = ?, reviewed_by = ?, review_time = CURRENT_TIMESTAMP
-             WHERE id = ?
-        ''', (new_status, note or None, g.user['id'], rid))
+             WHERE id = ? AND status = ?
+        ''', (new_status, note or None, g.user['id'], rid, row['status']))
+        if cursor.rowcount == 0:
+            return jsonify({'code': 409, 'msg': '这条申请刚被别人处理过了，刷新看看'}), 409
         conn.commit()
 
     logger.info('身份审核 #%s 学号=%s 结论=%s 处理人=%s(%s) ip=%s',

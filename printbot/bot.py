@@ -25,6 +25,7 @@ import collections
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -243,6 +244,20 @@ def reply_pref_default(client, qq, argument):
 # 这是一次很轻的 GET，代价可以忽略。
 PREF_CACHE_TTL = 10
 
+# 两个按 QQ 号长 key 的缓存都有界（理由同 _seen_before：无界集合跑几个月
+# 会变成内存里的一条垃圾带 —— 每个跟机器人说过话的 QQ 永久留一条）。
+# dict 保插入序：超限就淘汰最早写进来的那批。TTL 只管新鲜度、不管淘汰，
+# 所以必须有这一道，两者缺一不可。
+_CACHE_MAX_KEYS = 2000
+_CACHE_PRUNE_COUNT = 500
+
+
+def _prune_cache(cache):
+    if len(cache) <= _CACHE_MAX_KEYS:
+        return
+    for key in list(cache)[:_CACHE_PRUNE_COUNT]:
+        cache.pop(key, None)
+
 
 def _prefs_cache_get(qq):
     """偏好（带 PREF_CACHE_TTL 秒缓存）。
@@ -265,6 +280,7 @@ def _prefs_cache_get(qq):
         # 够不着服务器时按默认来（发卡）——门面偏好不值得让消息发不出去
         data = {}
     _prefs_cache[key] = (now, data)
+    _prune_cache(_prefs_cache)
     return data
 
 
@@ -361,6 +377,7 @@ def _identity_error(qq):
         return _identity_text(code, qq)
     #    只有「确实有账号」才记缓存（理由见上面 IDENTITY_CACHE_TTL 那段）
     _identity_cache[key] = (now, None)
+    _prune_cache(_identity_cache)
     return None
 
 
@@ -543,8 +560,20 @@ def _pending_get(qq):
 
 
 def _pending_set(qq, entry):
-    """挂上（或替换）某个 QQ 的待办。"""
+    """挂上（或替换）某个 QQ 的待办。
+
+    entry 已被打上 dead 标记时**拒绝写回**，并删掉它带的暂存文件：
+    「检查标记」与「写回」之间可能隔着一次取价目表的网络请求（几十秒级），
+    期间巡检超时 / 学生「取消」/ 又开了一批预设单都会把这一批清掉并打上标记
+    —— 只靠 handle_attachments 里的那次检查，挡得住「检查之前」的作废，
+    挡不住「检查之后」的。僵尸 entry 复活的症状是之后每次下单都
+    FileNotFoundError，而日志里看不出是谁删了文件，所以收口在锁内。
+    """
     with _pending_lock:
+        if entry.get('dead'):
+            for item in entry.get('files') or []:
+                _remove_quiet(item.get('path'))
+            return
         _pending[qq] = entry
 
 
@@ -1011,10 +1040,22 @@ def handle_attachments(client, qq, attachments, text=''):
 
     entry = _pending_get(qq)
     if entry is not None and time.time() - (entry.get('ts') or 0) > config.BATCH_TTL_SECONDS:
-        #    上一批已经超时了（推送循环每 15 秒扫一次，中间这几秒里进来的
+        #    上一批已经超时了（推送循环一个轮询周期 EVENTS_POLL_SECONDS 才扫一次，中间这几秒里进来的
         #    新文件不该被算进那批已经作废的东西里）。
         _clear_pending(qq)
         entry = None
+    if entry is not None and entry.get('kind') == 'preset':
+        #    正在等一条「打印服务」的确认时又收到文件：**不收**。
+        #    混进预设待办的话，这些文件永远不会参与判完（预设单的判据是 raw），
+        #    确认下单时 _pending_pop 只摘待办、不删文件 —— 学生以为会和预设一起打，
+        #    实际谁也没打它们，暂存还占着盘。反向路径（file 待办时发「打印服务 N」）
+        #    在那边是显式作废重开的；这边不吞也不替他作废 ——
+        #    学生可能只是手快，替他扔掉一条已经填了一半的预设单更糟。
+        client.send_private_msg(
+            qq, '正在等你确认打印服务「%s」：回「好」下单，或「取消」重来。\n'
+                '文件没有收下，确认完这条服务再发一次。'
+                % (entry.get('preset_content') or '未名服务'))
+        return
     if entry is None:
         entry = _new_entry('file')
 
@@ -1266,9 +1307,12 @@ def _sweep_expired_pending(client):
             if asked >= len(config.BATCH_REMIND_AT):
                 continue
             if idle >= config.BATCH_REMIND_AT[asked]:
+                #    先发、发成功了才计次：计次在前的话，发送失败（连接抖了一下）
+                #    这一问其实没送达，却把下一次追问推迟整整一个间隔 ——
+                #    学生那头的体感是「机器人怎么不说话了」。
+                client.send_private_msg(qq, _remind_text(entry, qq))
                 entry['reminders'] = asked + 1
                 entry['asked_at'] = now
-                client.send_private_msg(qq, _remind_text(entry, qq))
         except OneBotError:
             log.warning('待办提醒发送失败 qq=%s（连接不可用）', qq)
 
@@ -1600,6 +1644,13 @@ def _apply_requirement(client, qq, entry, text, scope=None, target_names=None):
             return True
         #    规则一个字都没认出来 → 让大模型看一遍（没配 key 时这步是空操作）。
         #    只在「确实没认出来」时才打扰它：绝大多数消息在上面那一行就结束了。
+        #    但**明显是闲聊的短句不送**：配了 key 的话，每句「你好」「今天好累」
+        #    都是一次最长 8 秒的外网往返，学生干等着——llm.py 的注释一直声称
+        #    「明显是在说要求时才发」，这道预筛才把这句话兑现。判据刻意宽松：
+        #    带任何参数词、或者够长的句子都放行，误拦的代价只是少一次兜底
+        #    （照样回「没看懂」），误放的代价才是一次外网往返 —— 宁可多放。
+        if len(text) <= 12 and not _REQUIREMENT_HINT_RE.search(text):
+            return False
         fallback = llm.extract_requirement(text, entry.get('items') or [])
         if fallback is None:
             return False
@@ -1955,14 +2006,21 @@ def _submit_preset(client, qq, entry):
                                 price_item_id=resolved['price_item_id'],
                                 remark=entry.get('remark'))
     except api.ApiError as exc:
-        #    连不上服务器（不是服务端明确拒绝）：**不重试**，也不猜单有没有建成。
+        #    连不上服务器（不是服务端明确拒绝）：**不重试**，也不猜单有没有建成，
+        #    也**不回填待办** —— 回填了的话学生回「好」就是重复下单
+        #    （与文件单对 ApiError 的口径一致）。
         #    让它去发「订单」核对，是最省事的下一步。
         client.send_private_msg(qq, '%s\n这一单可能已经建好了，发「订单」可以核对；'
                                     '没有的话重新发一次「打印服务 %s」就行。'
-                                % (exc, entry.get('preset_content') or entry.get('preset_id')))
+                                    % (exc, entry.get('preset_content') or entry.get('preset_id')))
         return
     if resp.get('code') != 0:
-        client.send_private_msg(qq, '没有下成单：%s%s'
+        #    服务端**明确拒绝**（单子肯定没建成）：把待办回填回去，与文件单
+        #    的失败语义对齐 —— 学生回「好」就能重试，不用重新打一遍
+        #    「打印服务 N」再答一轮参数。预设单没有文件，回填没有盘上的账。
+        entry['ts'] = time.time()
+        _pending_set(qq, entry)
+        client.send_private_msg(qq, '没有下成单：%s\n要重试就回「好」，不要了回「取消」。%s'
                                 % (resp.get('msg', '未知原因'), _site_hint(resp)))
         return
     order = {'pickup_code': resp.get('pickup_code'),
@@ -2303,8 +2361,17 @@ def reply_ticket_reply(client, qq, argument):
 
 # 像「在回答追问」的短消息：数字、跳过、取消、默认一类。用来把「我这边没有待办」
 # 从「普通聊天」里分出来，好回一句有用的话，而不是甩一整篇帮助。
-# （批量流程里一个裸数字是**份数**的意思 —— 「打几份」那句提示就是这么写的。）
+# （注意：裸数字**不会**被批量流程当成份数 —— nlu._split_scoped 对「只有序号、
+# 没有正文」返回空，落进「没看懂」；它出现在这里只是因为像在对追问回话。）
 _ANSWER_LIKE = ('跳过', '取消', '取消吧', '算了', '默认', '默认值', '好', '好的')
+
+# 大模型兜底前的轻预筛（判据说明见 _apply_requirement 里的那段）：
+# 与打印参数**可能**沾边的字全部放行（颜色/份数/纸张/单双面/序号/「打」「印」），
+# 只拦「又短又完全不沾边」的句子 —— 那类几乎全是闲聊。
+_REQUIREMENT_HINT_RE = re.compile(
+    r'彩色|黑白|单|双|面|份|张|本|页|克|g|a[34]|b5|纸|相|铜版|牛皮|卡'
+    r'|第\s*\d|最后|都|每|打|印|横|竖|复印|扫描|订',
+    re.I)
 
 
 def _looks_like_answer(text):
@@ -2350,11 +2417,16 @@ def handle_event(client, event):
     entry = _pending_get(qq)
     if entry is not None and time.time() - (entry.get('ts') or 0) > config.BATCH_TTL_SECONDS:
         #    超时：先作废（顺手删暂存文件）再回话。这一步不能交给推送循环 ——
-        #    它每 15 秒才扫一次，中间这几秒进来的一句话会拿着**已经过期的那批**
+        #    它一个轮询周期（EVENTS_POLL_SECONDS）才扫一次，中间这几秒进来的一句话会拿着**已经过期的那批**
         #    去下单，而那些文件的寿命已经到了（清理逻辑随手就会删掉它们）。
+        #    作废要拦的只是「拿旧批下单」（「好」/参数句这类非命令消息）；
+        #    命令照常放行 —— 学生等急了之后恰恰会先发「订单」问一句，
+        #    把查询类命令也挡在「等太久」后面，他看到的就是机器人坏了。
         _clear_pending(qq)
-        client.send_private_msg(qq, _timeout_text(entry))
-        return
+        if command is None:
+            client.send_private_msg(qq, _timeout_text(entry))
+            return
+        entry = None
     if command is None:
         # 不是命令：先看是不是对这一批的要求（「黑白 2份」「第 2 份彩色」「好」）。
         if entry is not None:
@@ -2522,11 +2594,25 @@ def _notify_loop():
                 except OneBotError:
                     log.warning('推送中断（连接不可用），游标保持 %s', cursor)
                     break
+                except Exception:  # noqa: BLE001 —— 单个坏事件不毁整轮
+                    #    qq 缺失时 str(None)='None'，send 里 int('None') 抛 ValueError
+                    #    —— 只炸这一条。跳过它、照常让 for-else 推进游标：
+                    #    不然下一轮重拉同一批、再炸一次，推送就永远停在这一条上
+                    #    （线程活着但一条都推不出去，日志每轮一条异常）。
+                    log.exception('推送单个事件失败（跳过，游标照常推进）：order_id=%r',
+                                  ev.get('order_id'))
+                    continue
                 log.info('已推送「可取件」通知：订单 #%s → qq=%s', ev.get('order_id'), ev.get('qq'))
                 notified.add(ev.get('order_id'))
             else:
                 # for 没被 break 才走这里：这一批全推完了，游标才推进。
-                cursor = int(resp.get('cursor', cursor))
+                #    cursor 解析单独兜：形状不对时保持旧游标（下一轮重拉、
+                #    靠 notified 去重），**不能**让整轮报废 —— 与上面同一个理由。
+                raw_cursor = resp.get('cursor', cursor)
+                try:
+                    cursor = int(raw_cursor)
+                except (TypeError, ValueError):
+                    log.warning('events 回了奇怪的 cursor=%r，游标保持 %s', raw_cursor, cursor)
             if len(notified) > _NOTIFIED_CAP:
                 notified = set(sorted(notified)[-_NOTIFIED_CAP // 2:])
             _save_state(cursor, notified)
@@ -2571,6 +2657,21 @@ def run():
         log.error('启动自检被拒：code=%s msg=%s', resp.get('code'), resp.get('msg'))
         return 2
     log.info('服务器可达：%s（%s）', config.API_BASE, resp.get('msg'))
+    #    上限自检：printbot/config 里 BATCH_MAX_FILES 的注释一直写着
+    #    「必须 ≤ 服务端的 BATCH_ORDER_MAX_FILES，改一边要改另一边」——
+    #    但那只是纸面约定，谁也不校验。超了的话学生把整批文件传完，
+    #    最后一步才被服务端顶回来（文件占着 .pending 额度，还得自己发
+    #    「取消」清理）。print-options 不查身份、顺手一问就能当场喊出来。
+    try:
+        options = api.print_options()
+        server_max = options.get('batch_max_files')
+        if isinstance(server_max, int) and config.BATCH_MAX_FILES > server_max:
+            log.error('BATCH_MAX_FILES=%s 大于服务端上限 %s：一次超过上限的批会被'
+                      '「传完才拒」。把 printbot/.env 的 BATCH_MAX_FILES 调小，'
+                      '或让服务端调大 BATCH_ORDER_MAX_FILES。',
+                      config.BATCH_MAX_FILES, server_max)
+    except api.ApiError:
+        pass  # 自检问不着就算了（ping 已经替我们把「链路不通」喊过），别挡启动
     purged = _purge_pending_dir()
     if purged:
         # 对话状态在内存里，重启即失效 —— 上轮留下的暂存文件不会再有人认领。

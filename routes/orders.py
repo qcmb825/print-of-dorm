@@ -396,6 +396,10 @@ def decorate_orders(rows, my_id, is_super, files_by_order=None):
             'contact': item['owner_contact'],
         })[0] is None
         if owner_qq:
+            #    有 QQ 就顶上展示位（QQ 是必填字段、也是最能找到人的通道）。
+            #    **详情接口（api_order_detail）做着同一件事** —— 有一段时间只有
+            #    这里顶、详情不顶，同一单两处看到的联系方式对不上。改口径
+            #    两处一起改，别让它们再分叉。
             item['owner_contact_type'] = 'qq'
             item['owner_contact'] = owner_qq
         orders.append(item)
@@ -684,12 +688,21 @@ def create_order_from_saved_files(entries, color, duplex, remark, copies,
             plan_copies = 1
         if plan_copies < 1:
             plan_copies = 1
-        #    这一档不支持双面却传了 double：按单面算（与 resolve_price_item 同一判据）。
+        #    这一档不支持双面却传了 double：按单面算。
         #    落库的 duplex 必须与计价那一档一致，否则账单上写着「双面」、钱按单面收。
+        #    ⚠️ 这是**兜底**，正常路径上不该发生：resolve_price_item /
+        #    resolve_preset_item 现在会当场报「这一档只支持单面，改成单面或换一档」
+        #    让操作人自己选（静默降级等于替他改了要打的东西）。四个现有调用方
+        #    都先过了那两个函数，所以这里只在「有人直调本函数」时才会命中 ——
+        #    那种情形下不可以抛异常（会把老客户端变成 500），但**必须留痕**：
+        #    不留痕就是一条「要双面、打单面、账记单面」的静默改参。
         #    **没选档（item 为 None）时不动它**：没有档位就没有「支不支持双面」可问，
         #    而老前端 / 机器人单文件那条路本来就只靠这个参数（校验在 parse_copies
         #    与表单那一步做过）—— 在这里降级等于把它们传的 double 悄悄吃掉。
         if plan_duplex == 'double' and plan_item and not pricing.supports_duplex(plan_item):
+            logger.warning('建单兜底：档位「%s」不支持双面，第 %s 份的 duplex 已降为 single —— '
+                           '正常路径应由 resolve_price_item/resolve_preset_item 先报错拦住',
+                           pricing.format_item_label(plan_item), len(plans) + 1)
             plan_duplex = 'single'
         plan_color = entry.get('color')
         if plan_color not in ('black', 'color'):
@@ -818,7 +831,7 @@ def create_order_from_saved_files(entries, color, duplex, remark, copies,
                 try:
                     os.remove(save_path)
                 except OSError:
-                    logger.warning('清理孤儿文件失败: %s', save_path)
+                    logger.warning('清理孤儿文件失败: %s', os.path.basename(save_path))
         raise
     finally:
         if conn is not None:
@@ -945,7 +958,13 @@ def resolve_preset_item(conn, preset, data):
         # 这条服务声称自己用某一档纸，而那一档已经不存在了。
         return None, duplex, '这条打印服务绑定的价目项已被删除，请联系管理员'
     if duplex == 'double' and not pricing.supports_duplex(item):
-        duplex = 'single'
+        #    与 resolve_price_item 同一条纪律：说了「双面」而这一档只有单面价，
+        #    要**报错让他选**，不能静默按单面下单 —— 学生拿到单面的纸才发现，
+        #    正是那边注释自己描述的「要么当场跟打印员吵」的场面。
+        #    预设绑死的档没有「换一档」的出路（绑定时学生端连选择框都不显示），
+        #    所以文案只给走得通的路：改成单面，或换一条服务。
+        return None, duplex, ('「%s」这条服务只支持单面。把单双面改成单面，'
+                              '或者换一条服务' % pricing.format_item_label(item))
     return item, duplex, None
 
 
@@ -1153,7 +1172,7 @@ def discard_upload_file(save_path):
         if os.path.exists(save_path):
             os.remove(save_path)
     except OSError:
-        logger.warning('清理上传失败的文件失败: %s', save_path)
+        logger.warning('清理上传失败的文件失败: %s', os.path.basename(save_path))
 
 
 
@@ -1184,7 +1203,9 @@ def api_upload():
         return jsonify({'code': 400, 'msg': error}), 400
 
     # 价目项要查库，所以放后面一起做，别为了早而早把校验顺序搞得七零八落。
-    # duplex 由它带出来：这一档不支持双面时会被强制成单面（见 resolve_price_item）。
+    # duplex 由它带出来：这一档不支持双面时**直接报错**（「改成单面，或者换一档」），
+    # 不在这里替学生降级 —— 静默降级的后果是他拿到单面的纸、账单也记单面，
+    # 而他要的是双面（见 resolve_price_item 那段注释）。
     with db_conn() as conn:
         item, duplex, error = resolve_price_item(conn, request.form)
     if error:
@@ -1209,8 +1230,11 @@ def api_upload():
         # create_order_from_saved_file 失败时自己已经删过一次，这里判存在再删，
         # 重复走到也不会出问题；删不掉只记 warning —— 它不该盖住上面那个真正的错误。
         discard_upload_file(save_path)
-        logger.exception('上传订单失败：下单人=%s 文件=%s 落盘路径=%s ip=%s',
-                         g.user['nickname'], original_name, save_path, client_ip())
+        #    落盘位置只记文件名，不记绝对路径（上传目录的盘符/层级属于部署细节，
+        #    日志是最容易被整包拷走的东西 —— 与 bot.py:554 那条口径一致）。
+        logger.exception('上传订单失败：下单人=%s 文件=%s 落盘文件=%s ip=%s',
+                         g.user['nickname'], original_name,
+                         os.path.basename(save_path), client_ip())
         return jsonify({'code': 500, 'msg': '上传失败，请稍后重试'}), 500
 
     logger.info('新订单 #%s 下单人=%s 文件=%s 大小=%sKB 类别=%s 单双面=%s 份数=%s 价目项=%s 单号=%s ip=%s',
@@ -1423,6 +1447,7 @@ def api_order_detail(order_id):
                    owner.student_id AS owner_student_id, owner.dorm AS owner_dorm,
                    owner.status AS owner_status,
                    owner.contact_type AS owner_contact_type, owner.contact AS owner_contact,
+                   owner.qq AS owner_qq,
                    claimer.nickname AS claimer_nickname, claimer.status AS claimer_status,
                    pricer.nickname AS pricer_nickname, pricer.status AS pricer_status
             FROM orders o
@@ -1436,6 +1461,21 @@ def api_order_detail(order_id):
             return jsonify({'code': 404, 'msg': '订单不存在'}), 404
 
         detail = dict(row)
+        #    联系方式与订单台列表（decorate_orders）**同一口径**：QQ 是必填字段、
+        #    也是最能找到人的通道，填了就用它顶上展示位。曾经列表顶、详情不顶，
+        #    同一单两处看到的联系方式不一样 —— 管理员在列表看到 QQ、进详情
+        #    看到学生自填的微信号，两头对不上（而这段注释原先哪儿都没有，
+        #    像是两处各写各的）。mailbox_missing 也在这里算一份，
+        #    与列表用同一个判定函数（user_mailbox）。
+        owner_qq = detail.pop('owner_qq', None)
+        detail['owner_mailbox_missing'] = user_mailbox({
+            'qq': owner_qq,
+            'contact_type': detail.get('owner_contact_type'),
+            'contact': detail.get('owner_contact'),
+        })[0] is None
+        if owner_qq:
+            detail['owner_contact_type'] = 'qq'
+            detail['owner_contact'] = owner_qq
         # file_path 只用来回一个「文件还在不在、多大」，拿到结果就地丢掉 ——
         # 服务器绝对路径没有任何理由进响应体（下载接口那边是同一口径）。
         #
@@ -1754,43 +1794,59 @@ def api_release_order(order_id):
 # 为什么只允许「没被接单」的时候：一旦有人接了，这单就在别人的工作里了——
 # 他可能已经下载、已经在打印，单子这时候凭空消失，最轻的结果也是白打一份纸。
 # 那种情况该走「释放」，把单退回答待接单池，而不是让整条记录不存在。
-@bp.route('/api/order/<int:order_id>/withdraw', methods=['POST'])
-@login_required
-def api_withdraw_order(order_id):
+def withdraw_own_order(order_id, uid, timeline_prefix=''):
+    """「本人撤回自己的、还没被接单的订单」的**核心实现**，网页端与机器人共用。
+
+    返回 (row, file_paths, error_response)：
+      · 成功时 (row, file_paths, None) —— 调用方只管收尾日志；
+      · 失败时 (None, None, (响应, 状态码))，直接 `return error` ——
+        404 / 403（带留痕）/ 400 / 409 全部在这里。
+
+    为什么收口成一份：网页端与机器人各有一份近全文拷贝，已经漂过一处
+    （删文件失败的日志一边记完整路径、一边记文件名）。这是**删除用户数据**
+    的核心守卫 —— 属主校验、先取清单再删库、条件 DELETE + rowcount 兜并发、
+    多文件全删 —— 哪天改守卫只改一边，症状就是「网页撤得掉、QQ 撤不掉」
+    这种一半生效，而删除类操作的两条路必须永远一个口径。
+
+    顺序（这条路的命根子，别动）：
+      ① 文件清单在**删库之前**取出来：订单行一删，order_files 就再也关联不到
+        （这张表没有外键，孤儿行按订单号查不到）；多文件的单只删第一份的话，
+        剩下几份永远没人认领、也永远占着盘。
+      ② 删除语句把刚判过的条件再写一遍不是重复劳动：SELECT 与 DELETE 之间
+        单子可能被接走，rowcount = 0 就说明条件不成立了，别删。
+      ③ 库提交**之后**才动盘上的文件：先删文件的话会出现「订单还在、文件没了」，
+        接单人一点开就是 404；删文件失败只留一个没人引用的孤儿，无害。
+    timeline_prefix 是时间线叙事里的来源段（网页端空串，机器人给「（QQ，单号 x）」）。
+    """
     with db_conn() as conn:
         row = conn.execute(
             'SELECT user_id, claimed_by, status, filename, file_path FROM orders WHERE id = ?',
             (order_id,)).fetchone()
         if row is None:
-            return jsonify({'code': 404, 'msg': '订单不存在'}), 404
-        if row['user_id'] != g.user['id']:
+            return None, None, (jsonify({'code': 404, 'msg': '订单不存在'}), 404)
+        if row['user_id'] != uid:
             security_event('withdraw_denied',
-                           '订单 #%s 的下单人 uid=%s，操作人试图撤回他人订单'
-                           % (order_id, row['user_id']))
-            return jsonify({'code': 403, 'msg': '只能撤回自己下的订单'}), 403
+                           '订单 #%s 的下单人 uid=%s，操作人 uid=%s 试图撤回他人订单'
+                           % (order_id, row['user_id'], uid))
+            return None, None, (jsonify({'code': 403, 'msg': '只能撤回自己下的订单'}), 403)
         if row['claimed_by'] is not None:
-            return jsonify({'code': 400, 'msg': '订单已经被接取，无法撤回'}), 400
+            return None, None, (jsonify({'code': 400, 'msg': '订单已经被接取，无法撤回'}), 400)
         if row['status'] == ST_DONE:
-            return jsonify({'code': 400, 'msg': '订单已完成，不能撤回'}), 400
-        #    文件清单要在**删库之前**取出来：订单行一删，order_files 就再也
-        #    关联不到了（这张表没有外键，那几行会留下但成了孤儿，
-        #    而按订单号查是查不到它们的）。多文件的单尤其要注意 ——
-        #    只删 first 那一份的话，剩下几份永远没人认领，也永远占着盘。
+            return None, None, (jsonify({'code': 400, 'msg': '订单已完成，不能撤回'}), 400)
+        # ① 见 docstring。兜底那行是 order_files 没有记录的老行（回填之前的库），
+        #    仍按老列删，与 api_download 的回退口径一致。
         file_paths = [entry['file_path'] for entry in
                       files_for_orders(conn, [order_id]).get(order_id, [])
                       if entry['file_path']]
         if not file_paths and row['file_path']:
-            # 兜底：order_files 里没有记录的老行（回填之前的库）仍按老列删。
             file_paths = [row['file_path']]
-        # 删除语句把刚刚判过的条件又写了一遍，不是重复劳动：
-        # 从 SELECT 到这里之间，完全可能有人正好把单接走，上面那句拦不住。
-        # rowcount 为 0 就说明条件已经不成立了，那就别再删。
+        # ② 见 docstring。
         cursor = conn.execute(
             'DELETE FROM orders WHERE id = ? AND user_id = ? AND claimed_by IS NULL AND status <> ?',
-            (order_id, g.user['id'], ST_DONE))
+            (order_id, uid, ST_DONE))
         if cursor.rowcount == 0:
             conn.rollback()
-            return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败，刷新看看'}), 409
+            return None, None, (jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败，刷新看看'}), 409)
         # 文件行跟着订单一起删：订单已经不存在了，留着这几行只会让
         # 「这一单有哪些文件」这个问题在别处（比如以后的清理脚本）得到一个
         # 指向空气的答案。
@@ -1807,19 +1863,27 @@ def api_withdraw_order(order_id):
                 else ('，%d 份文件已一并删除' % len(file_paths))
         else:
             note = '（预设服务，无文件）'
-        log_event(order_id, ORDER_LOG_WITHDRAW, '本人撤回订单%s' % note, conn=conn)
+        log_event(order_id, ORDER_LOG_WITHDRAW,
+                  '本人撤回订单%s%s' % (timeline_prefix, note), conn=conn)
         conn.commit()
 
-    # 数据库那边确认删掉了才动文件。万一删文件失败，留下的只是一个没人引用的孤儿文件；
-    # 反过来先删文件的话，就会出现「订单还在、文件没了」——接单人一点开就是 404。
-    # 没文件的单直接跳过这一段：os.remove('') 一定抛 OSError，
-    # 白白写一条「删除文件失败」的 warning，把日志留给别的问题。
+    # ③ 见 docstring。没文件的单直接跳过这一段：os.remove('') 一定抛 OSError，
+    #    白白写一条「删除文件失败」的 warning，把日志留给别的问题。
     for file_path in file_paths:
         try:
             os.remove(file_path)
         except OSError:
             logger.warning('撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                           order_id, file_path)
+                           order_id, os.path.basename(file_path))
+    return row, file_paths, None
+
+
+@bp.route('/api/order/<int:order_id>/withdraw', methods=['POST'])
+@login_required
+def api_withdraw_order(order_id):
+    row, file_paths, error = withdraw_own_order(order_id, g.user['id'])
+    if error is not None:
+        return error
     logger.info('订单 #%s 被 %s 撤回，文件=%s（%d 份） ip=%s',
                 order_id, g.user['nickname'], row['filename'] or '（无文件）',
                 len(file_paths), client_ip())
@@ -1943,14 +2007,27 @@ def api_dispatch_print(order_id):
             }), 400
         # 目标打印机是表单里选的：必须存在且启用（每单手选，不做自动路由——
         # 哪台打彩哪台打黑白是柜台当场判断的事）。
-        printer = find_printer(conn, int(printer_id)) if printer_id is not None else None
+        #    printer_id 来自请求体，与下面 file_id 同一道校验：先卡类型再进 SQL ——
+        #    否则传个 "abc" 是一次 500，传 true（bool）会静默落到 1 号机上
+        #    （int(True) == 1）。两个 id 一严一松的表单，填错的人只会怪系统抽风。
+        if printer_id is None or isinstance(printer_id, bool):
+            return jsonify({'code': 400, 'msg': '先选一台启用中的打印机'}), 400
+        try:
+            printer = find_printer(conn, int(printer_id))
+        except (TypeError, ValueError):
+            return jsonify({'code': 400, 'msg': '先选一台启用中的打印机'}), 400
         if printer is None or printer['is_active'] != 1:
             return jsonify({'code': 400, 'msg': '先选一台启用中的打印机'}), 400
-        # 防重复（订单级）：发成功过（print_sent_time 非空）且没报错的单，再发就是
-        # 「重打」——纸会多出一整套，发往哪台都一样。这里不放行也不直接拒绝，
-        # 回一个 409 让前端把话问清楚；上一发失败的单（print_error 非空）不受这道闸，
-        # 重发本来就是给它准备的——包括换一台再试。
-        if row['print_sent_time'] and not (row['print_error'] or '').strip() and not force:
+        # 防重复（订单级）：**只要这一单真的送进过打印机**（print_sent_time 非空），
+        # 再发就是「重打」——纸会多出一整套，发往哪台都一样。
+        #    判据刻意**不再看 print_error**：「部分失败」的单（前几份送出、后面某份
+        #    失败）现在也会落 print_sent_time（见 printer_worker 失败分支），而它同时
+        #    带着 print_error。按旧判据（有错就放行）它会绕过这道确认，柜台照着
+        #    print_error 里那句「缺的几份请手动打」再点一次，已经出过的纸立刻再印
+        #    一遍 —— 整单纸翻倍、钱只收一份。
+        #    「一次都没送出去」（sent=0）的单 print_sent_time 仍为空，重发免确认，
+        #    那正是这道闸本来要放行的情形。
+        if row['print_sent_time'] and not force:
             return jsonify({
                 'code': 409, 'confirm': True,
                 'msg': '这单已下发过打印机，重发会整单多印一份。确认要重新下发吗？'
@@ -1993,9 +2070,9 @@ def api_dispatch_print(order_id):
                 overrides[file_id] = override
 
     if not enqueue_dispatch(order_id, printer['id'], g.user['id'], g.user['role'], overrides):
-        # 同一单对这台已经在队列里/正在发：不是错误，是提醒别连点。
-        return jsonify({'code': 409, 'msg': '这单已经在「%s」的下发队列里了，稍等看状态'
-                        % printer['name']}), 409
+        # 同一单已经在队列里/正在发（防重复是订单级的，发往哪台都算）：
+        # 不是错误，是提醒别连点、也别在首单没出结果时换台重发 —— 那会打两套纸。
+        return jsonify({'code': 409, 'msg': '这单已经在下发队列里了，等它出结果再看'}), 409
 
     logger.info('订单 #%s 请求下发打印机「%s」 操作人=%s(%s) ip=%s',
                 order_id, printer['name'], g.user['nickname'], g.user['role'], client_ip())
@@ -2739,12 +2816,14 @@ def api_download(order_id):
     upload_root = Path(UPLOAD_FOLDER).resolve()
     file_path = Path(target['file_path']).resolve()
     if upload_root != file_path.parent and upload_root not in file_path.parents:
-        # 库里的路径跑到上传目录外面，只有被篡改才可能发生，按安全事件记
+        # 库里的路径跑到上传目录外面，只有被篡改才可能发生，按安全事件记。
+        #    这一条**刻意记完整路径**：它是安全取证现场，被谁塞了什么值进来
+        #    必须原样可见（其余业务日志只记文件名，见 orders.py 各处的 basename 口径）。
         security_event('path_traversal_blocked',
                        '订单 #%s 的 file_path=%s 不在上传目录内' % (order_id, target['file_path']))
         return jsonify({'code': 400, 'msg': '文件路径不合法'}), 400
     if not file_path.is_file():
-        logger.warning('订单 #%s 的文件已丢失：%s', order_id, target['file_path'])
+        logger.warning('订单 #%s 的文件已丢失：%s', order_id, os.path.basename(target['file_path']))
         return jsonify({'code': 404, 'msg': '文件不存在或已被清理'}), 404
 
     logger.info('订单 #%s 的文件「%s」被 %s(%s) 下载 ip=%s',

@@ -193,11 +193,13 @@ def _may_notify(conn, order):
     return prefs.should_notify(current, 'mail')
 
 
-def _send_student(order, mailbox, qr_path):
+def _send_student(order, mailbox, qr_path, conn=None):
     """给一个学生发他的取件通知。一单一封，所以这里只管一笔。"""
     has_qr = bool(qr_path)
-    # 取件地点/时间读站点设置（DB 优先、env 兜底）—— 与学生端卡片同一处真相
-    pickup = get_pickup_info()
+    # 取件地点/时间读站点设置（DB 优先、env 兜底）—— 与学生端卡片同一处真相。
+    #    把手里这把 conn 传下去：不传的话 get_pickup_info 会自己开新连接，
+    #    一轮扫描 100 单就是 100 次「开连接 + SELECT + 关连接」。
+    pickup = get_pickup_info(conn)
     return send_mail(
         compose_pickup_subject(order),
         compose_pickup_body(order, pickup=pickup),
@@ -335,7 +337,7 @@ def scan_once():
                                 order['id'], reason)
                     manual.setdefault(order['claimed_by'], []).append(order)
                     continue
-                if _send_student(order, mailbox, _pay_qr_path(conn, order['claimed_by'])):
+                if _send_student(order, mailbox, _pay_qr_path(conn, order['claimed_by']), conn):
                     sent += 1
                 else:
                     failed.append(order['id'])

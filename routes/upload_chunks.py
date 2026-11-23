@@ -96,7 +96,15 @@ PART_WINDOW_SECONDS = 60
 # 超过它的锁一定是崩溃留下的残骸，允许下一次提交直接接管。
 MERGE_LOCK_STALE_SECONDS = 3600
 
-CHUNK_ROOT = os.path.join(UPLOAD_FOLDER, '.chunks')
+# 分片会话区的根目录。**每次现算而不是在模块级存一份常量**：让「目录」这件事
+# 只有一个来源（UPLOAD_FOLDER），改它不会漏掉某个缓存副本。
+# ⚠️ 但别把它读成「运行中改 config.UPLOAD_FOLDER 会生效」：这里的 UPLOAD_FOLDER
+# 是 `from config import ...` 绑定的**模块级快照**，import 之后再改 config 里
+# 那个名字与这里无关。测试脚本必须在 **import config 之前**设环境变量
+# （AGENTS.md 那条纪律）；照这句旧注释去写「import 后改 config」的脚本，
+# 拿到的是「服务起在 A、断言读 B」而两边都不报错 —— 正是分目录那轮踩过的坑。
+def _chunk_root():
+    return os.path.join(UPLOAD_FOLDER, '.chunks')
 
 # upload_id 由本模块用 secrets.token_urlsafe 生成，格式可控。
 # 这里再校验一次，是因为它会直接拼进文件系统路径 ——
@@ -124,7 +132,7 @@ def _expected_part_size(meta, index):
 
 
 def _session_dir(upload_id):
-    return os.path.join(CHUNK_ROOT, upload_id)
+    return os.path.join(_chunk_root(), upload_id)
 
 
 def _lock_path(upload_id):
@@ -134,7 +142,7 @@ def _lock_path(upload_id):
     搬目录当锁，等于把「锁被占着」和「数据不在了」变成同一件事，
     而这两件事必须分得开 —— 抢不到锁的人不该看到、更不该碰到别人的数据。
     """
-    return os.path.join(CHUNK_ROOT, upload_id + '.lock')
+    return os.path.join(_chunk_root(), upload_id + '.lock')
 
 
 def _merge_lock_is_stale(lock_path):
@@ -187,7 +195,8 @@ def _acquire_merge_lock(upload_id):
         return lock_path, False
     if not _merge_lock_is_stale(lock_path):
         return None, True
-    logger.warning('发现过期的合并锁，接管 upload_id=%s: %s', upload_id, lock_path)
+    logger.warning('发现过期的合并锁，接管 upload_id=%s: %s', upload_id,
+                   os.path.basename(lock_path))
     try:
         os.remove(lock_path)
     except OSError:
@@ -207,7 +216,8 @@ def _release_merge_lock(lock_path):
     try:
         os.remove(lock_path)
     except OSError:
-        logger.warning('删除合并锁失败，这份上传在锁过期前会一直提示「正在处理中」: %s', lock_path)
+        logger.warning('删除合并锁失败，这份上传在锁过期前会一直提示「正在处理中」: %s',
+                       os.path.basename(lock_path))
 
 
 def _read_meta(session_dir):
@@ -250,16 +260,17 @@ def _cleanup_stale(reason):
     判据用**目录 mtime** 而不是 meta 里的 created_at：一个传了 20 小时、
     断断续续还在传的会话不该被清掉，而每次写新分片都会刷新目录 mtime。
     """
-    if not os.path.isdir(CHUNK_ROOT):
+    root = _chunk_root()
+    if not os.path.isdir(root):
         return 0
     now = time.time()
     removed = 0
     try:
-        names = os.listdir(CHUNK_ROOT)
+        names = os.listdir(root)
     except OSError:
         return 0
     for name in names:
-        path = os.path.join(CHUNK_ROOT, name)
+        path = os.path.join(root, name)
         if not os.path.isdir(path):
             continue
         try:
@@ -303,10 +314,11 @@ def _session_bytes(session_dir):
 def _pending_of_user(user_id):
     """列出这个账号还没传完的会话（按创建时间倒序）。"""
     result = []
-    if not os.path.isdir(CHUNK_ROOT):
+    root = _chunk_root()
+    if not os.path.isdir(root):
         return result
     try:
-        names = os.listdir(CHUNK_ROOT)
+        names = os.listdir(root)
     except OSError:
         return result
     for name in names:
@@ -315,7 +327,7 @@ def _pending_of_user(user_id):
         # 原地不动，所以「正在合并」的那份仍然会出现在这个列表里 —— 这正是想要的。
         if not _UPLOAD_ID_RE.match(name):
             continue
-        meta = _read_meta(os.path.join(CHUNK_ROOT, name))
+        meta = _read_meta(os.path.join(root, name))
         if not isinstance(meta, dict) or meta.get('user_id') != user_id:
             continue
         result.append((name, meta))
@@ -391,7 +403,7 @@ def _load_session(upload_id):
     # meta 是磁盘上的 JSON，可能被截断或改坏。缺字段时如果继续往下走，
     # 报出来的是 KeyError 500，而不是「这份上传失效了」—— 排查起来会绕远路。
     if not all(key in meta for key in ('user_id', 'filename', 'size', 'total_chunks')):
-        logger.warning('分片上传元数据不完整，按失效处理: %s', session_dir)
+        logger.warning('分片上传元数据不完整，按失效处理: %s', os.path.basename(session_dir))
         return None, None, (jsonify({'code': 404, 'msg': '这份上传已失效，请重新上传'}), 404)
     if meta.get('user_id') != g.user['id']:
         # 拿到别人的 upload_id 想往里塞分片：典型越权，必须留痕
@@ -526,7 +538,7 @@ def api_chunk_init():
         os.makedirs(session_dir, exist_ok=False)
     except OSError:
         # 同名目录基本不可能（token 是随机的），真撞上就让用户重试一次
-        logger.exception('创建分片上传会话目录失败: %s', session_dir)
+        logger.exception('创建分片上传会话目录失败: %s', os.path.basename(session_dir))
         return jsonify({'code': 500, 'msg': '创建上传会话失败，请重试'}), 500
 
     meta = {
@@ -542,7 +554,7 @@ def api_chunk_init():
             json.dump(meta, fp, ensure_ascii=False)
     except OSError:
         shutil.rmtree(session_dir, ignore_errors=True)
-        logger.exception('写入分片上传元数据失败: %s', session_dir)
+        logger.exception('写入分片上传元数据失败: %s', os.path.basename(session_dir))
         return jsonify({'code': 500, 'msg': '创建上传会话失败，请重试'}), 500
 
     logger.info('分片上传开始 upload_id=%s 用户=%s 文件=%s 大小=%sKB 共 %s 片 ip=%s',
@@ -649,7 +661,7 @@ def api_chunk_put(upload_id, index):
             try:
                 os.remove(tmp_path)
             except OSError:
-                logger.warning('清理分片临时文件失败: %s', tmp_path)
+                logger.warning('清理分片临时文件失败: %s', os.path.basename(tmp_path))
         logger.warning('分片上传失败 upload_id=%s 第 %s 片：写入 %s 字节 / 期望 %s 字节 ip=%s',
                        upload_id, index, written, expected, client_ip())
         return jsonify({'code': 400, 'msg': '分片上传失败，请重试'}), 400

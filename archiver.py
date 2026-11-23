@@ -72,13 +72,21 @@ def scan_once(days=None, limit=None):
     return archived
 
 
+# 线程只拉起一次（与 notifier / pickup_notifier 同款）：app.py 只调一次够用，
+# 防的是以后有人在别处也调了一下 —— 双线程归档不出错数据（条件 UPDATE 兜着），
+# 但扫描翻倍、日志双份，查起来像见了鬼。
+_start_lock = threading.Lock()
+_started = False
+
+
 def start_archive_watcher():
     """起一个后台线程，每 ARCHIVE_INTERVAL 秒归一轮。
 
-    与 notifier / pickup_notifier 同一套写法（daemon 线程 + 整轮包 try）：
-    一轮失败只记日志，不能让线程死掉 —— 线程一死，超期归档就永久停摆，
-    而界面上完全看不出异常（「可取件」里那批单会一直躺着）。
+    与 notifier / pickup_notifier 同一套写法（daemon 线程 + 整轮包 try +
+    防重入锁）：一轮失败只记日志，不能让线程死掉 —— 线程一死，超期归档
+    就永久停摆，而界面上完全看不出异常（「可取件」里那批单会一直躺着）。
     """
+    global _started
     if not ARCHIVE_ENABLED:
         logger.info('取件超期归档：已关闭（ARCHIVE_ENABLED=false）')
         return None
@@ -98,8 +106,20 @@ def start_archive_watcher():
                 logger.exception('取件超期归档：本轮失败，下一轮继续')
             time.sleep(ARCHIVE_INTERVAL)
 
-    thread = threading.Thread(target=loop, name='archive-watcher', daemon=True)
-    thread.start()
+    with _start_lock:
+        if _started:
+            return None
+        thread = threading.Thread(target=loop, name='archive-watcher', daemon=True)
+        try:
+            thread.start()
+        except BaseException:
+            #    起不来就**别把 _started 置真**：置了之后这台服务再也不会尝试
+            #    归档（`_started` 恒真 → 直接 return None），而界面上完全看不出来
+            #    —— 「可取件」里那批单会一直躺着，超期归档永久停摆。
+            #    与 printer_worker.enqueue_dispatch 同一个模式。
+            logger.exception('取件超期归档：线程启动失败（本轮不启动，下次调用会重试）')
+            raise
+        _started = True
     logger.info('取件超期归档：每 %d 秒扫一轮，可取件满 %d 天转「%s」',
                 ARCHIVE_INTERVAL, ARCHIVE_AFTER_DAYS, ST_UNCLAIMED)
     return thread

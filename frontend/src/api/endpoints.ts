@@ -264,7 +264,6 @@ export const chunkApi = {
     post<ChunkSession>('/api/upload/chunked', { filename, size, fingerprint }),
   /** 未完成的会话列表，用来提醒「上次那份还没传完」。 */
   pending: () => get<ChunkPendingResponse>('/api/upload/chunked'),
-  info: (uploadId: string) => get<ChunkSession>(`/api/upload/chunked/${uploadId}`),
   /** 传一片。body 是原始二进制，不是 multipart。 */
   putChunk: (
     uploadId: string,
@@ -272,9 +271,10 @@ export const chunkApi = {
     blob: Blob,
     onProgress?: (percent: number) => void,
   ) => putRaw<ChunkSession>(`/api/upload/chunked/${uploadId}/${index}`, blob, onProgress),
-  /** 所有分片到位后合并落盘并生成订单。 */
-  complete: (uploadId: string, options: UploadOptions) =>
-    post<UploadResponse>(`/api/upload/chunked/${uploadId}/complete`, options),
+  /*  （曾经还有 info / complete 两个封装：complete 对应服务端「传完即下单」的
+   *  老路 —— 那条路**服务端有意保留**（机器人与缓存里的旧页面还在用），
+   *  但前端自改用 prepare 之后就没有任何调用方了，留着只会让人往它上面接新界面。
+   *  真要删会话详情时从 init/pending 的返回值里拿就够。） */
   /** 合并落盘，但**先不下单** —— 收进预上传区换一个 file_token（大文件版的实时预估）。 */
   prepare: (uploadId: string) =>
     post<UploadPrepareResponse>(`/api/upload/chunked/${uploadId}/prepare`, {}),

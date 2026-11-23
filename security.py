@@ -2,6 +2,7 @@
 
 import time
 import secrets
+import threading
 from cryptography.fernet import InvalidToken
 from flask import g, has_request_context, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -195,16 +196,20 @@ def login_blocked(key):
 def record_login_failure(key):
     """记一次失败，到阈值就锁一段时间。"""
     now = time.monotonic()
-    count, first_ts, _ = _login_failures.get(key, (0, now, 0))
-    if now - first_ts > LOGIN_LOCK_SECONDS:  # 超出统计窗口，重新计数
-        count, first_ts = 0, now
-    count += 1
-    lock_until = now + LOGIN_LOCK_SECONDS if count >= LOGIN_MAX_FAILS else 0
-    _login_failures[key] = (count, first_ts, lock_until)
-    if len(_login_failures) > 5000:  # 简单清理一下，避免字典无限增长
-        for k, (_, ts, _) in list(_login_failures.items()):
-            if now - ts > LOGIN_LOCK_SECONDS * 4:
-                _login_failures.pop(k, None)
+    #    读改写包在一把锁里：waitress 是 8 线程，同一账号并发的两个失败请求
+    #    后写会覆盖先写、丢掉一次计数 —— 后果只是第 5 次锁定晚到一拍，
+    #    但「限流偶尔失灵」这种事不该靠运气。
+    with _counter_lock:
+        count, first_ts, _ = _login_failures.get(key, (0, now, 0))
+        if now - first_ts > LOGIN_LOCK_SECONDS:  # 超出统计窗口，重新计数
+            count, first_ts = 0, now
+        count += 1
+        lock_until = now + LOGIN_LOCK_SECONDS if count >= LOGIN_MAX_FAILS else 0
+        _login_failures[key] = (count, first_ts, lock_until)
+        if len(_login_failures) > 5000:  # 简单清理一下，避免字典无限增长
+            for k, (_, ts, _) in list(_login_failures.items()):
+                if now - ts > LOGIN_LOCK_SECONDS * 4:
+                    _login_failures.pop(k, None)
 
 
 
@@ -214,6 +219,10 @@ def clear_login_failures(key):
 
 
 _hits = {}
+
+# _login_failures 与 _hits 的读改写共用的锁。两个计数器都不在热路径上
+# （登录失败、限流撞线才碰），锁开销可以忽略；换来的是并发计数不丢。
+_counter_lock = threading.Lock()
 
 
 
@@ -230,15 +239,18 @@ def hit_limit(key, limit, window_seconds):
     而日志里一个错都没有。参数签名保持不变（调用点有十几处）。
     """
     now = time.monotonic()
-    _, stamps = _hits.get(key, (window_seconds, ()))
-    recent = [ts for ts in stamps if now - ts < window_seconds]
-    recent.append(now)
-    _hits[key] = (window_seconds, recent)
-    if len(_hits) > 5000:  # 键太多了就顺带扫一遍，把窗口早已过期的清掉
-        for k, (window, stamps) in list(_hits.items()):
-            # 判据用**这个键自己的窗口**，不是当前这次调用的窗口（原因见 docstring）。
-            if all(now - ts >= window for ts in stamps):
-                _hits.pop(k, None)
+    #    与 record_login_failure 同一把锁：这里的读改写不原子的话，
+    #    并发的两个请求会互相覆盖时间戳列表，限流被静默放宽。
+    with _counter_lock:
+        _, stamps = _hits.get(key, (window_seconds, ()))
+        recent = [ts for ts in stamps if now - ts < window_seconds]
+        recent.append(now)
+        _hits[key] = (window_seconds, recent)
+        if len(_hits) > 5000:  # 键太多了就顺带扫一遍，把窗口早已过期的清掉
+            for k, (window, stamps) in list(_hits.items()):
+                # 判据用**这个键自己的窗口**，不是当前这次调用的窗口（原因见 docstring）。
+                if all(now - ts >= window for ts in stamps):
+                    _hits.pop(k, None)
     return len(recent) > limit
 
 

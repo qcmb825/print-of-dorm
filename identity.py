@@ -25,6 +25,10 @@ from security import security_event
 #   self_reported —— 名单里空着、学生注册时自己填的，没有人核对过。
 # 这两类值必须分得开：回填出去的姓名等于把这个学号锁死在那种写法上，
 # 哪天发现填错了，得能查出来哪些是学生自报的、可以放心改。
+#    ⚠️ 这个值在 memoryandtest/tools/build_roster_db.py 里是以**字面量** 'import'
+#    写进去的（那份工具不 import 本项目模块，为了保持它单文件可拷走）——
+#    改这里等于改了「回填姓名可不可信」的判据，那边必须一起改，两边少一边
+#    就会出现「名单导入的姓名在一份代码里算权威、在另一份里算来历不明」。
 NAME_SOURCE_IMPORT = 'import'
 
 NAME_SOURCE_SELF = 'self_reported'

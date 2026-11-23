@@ -150,7 +150,10 @@ def _clean(content, items):
     try:
         data = json.loads(raw)
     except ValueError:
-        config.log.warning('大模型兜底返回的不是 JSON：%s', content[:120])
+        #    不落返回内容：用户消息是被原样拼进 prompt 的，注入可以让模型把
+        #    正文复读回来，而日志纪律是「绝不出现消息正文」（bot.py 同一条）。
+        #    排障要的信息是「返回了但解析不了」，长度足够定位。
+        config.log.warning('大模型兜底返回的不是 JSON（长度 %d，内容不落日志）', len(content))
         return None
     if not isinstance(data, dict):
         return None

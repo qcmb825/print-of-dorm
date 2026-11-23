@@ -148,10 +148,12 @@ def files_for_orders(conn, order_ids):
         placeholders = ','.join('?' * len(chunk))
         # v26 起多带每份文件自己的参数三列（color_type / duplex / copies）：
         # 打印机下发按行拆任务时要读它们；订单台的「下发确认」弹窗也直接用同一份。
+        # paper_name 同理（改参数接口支持逐份改纸）—— 下发把纸也按行读，不然就成了
+        # 「钱按逐份的纸算、打印机按第一份的纸打」。
         # 别的消费者不读这几列，多出来不碍事 —— 各查各的 SELECT 才是要出事的写法。
         rows = conn.execute(
             'SELECT id, order_id, filename, file_path, size, pages, sort_order, '
-            'color_type, duplex, copies '
+            'color_type, duplex, copies, paper_name '
             'FROM order_files WHERE order_id IN (%s) ORDER BY order_id, sort_order, id'
             % placeholders, chunk).fetchall()
         for row in rows:
@@ -497,13 +499,32 @@ def _schema_work_pending(cursor, current_version):
         pending.append('price_rules(重建为价目表)')
     if _table_exists(cursor, 'price_rules_v19'):
         pending.append('price_rules_v19(中断恢复)')
+    # v4 的 users 重建迁移若死在「DROP users → RENAME」之间，库里会留下
+    # users 不在、users_new 带着全部账号的现场 —— 迁移函数会先扶正它，
+    # 这里把它列进 pending 才有备份兜着（与 price_rules_v19 同一待遇）。
+    if not _table_exists(cursor, 'users') and _table_exists(cursor, 'users_new'):
+        pending.append('users(中断恢复)')
 
     # 兜底：版本号落后就当成「可能还有数据迁移要跑」（v17 改状态文案、v19 清机器人备注、
     # v23 回填 order_files 都属于只改数据的那种，不会在上面几条结构判据里留痕）。
     if _migration_version(current_version) < _migration_version(SCHEMA_VERSION):
-        pending.append('版本 %s → %s' % (current_version or '（无记录）', SCHEMA_VERSION))
+        #    例外：唯一索引没建成时，版本号是被**故意**按住的（init_database 里
+        #    「迁移未完成」那条 error），结构其实已经全部就位，每轮重试只是把
+        #    同一件事再做一遍。存量重复没清完之前，若还按「版本落后 = 有活干」
+        #    触发整库备份，每重启一次就多一个 .bak —— P1-4 修的正是这个故障
+        #    （data/ 堆 32 个 .bak 吃满盘，最先坏的是写库）。所以只有当
+        #    「除了这条兜底没有别的待办、且 schema_meta 里有索引被按住的标记」时，
+        #    才不把版本落后算作待办；真有结构要改时（列表非空）照旧备份。
+        if not (not pending and _meta_value(cursor, 'unique_index_pending')):
+            pending.append('版本 %s → %s' % (current_version or '（无记录）', SCHEMA_VERSION))
 
     return pending
+
+
+def _meta_value(cursor, key):
+    """读 schema_meta 里的一个标记值（没有该行返回 None）。key 全部来自本文件的字面量。"""
+    row = cursor.execute('SELECT value FROM schema_meta WHERE key = ?', (key,)).fetchone()
+    return row[0] if row else None
 
 
 
@@ -560,6 +581,10 @@ def _migrate_release_unique_names(cursor, current_version):
     row = cursor.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
     ).fetchone()
+    #    「users 不在、users_new 在」的中断现场（死在 DROP 与 RENAME 之间）
+    #    由 init_database 开头的恢复分支扶正 —— 恢复必须排在 CREATE TABLE
+    #    IF NOT EXISTS users 之前，排在这里就晚了（空表已经造出来了）。
+    #    所以本函数看到的 users 要么正常、要么是恢复完的，不需要再兜。
     # 结构检查优先于版本号：版本号只是记录，可能和实际结构不一致
     # （上次迁移建好新表后、更新版本号前被杀）。
     # 结构不合时要无条件重建，不管版本号是多少。
@@ -908,6 +933,39 @@ def init_database():
                 sys.exit(1)
             cursor.execute('DROP TABLE IF EXISTS orders')  # 老库没有版本记录，一次性清掉旧结构
 
+        # ⚠️ 备份判据**必须在这里**求值：这一段之前只有 sqlite_master / PRAGMA 的
+        # 只读查询，之后整个 init_database 就开始真的动结构了（先 RENAME 中断恢复、
+        # 再一堆 ALTER、再建新表）。原先这一句被排在 order_files 补列（约在下面
+        # 一百多行之后）之后，于是"缺了 order_files.color_type 吗"这类判据在问的
+        # 时候已经被自己补好了 —— **恒假**；配上「唯一索引没建成时豁免版本落后」
+        # 那条，一个真的要加 7 列的库会被判成"没活干"，**零备份**直接 ALTER。
+        # 偷走的不是启动能力，是退路：那一步做坏了没有备份可换回来。
+        # 判据全部只读（_schema_work_pending 的 docstring 有清单），挪到这里安全。
+        pending_changes = [] if fresh_database else _schema_work_pending(cursor, current_version)
+        if pending_changes:
+            # cursor.connection.commit()：改动是先写日志再回放主文件的，事务没提交时
+            # 直接复制主文件可能拷到一个中间态，而备份的意义正是「能拿它换回来」。
+            cursor.connection.commit()
+            backup = backup_database_file()
+            logger.info('本轮启动要改数据库结构（%s），已先备份整库：%s',
+                        '、'.join(pending_changes[:6]) + ('…' if len(pending_changes) > 6 else ''),
+                        backup or '（库文件还不存在，无需备份）')
+
+        #    users 表重建迁移（v3→v4）的中断恢复，**必须排在下面那句
+        #    CREATE TABLE IF NOT EXISTS users 之前**：上次迁移若死在
+        #    「DROP TABLE users」与「RENAME users_new → users」之间，库里
+        #    users 不在、users_new 带着全部账号躺在那儿。不在这里先扶正的话，
+        #    CREATE IF NOT EXISTS 会先造出一张**空表**，随后
+        #    _migrate_release_unique_names 的结构检查看到「users 无 UNIQUE」
+        #    直接放行 —— 全部账号留在孤儿表里，而索引、迁移、版本号全在
+        #    空表上正常推进，日志一片正常。恢复本身只是把名字改回去（DDL，
+        #    无数据改动）；_schema_work_pending 里那条「users(中断恢复)」
+        #    保证这一步之前先有整库备份。
+        if (not _table_exists(cursor, 'users')
+                and _table_exists(cursor, 'users_new')):
+            logger.warning('检测到上次 users 表迁移中断（users 不在、users_new 在），先恢复再走正常流程')
+            cursor.execute('ALTER TABLE users_new RENAME TO users')
+
         # users 表的 DDL 里刻意不写 UNIQUE：唯一性靠下面那三个部分唯一索引来保证，
         # 只有「还没注销」的账号参与判重。别处看到这张表没约束，不是漏写了。
         # nickname 保留 COLLATE NOCASE，让「Tom」和「tom」在判重和登录查询里算同一个名字。
@@ -1001,6 +1059,11 @@ def init_database():
             cursor.execute(live_index_sql)
         except sqlite3.IntegrityError:
             _pickup_index_ok = False
+            #    把「索引被按住」记进 schema_meta：版本号因此不推进时，
+            #    _schema_work_pending 靠这个标记把「版本落后」从备份判据里豁免，
+            #    不然存量重复清完之前每重启一次就多一份整库备份。
+            cursor.execute("INSERT OR REPLACE INTO schema_meta (key, value) "
+                           "VALUES ('unique_index_pending', '1')")
             logger.error('单号唯一索引没建成：还没取件的订单里存在重复的单号，'
                          '请先处理这些重复数据；本次仍会继续启动，但单号暂时不能保证唯一')
             logger.error('!!! 迁移未完成：单号唯一索引未建成，版本号不会推进，下次启动仍会重试 !!!')
@@ -1063,22 +1126,8 @@ def init_database():
             'CREATE INDEX IF NOT EXISTS idx_order_files_order ON order_files(order_id)'
         )
 
-        # 备份只在**这一轮真的有事要做**时才做（P1-4）。原先这里无条件
-        # backup_database_file()，于是每启动一次就多一份整库副本：实测 data/ 下
-        # 已经堆了 32 个 .bak，而库还在长 —— 备份吃满盘的那天，最先坏的是写库，
-        # 而症状看起来是「订单存不进去」，没人会想到是启动脚本复制了 32 份库。
-        # 判据见 _schema_work_pending（缺列 / 老结构 / 版本落后），全是只读查询。
-        # 全新库（schema_meta 里连版本记录都没有，见上面的 fresh_database）不备份：
-        # 那时候库里没有老数据要保护，复制一份刚建出来的空壳只是又一个垃圾文件。
-        pending_changes = [] if fresh_database else _schema_work_pending(cursor, current_version)
-        if pending_changes:
-            # cursor.connection.commit()：改动是先写日志再回放主文件的，事务没提交时
-            # 直接复制主文件可能拷到一个中间态，而备份的意义正是「能拿它换回来」。
-            cursor.connection.commit()
-            backup = backup_database_file()
-            logger.info('本轮启动要改数据库结构（%s），已先备份整库：%s',
-                        '、'.join(pending_changes[:6]) + ('…' if len(pending_changes) > 6 else ''),
-                        backup or '（库文件还不存在，无需备份）')
+        # 备份已在上面（DROP 之后、任何 ALTER 之前）做过 —— 判据必须在那时候求值，
+        # 见那段注释。这里只留一句提醒：别再把它挪回来。
 
         # 这轮新增联系方式，给已有的 users 表补两列。
         # CREATE TABLE IF NOT EXISTS 对已存在的表没有任何改动，老库只能靠 ALTER TABLE；
@@ -1304,6 +1353,10 @@ def init_database():
             ''')
         except sqlite3.IntegrityError:
             _qq_index_ok = False
+            #    与单号索引同一个标记（见那边）：版本号被按住时豁免「版本落后」
+            #    触发的整库备份，别让每次重启都白多一个 .bak。
+            cursor.execute("INSERT OR REPLACE INTO schema_meta (key, value) "
+                           "VALUES ('unique_index_pending', '1')")
             logger.error('QQ 号唯一索引没建成：还有用中的账号共用同一个 QQ 号，'
                          '请先在账号管理里核对并改掉；本次仍会继续启动，'
                          '但「按 QQ 找账号」暂时不能保证唯一')
@@ -1728,6 +1781,10 @@ def init_database():
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)",
                 (SCHEMA_VERSION,),
             )
+            #    两个索引都建成了，把「被按住」的标记清掉 —— 不清的话，
+            #    _schema_work_pending 会一直把「版本落后」从备份判据里豁免掉，
+            #    以后真有结构要改时那次备份反而被它吃掉。
+            cursor.execute("DELETE FROM schema_meta WHERE key = 'unique_index_pending'")
         else:
             logger.error('存在未建成的唯一索引，本次不推进版本号（迁移未完成）')
         conn.commit()

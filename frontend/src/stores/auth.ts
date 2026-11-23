@@ -75,6 +75,12 @@ export const useAuthStore = defineStore('auth', () => {
    *  这里自己跳转，并带上 redirect 让用户登录后回到原页面。
    *  已在登录页时不再跳转，避免无限重定向。 */
   setUnauthorizedHandler(async () => {
+    //    启动握手（bootstrap）里的那次 401 不在这里接管：此刻首个导航还没完成，
+    //    router.currentRoute 还是初始位置，拿它当 redirect 会以 `replace('/')`
+    //    取消守卫所在的这次导航 —— 守卫准备的**真实深链**（redirect: to.fullPath）
+    //    就这么丢了，登录后只能回到首页。守卫本来就拦得住未登录访问；
+    //    这条回调的本意只是接管「登录之后」静默轮询里的 401。
+    if (!ready.value) return
     user.value = null
     // 只清内存里的开关，不动 sessionStorage：同一个人重新登录还能接着用，
     // 换个人登录时 restoreAdvanced() 会按他的资格把开关压回去。

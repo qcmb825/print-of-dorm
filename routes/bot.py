@@ -35,10 +35,8 @@ QQ 里一次发好几份文件是常态（「这几份都打一下」）。批�
 比让用户重发一遍文件便宜得多。
 """
 
-import os
 import sqlite3
 import time
-import uuid
 
 from flask import Blueprint, Response, g, jsonify, request
 
@@ -46,21 +44,21 @@ import botcard
 import prefs
 import pricing
 
-from config import (ALLOWED_EXTENSIONS, BATCH_ORDER_MAX_FILES, ORDER_LOG_WITHDRAW,
+from config import (BATCH_ORDER_MAX_FILES,
                     ORDER_SOURCE_BOT, PICKUP_NOTIFY_MAX_AGE_HOURS, ROLE_USER, ST_DONE,
                     ST_PENDING, ST_PRINTING, ST_READY, ST_UNCLAIMED, ST_UNPRICED, STATUS_ACTIVE,
                     STATUS_DISABLED, TICKET_BODY_MAX, TICKET_CLOSED, TICKET_MAX_OPEN,
-                    TICKET_SUBJECT_MAX, UPLOAD_FOLDER, logger)
-from db import db_conn, files_for_orders, find_preset
+                    TICKET_SUBJECT_MAX, logger)
+from db import db_conn, find_preset
 from security import client_ip, hit_limit, rate_limited, security_event
-from utils import allowed_file, content_signature_error, parse_copies
-from .estimate import (_group_item_label, _group_item_log, commit_prepared_group,
-                       discard_prepared, pages_for_pending,
+from utils import parse_copies
+from .estimate import (_group_item_label, _group_item_log, _saved_duplex_and_copies,
+                       commit_prepared_group, discard_prepared, pages_for_pending,
                        store_pending_file, validate_order_groups)
 from .orders import (create_order_from_saved_file, create_preset_order,
-                     discard_upload_file, log_event, quota_rejection, quota_snapshot,
+                     discard_upload_file, quota_snapshot,
                      resolve_preset_item, resolve_price_item, save_incoming_file,
-                     UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
+                     withdraw_own_order, UPLOAD_MAX_IN_WINDOW, UPLOAD_WINDOW_SECONDS)
 
 bp = Blueprint('bot', __name__)
 
@@ -389,6 +387,10 @@ def api_bot_print_options():
         'msg': 'ok',
         'presets': [_preset_dict(r) for r in presets],
         'price_items': items,
+        #    与网页端 /api/print-options 同一个字段：printbot 启动自检拿它核对
+        #    自己的 BATCH_MAX_FILES —— 那条「必须 ≤ 服务端」的约定原先只活在
+        #    注释里，超了的话学生传完文件才在最后一步被顶回来。
+        'batch_max_files': BATCH_ORDER_MAX_FILES,
     })
 
 
@@ -470,9 +472,10 @@ def _me_payload(uid, nickname, conn=None):
 def api_bot_order_withdraw():
     """自助撤回「自己的、还没被接单的」订单（与网页端 /api/order/<id>/withdraw 同一套规则）。
 
-    这是**唯一真会删数据**的 bot 接口，所以逐条对齐网页端的守卫：
-    别人的单 403 并留痕、已接单 400、已取件 400；删除语句把条件再写一遍 +
-    rowcount 兜并发（SELECT 到 DELETE 之间单可能被接走）。
+    这是**唯一真会删数据**的 bot 接口。守卫与删除收口在
+    orders.withdraw_own_order（网页端同一份实现）：别人的单 403 并留痕、
+    已接单 400、已取件 400、条件 DELETE + rowcount 兜并发 —— 这里只负责
+    「按单号找到是哪一单」与限流。
     """
     data = request.get_json(silent=True) or {}
     error = _identify(data.get('qq'))
@@ -507,54 +510,17 @@ def api_bot_order_withdraw():
         if row is None:
             return jsonify({'code': 404, 'msg': '没有找到这张单，核对一下单号'}), 404
         order_id = row['id']
-        if row['user_id'] != uid:
-            security_event('withdraw_denied',
-                           '订单 #%s 的下单人 uid=%s，bot 请求来自 uid=%s'
-                           % (order_id, row['user_id'], uid))
-            return jsonify({'code': 403, 'msg': '只能撤回自己下的订单'}), 403
-        if row['claimed_by'] is not None:
-            return jsonify({'code': 400, 'msg': '订单已经被接取，无法撤回'}), 400
-        if row['status'] == ST_DONE:
-            return jsonify({'code': 400, 'msg': '订单已完成，不能撤回'}), 400
-        #    文件清单必须在**删库之前**取出来（与网页端那条路同一个道理）：一单多文件时
-        #    只删 orders.file_path（= 第一份）的话，剩下几份永远没人认领、永远占着盘，
-        #    而这个学生的用量页会一直算着一个他早就不想要的数字。
-        #    ⚠️ 顺序（P2-1）：先取清单 → 再删 orders → 再删 order_files → 提交 → 最后删
-        #    盘上的文件。原先这段写在 DELETE 之后，只因 order_files 没有外键、
-        #    删 orders 又不会连带它才侥幸没出事；哪天有人给它补上 ON DELETE CASCADE，
-        #    清单就会在删完订单那一刻变成空列表 —— 文件从此删不掉，而且不报错。
-        file_paths = [entry['file_path'] for entry in
-                      files_for_orders(conn, [order_id]).get(order_id, [])
-                      if entry['file_path']]
-        if not file_paths and row['file_path']:
-            file_paths = [row['file_path']]   # 老库回填之前留下的行
-        cursor = conn.execute(
-            'DELETE FROM orders WHERE id = ? AND user_id = ? AND claimed_by IS NULL AND status <> ?',
-            (order_id, uid, ST_DONE))
-        if cursor.rowcount == 0:
-            conn.rollback()
-            return jsonify({'code': 409, 'msg': '订单状态刚发生了变化，撤回失败'}), 409
-        conn.execute('DELETE FROM order_files WHERE order_id = ?', (order_id,))
-        if file_paths:
-            note = ('，文件「%s」已一并删除' % row['filename']) if len(file_paths) == 1 \
-                else ('，%d 份文件已一并删除' % len(file_paths))
-        else:
-            note = '（预设服务，无文件）'
-        log_event(order_id, ORDER_LOG_WITHDRAW,
-                  '本人撤回订单（QQ，单号 %s）%s' % (handle or '—', note),
-                  conn=conn)
-        conn.commit()
 
-    # 库里删干净了才动文件：反过来的话会出现「订单还在、文件没了」。
-    for file_path in file_paths:
-        try:
-            os.remove(file_path)
-        except OSError:
-            logger.warning('bot 撤回订单 #%s 时删除文件失败（可能早已被清理）：%s',
-                           order_id, os.path.basename(file_path or ''))
+    #    守卫与删除收口在 orders.withdraw_own_order（网页端同一份实现）——
+    #    这里曾经是它的近全文拷贝，已经漂过一处（删文件失败的日志口径不一致）。
+    #    删除用户数据的守卫两条路必须永远一个口径。
+    row, file_paths, error = withdraw_own_order(
+        order_id, uid, timeline_prefix='（QQ，单号 %s）' % (handle or '—'))
+    if error is not None:
+        return error
     logger.info('订单 #%s 被 %s 通过 QQ 撤回，文件=%s（%d 份） ip=%s',
                 order_id, g.user['nickname'],
-                os.path.basename(row['filename'] or '') or '（无文件）',
+                row['filename'] or '（无文件）',
                 len(file_paths), client_ip())
     return jsonify({'code': 0, 'msg': '订单已撤回'})
 
@@ -792,42 +758,20 @@ def api_bot_order_file():
     if error:
         return jsonify({'code': 400, 'msg': error}), 400
 
-    original_name = os.path.basename(file.filename)
-    if not allowed_file(original_name):
-        security_event('upload_blocked_type', '文件「%s」不在白名单内（QQ 来源）' % original_name[:80])
-        return jsonify({
-            'code': 400,
-            'msg': '不支持的文件类型，仅允许：' + '、'.join(sorted(ALLOWED_EXTENSIONS))
-        }), 400
-
-    ext = original_name.rsplit('.', 1)[1].lower()
-    new_filename = '%s.%s' % (uuid.uuid4().hex, ext)
-    save_path = os.path.join(UPLOAD_FOLDER, new_filename)
+    #    落盘与文件校验收口到 orders.save_incoming_file —— 这里曾经手抄了一遍
+    #    「白名单 → 配额（落盘前）→ 落盘 → 空文件 → 内容嗅探 → 配额（落盘后）」，
+    #    成了这条规矩的第三份拷贝（直传 / 预上传 / 机器人各一份）；将来给
+    #    save_incoming_file 加新校验时，这条老路会静默漏掉，症状就是
+    #    「网页能传的文件 QQ 传不了」。顺带：这边原来用的是裸 os.remove，
+    #    Windows 上文件被占用时会把本该回 400 的分支变成 500
+    #    （save_incoming_file 统一走 discard_upload_file 就是为了这个）。
+    info, error_response = save_incoming_file(file)
+    if error_response is not None:
+        return error_response
+    original_name = info['name']
+    save_path = info['path']
 
     try:
-        quota_error = quota_rejection()
-        if quota_error is not None:
-            return quota_error
-
-        file.save(save_path)
-        file_size = os.path.getsize(save_path)
-        if file_size == 0:
-            os.remove(save_path)
-            return jsonify({'code': 400, 'msg': '这个文件是空的（0 字节），换一个再试'}), 400
-
-        content_error = content_signature_error(save_path, ext)
-        if content_error is not None:
-            os.remove(save_path)
-            security_event('upload_content_mismatch',
-                           '文件「%s」的内容与扩展名 %s 不符（QQ 来源）'
-                           % (original_name[:80], ext))
-            return jsonify({'code': 400, 'msg': content_error}), 400
-
-        quota_error = quota_rejection(file_size)
-        if quota_error is not None:
-            os.remove(save_path)
-            return quota_error
-
         #    color 传 'black' 只是个占位：有价目项时 create_order_from_saved_file
         #    会用 pricing.item_color(item) 覆盖它（颜色由价目项决定）；
         #    没有价目项（管理员还没配）时它才生效，而那正是"没得选"的老规矩。
@@ -835,17 +779,20 @@ def api_bot_order_file():
             original_name, save_path, 'black', duplex, remark, copies, item,
             source=ORDER_SOURCE_BOT)
     except Exception:
-        if os.path.exists(save_path):
-            try:
-                os.remove(save_path)
-            except OSError:
-                logger.warning('清理上传失败的文件失败: %s', save_path)
+        #    create_order_from_saved_files 在它自己的 except 里删过一遍了，但那只
+        #    覆盖「落库那一段」；它前面还有一段**纯计算**（把 entries 摊成 plans、
+        #    取价目项、判能不能双面）在 try 之外，那一段抛异常时它根本走不到删除。
+        #    所以这里必须自己兜一刀（判存在再删，幂等）—— 与网页端 /api/upload
+        #    至今保留的那一刀同一个理由。少了它，这份文件就留在上传目录根下：
+        #    没有订单认领、清理机制（只认订单指着的文件）与配额（只算未接单订单的
+        #    文件）都不认它 —— 永久占盘、无人可见、日志里只有一条 500。
+        discard_upload_file(save_path)
         logger.exception('bot 文件下单失败：下单人=%s 文件=%s ip=%s',
                          g.user['nickname'], original_name, client_ip())
         return jsonify({'code': 500, 'msg': '下单失败，请稍后重试'}), 500
 
     logger.info('新订单 #%s 下单人=%s（QQ） 文件=%s 大小=%sKB 单号=%s ip=%s',
-                order_id, g.user['nickname'], original_name, file_size // 1024,
+                order_id, g.user['nickname'], original_name, info['size'] // 1024,
                 pickup_code, client_ip())
     return jsonify({'code': 0, 'msg': '下单成功', 'order_id': order_id,
                     'pickup_code': pickup_code, 'est_price': est_price})
@@ -977,11 +924,18 @@ def api_bot_order_prepared():
                 'msg': '第 %d 组没下成，前面 %d 单已经提交' % (index + 1, len(orders)),
                 'orders': orders,
             }), 500
+        #    单双面与份数**从落库的那一行读**，不拿组级 options ——
+        #    与网页端 /api/order/prepared 完全同一条口径（见 estimate.py 那段
+        #    「用户报的就是这个」）。机器人发来的建单请求里根本**没有组级**
+        #    duplex/copies（printbot 只给逐份的），组级那两个值于是落到默认
+        #    「1 份 / 单面」；拿它回执就是：纸按学生说的双面打、
+        #    QQ 里回一句「单面」，学生照着回执去核对又会以为打错了。
+        saved = _saved_duplex_and_copies(order_id)
         logger.info('新订单 #%s（QQ 批量·第 %s/%s 组）下单人=%s 文件=%s 单双面=%s 份数=%s '
                     '价目项=%s 单号=%s ip=%s',
                     order_id, index + 1, len(prepared), g.user['nickname'],
                     '、'.join(entry['name'] for entry in group['entries']),
-                    group['options']['duplex'], group['options']['copies'],
+                    saved['duplex'], saved['copies'],
                     _group_item_log(group['entries']),
                     pickup_code, client_ip())
         orders.append({
@@ -992,8 +946,7 @@ def api_bot_order_prepared():
             #    逐份档位不同时给 null（回执里退回显示文件名）——
             #    与网页端同一条口径，见 routes/estimate._group_item_label。
             'price_item_name': _group_item_label(group['entries']),
-            'copies': group['options']['copies'],
-            'duplex': group['options']['duplex'],
+            **saved,
         })
 
     return jsonify({
@@ -1063,20 +1016,11 @@ def api_bot_prefs_save():
     fields = data.get('prefs') or {}
     if not isinstance(fields, dict):
         return jsonify({'code': 400, 'msg': '偏好格式不对'}), 400
-    # 免打扰时段要成对出现（只给一头等于没设），格式不对直接拒 —— 静默忽略会让用户
-    # 以为设上了、夜里照样被吵。
-    for key in ('quiet_from', 'quiet_to'):
-        value = fields.get(key)
-        if value and prefs.parse_clock(value) is None:
-            return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
-    if ('quiet_from' in fields) != ('quiet_to' in fields):
-        return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
-    #    两个时间点一样 = 等于没设（`in_quiet_hours` 就是这么判的），
-    #    存下去只会让用户以为自己设上了。判定在 prefs.valid_quiet_pair 里收口，
-    #    网页与机器人问的是同一个函数。
-    if fields.get('quiet_from') or fields.get('quiet_to'):
-        if not prefs.valid_quiet_pair(fields.get('quiet_from'), fields.get('quiet_to')):
-            return jsonify({'code': 400, 'msg': '开始与结束时间不能一样'}), 400
+    #    免打扰三道校验收口在 prefs.validate_quiet_fields（网页入口同一份）——
+    #    静默忽略会让用户以为设上了、夜里照样被吵，所以这里明确拒绝。
+    error = prefs.validate_quiet_fields(fields)
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
     saved = prefs.save_prefs(g.user['id'], fields)
     return jsonify({'code': 0, 'msg': 'ok', 'prefs': saved, 'lines': prefs.describe(saved)})
 
@@ -1135,9 +1079,14 @@ def api_bot_card():
     #    （与 upload / register 那几处同一个写法）。写成 `if not ...` 会把**第一次**
     #    请求就拦掉（自检时被 test_bot_card 当场抓到）。
     #    限流的键：有身份就按账号（同一个人换个入口刷也是同一个额度），
-    #    帮助卡没有身份，退到按 QQ 号 —— 拿 IP 当键的话，同一台机器上的两个人都算一个人。
+    #    帮助卡没有身份，退到按 QQ 号 —— 拿 IP 当键的话，同一台机器上的两个人都算一个人；
+    #    而走机器人那台的请求全是同一个源 IP，整校的帮助卡会挤进同一把计数器。
+    #    qq 参数确实可以换着报，但能走到这里的只有持 BOT_TOKEN 的 printbot ——
+    #    换键刷量等于拿自己的令牌刷自己，闸门（identify_bot_request）已经把陌生人挡在外面了。
+    #    429 走 rate_limited()：撞线不留痕的话，这种刷量在 security.log 里就是隐形的。
     if hit_limit('bot_card:%s' % (uid if uid is not None else qq_number or 'anon'), 40, 60):
-        return jsonify({'code': 429, 'msg': '刷得太快了，缓一下再看'}), 429
+        return rate_limited('bot_card_rate_limited', 'qq=%s kind=%s' % (qq_number or 'anon', kind),
+                            '刷得太快了，缓一下再看')
     with db_conn() as conn:
         if kind == 'orders':
             payload = _orders_payload(uid, conn)

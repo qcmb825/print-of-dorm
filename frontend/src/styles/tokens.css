@@ -504,6 +504,11 @@
   --color-st-done-bg: var(--status-done-bg);
   --color-st-unpriced: var(--status-unpriced);
   --color-st-unpriced-bg: var(--status-unpriced-bg);
+  /* 「未取件」（v25 超期归档）：六档状态一个都不能少 —— 这一组是给 Tailwind
+     类名（text-st-* / bg-st-*）用的桥接表，漏一档时写 text-st-unclaimed 会
+     拿到一张不存在的令牌，颜色静默消失，而不是报错。 */
+  --color-st-unclaimed: var(--status-unclaimed);
+  --color-st-unclaimed-bg: var(--status-unclaimed-bg);
 
   --color-role-user: var(--role-user);
   --color-role-user-bg: var(--role-user-bg);

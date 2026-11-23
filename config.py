@@ -543,8 +543,10 @@ ORDER_STATUSES_QUEUE = (ST_UNPRICED, ST_PENDING, ST_PRINTING, ST_READY)
 # ---- 取件超期归档（archiver.py）----
 # 「可取件」摆满 ARCHIVE_AFTER_DAYS 天还没人来取，就自动转到「未取件」。
 # 7 天是照学校作息定的：一个周末加几天缓冲，学生不至于刚回家就被归档。
-ARCHIVE_ENABLED = os.getenv('ARCHIVE_ENABLED', 'true').strip().lower() not in (
-    '0', 'false', 'no', 'off')
+# 走 env_bool 与其余开关同一套判据 —— 原先这里用黑名单（不在 0/false/no/off 里就算开），
+# 拼错一个字母照样开；其他开关全是白名单、拼错即关。同一份配置文件里
+# 两类布尔对「拼错」的应对方向相反，运维根本记不住哪个是哪个。
+ARCHIVE_ENABLED = env_bool('ARCHIVE_ENABLED', True)
 
 ARCHIVE_AFTER_DAYS = env_int('ARCHIVE_AFTER_DAYS', 7)
 

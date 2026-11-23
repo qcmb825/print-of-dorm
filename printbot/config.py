@@ -36,6 +36,11 @@ def load_env_file(env_file='.env'):
         key, value = key.strip(), value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             value = value[1:-1]
+        else:
+            #    行内注释（KEY=value # 说明）剥掉：裸值里出现「 #」只可能是注释 ——
+            #    令牌/URL 是 urlsafe 的，不会带 #。不剥的话 BOT_TOKEN=xxx # 备注
+            #    会把整串尾巴当成令牌，表现为每次 401，而日志里只看得出「令牌错」。
+            value = value.split(' #', 1)[0].strip()
         if key:
             os.environ.setdefault(key, value)
 

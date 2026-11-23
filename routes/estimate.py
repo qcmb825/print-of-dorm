@@ -67,7 +67,13 @@ bp = Blueprint('estimate', __name__)
 # 它和订单附件同属「运行期数据」，一起被备份、一起被搬走；
 # 而点开头的名字让人一眼看出「这不是订单文件」——
 # 运维手动清盘时不会误删，写清理脚本的人也不会把它当成订单扫进去。
-PENDING_ROOT = os.path.join(UPLOAD_FOLDER, '.pending')
+# **每次现算而不是在模块级存一份常量**：让「目录」只有一个来源（UPLOAD_FOLDER）。
+# ⚠️ 但这不等于「运行中改 config.UPLOAD_FOLDER 会生效」—— 本文件的 UPLOAD_FOLDER
+# 是 `from config import ...` 的快照，import 之后再改 config 那个名字与这里无关。
+# 测试脚本必须在 **import config 之前**设环境变量；照旧注释去写「import 后改
+# config」的脚本，会得到「服务起在 A、断言读 B」且两边都不报错。
+def pending_root():
+    return os.path.join(UPLOAD_FOLDER, '.pending')
 
 # token 的形状（32 位小写十六进制）。**先卡形状再去碰磁盘**：
 # 拼接路径之前不校验，就是一个能让 `../` 走进来的口子。
@@ -85,7 +91,7 @@ _PAGES_CACHE_MAX = 500
 # ---- 预上传区 ---------------------------------------------------------------
 
 def _pending_dir(user_id):
-    return os.path.join(PENDING_ROOT, str(user_id))
+    return os.path.join(pending_root(), str(user_id))
 
 
 def cleanup_pending():
@@ -94,15 +100,15 @@ def cleanup_pending():
     惰性调用（每次预上传顺带扫一遍），见模块注释。
     按 mtime 判过期而不是按创建时间：学生传完之后又换了一份，旧的照样会自然过期。
     """
-    if not os.path.isdir(PENDING_ROOT):
+    if not os.path.isdir(pending_root()):
         return
     deadline = time.time() - PENDING_UPLOAD_TTL_HOURS * 3600
     try:
-        user_dirs = os.listdir(PENDING_ROOT)
+        user_dirs = os.listdir(pending_root())
     except OSError:
         return
     for user_dir in user_dirs:
-        folder = os.path.join(PENDING_ROOT, user_dir)
+        folder = os.path.join(pending_root(), user_dir)
         if not os.path.isdir(folder):
             continue
         keep = 0
@@ -209,10 +215,13 @@ _HINTS = (
     ('没选价目项', '先选一档类型 / 纸张'),
     ('自动估价未启用', '管理员未开启自动估价'),
     ('读不出文件页数', '读不出这份文件的页数'),
-    #    「明确要双面、这一档只有单面」：resolve_price_item 会把这句原文放在
-    #    reason 里，试算接口不报 400（试算失败不该把学生挡在页面上），
-    #    但必须翻成一句能照着做的话，否则学生只看到「暂时算不出预估」。
-    ('只支持单面', '这一档只支持单面，换一档或改成单面'),
+    #    「明确要双面、这一档只有单面」：resolve_price_item / resolve_preset_item
+    #    会把这句原文放在 reason 里，试算接口不报 400（试算失败不该把学生挡在
+    #    页面上），但必须翻成一句能照着做的话，否则学生只看到「暂时算不出预估」。
+    #    ⚠️ 文案只说**总是走得通的那一条**（改成单面）：预设单绑死的档位没有
+    #    「换一档」这个选择框（学生端连选档都不显示），照旧文案写「换一档」，
+    #    他会去找一个不存在的入口。
+    ('只支持单面', '这一档只支持单面，把单双面改成单面再试'),
     # v24 起逐份估价：明细里的说法比整单那句更具体（「读不出**这份**文件的页数」、
     # 「按这一项的单价算出来是 0 元」），两条都要能认出来 —— 认不出来时
     # _hint_for 只会回一句中性的兜底，学生就不知道下一步该改哪里。
@@ -441,8 +450,10 @@ def _quote_for_files(conn, raw_files):
     与建单那条路（validate_order_groups）**用同一套逐份判据**：
       · 每个 token 必须真的还在自己的 `.pending` 目录里；
       · 页数一律服务端数（客户端报的不可信，见模块注释）；
-      · 档位走 resolve_price_item，所以「这一档不支持双面」在这里就已归正 ——
-        否则学生会看到「双面」的价格，到下单时被改成单面，金额对不上。
+      · 档位走 resolve_price_item，所以「这一档不支持双面」在这里就**软失败**了
+        （item = None + item_error 进 hint）—— 「说了双面、这一档只有单面价」
+        必须当场说清楚，而不是等下单时才被改成单面：学生看到的价是按双面算的，
+        金额和纸就对不上。
 
     与单文件试算的差别只有一条：**任一份算不出来，整单就给 null**。
     少算几份的合计是一个偏低的数字，学生照着它备钱、到柜台发现不是这个数，

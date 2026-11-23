@@ -7,14 +7,20 @@
 
 队列在内存里 —— 服务重启丢掉的只是「还没发出去的活」，订单状态不会说谎
 （没发出去就还是「待打印」，柜台重新点一次就行），为此引入一张队列表不划算。
+诚实起见把边界说清：这条承诺只对**排在队列里**的活成立；**正在发送**的那几秒
+进程被杀的话，IPP 请求可能已经送达、纸已经开始出，而订单还停在待打印 ——
+那种情形重发前先看一眼打印机有没有纸出来（重试/重发的闸门拦不住这一种）。
 
 与 notifier / archiver 同一套写法：daemon 线程、整轮包 try。
 线程一死，那台机器的下发就永久停摆，而界面上只会看到「点了没反应」——
 所以每一轮的失败都只记日志，不能让它死。
 
 防重复有两道：
-    ① (订单, 打印机) 二元组的 _inflight 集合 —— 同一单对同一台还在队列里/正在发时，
-       第二次入队直接拒绝（换一台不受影响：那是操作员的明确选择）；
+    ① _inflight 的**订单级**集合 —— 同一单还在队列里/正在发时（发往哪台都一样），
+       第二次入队直接拒绝。曾经按 (订单, 打印机) 二元组记账，结果「先点 A 机、
+       几秒内再点 B 机」两单都过了 409 检查、双双入队，整单纸打两套 ——
+       print_sent_time 只在全部发完之后才写，首单发完之前那道订单级闸门
+       是空的，兜不住这个窗口。
     ② orders.print_sent_time（订单级）—— 发成功过且没报错的单，再发**任何一台**
        都要操作人明确确认。纸是按单算的，多一台就多一份。
    跨进程的第三种情况（同一台库起两个服务实例）没有防 —— 真要那么跑的话，
@@ -27,7 +33,7 @@ from pathlib import Path
 
 from config import (ORDER_LOG_PRINT, PRINTER_RETRIES, ST_PENDING,
                     ST_PRINTING, UPLOAD_FOLDER, logger)
-from db import db_conn, find_printer, files_for_orders, log_order_event
+from db import db_conn, files_for_orders, log_order_event
 from printer import (DispatchError, TransientDispatchError, send_job)
 
 # 每台打印机一条队列 + 一个消费者线程。_lock 只护 _queues/_workers_started
@@ -35,16 +41,22 @@ from printer import (DispatchError, TransientDispatchError, send_job)
 _queues = {}
 _workers_started = set()
 _threads_lock = threading.Lock()
-_inflight = set()
+# 订单级：order_id -> printer_id。同订单换打印机也要等首单出结果（见模块注释①）。
+_inflight = {}
 
 # 瞬时失败的退避：第 n 次重试前等 3n 秒，最多等 30 秒。
 # 这是后台线程，等得起；柜台的人也等得起 —— 界面上那单还停在待打印。
 _RETRY_BACKOFF_SECONDS = 3
 _RETRY_BACKOFF_MAX_SECONDS = 30
 
+# 单份文件的**总发送时限**（每轮尝试的预算，乘上尝试次数才是整份的上限）。
+# 与 config.PRINTER_TIMEOUT（单次 socket 读写）不是一回事：那个管不了
+# 「协议层内部降级重发一次」与「本函数重试三次」的乘法效应。
+RETRY_TOTAL_BUDGET_SECONDS = 90
+
 
 def enqueue_dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
-    """把一张订单排进**指定打印机**的下发队列。返回 False = 这单对这台已在队列里/正在发。
+    """把一张订单排进**指定打印机**的下发队列。返回 False = 这单已在队列里/正在发（哪台都算）。
 
     overrides 是**下发时的参数覆盖**（{file_id: {'color_type':…, 'duplex':…}}，
     file_id 用 0 表示老库单的第一份）：柜台在确认框里逐份改的黑白/彩色、单/双面。
@@ -53,17 +65,30 @@ def enqueue_dispatch(order_id, printer_id, actor_id, actor_role, overrides=None)
     而不是后台线程 —— 时间线上「谁送进打印机的」是柜台的问题，
     「哪个线程发的」不是。
     """
-    key = (order_id, printer_id)
     with _threads_lock:
-        if key in _inflight:
+        if order_id in _inflight:
             return False
-        _inflight.add(key)
+        _inflight[order_id] = printer_id
         queue_for = _queues.setdefault(printer_id, queue.Queue())
         if printer_id not in _workers_started:
             _workers_started.add(printer_id)
             thread = threading.Thread(target=_loop, args=(printer_id,),
                                       name='printer-worker-%d' % printer_id, daemon=True)
-            thread.start()
+            try:
+                thread.start()
+            except BaseException:
+                #    起不了线程（进程线程数打满 / 内存吃紧 / 解释器正在退出）时
+                #    必须把刚才那两笔登记撤回去。不撤的话：这台打印机**永远不会
+                #    再起线程**（`printer_id in _workers_started` 恒真），而接口
+                #    照样回 202「已交给队列」—— 单子永远停在待打印、没有
+                #    print_error、时间线上没有记录，柜台只会以为系统吞了他的点击；
+                #    同一单再点一次还会被 _inflight 挡成 409。这正是本项目最怕的
+                #    那类「不报错、只是不对」，而且是永久性的。
+                #    撤回之后重新抛：让上层回 500/503，操作人能立刻重试。
+                _workers_started.discard(printer_id)
+                _queues.pop(printer_id, None)
+                _inflight.pop(order_id, None)
+                raise
             logger.info('打印机下发：为打印机 #%s 起了下发线程', printer_id)
     queue_for.put((order_id, printer_id, actor_id, actor_role, overrides or {}))
     logger.info('打印机下发：订单 #%s 已排入打印机 #%s 的队列（操作人 uid=%s，前方 %d 单）',
@@ -119,14 +144,28 @@ def _dispatch_params(entry, order, overrides, file_key):
 
 
 _LABEL_COLOR = {'black': '黑白', 'color': '彩色'}
-_LABEL_DUPLEX = {'single': '单面', 'double': '双面'}
+#    'mixed' 也要认：某份 order_files.duplex 为 NULL、订单级是「混合」时，
+#    _pick_param 会取到它 —— 不翻译的话时间线上写「订单原为 黑白·mixed」。
+_LABEL_DUPLEX = {'single': '单面', 'double': '双面', 'mixed': '混合'}
 
 
 def _send_with_retry(pr, file_path, job_name, copies, duplex, color, paper_name):
     """发一份文件，瞬时失败按 PRINTER_RETRIES 退避重试。
-    返回打印机给的 {'job_id': ...}；永久失败直接抛，重试没意义。"""
+    返回打印机给的 {'job_id': ...}；永久失败直接抛，重试没意义。
+
+    **整份文件有一个总时限**（RETRY_TOTAL_BUDGET_SECONDS）：PRINTER_TIMEOUT 卡的是
+    单次 socket 读写，而一次下发在协议层内部还可能降级重发一次，再乘上本函数
+    的 1+PRINTER_RETRIES 次 —— 一份最坏能耗三四分钟，一单 10 份就把这台打印机
+    的队列占住十几分钟，柜台看到的只是「点了没反应」。超预算时按瞬时失败
+    抛出去（让它进 print_error 等人工），而不是无限等下去。
+    """
+    deadline = time.monotonic() + RETRY_TOTAL_BUDGET_SECONDS * (1 + max(0, PRINTER_RETRIES))
     last_exc = None
     for attempt in range(1 + max(0, PRINTER_RETRIES)):
+        if time.monotonic() >= deadline:
+            logger.warning('打印机下发：这一份已超出总时限（%d 秒 × %d 次），不再重试',
+                           RETRY_TOTAL_BUDGET_SECONDS, 1 + PRINTER_RETRIES)
+            break
         try:
             return send_job(pr, file_path, job_name, copies, duplex, color, paper_name)
         except TransientDispatchError as exc:
@@ -177,8 +216,32 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
             'FROM printers WHERE id = ?', (printer_id,)).fetchone()
         if order is None or printer is None:
             # 排队期间单子被撤回、或打印机被管理员删掉：都不发。
-            # 单子没了自然发不成；打印机没了更不能凭记忆发 ——
+            # 单子没了自然发不成（也没处留痕）；打印机没了更不能凭记忆发 ——
             # 地址可能已经被改成另一台了。
+            #    打印机被删的这条**必须留痕**：接口已经用 202 答应过操作人
+            # 「已交给队列」，这里静默 return 的话，这单就永远停在待打印，
+            # 界面上没有 print_error、时间线上没有记录 —— 全模块唯一的
+            # 「凭空消失的失败」，柜台只会以为系统吞了他的点击。
+            if order is not None and printer is None:
+                error = '打印机 #%s 已被删除，未送打印机' % printer_id
+                conn.execute('UPDATE orders SET print_error = ?, update_time = CURRENT_TIMESTAMP '
+                             'WHERE id = ? AND status IN (?, ?)',
+                             (error, order_id, ST_PENDING, ST_PRINTING))
+                #    台账也要补一行：紧邻的「停用」分支三样齐全（print_error +
+                #    print_jobs + 留痕），这一支原先只有两样 —— 于是它成了全模块
+                #    唯一「逐台逐次明细缺页」的失败形态（与 cfb0d4a 确立的口径
+                #    不符）。打印机行已经没了，用排障所需的快照顶上：id 是真的，
+                #    名字写明「已删除」，够答「这一单当时想发去哪台」。
+                #    份数给 None 而不是 order['copies']：v24 起它是**总份数**，
+                #    而这一支一份都没发 —— 照抄会得到「copies=5 却零个字节出去」
+                #    的假明细。
+                _record_job(conn, order_id, {'id': printer_id, 'name': '（已删除）'},
+                            None, error,
+                            (order['color_type'], order['duplex'], None,
+                             order['paper_name'] or ''),
+                            actor_id, actor_role, sent_time=False)
+                log_order_event(conn, order_id, actor_id, actor_role, ORDER_LOG_PRINT, error)
+                conn.commit()
             logger.warning('打印机下发：订单 #%s 或打印机 #%s 已不存在，跳过',
                            order_id, printer_id)
             return
@@ -193,8 +256,22 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
                         order_id, order['status'])
             return
         if printer['is_active'] != 1:
-            log_order_event(conn, order_id, actor_id, actor_role, ORDER_LOG_PRINT,
-                            '打印机「%s」已被停用，未送打印机' % printer['name'])
+            #    停用同样给界面一条 print_error 与一行台账：时间线只有点开详情才看，
+            #    print_error 与 print_jobs 才是「这单为什么卡着」的第一现场
+            #    （与 cfb0d4a 确立的「逐台逐次台账不缺页」同一条口径）。
+            error = '打印机「%s」已被停用，未送打印机' % printer['name']
+            conn.execute('UPDATE orders SET print_error = ?, update_time = CURRENT_TIMESTAMP '
+                         'WHERE id = ? AND status IN (?, ?)',
+                         (error, order_id, ST_PENDING, ST_PRINTING))
+            #    份数给 None：orders.copies 自 v24 起是**总份数**（Σ 每份份数），
+            #    而这一支一份都没发 —— 照抄会记成「按 5 份发过」，与事实相反。
+            #    这一行台账的用途是「这一次想按什么参数发、为什么没发成」，
+            #    份数在这一支没有答案，如实留空。
+            _record_job(conn, order_id, printer, None, error,
+                        (order['color_type'], order['duplex'], None,
+                         order['paper_name'] or ''),
+                        actor_id, actor_role, sent_time=False)
+            log_order_event(conn, order_id, actor_id, actor_role, ORDER_LOG_PRINT, error)
             conn.commit()
             logger.info('打印机下发：打印机 #%s 已停用，订单 #%s 未送', printer_id, order_id)
             return
@@ -218,8 +295,10 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
         else:
             # 老库回填之前的行（order_files 里没有记录）仍按老列走，
             # 与 api_download 的回退口径一致。id 给 0：确认框的参数覆盖按它对号。
+            # paper_name 也给 None（_pick_param 会落到订单级）。
             entries = [{'id': 0, 'filename': order['filename'], 'file_path': order['file_path'],
-                        'color_type': None, 'duplex': None, 'copies': None}]
+                        'color_type': None, 'duplex': None, 'copies': None,
+                        'paper_name': None}]
 
         sent = 0
         job_id = None
@@ -239,9 +318,14 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
                 entry, order, overrides, entry['id'])
             order_color = _pick_param(entry, order, 'color_type', 'black')
             order_duplex = _pick_param(entry, order, 'duplex', 'single')
+            #    纸张与颜色/单双面同一个读法：文件行自己的纸名优先，没有才落订单级。
+            #    曾经直接读 order['paper_name']（= 第一份的快照），而改参数接口
+            #    明明支持逐份改纸、钱也按逐份的纸重算过 —— 结果第 2 份改了 A3
+            #    账上按 A3 收，打印机收到的还是第一份的 A4。「收的钱和打的纸
+            #    不一样」正是 D.5 防线要拦的事。
             params = (dispatched_color, dispatched_duplex,
                       _pick_param(entry, order, 'copies', 1),
-                      order['paper_name'] or '')
+                      _pick_param(entry, order, 'paper_name', ''))
             if path is None:
                 # 前面送出去的纸收不回来，如实说清：重发会整单重打。
                 if sent:
@@ -254,6 +338,16 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
                 log_detail = column_error
                 _record_job(conn, order_id, printer, None, column_error, params,
                             actor_id, actor_role, sent_time=False)
+                #    每写一行明细就提交：这段循环里最长的活是「把 50MB 的文档
+                #    传给打印机」，一份几分钟都可能。攒到最后才 commit 的话，
+                #    从第一行 INSERT 起就攥着 SQLite 的**写锁**，而这期间接单、
+                #    计费、改状态、学生下单全都要写库 —— db_conn 的 timeout 是
+                #    10 秒，超了就 OperationalError → 500，而 waitress 只有 8 个
+                #    线程，堵住的请求线程会把全站一起拖慢。一单 10 份就是十几分钟。
+                #    代价是「明细先落地、订单状态后落地」，中间那几秒被杀的进程
+                #    会留下「发了但订单还停在待打印」—— 那是本来就承认的窗口
+                #    （见模块注释），比全站写请求 500 划算得多。
+                conn.commit()
                 break
             if deviated:
                 deviations.append(
@@ -278,12 +372,14 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
                     log_detail = '下发失败：%s' % exc
                 _record_job(conn, order_id, printer, None, column_error, params,
                             actor_id, actor_role, sent_time=False)
+                conn.commit()  # 同上：明细立刻落地，别让写锁横跨下一次发送
                 break
             sent += 1
             if result.get('job_id') and not job_id:
                 job_id = result['job_id']
             _record_job(conn, order_id, printer, result.get('job_id'), None, params,
                         actor_id, actor_role, sent_time=True)
+            conn.commit()  # 同上：一份一行、一行一提交
 
         printer_label = '「%s」' % printer['name']
         if sent == len(entries):
@@ -318,17 +414,36 @@ def _dispatch(order_id, printer_id, actor_id, actor_role, overrides=None):
             # WHERE 带状态守卫，与成功分支同一个道理：发送的那几十秒里单子可能
             # 被人标成可取件/取走 —— 把「下发失败」挂到一张已经交出去的单上，
             # 柜台会当它没打好扣下来，比不写更糟。错误详情留在上面的留痕里。
-            if sent and job_id and not order['print_sent_time']:
-                conn.execute('UPDATE orders SET print_error = ?, print_job_id = ?, '
-                             'update_time = CURRENT_TIMESTAMP '
-                             'WHERE id = ? AND status IN (?, ?)',
-                             (column_error, job_id, order_id, ST_PENDING, ST_PRINTING))
+            #    留痕与 print_error 都跟着上面那句 UPDATE 的 rowcount 走：发送的那
+            #    几十秒里单子可能已经交出去了（改状态 / 取件），命中 0 行就什么都
+            #    不该再写 —— 否则库列干净、时间线上却多一条「下发失败」挂在已经
+            #    取走的单上，柜台会当它没打好扣下来。成功分支一直这么写，这一支
+            #    原先漏了 rowcount 守卫。
+            #
+            #    sent > 0 就**必须**落 print_sent_time：那一列是「这一单真的进过
+            #    打印机」的凭证，不是「全部成功」的标记。原先还要求 job_id 非空
+            #    （raw9100 永远拿不到 job_id）且 print_sent_time 原先为空 ——
+            #    两头一夹，「前 3 份成功、第 4 份失败」的单一个凭证都没有：
+            #    下发接口那道二次确认判的正是 print_sent_time，于是柜台照着
+            #    print_error 里那句「缺的几份请手动打」再点一次下发，前 3 份
+            #    立刻又印一遍 —— 整单纸翻倍，钱只收一份，日志里一个错都没有。
+            #    一份凭证 = 一套已经出过的纸，判据只能是「送出去过没有」。
+            if sent:
+                cursor = conn.execute(
+                    'UPDATE orders SET print_error = ?, '
+                    'print_job_id = COALESCE(?, print_job_id), '
+                    'print_sent_time = COALESCE(print_sent_time, CURRENT_TIMESTAMP), '
+                    'update_time = CURRENT_TIMESTAMP '
+                    'WHERE id = ? AND status IN (?, ?)',
+                    (column_error, job_id, order_id, ST_PENDING, ST_PRINTING))
             else:
-                conn.execute('UPDATE orders SET print_error = ?, update_time = CURRENT_TIMESTAMP '
-                             'WHERE id = ? AND status IN (?, ?)',
-                             (column_error, order_id, ST_PENDING, ST_PRINTING))
-            log_order_event(conn, order_id, actor_id, actor_role, ORDER_LOG_PRINT,
-                            '%s%s' % (printer_label, log_detail))
+                cursor = conn.execute(
+                    'UPDATE orders SET print_error = ?, update_time = CURRENT_TIMESTAMP '
+                    'WHERE id = ? AND status IN (?, ?)',
+                    (column_error, order_id, ST_PENDING, ST_PRINTING))
+            if cursor.rowcount:
+                log_order_event(conn, order_id, actor_id, actor_role, ORDER_LOG_PRINT,
+                                '%s%s' % (printer_label, log_detail))
             conn.commit()
             logger.warning('打印机下发：订单 #%s 失败 %s（%d/%d 份送出）：%s',
                            order_id, printer_label, sent, len(entries), column_error)
@@ -355,7 +470,7 @@ def _loop(printer_id):
                 logger.exception('打印机下发：订单 #%s 的失败标记也写不进去', item[0])
         finally:
             with _threads_lock:
-                _inflight.discard((item[0], item[1]))
+                _inflight.pop(item[0], None)
 
 
 def start_printer_worker():

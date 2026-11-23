@@ -36,6 +36,11 @@ RECV_TIMEOUT_SECONDS = 120
 # 超时多半意味着连接已经坏了（响应永远等不到）。
 ACTION_TIMEOUT_SECONDS = 15
 
+# 事件队列的上界。处理线程卡死（或死了）才会堆到这个地步 —— 无界队列
+# 在那种情形下变成纯内存泄漏，而界面上什么都不会显示。满了丢**最老的**
+# （最没时效的一条）给新事件腾位，并把这件事喊出来：静默丢弃比静默堆积好查。
+EVENTS_QUEUE_MAX = 500
+
 
 class OneBotError(RuntimeError):
     """连接或动作调用的失败。断线重连由外层循环负责，这里只负责如实上报。"""
@@ -50,7 +55,7 @@ class OneBotClient:
         self._ws = None
         self._send_lock = threading.Lock()
         self._pending = {}  # echo -> queue.Queue（响应帧的去处）
-        self._events = queue.Queue()  # 事件帧的去处（见模块注释的线程模型）
+        self._events = queue.Queue(maxsize=EVENTS_QUEUE_MAX)  # 事件帧的去处（见模块注释的线程模型）
         self._worker = None
         self._stop = False
 
@@ -145,7 +150,16 @@ class OneBotClient:
         if 'post_type' in frame:
             # 事件进队列，由处理线程消费 —— **绝不在这里直接跑 on_event**，
             # 那会把收帧线程卡在动作等待上（见模块注释的死锁复盘）。
-            self._events.put(frame)
+            try:
+                self._events.put_nowait(frame)
+            except queue.Full:
+                try:
+                    self._events.get_nowait()
+                except queue.Empty:
+                    pass
+                self._events.put_nowait(frame)
+                log.warning('事件队列已满（%d），丢弃了最老的一条 —— 事件处理线程可能卡住了',
+                            EVENTS_QUEUE_MAX)
 
     # ---- 动作调用 -------------------------------------------------------
 

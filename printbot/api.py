@@ -14,6 +14,7 @@
     再问一遍得到的还是同一句。
 """
 
+import http.client
 import json
 import time
 import urllib.error
@@ -54,7 +55,12 @@ def _request(method, path, payload=None, timeout=30, retries=1):
         try:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             return _send(req, timeout)
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError,
+                http.client.HTTPException) as exc:
+            #    http.client.HTTPException 也要接：IncompleteRead（响应读一半断了）、
+            #    BadStatusLine 这类只继承它、不继承 OSError —— 而它们在跨洋链路上
+            #    恰恰是常态。漏了的话这些异常会裸着冲出 _request，绕过调用方
+            #    的 except ApiError 兜底，学生收不到任何回复。
             last_exc = exc
             if attempt < retries:
                 time.sleep(2 * (attempt + 1))
@@ -82,7 +88,8 @@ def _request_bytes(path, timeout=60, retries=1):
         except urllib.error.HTTPError:
             # 4xx/5xx 都是明确回答（501 = 没字体、404 = 服务器还没这接口）
             return None
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError,
+                http.client.HTTPException) as exc:
             last_exc = exc
             if attempt < retries:
                 time.sleep(2 * (attempt + 1))
@@ -133,7 +140,8 @@ def _request_multipart(path, fields, file_field, file_name, file_bytes,
         })
     try:
         return _send(req, timeout)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError,
+            http.client.HTTPException) as exc:
         raise ApiError('上传失败（%s）。单子可能没有建成 —— 请重新发一次文件' % exc) from exc
 
 
@@ -274,10 +282,14 @@ def upload_prepare(qq, file_name, file_bytes):
 def order_prepared(qq, groups):
     """**批量下单的第二步**：用已经传上来的文件建单，一个 group = 一张订单。
 
-    groups 里每一项：{'files': [{'file_token','filename'}, …],
-    'price_item_id', 'copies', 'duplex', 'remark'}。
-    组内几份文件同参数、合成一张单；参数不一样的由**调用方**分成多组
-    （机器人那边按「档位 + 单双面 + 份数」分，学生看到的就是「同类型的合并」）。
+    groups 里每一项：{'files': [{'file_token', 'filename', 'price_item_id',
+    'copies', 'duplex'}, …], 'remark'}。
+    **参数挂在每一份文件上**（v24，2026-10 起）：组内几份可以各不相同，
+    服务端按份读、缺了才落组级默认。所以机器人现在整批只发**一组**、
+    也不传组级参数（见 bot.py 的 _submit_batch）—— 这一批就是一个单号。
+    ⚠️ 组级的 price_item_id / copies / duplex 仍然被服务端接受，但那是给
+    「网页端老请求形状」的兼容位，**不代表整单**；回执要念的值由服务端
+    按落库行汇总后给出，别自己拿组级那份去念。
 
     不重试（见模块注释）：响应丢了不等于没建成，重发一次就是重复下单。
     """

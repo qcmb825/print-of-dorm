@@ -387,11 +387,7 @@ def estimate(rules, item, pages, copies, duplex):
     if pages > EST_PAGES_MAX:
         pages = EST_PAGES_MAX
         note = PAGES_CLAMP_NOTE
-    try:
-        copies = int(copies)
-    except (TypeError, ValueError):
-        copies = 1
-    copies = max(COPIES_MIN, min(COPIES_MAX, copies))
+    copies = _clamp_copies(copies)
     total = float(rules.get('base_fee', 0.0)) \
         + pages * copies * item_unit_price(item, duplex)
     total = max(total, float(rules.get('min_price', 0.0)))
@@ -423,8 +419,10 @@ def estimate_for_order(conn, pages, copies, duplex, item):
 def _clamp_copies(value):
     """份数夹到合法区间。读不出来（None / 非数字）按**最少份**算。
 
-    与 estimate() 里内联的那一段同一个口径；单独摘出来只是因为
-    estimate_for_files 要逐份做一次，抄一遍就有两处会各自漂移。
+    全项目份数夹断的**唯一**入口：estimate()、estimate_for_files、
+    estimate_for_preset 都走它。原先三处各抄一份（estimate 那份的非数字
+    回退还是字面量 1 而不是 COPIES_MIN），改 COPIES_MIN 时必有一处不跟 ——
+    「抄一遍就有两处会各自漂移」这句话在它自己身上应验过一次。
     """
     try:
         copies = int(value)
@@ -609,11 +607,7 @@ def estimate_for_preset(conn, pages, copies, duplex, item, preset_price):
         return None, '自动估价未启用'
     if preset_price is None:
         return estimate(rules, item, pages, copies, duplex)
-    try:
-        count = int(copies)
-    except (TypeError, ValueError):
-        count = COPIES_MIN
-    count = max(COPIES_MIN, min(COPIES_MAX, count))
+    count = _clamp_copies(copies)
     total = round(max(0.0, float(preset_price)) * count, 2)
     if total <= 0:
         return None, '这条服务的定价是 0 元（检查预设里的价格）'

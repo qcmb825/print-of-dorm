@@ -1,11 +1,12 @@
 """邮件相关的代码都收在这个包里。
 
-拆成四个文件，是因为这里其实是四件互不相干的事：
+拆成五个文件，是因为这里其实是几件互不相干的事：
 
     recipients.py  「这封信该寄给谁」—— 推导规则跟 SMTP 没有任何关系；
     sender.py      「怎么把信递出去」—— 传输细节跟收件人是谁没关系；
     template.py    「未接单提醒里写什么」—— 催管理员那一路；
-    pickup.py      「可取件提醒里写什么」—— 通知学生那一路（带收款码图，要 HTML）。
+    pickup.py      「可取件提醒里写什么」—— 通知学生那一路（带收款码图，要 HTML）；
+    password_reset.py  「重置密码的信里写什么」—— 自助找回那一路（验证码 + 时效）。
 
 挤在一个文件里当然也能跑。分开是为了能**一件一件地测**：收件人规则要造几个
 假账号、正文格式只要两次字符串比较、传输要真的碰 SMTP —— 混在一起就只能一起测，
@@ -28,7 +29,7 @@ mailcap，不叫 mail）。将来装了同名的新依赖，报出来的会是**
 ModuleNotFoundError，症状完全不像命名冲突，如果哪天有依赖莫名其妙找不到了，
 回头看一眼这里。
 """
-from . import pickup, recipients, sender, template
+from . import password_reset, pickup, recipients, sender, template
 from .pickup import (PAY_QR_CID, compose_manual_body, compose_manual_subject,
                      compose_pickup_body, compose_pickup_html, compose_pickup_subject)
 from .recipients import (NO_MAILBOX_EMPTY, NO_MAILBOX_INVALID, NO_MAILBOX_WECHAT,
@@ -38,7 +39,7 @@ from .sender import is_configured, send_mail
 from .template import compose_body, compose_subject
 
 __all__ = (
-    'pickup', 'recipients', 'sender', 'template',
+    'password_reset', 'pickup', 'recipients', 'sender', 'template',
     'PAY_QR_CID', 'compose_manual_body', 'compose_manual_subject',
     'compose_pickup_body', 'compose_pickup_html', 'compose_pickup_subject',
     'NO_MAILBOX_EMPTY', 'NO_MAILBOX_INVALID', 'NO_MAILBOX_WECHAT',

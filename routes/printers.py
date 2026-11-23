@@ -6,13 +6,15 @@
 CRUD 的形状照 order_options.py 的 print-presets / paper-types 惯例：
 roles_required、_clean_text、重名 409、删除才写 audit。
 """
+import time
+
 from flask import Blueprint, g, jsonify, request
 
 from auth import roles_required
 from config import ROLE_ADMIN, ROLE_SUPER, logger
 from db import db_conn, find_printer, find_active_printers
 from printer import DispatchError, probe_host, query_printer
-from security import audit_action, client_ip
+from security import audit_action, client_ip, hit_limit, rate_limited
 from utils import parse_bool_flag
 
 bp = Blueprint('printers', __name__)
@@ -133,6 +135,9 @@ def api_admin_update_printer(pid):
             (payload['name'], payload['host'], payload['mode'],
              payload['port'], payload['ipp_path'], pid))
         conn.commit()
+    #    地址/端口改过之后，缓存的旧状态最长还要活 30 秒 —— 换了机器的打印机
+    #    在订单台上仍显示旧的那台的在线态。改完即失效，让下一轮轮询重新问。
+    _status_cache.pop(pid, None)
     logger.info('修改打印机 #%s「%s」 操作人=%s(%s) ip=%s',
                 pid, payload['name'], g.user['nickname'], g.user['role'], client_ip())
     return jsonify({'code': 0, 'msg': '打印机已更新'})
@@ -151,6 +156,7 @@ def api_admin_printer_active(pid):
         conn.execute('UPDATE printers SET is_active = ?, update_time = CURRENT_TIMESTAMP '
                      'WHERE id = ?', (1 if active else 0, pid))
         conn.commit()
+    _status_cache.pop(pid, None)  # 启停影响「该不该出现在状态列表里」，缓存立即失效
     logger.info('打印机 #%s %s 操作人=%s(%s) ip=%s',
                 pid, '已启用' if active else '已停用',
                 g.user['nickname'], g.user['role'], client_ip())
@@ -166,6 +172,7 @@ def api_admin_delete_printer(pid):
             return jsonify({'code': 404, 'msg': '打印机不存在'}), 404
         conn.execute('DELETE FROM printers WHERE id = ?', (pid,))
         conn.commit()
+    _status_cache.pop(pid, None)  # 缓存里那条再也不会被刷新，顺手收走
     # 历史不跟着删：print_jobs 里存的是名字快照，删机后逐台明细照读。
     audit_action('delete_printer', '删除打印机 #%s「%s」' % (pid, printer['name']))
     return jsonify({'code': 0, 'msg': '打印机已删除'})
@@ -175,10 +182,19 @@ def api_admin_delete_printer(pid):
 @roles_required(ROLE_ADMIN, ROLE_SUPER)
 def api_admin_probe_printer():
     """表单的「探测」按钮：给一个主机地址，回协议/端口/队列路径/型号 ——
-    探测逻辑与 scripts/probe_printer.py 的 CLI 共用 printer.probe_host。"""
+    探测逻辑与 scripts/probe_printer.py 的 CLI 共用 printer.probe_host。
+
+    host 不做内网/网段白名单（SSRF 面）：这是管理员的可信面 —— 他本来就能
+    下载全部学生文件，probe 只对 host 的 631/9100 说话、返回口径很粗；
+    真正要防的是它**顺带**构成的资源耗尽面（短超时 + 总预算在 printer.probe_host，
+    这里再按操作人限频）。
+    """
     host = ((request.get_json(silent=True) or {}).get('host') or '').strip()
     if not host:
         return jsonify({'code': 400, 'msg': '先填主机地址再探测'}), 400
+    if hit_limit('printer_probe:%s' % g.user['id'], 5, 60):
+        return rate_limited('printer_probe_rate_limited', '操作人 #%s' % g.user['id'],
+                            '探测得太快了，缓一下再试')
     result = probe_host(host)
     if result['error']:
         return jsonify({'code': 400, 'msg': '探测失败：%s' % result['error']}), 400
@@ -190,13 +206,28 @@ def api_admin_probe_printer():
 
 
 def _printer_online_state(printer):
-    """问一台打印机的实时状态。成功返回 (state 字典, None)，失败返回 (None, 原因)。"""
+    """问一台打印机的实时状态。成功返回 (state 字典, None)，失败返回 (None, 原因)。
+
+    接 Exception 而不只是 DispatchError：query_printer 内部已经把畸形 IPP 响应
+    收口成 DispatchError，但「收口」靠的是每条解析路径都记得抛它 —— 一台
+    固件很怪的打印机抛出任何别的异常，status 接口就会每 10 秒 500 一次，
+    而前端对 status 500 的处理是静默当「联动没开」，整个下发按钮就此消失。
+    与本接口对自己的承诺（「问不到的给 null、原因原样带回」）一致，
+    宁可把一台机器误报成离线，不能把订单台拖下水。
+    """
     pr = {'host': printer['host'], 'mode': printer['mode'],
           'port': printer['port'], 'ipp_path': printer['ipp_path']}
     try:
         return query_printer(pr, timeout=_STATUS_QUERY_TIMEOUT), None
-    except DispatchError as exc:
-        return None, str(exc)
+    except Exception as exc:  # noqa: BLE001 —— 理由见 docstring，一台怪机器不能拖垮订单台
+        #    只有我们自己定义的 DispatchError 才把原文给前端：它的文案是为操作人写的
+        #    （「连不上打印机 10.0.0.5:631」这种）。其余异常（socket / OSError /
+        #    内网库的奇怪报错）原文可能带主机、端口甚至本机路径，进响应体没有好处 ——
+        #    给个类型名，原文走主日志，排障照样查得到。
+        if isinstance(exc, DispatchError):
+            return None, str(exc)
+        logger.warning('打印机 #%s 状态查询抛出未预期的异常：%r', printer['id'], exc)
+        return None, type(exc).__name__
 
 
 @bp.route('/api/admin/printers/status')
@@ -206,7 +237,6 @@ def api_printer_status():
 
     在线态带 per-printer 30 秒缓存；问不到的打印机状态给 null、原因原样带回 ——
     联动坏了不该把订单台一起弄坏。"""
-    import time
     now = time.monotonic()
     with db_conn() as conn:
         printers = find_active_printers(conn)

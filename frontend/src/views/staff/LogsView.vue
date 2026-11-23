@@ -184,6 +184,20 @@ const columns = computed<DataTableColumns<OrderLogRow>>(() => [
   },
 ])
 
+/** 明细表的横向契约：**从列定义算出来**，不手写常数 —— 改列宽/加列时两处必然漂移，
+ *  给大了不管屏幕多宽底部都挂着一条滚动条（订单台当年写死 1474 就是这么踩的）。
+ *  说明列是 minWidth，按它的基准值计入。口径与 OrdersView / UsersView 一致。
+ *  ⚠️ 与之配套的是**auto 布局**（默认），不要给 el-table 加 `table-layout="fixed"`：
+ *  fixed 只按 width 分配、不把剩余空间分给任何一列（宽屏下右侧留一片空白），
+ *  而且会把「说明」列那个 minWidth 当成固定宽度锁死，失去随容器伸缩的能力 ——
+ *  这个合计值也就从「下限」变成了「精确宽度」。 */
+const SCROLL_X = computed(() =>
+  columns.value.reduce(
+    (sum, column) => sum + (Number(column.width) || Number(column.minWidth) || 0),
+    0,
+  ),
+)
+
 /** 分页配置写在 setup 里而不是模板内联：内联那版要在模板里给 ref 赋值，
  *  编译出来是什么行为得靠记；写在这里一眼就是 page.value = next。 */
 const pagination = computed(() => ({
@@ -375,7 +389,7 @@ onMounted(() => {
         :data="logs"
         :loading="loading"
         :row-key="(row: OrderLogRow) => row.id"
-        :scroll-x="980"
+        :scroll-x="SCROLL_X"
         size="small"
         remote
         :pagination="pagination"

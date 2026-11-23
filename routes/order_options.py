@@ -589,8 +589,12 @@ def _name_taken(conn, name, exclude_id=None):
     查重查在应用层而不是建唯一索引，是因为索引会连已停用的记录一起挡住，
     于是「停用 A4 之后再建一条 A4」会撞 IntegrityError，报出来的还是数据库层的错，
     用户只看到「保存失败」。查在应用层才能给出一句能看懂的话。
+
+    COLLATE NOCASE 与 docstring 的「不区分大小写」是同一句话 —— 曾经只有
+    docstring 这么说、SQL 是区分大小写的，于是「A4 70g」建完还能再建「a4 70g」，
+    学生下拉里出现两个只有大小写差异的档。printers._name_taken 是对的那份，看齐它。
     """
-    sql = 'SELECT id FROM paper_types WHERE name = ?'
+    sql = 'SELECT id FROM paper_types WHERE name = ? COLLATE NOCASE'
     params = [name]
     if exclude_id is not None:
         sql += ' AND id <> ?'

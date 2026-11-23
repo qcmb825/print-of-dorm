@@ -160,7 +160,10 @@ watch(visibility, (state) => {
 
 onMounted(async () => {
   await load()
-  resume()
+  //    可见性没确认就 resume，轮询会在后台标签页里一直空转（会话恢复、
+  //    中键恢复都会在后台挂载组件）。其余三处轮询（MyOrders / Orders /
+  //    TicketPanel）都有这道闸；这一页间隔最密（3 秒一拍），更不能漏。
+  if (visibility.value === 'visible') resume()
   await scrollToBottom(false)
 })
 

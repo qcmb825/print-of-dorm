@@ -131,6 +131,40 @@ def valid_quiet_pair(start, end):
     return a is not None and b is not None and a != b
 
 
+def validate_quiet_fields(fields):
+    """免打扰字段**在保存前**要过的三道校验，返回错误文案（None = 通过）。
+
+    网页（routes/account.py 的 /api/me/prefs）与机器人（/api/bot/prefs）
+    两个入口共用。原先「格式 → 成对 → 两头不一样」这三段流程在两边各抄一遍
+    （连注释都一样）—— 判定本身虽然早就收口在 parse_clock / valid_quiet_pair，
+    但「怎么用它们」是抄的：将来加「免打扰最多跨 12 小时」这类新规则时，
+    多半只改一个入口，症状是「网页能设、机器人设不上」，而且不报错。
+
+    fields 是**过滤过白名单**的偏好键字典：键在不在是判据的一部分
+    （只给一头等于没设，空字符串会由 save_prefs 里的类型收口处理）。
+    """
+    for key in ('quiet_from', 'quiet_to'):
+        value = fields.get(key)
+        if value in (None, ''):
+            continue
+        #    类型先卡：parse_clock 只吃 str，而 JSON 里写个 `"quiet_from": 22`
+        #    （没加引号）是完全可能的输入 —— 那一下 AttributeError 会冲出
+        #    validate_quiet_fields，变成两个入口未经收口的 500。
+        #    收口在这里的好处正是「一处修好、网页与机器人同时修好」。
+        if not isinstance(value, str):
+            return '免打扰时间要写成 22:00 这样'
+        if parse_clock(value) is None:
+            return '免打扰时间要写成 22:00 这样'
+    if ('quiet_from' in fields) != ('quiet_to' in fields):
+        return '免打扰要同时给开始和结束时间'
+    #    两个时间点一样 = 等于没设（`in_quiet_hours` 就是这么判的），
+    #    存下去只会让用户以为自己设上了。
+    if fields.get('quiet_from') or fields.get('quiet_to'):
+        if not valid_quiet_pair(fields.get('quiet_from'), fields.get('quiet_to')):
+            return '开始与结束时间不能一样'
+    return None
+
+
 def in_quiet_hours(prefs, when=None):
     """此刻是否落在免打扰时段。跨零点（22:00-08:00）也要判对。"""
     start = parse_clock(prefs.get('quiet_from'))

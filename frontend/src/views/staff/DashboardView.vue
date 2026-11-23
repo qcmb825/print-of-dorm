@@ -60,6 +60,10 @@ const statusColors = computed<Record<string, string>>(() => ({
   打印中: theme.tokens.statusPrinting,
   可取件: theme.tokens.statusReady,
   已取件: theme.tokens.statusDone,
+  // 「未取件」（可取件超期自动转入，v25）：少映射的后果不是报错，
+  // 是这一块掉进下面的 palette.primary 兜底色 —— 语义体系外的颜色，
+  // 和当年「待计费」漏配是同一个坑。
+  未取件: theme.tokens.statusUnclaimed,
 }))
 
 const orderStats = computed(() => stats.value?.orders)

@@ -473,30 +473,20 @@ def api_me_prefs_save():
     fields = {k: v for k, v in data.items() if k in prefs.EDITABLE}
     if not fields:
         return jsonify({'code': 400, 'msg': '没有要保存的偏好项'}), 400
-    # 免打扰时段要成对、格式要对：只给一头等于没设，格式错会让夜里照旧被吵
-    # （静默忽略比报错更糟，所以这里明确拒绝）。
-    for key in ('quiet_from', 'quiet_to'):
-        value = fields.get(key)
-        if value and prefs.parse_clock(value) is None:
-            return jsonify({'code': 400, 'msg': '免打扰时间要写成 22:00 这样'}), 400
-    if ('quiet_from' in fields) != ('quiet_to' in fields):
-        return jsonify({'code': 400, 'msg': '免打扰要同时给开始和结束时间'}), 400
-    #    两个时间点一样 = 等于没设（`in_quiet_hours` 就是这么判的），
-    #    存下去只会让用户以为自己设上了。判定在 prefs.valid_quiet_pair 里收口，
-    #    网页与机器人问的是同一个函数。
-    if fields.get('quiet_from') or fields.get('quiet_to'):
-        if not prefs.valid_quiet_pair(fields.get('quiet_from'), fields.get('quiet_to')):
-            return jsonify({'code': 400, 'msg': '开始与结束时间不能一样'}), 400
+    #    免打扰三道校验（格式 / 成对 / 两头不一样）收口在 prefs.validate_quiet_fields，
+    #    机器人入口问的是同一个函数 —— 校验各抄一遍的话，改一处漏一处。
+    error = prefs.validate_quiet_fields(fields)
+    if error:
+        return jsonify({'code': 400, 'msg': error}), 400
     saved = prefs.save_prefs(g.user['id'], fields)
     return jsonify({'code': 0, 'msg': '偏好已保存', 'prefs': saved,
                     'lines': prefs.describe(saved)})
 
 
 @bp.route('/api/me/profile', methods=['PUT'])
+@login_required
 def api_me_update_profile():
     """自助改资料：只允许修改昵称 / 宿舍 / QQ / 其他联系方式。"""
-    if g.get('user') is None:
-        return jsonify({'code': 401, 'msg': '请先登录'}), 401
     data = request.get_json(silent=True) or {}
     # 为了复用 validate_identity_fields（它要求 real_name/student_id 存在），
     # 把不可改的字段从 g.user 带进来。客户端只能改 nickname/dorm/qq/contact_type/contact。
@@ -545,7 +535,10 @@ def api_me_update_profile():
         except sqlite3.IntegrityError:
             conn.rollback()
             logger.warning('用户改资料撞唯一索引：uid=%s ip=%s', uid, client_ip())
-            return jsonify({'code': 409, 'msg': '昵称或学号刚被别人占用，请刷新后重试'}), 409
+            #    文案与 admin.py 的同款接口保持一致：上面虽然查过昵称与 QQ 的占用，
+            #    但并发窗口里仍可能撞 idx_users_qq_live —— 只提「昵称或学号」的话，
+            #    撞 QQ 的那个人改多少次昵称都修不好。
+            return jsonify({'code': 409, 'msg': '昵称、学号或 QQ 号刚被别人占用，请刷新后重试'}), 409
 
     # 记录变更审计，只列出真的改的字段
     changes = []
@@ -579,10 +572,9 @@ def api_me_update_profile():
 
 
 @bp.route('/api/me/password', methods=['PUT'])
+@login_required
 def api_me_change_password():
     """自助改密码：需要当前密码，新密码更新后其他设备被吊销，但当前会话保持。"""
-    if g.get('user') is None:
-        return jsonify({'code': 401, 'msg': '请先登录'}), 401
     data = request.get_json(silent=True) or {}
     current = data.get('current_password') or ''
     newpw = data.get('new_password') or ''
