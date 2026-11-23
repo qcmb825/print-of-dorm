@@ -13,6 +13,8 @@ import UserMenu from '@/components/UserMenu.vue'
 import { useAnnouncementStore } from '@/stores/announcement'
 import { useAuthStore } from '@/stores/auth'
 import { useNavSlider } from '@/composables/motion'
+import { lotteryApi } from '@/api/endpoints'
+import type { LotteryHint } from '@/api/types'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -95,8 +97,27 @@ const pageNo = computed(() => {
 // 缺 QQ 号的提醒（main 带过来的）：账号一换就重算一次。
 watch(() => auth.user?.id, syncQqReminder, { immediate: true })
 
+// 抽奖徽标：挂载时查一次、每次换页轻刷一次（接口只有一条小查询，
+// 见 routes/lottery.py 的 api_lottery_hint —— 别在这里加重它）。
+const lotteryHint = ref<LotteryHint | null>(null)
+
+async function loadLotteryHint(): Promise<void> {
+  if (!auth.isLoggedIn) {
+    lotteryHint.value = null
+    return
+  }
+  try {
+    lotteryHint.value = await lotteryApi.hint()
+  } catch {
+    // 徽标是锦上添花：拉不到就当没有，不打断导航。
+    lotteryHint.value = null
+  }
+}
+
+watch(() => route.path, loadLotteryHint)
 onMounted(() => {
   void announcement.load()
+  void loadLotteryHint()
 })
 </script>
 
@@ -123,6 +144,23 @@ onMounted(() => {
     >
       <div class="mx-auto flex h-14 max-w-6xl items-center gap-3 px-3 sm:h-16 sm:px-5">
         <BrandMark />
+        <!-- 抽奖徽标：有在架活动才出现（hint.active 由服务端说了算，见 lotteryApi.hint）。
+             open→「抽奖」、drawn→「开奖」；归档后它自己消失，不留一格死入口。
+             放在品牌右侧而不是导航里：它是"这一阵子有的事"，不是常驻栏目 ——
+             活动一归档，塞进导航的那一格就成了要专门拆的遗留。 -->
+        <RouterLink
+          v-if="lotteryHint?.active"
+          to="/lottery"
+          class="tech-label tech-label--cn inline-flex shrink-0 items-center border px-2 py-1 text-xs font-bold no-underline transition-colors duration-[var(--motion-dur-fast)]"
+          :style="{
+            borderColor: 'var(--accent-tint-border)',
+            backgroundColor: 'var(--accent-tint-soft)',
+            color: 'var(--accent-text)',
+          }"
+          :aria-label="lotteryHint.status === 'drawn' ? '查看开奖结果' : '参与抽奖'"
+        >
+          {{ lotteryHint.status === 'drawn' ? '开奖' : '抽奖' }}
+        </RouterLink>
         <!-- 横向导航放到 md：sm(640) 就显示的话，staff 的 4 个导航项会和品牌、
              账号区挤在一行，实测在 640px 会溢出 31px。窄屏继续用底部标签栏。 -->
         <nav ref="topNav" class="relative ml-4 hidden items-center gap-1 md:flex" data-nav-slider aria-label="主导航">

@@ -26,6 +26,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  Box,
   CircleCheck,
   FileText,
   Hash,
@@ -757,6 +758,11 @@ function announceOrders(orders: ReceiptOrder[]): void {
   void router.push('/my-orders')
 }
 
+/** 去 3D 打印广告页。同上不 await：导航失败不该被当成提交失败。 */
+function go3d(): void {
+  void router.push('/3d')
+}
+
 async function submit(): Promise<void> {
   if (blockReason.value) {
     message.warning(blockReason.value)
@@ -1029,13 +1035,23 @@ onMounted(async () => {
       <StageHead code="01" title="选择文件" step="STEP 1/3" class="mb-3" />
 
       <!-- 下单方式。两个按钮而不是下拉框：这是两条完全不同的流程（一个有文件、
-           一个没有），下拉框会让人以为「选了预设之后还能再补个文件」。 -->
-      <NRadioGroup v-model:value="mode" :disabled="submitting" class="mb-4 flex flex-wrap gap-2">
-        <NRadioButton value="file">上传文件</NRadioButton>
-        <NRadioButton value="preset" :disabled="!presets.length && !optionsLoading">
-          使用预设打印服务
-        </NRadioButton>
-      </NRadioGroup>
+           一个没有），下拉框会让人以为「选了预设之后还能再补个文件」。
+           右边的「3D 打印」不是这一组的一员：它不是下单方式，是去广告页的入口，
+           所以走 router.push 而不塞进 NRadioGroup —— 塞进去 mode 就多出一个
+           不是下单方式的值，usingPreset 和预设校验全得跟着改。 -->
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <NRadioGroup v-model:value="mode" :disabled="submitting" class="flex flex-wrap gap-2">
+          <NRadioButton value="file">上传文件</NRadioButton>
+          <NRadioButton value="preset" :disabled="!presets.length && !optionsLoading">
+            使用预设打印服务
+          </NRadioButton>
+        </NRadioGroup>
+        <NButton secondary @click="go3d">
+          <template #icon><Box :size="15" /></template>
+          3D 打印
+          <span class="tech-label ml-1 text-xs" style="color: var(--accent-text)">NEW</span>
+        </NButton>
+      </div>
 
       <!-- 预设清单拉不到时给一句人话。不写它的话，第二个按钮是灰的、
            下拉框是空的，看起来就是这个功能没做。 -->

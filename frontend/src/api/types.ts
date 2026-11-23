@@ -1323,3 +1323,92 @@ export interface BotHintState {
   clicks: number
   closed: boolean
 }
+
+
+/* ---- 抽奖（v28，2026-11 加）----
+ *
+ * 时间字段后端已按全站约定转成本地时间（routes/lottery.py 的 _to_local），
+ * 前端用 shortTime/fullTime 直接格式化，不做第二次时区换算。
+ * 「参与人名单只给昵称」的分级在后端 SELECT 里就划开了 —— 学生端这个类型
+ * 里**没有**姓名/学号/宿舍字段，不是「前端没显示」，是根本拿不到。 */
+export interface LotteryHint {
+  active: boolean
+  status: 'open' | 'drawn' | null
+}
+
+export interface Lottery {
+  exists: true
+  id: number
+  status: 'open' | 'drawn'
+  prize_name: string
+  /** 本期总份数（含 carry_in） */
+  prize_quantity: number
+  /** 建活动时带入的上期同奖品结余 */
+  carry_in: number
+  draw_at: string
+  archive_at: string | null
+  drawn_at: string | null
+  has_image: boolean
+  participant_count: number
+  /** 昵称列表（上限 LOTTERY_PARTICIPANT_LIMIT，截断时看 participants_truncated） */
+  participants: string[]
+  participants_truncated: boolean
+  /** 只有已开奖才非空 */
+  winners: string[]
+  joined: boolean
+  is_winner: boolean
+  eligible: boolean
+  /** no_pickup=近 30 天没有取件成功的订单；closed=已截止/已开奖 */
+  ineligible_reason: 'no_pickup' | 'closed' | null
+}
+
+export interface LotteryNone {
+  exists: false
+}
+
+export type LotteryResponse = (Lottery & { code: number }) | (LotteryNone & { code: number })
+
+/** 管理端列表/详情共用的一期摘要 */
+export interface LotteryAdminItem {
+  id: number
+  prize_name: string
+  prize_quantity: number
+  carry_in: number
+  draw_at: string
+  archive_at: string | null
+  status: 'open' | 'drawn' | 'archived'
+  drawn_at: string | null
+  create_time: string
+  has_image: boolean
+  participant_count: number
+  winner_count: number
+  /** 份数 - 中奖数；只有开奖后才有值（它就是下期同奖品的结余） */
+  leftover: number | null
+}
+
+export interface LotteryAdminEntry {
+  user_id: number
+  nickname: string
+  real_name: string
+  student_id: string
+  dorm: string
+  qq: string | null
+  joined_at: string
+  is_winner: boolean
+  notify_time: string | null
+  /** no_mailbox / smtp；null = 已通知或还没轮到 */
+  notify_error: string | null
+}
+
+export interface LotteryAdminDetail extends LotteryAdminItem {
+  entries: LotteryAdminEntry[]
+}
+
+/** 建/改活动的输入。时刻用 epoch 毫秒（NDatePicker 的原生值），
+ *  后端按本地时区解释再转 UTC 入库。 */
+export interface LotteryInput {
+  prize_name: string
+  prize_quantity: number
+  draw_at_ms: number
+  archive_at_ms?: number | null
+}

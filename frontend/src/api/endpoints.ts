@@ -58,6 +58,11 @@ import type {
   UploadPrepareResponse,
   UploadResponse,
   UserPrefs,
+  LotteryAdminDetail,
+  LotteryAdminItem,
+  LotteryHint,
+  LotteryInput,
+  LotteryResponse,
 } from './types'
 
 /* 账号 */
@@ -656,4 +661,48 @@ export const presetDocApi = {
   url: (presetId: number) => `/api/preset-doc/${presetId}`,
   /** 取回 PDF 的字节（交给 pdf.js 渲染到 canvas）。 */
   binary: (presetId: number) => getBinary(`/api/preset-doc/${presetId}`),
+}
+
+/* ---- 抽奖（v28，2026-11 加）：学生参与 + 管理端管理。----
+ * 资格/结余/开奖口径见 routes/lottery.py 模块头；前端只照单显示，不复制口径。 */
+export const lotteryApi = {
+  /** 导航徽标探针：有没有在架活动。布局每次路由切换都调，保持最轻。 */
+  hint: () => get<LotteryHint & { code: number }>('/api/lottery/hint'),
+  /** 当前活动 + 我的参与状态 + 参与人昵称。无在架活动回 exists:false。 */
+  get: () => get<LotteryResponse>('/api/lottery'),
+  /** 确认参与（资格在服务端校验，403 = 近 30 天没有取件成功的订单） */
+  join: () => post<{ code: number; msg: string }>('/api/lottery/join'),
+  /** 撤回参与（仅 open 且未到开奖时刻；409 = 已开奖/已截止） */
+  withdraw: () => del<{ code: number; msg: string; removed: number }>('/api/lottery/join'),
+  /** 奖品配图（登录即可看；每次上传文件名都换，URL 可长缓存） */
+  prizeImageUrl: (id: number) => `/api/lottery/${id}/prize-image`,
+  adminList: () => get<{ code: number; items: LotteryAdminItem[] }>('/api/admin/lotteries'),
+  adminDetail: (id: number) =>
+    get<LotteryAdminDetail & { code: number }>(`/api/admin/lotteries/${id}`),
+  /** 表单的「上期同奖品结余」提示（奖品名是结余的钥匙） */
+  adminCarry: (prizeName: string) =>
+    get<{ code: number; carry_in: number }>(
+      `/api/admin/lotteries/carry?prize_name=${encodeURIComponent(prizeName)}`,
+    ),
+  adminCreate: (input: LotteryInput) =>
+    post<{ code: number; msg: string; id: number; carry_in: number }>('/api/admin/lotteries', input),
+  /** 仅 open 可改；drawn 之后名单冻结，只有「立即归档」能继续 */
+  adminUpdate: (id: number, input: LotteryInput) =>
+    put<{ code: number; msg: string }>(`/api/admin/lotteries/${id}`, input),
+  /** 立即开奖（可在设定时刻之前；开完不可改） */
+  adminDraw: (id: number) =>
+    post<{ code: number; msg: string }>(`/api/admin/lotteries/${id}/draw`),
+  /** 立即归档（学生端从此隐藏，管理端历史保留；用于提前开下一期） */
+  adminArchive: (id: number) =>
+    post<{ code: number; msg: string }>(`/api/admin/lotteries/${id}/archive`),
+  adminDelete: (id: number) =>
+    del<{ code: number; msg: string }>(`/api/admin/lotteries/${id}`),
+  adminUploadImage: (id: number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return upload<{ code: number; msg: string; image_version: string }>(
+      `/api/admin/lotteries/${id}/prize-image`,
+      form,
+    )
+  },
 }
