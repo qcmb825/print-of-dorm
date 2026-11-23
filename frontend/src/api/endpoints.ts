@@ -674,8 +674,12 @@ export const lotteryApi = {
   join: () => post<{ code: number; msg: string }>('/api/lottery/join'),
   /** 撤回参与（仅 open 且未到开奖时刻；409 = 已开奖/已截止） */
   withdraw: () => del<{ code: number; msg: string; removed: number }>('/api/lottery/join'),
-  /** 奖品配图（登录即可看；每次上传文件名都换，URL 可长缓存） */
-  prizeImageUrl: (id: number) => `/api/lottery/${id}/prize-image`,
+  /** 奖品配图（登录即可看）。
+   *  ⚠️ 必须带 version（= 后端给的 image_version，也就是库里的文件名）：
+   *  这条路的 URL 是固定路径，后端又给了 `max-age=86400`，不带版本号时
+   *  管理员换完图学生端最长一天仍看旧图 —— 而且不报错，只是图不对。 */
+  prizeImageUrl: (id: number, version = '') =>
+    `/api/lottery/${id}/prize-image${version ? `?v=${encodeURIComponent(version)}` : ''}`,
   adminList: () => get<{ code: number; items: LotteryAdminItem[] }>('/api/admin/lotteries'),
   adminDetail: (id: number) =>
     get<LotteryAdminDetail & { code: number }>(`/api/admin/lotteries/${id}`),

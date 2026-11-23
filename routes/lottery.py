@@ -218,10 +218,26 @@ def _payload(conn, lot, user_id):
         'archive_at': _to_local(lot['archive_at']),
         'drawn_at': _to_local(lot['drawn_at']),
         'has_image': bool(lot['prize_image_file']),
+        #    配图的缓存键：浏览器认的是 **URL**，而取图那条路是 /<id>/prize-image
+        #    固定路径。只回 has_image 的话，管理员换完图、学生端最长一天仍看旧图
+        #    （取图响应带 `Cache-Control: private, max-age=86400`），控制台一个错都没有。
+        #    把文件名当版本号发出去，前端拼成 ?v=<文件名>，换图即换 URL。
+        #    学生端与管理端都要（管理端列表里也可能渲染缩略图）。
+        'image_version': lot['prize_image_file'] or '',
         'participant_count': count,
         'participants': participants,
         'participants_truncated': count > len(participants),
+        #    上限本身也给出去：前端原来把「仅列前 500」写死在文案里，而这个数
+        #    来自 config（LOTTERY_PARTICIPANT_LIMIT，可被 env 改）—— 改了配置，
+        #    界面上的说明就开始说谎。
+        'participant_limit': LOTTERY_PARTICIPANT_LIMIT,
         'winners': winners,
+        #    中奖名单与参与名单共用同一个 LIMIT，但「被截断了」原先只有参与者那一侧
+        #    告诉前端 —— 份数填到几千时，中奖名单只显示前 N 个而界面不说一句，
+        #    学生会以为就这么多人中了。开奖时的中奖数 = min(份数, 参与数)，
+        #    拿它跟实际发出去的长度比就知道有没有截断（不必再查一次库）。
+        'winners_truncated': lot['status'] == 'drawn'
+                             and len(winners) < min(int(lot['prize_quantity']), count),
         'joined': joined,
         'is_winner': bool(joined_row and joined_row['is_winner']),
         'eligible': eligible,
@@ -449,6 +465,12 @@ def _admin_row(conn, lot):
         'drawn_at': _to_local(lot['drawn_at']),
         'create_time': _to_local(lot['create_time']),
         'has_image': bool(lot['prize_image_file']),
+        #    配图的缓存键：浏览器认的是 **URL**，而取图那条路是 /<id>/prize-image
+        #    固定路径。只回 has_image 的话，管理员换完图、学生端最长一天仍看旧图
+        #    （取图响应带 `Cache-Control: private, max-age=86400`），控制台一个错都没有。
+        #    把文件名当版本号发出去，前端拼成 ?v=<文件名>，换图即换 URL。
+        #    学生端与管理端都要（管理端列表里也可能渲染缩略图）。
+        'image_version': lot['prize_image_file'] or '',
         'participant_count': total,
         'winner_count': winners,
         'leftover': (int(lot['prize_quantity']) - winners) if lot['status'] in ('drawn', 'archived') else None,
@@ -495,13 +517,21 @@ def api_admin_create():
         if existing:
             return jsonify({'code': 409, 'msg': '已有一个进行中/未归档的抽奖，先归档或删除'}), 409
         carry = _compute_carry_in(conn, vals['prize_name'])
-        cursor = conn.execute('''
-            INSERT INTO lotteries
-                (prize_name, prize_quantity, carry_in, draw_at, archive_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (vals['prize_name'], vals['prize_quantity'], carry,
-              vals['draw_at'], vals['archive_at'], g.user['id']))
-        conn.commit()
+        try:
+            cursor = conn.execute('''
+                INSERT INTO lotteries
+                    (prize_name, prize_quantity, carry_in, draw_at, archive_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (vals['prize_name'], vals['prize_quantity'], carry,
+                  vals['draw_at'], vals['archive_at'], g.user['id']))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            #    上面那句「先查有没有在架」在并发下挡不住两条请求（都查不到、都去插）。
+            #    真正兜住的是 db.py 的 idx_lotteries_live 部分唯一索引 —— 被它拦下时
+            #    这里如实回 409，而不是让 500 冲出去。不拦的后果不是 500：
+            #    是两期 open 并存，其中一期谁都看不见却照样开奖、照样发中奖邮件。
+            return jsonify({'code': 409,
+                            'msg': '已有一个进行中/未归档的抽奖，先归档或删除'}), 409
     logger.info('抽奖：%s 建立第 %s 期（奖品 %s × %d，结余 %d）ip=%s',
                 actor_label(), cursor.lastrowid, vals['prize_name'],
                 vals['prize_quantity'], carry, client_ip())

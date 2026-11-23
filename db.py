@@ -1788,6 +1788,22 @@ def init_database():
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_lotteries_status ON lotteries(status, id)'
         )
+        #    「同一时间只允许一期在架」不能只靠路由层那句「先查后插」：两条并发 POST
+        #    会各自查不到、各自插进去，于是两期 open 并存。展示侧被 _current_lottery
+        #    的 ORDER BY id DESC 兜住（只有最新那期看得见），但**另一期到点照样开奖、
+        #    照样给中奖者发邮件** —— 学生会收到一封「你中奖了」，而他从来没见过那期活动。
+        #    约束落在数据库里才是真的（与 v15 的 idx_users_qq_live 同一做法）。
+        #    建失败（存量里已经并存两期及以上）只记 error、不影响启动：
+        #    路由层那道先查后插仍然是第二道网。
+        try:
+            cursor.execute('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_lotteries_live
+                    ON lotteries(status) WHERE status IN ('open', 'drawn')
+            ''')
+        except sqlite3.IntegrityError:
+            logger.error('抽奖「同一时间只有一期在架」的唯一索引没建成：库里已有两期以上'
+                         '并存（open/drawn），请先在抽奖页把多余的归档或删除；'
+                         '本次仍会继续启动，但并发建期暂时挡不住')
 
         # 参与记录。(lottery_id, user_id) 唯一索引就是「一人一期一票」本身：
         # 并发下两个 POST 同时过校验，也只插得进一行（另一个 IntegrityError）。

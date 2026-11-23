@@ -6,7 +6,7 @@
  *  页面因此不调任何接口：内容只有部署者自己改得动，写在前端就够 ——
  *  没有加载态、没有骨架屏、没有错误分支，也没有要轮询的东西。
  *  联系方式与登录页共用 config/contact.ts 的同一个号，别在这里抄第二份。 */
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { Check, Copy, ExternalLink } from '@lucide/vue'
 import { NButton } from 'naive-ui'
 import PageHeader from '@/components/PageHeader.vue'
@@ -30,6 +30,14 @@ async function copyQq(): Promise<void> {
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copied.value = false }, 2200)
 }
+
+// 与 LoginView / LotteryView 同一条口径：计时器在卸载时清掉。
+// 漏了这一句的表现是「离开页面后 2.2 秒仍往一个已卸载的 ref 写值」——
+// 不报错、也看不出来，但全站只有这一处不守规矩。
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = null
+})
 </script>
 
 <template>

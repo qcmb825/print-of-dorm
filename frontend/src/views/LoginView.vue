@@ -127,7 +127,13 @@ let copiedTimer: ReturnType<typeof setTimeout> | null = null
 /** 点一下就复制 QQ 号：复制动作与 execCommand 兜底在 composables/clipboard.ts。
  *  这里只管「已复制」的回显 —— 复制不了也不挡路，号就写在按钮上。 */
 async function copyAdminQq(): Promise<void> {
-  await copyText(ADMIN_QQ)
+  //    **按返回值决定文案**：原先无条件置 true，复制失败也显示「已复制」——
+  //    学生以为粘进 QQ 了，实际剪贴板里是空的（Print3DView 那一处是对的）。
+  const ok = await copyText(ADMIN_QQ)
+  if (!ok) {
+    message.error('复制失败 · 选中号码手动复制')
+    return
+  }
   copiedQq.value = true
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copiedQq.value = false }, 2200)

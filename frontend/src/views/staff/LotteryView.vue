@@ -20,6 +20,7 @@ import {
   NSkeleton,
   useMessage,
 } from 'naive-ui'
+import { ApiError } from '@/api/client'
 import { lotteryApi } from '@/api/endpoints'
 import type { LotteryAdminDetail, LotteryAdminEntry, LotteryAdminItem } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
@@ -29,11 +30,18 @@ import { fullTime } from '@/utils/format'
 
 const message = useMessage()
 
+/** 奖品图上限：与后端 `LOTTERY_IMAGE_MAX_BYTES` 同一档（默认 4MB）。
+ *  前端这一道只为省掉「白传一遍再被拒」，真正的边界永远在服务端 ——
+ *  所以它写死在这里可以，但后端调小时这里要跟着调（否则用户能选、传上去才被拒）。 */
+const LOTTERY_IMAGE_MAX_BYTES = 4 * 1024 * 1024
+
 const items = ref<LotteryAdminItem[]>([])
 const detail = ref<LotteryAdminDetail | null>(null)
 const selectedId = ref<number | null>(null)
 const loading = ref(true)
 const detailLoading = ref(false)
+/** 名单**没读到**（与「读到空名单」是两件事，见 loadDetail 里的注释）。 */
+const detailError = ref(false)
 const saving = ref(false)
 const acting = ref(false)
 
@@ -132,10 +140,14 @@ async function load(): Promise<void> {
 
 async function loadDetail(id: number): Promise<void> {
   detailLoading.value = true
+  detailError.value = false
   try {
     detail.value = await lotteryApi.adminDetail(id)
   } catch {
     detail.value = null
+    //    单独一位：模板里「没有 detail 或没有 entries」会渲染成空态结论
+    //    「这一期还没有人参与」，而这里其实是**没读到**。两种情形必须分开。
+    detailError.value = true
     message.error('参与名单没读到 · 稍后重试')
   } finally {
     detailLoading.value = false
@@ -154,8 +166,24 @@ async function save(): Promise<void> {
     message.warning('奖品名称不能为空')
     return
   }
+  //    NInputNumber 清空之后是 null，而 `!Number.isInteger(null)` 为真 —— 不挡这一下，
+  //    提交上去就是后端一句「份数必须是正整数」，而 400 在这页上原本是无声的。
+  if (!Number.isInteger(form.prize_quantity) || (form.prize_quantity as number) < 1) {
+    message.warning('份数至少 1 份')
+    return
+  }
   if (!form.draw_at_ms) {
     message.warning('先挑一个开奖时间')
+    return
+  }
+  if (form.draw_at_ms <= Date.now()) {
+    //    ⚠️ 编辑在架期时表单回填的是**原始开奖时刻**，一旦过了点（worker 还没结算，
+    //    默认 30 秒窗口；线程没跑时更久）这里原样提交就必吃 400「开奖时间必须晚于现在」。
+    //    **不自动顺延**：那是替管理员改业务时间（他只是想改份数），与「不替用户猜」
+    //    同一条纪律。让他自己往后选一档，并说清为什么。
+    message.warning(editingId.value
+      ? '这一期已经到开奖时刻了（等后台结算），先把开奖时间往后选再保存'
+      : '开奖时间要晚于现在')
     return
   }
   saving.value = true
@@ -174,8 +202,13 @@ async function save(): Promise<void> {
       message.success('已创建')
     }
     await load()
-  } catch {
-    // 失败文案（份数/时间不合法、已有在架活动等）由全局层弹，这里不再叠一句。
+  } catch (error) {
+    //    ⚠️ 这里原本写的是「失败文案由全局层弹」——**项目里没有那个全局层**：
+    //    main.ts 只挂 provider、client.ts 只 reject、feedback.ts 只注册 message 实例，
+    //    没有任何地方把 ApiError 自动弹出来。照那句话写空 catch，失败的样子就是
+    //    「点创建没反应」（比如 409「已有一个进行中/未归档的抽奖」）。
+    //    每个 catch 自己报一句，与 LogsView / MyOrdersView 同一写法。
+    message.error(error instanceof ApiError ? error.message : '保存没生效 · 稍后重试')
   } finally {
     saving.value = false
   }
@@ -195,8 +228,8 @@ async function drawNow(): Promise<void> {
     await lotteryApi.adminDraw(target)
     message.success('已开奖')
     await load()
-  } catch {
-    // 409（已开过）等由全局层说。
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '开奖没生效 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -216,8 +249,8 @@ async function archiveNow(): Promise<void> {
     await lotteryApi.adminArchive(target)
     message.success('已归档')
     await load()
-  } catch {
-    // 同上。
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '归档没生效 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -238,8 +271,8 @@ async function remove(): Promise<void> {
     await lotteryApi.adminDelete(target)
     message.success('已删除')
     await load()
-  } catch {
-    // 同上。
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '删除没生效 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -258,13 +291,21 @@ async function onImagePicked(event: Event): Promise<void> {
   input.value = ''
   const target = selectedId.value
   if (!file || !target) return
+  //    前端先挡一道大小与类型：与 PayQrDialog 同一判据。后端那道防线齐全
+  //    （白名单 / 0 字节 / 上限 / 内容嗅探），但让 5MB 的图白传一遍再被拒，
+  //    体验上就是「点了没反应」—— 而这一页的失败已经够不显眼了。
+  if (file.size > LOTTERY_IMAGE_MAX_BYTES) {
+    message.warning('图片太大了（上限 %d MB），压缩后再传'
+      .replace('%d', String(LOTTERY_IMAGE_MAX_BYTES / (1024 * 1024))))
+    return
+  }
   acting.value = true
   try {
     await lotteryApi.adminUploadImage(target, file)
     message.success('配图已更新')
     await loadDetail(target)
-  } catch {
-    // 类型/大小/内容签名的拒绝文案由全局层弹。
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : '配图没更新 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -422,22 +463,32 @@ onMounted(load)
           </table>
         </div>
 
-        <!-- 在架活动的快捷动作：开奖 / 归档 / 删除，都带确认。 -->
+        <!-- 快捷动作。**外层只看「选中了哪一期」**，不要求它是「在架」的那期：
+             原先外层判 inShelfItem，于是选中一张已归档的历史期时整块都不渲染 ——
+             连删除按钮都没有，而后端 DELETE 允许删任何期（历史列表上限 30 期，
+             攒满之后只能用改库的方式清）。开奖/归档仍然只对在架期出现，
+             它们的判据留在各自按钮上。 -->
         <div
-          v-if="inShelfItem && selectedId === inShelfItem.id"
+          v-if="selectedId"
           class="mt-3 flex flex-wrap gap-2 border-t pt-3"
           style="border-color: var(--border)"
         >
-          <NButton v-if="inShelfItem.status === 'open'" size="small" :loading="acting" @click="drawNow">
+          <NButton
+            v-if="inShelfItem && selectedId === inShelfItem.id && inShelfItem.status === 'open'"
+            size="small" :loading="acting" @click="drawNow"
+          >
             <template #icon><Play :size="14" /></template>
             立即开奖
           </NButton>
-          <NButton v-if="inShelfItem.status === 'drawn'" size="small" :loading="acting" @click="archiveNow">
+          <NButton
+            v-if="inShelfItem && selectedId === inShelfItem.id && inShelfItem.status === 'drawn'"
+            size="small" :loading="acting" @click="archiveNow"
+          >
             立即归档
           </NButton>
           <NButton size="small" :loading="acting" @click="pickImage">
             <template #icon><ImageUp :size="14" /></template>
-            {{ inShelfItem.has_image ? '换奖品图' : '上传奖品图' }}
+            {{ detail?.has_image ? '换奖品图' : '上传奖品图' }}
           </NButton>
           <NButton size="small" quaternary :loading="acting" @click="remove">
             <template #icon><Trash2 :size="14" /></template>
@@ -465,6 +516,18 @@ onMounted(load)
 
         <div v-if="detailLoading" class="mt-3">
           <NSkeleton height="120px" :sharp="false" />
+        </div>
+        <!-- 读取失败不能落进「还没有人参与」那个空态：那是**一句结论**，而这时
+             我们什么都不知道（cc1c536 修过的正是这种假空态）。 -->
+        <div v-else-if="detailError" class="mt-3">
+          <EmptyState code="ERR / ENTRIES" title="参与名单没读到" hint="多半是网络没跟上" tone="alarm">
+            <template #action>
+              <NButton v-if="selectedId" size="small" @click="loadDetail(selectedId)">
+                <template #icon><RefreshCw :size="14" /></template>
+                重试
+              </NButton>
+            </template>
+          </EmptyState>
         </div>
         <div v-else-if="!detail || !detail.entries.length" class="mt-3">
           <EmptyState code="00 / NO ENTRIES" title="这一期还没有人参与" />

@@ -1349,10 +1349,16 @@ export interface Lottery {
   archive_at: string | null
   drawn_at: string | null
   has_image: boolean
+  /** 配图版本（= 库里的文件名）。取图 URL 带上它当缓存键：
+   *  不带的话换图后浏览器 max-age 一天内仍显示旧图，而界面没有任何异常。 */
+  image_version: string
   participant_count: number
   /** 昵称列表（上限 LOTTERY_PARTICIPANT_LIMIT，截断时看 participants_truncated） */
   participants: string[]
   participants_truncated: boolean
+  /** 名单上限本身（后端可配）—— 文案里的「仅列前 N 人」要用它，不要写死 500。 */
+  participant_limit: number
+  winners_truncated: boolean
   /** 只有已开奖才非空 */
   winners: string[]
   joined: boolean
@@ -1380,6 +1386,9 @@ export interface LotteryAdminItem {
   drawn_at: string | null
   create_time: string
   has_image: boolean
+  /** 配图版本（= 库里的文件名）。取图 URL 带上它当缓存键：
+   *  不带的话换图后浏览器 max-age 一天内仍显示旧图，而界面没有任何异常。 */
+  image_version: string
   participant_count: number
   winner_count: number
   /** 份数 - 中奖数；只有开奖后才有值（它就是下期同奖品的结余） */

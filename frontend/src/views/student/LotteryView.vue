@@ -16,6 +16,7 @@ import { RefreshCw, Trophy } from '@lucide/vue'
 import { NButton, NSkeleton } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { lotteryApi } from '@/api/endpoints'
+import { ApiError } from '@/api/client'
 import type { Lottery } from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -36,7 +37,9 @@ const imageFailed = ref(false)
 
 const isDrawn = computed(() => lottery.value?.status === 'drawn')
 const prizeImageSrc = computed(() =>
-  lottery.value ? lotteryApi.prizeImageUrl(lottery.value.id) : '',
+  lottery.value
+    ? lotteryApi.prizeImageUrl(lottery.value.id, lottery.value.image_version)
+    : '',
 )
 
 async function load(): Promise<void> {
@@ -67,8 +70,11 @@ async function join(): Promise<void> {
     const data = await lotteryApi.join()
     notify.success(data.msg || '已加入')
     await load()
-  } catch {
-    // 失败提示由全局拦截器弹（资格 403 / 截止 409 都有明确文案），这里只收住转圈。
+  } catch (error) {
+    //    这里原本写「失败提示由全局拦截器弹」——**没有那个全局层**（main.ts 只挂
+    //    provider、client.ts 只 reject），照那样写空 catch，学生点「我也要参与」
+    //    被 403 挡下时界面毫无反应。每个 catch 自己报，与 MyOrdersView 同款。
+    notify.error(error instanceof ApiError ? error.message : '没能参与 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -81,8 +87,8 @@ async function withdraw(): Promise<void> {
     await lotteryApi.withdraw()
     notify.success('已撤回')
     await load()
-  } catch {
-    // 同上：409（已开奖）的文案由全局层出。
+  } catch (error) {
+    notify.error(error instanceof ApiError ? error.message : '没能撤回 · 稍后重试')
   } finally {
     acting.value = false
   }
@@ -166,6 +172,9 @@ onMounted(load)
               </template>
               <span v-else class="text-ink-3">无人参与，本期未开出</span>
             </p>
+            <p v-if="lottery.winners_truncated" class="mt-1 text-xs text-ink-3">
+              中奖名单较长，这里只列出前 {{ lottery.participant_limit }} 位 · 完整名单见到店核对
+            </p>
             <p v-if="lottery.is_winner" class="mt-1 text-sm font-semibold" style="color: var(--accent-text)">
               你在名单里 · 到店报学号领取
             </p>
@@ -231,6 +240,13 @@ onMounted(load)
             <NButton disabled>我也要参与</NButton>
             <p class="mt-1.5 text-xs text-ink-3">近 30 天内没有取件成功的订单</p>
           </template>
+          <!-- 已到开奖时刻、但后台还没把它结算成 drawn（默认 30 秒窗口，
+               线程没跑时更久）：后端 join 对同条件回 409，所以按钮必须禁掉并
+               写清原因 —— 给一颗点了必失败的按钮，与「一个状态一个理由」自相矛盾。 -->
+          <template v-else-if="lottery.ineligible_reason === 'closed'">
+            <NButton disabled>我也要参与</NButton>
+            <p class="mt-1.5 text-xs text-ink-3">参与已截止，正在等开奖结果</p>
+          </template>
           <template v-else>
             <NButton :loading="acting" @click="join">我也要参与</NButton>
           </template>
@@ -242,7 +258,7 @@ onMounted(load)
         <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 class="font-heading text-base font-bold">参与名单</h2>
           <span class="readout">
-            {{ lottery.participant_count }} 人{{ lottery.participants_truncated ? ' · 仅列前 500' : '' }}
+            {{ lottery.participant_count }} 人{{ lottery.participants_truncated ? ` · 仅列前 ${lottery.participant_limit} 位` : '' }}
           </span>
         </div>
         <p v-if="lottery.participants.length" class="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
