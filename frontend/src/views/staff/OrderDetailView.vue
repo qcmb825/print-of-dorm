@@ -356,6 +356,21 @@ onMounted(() => {
           </div>
         </div>
 
+        <!-- 取件单号牌：**数字即图形**。取件核对时管理员照这串数字念、
+             学生报这串数字取件，它是这一页被读次数最多的东西 ——
+             不给它字段列表里的一格，给它全页最大的展示档位
+             （ignoredone 封面做法：数字占画面主角，标签退成一行小注记）。 -->
+        <div
+          v-if="order.pickup_code"
+          class="mt-4 flex items-end justify-between gap-4 border-t pt-3"
+          style="border-color: var(--border)"
+        >
+          <span class="readout pb-1.5">取件单号 / PICKUP CODE</span>
+          <span class="tnum font-heading text-4xl leading-none font-bold tracking-[0.08em] sm:text-5xl">
+            {{ order.pickup_code }}
+          </span>
+        </div>
+
         <!-- 「订单还在、文件没了」必须显式说出来：只把下载按钮置灰的话，
              管理员会以为是权限问题，跑去找人开权限而不是去找文件。
              但 **`file_exists === false` 不等于文件丢了** —— 预设单本来就没有文件，

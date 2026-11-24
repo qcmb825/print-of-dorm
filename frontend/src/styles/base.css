@@ -113,8 +113,8 @@
     background-clip: content-box;
   }
 
-  /* 焦点轮廓走 --accent-text，不走 --primary：后者是荧光黄 #fffa00，压在浅底上只有
-     1.05:1 —— 键盘用户会完全看不到焦点在哪。--accent-text 在同底上是 5.22:1。
+  /* 焦点轮廓走 --accent-text，不走 --primary：后者是琥珀 #f5a800，压在暖纸底上只有
+     1.81:1 —— 键盘用户会看不到焦点在哪。--accent-text 在同底上是 6.68:1。
      这属于 WCAG 2.4.11（非文本对比度 ≥3:1），换了颜色就要重新量。 */
   :focus-visible {
     outline: 2px solid var(--accent-text);
@@ -152,10 +152,47 @@
     border-radius: 0;
   }
 
-  /* 这里原先有 .login-card 的 backdrop-filter: blur(12px)。
-     删掉有两条原因：它属于「柔和光晕」语汇，与纯平硬边的目标相反；以及
-     backdrop-filter 需要每帧重算背后的内容，滚动时是实打实的合成开销。
-     .login-card 这个类保留 —— 它是 .login-card::after 那条双色亮线的定位宿主。 */
+  /* 登录卡：斜切两角（右上 / 左下）—— 整套语言里最大胆的一次 clip-path，
+     只给全站唯一的「凭证卡」用。切角与页头琥珀版的斜脊同向，
+     读作「从图纸上裁下来的一张卡」。焦点环等内部元素离边都有 padding，
+     不会被切到；::after 那条双色亮线在裁切区内，位置不受影响。 */
+  .login-card {
+    /* 实底白卡 + 1px 墨线框：下面垫着一张旋转的琥珀衬板（.login-card__sheet），
+       卡必须是「一张纸」才读得出叠印 —— 全站只有这一张卡用墨线框，那是
+       「凭证」该有的硬度。 */
+    background: var(--surface-overlay);
+    border: 1px solid var(--foreground);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+  }
+
+  /* 琥珀衬板：与卡同形同大，旋转 1.8° 错开 —— 印刷叠位的「另一版」。
+     叠印要成立，两层必须有同样的裁切（同一个 clip-path）与明显的错位。 */
+  .login-card__sheet {
+    position: absolute;
+    inset: 0;
+    background: var(--primary);
+    clip-path: polygon(0 0, calc(100% - 22px) 0, 100% 22px, 100% 100%, 22px 100%, 0 calc(100% - 22px));
+    transform: rotate(1.8deg) translate(10px, 12px);
+    transform-origin: center;
+  }
+
+  /* 登录页左缘竖排巨字：xl 以上才有位置。9% 墨 —— 是「纸上的另一层版」，
+     不是文字内容；它允许与图纸笔画相交（两层都是装饰）。 */
+  .login-rail-ghost {
+    position: fixed;
+    top: 50%;
+    left: 0.4rem;
+    translate: 0 -50%;
+    color: color-mix(in srgb, var(--foreground) 9%, transparent);
+    font-family: var(--stack-heading);
+    font-size: clamp(40px, 4.6vw, 72px);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+    writing-mode: vertical-rl;
+  }
 
   /* 数据单元（.panel-raised）：**保留一圈细描边**，但同样无底色、无圆角、无投影。
    *
@@ -167,6 +204,61 @@
     border: 1px solid var(--border);
     transition: border-color var(--motion-dur-fast) ease;
   }
+
+  /* ── 仪表卡（StatCard）────────────────────────────────────────
+   * 左缘刻度轨：把「指标卡」从「带框的格子」升级为「一枚仪表」。
+   * 刻度轨用 repeating-linear-gradient 画 4px 短刻，与 .gauge 同语汇。
+   *
+   * 2026-11-23 减重：撤掉右上角标三角。参考 ignoredone 资源档案卡的做法 ——
+   * 档案卡上数字与标签的落差是 3~4 倍，卡面本身零装饰；刻度轨留下
+   * （它是「这是一枚读数」的最低限度记号），角标三角是第二层装饰，减掉。 */
+  .stat-card {
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 7px;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--border) 0 1px,
+      transparent 1px 8px
+    );
+    background-position: left center;
+    background-size: 4px 100%;
+    background-repeat: no-repeat;
+    border-right: 1px solid var(--border-subtle);
+    content: '';
+  }
+  .stat-card:hover {
+    border-color: var(--accent-tint-border);
+  }
+  .stat-card__value {
+    transition:
+      color var(--motion-dur-slow) var(--motion-ease-out),
+      transform var(--motion-dur-fast) var(--motion-ease-out);
+  }
+  .stat-card:hover .stat-card__value {
+    transform: translateX(2px);
+  }
+  /* 强调格：琥珀淡底 + 古铜描边 —— 一页只允许少数几枚 */
+  .stat-card--accent {
+    background: var(--accent-tint-soft);
+    border-color: var(--accent-tint-border);
+  }
+  .stat-card--accent::before {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--accent-tint-border) 0 1px,
+      transparent 1px 8px
+    );
+  }
+
+  /* （原 .page-code 挂牌已并入 .title-slab：编号不再有自己的色块，
+   *  它住在标题琥珀版的全高段里 —— 见上方 .title-slab / .page-code-text。） */
 
   @media (hover: hover) {
     .panel-raised:hover {
@@ -306,19 +398,21 @@
      做成一个牌子而不是单纯加粗：颜色一律由令牌给，
      组件里不写死色值，改强调色时它跟着走。
 
-     文字色走 --accent-text 而不是 --accent：牌子上的字只有 13px，
+     文字色走 --accent-text 而不是 --accent：牌子上的字只有 14px，
      --accent(#c49102) 铺在 accent-tint 上只有 2.61:1，够不上小字的 4.5:1；
      --accent-text 在同一个底上是 5.03:1。边框（accent-tint-border）仍是
      原色相的淡黄，它只是描边、不承载信息，不需要为对比度让路。 */
   .spec-chip {
     display: inline-flex;
     align-items: baseline;
-    padding: 1px 5px;
+    padding: 1px 8px;
+    /* 小型平行四边形（/ 向），与标题梁、主按钮同一向斜 */
+    clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
     border: 1px solid var(--accent-tint-border);
     background-color: var(--accent-tint);
     color: var(--accent-text);
     font-family: var(--stack-mono);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
     line-height: 1.35;
     white-space: nowrap;
@@ -351,17 +445,119 @@
     display: none;
   }
 
+  /* 等高线地形：勘测母题的主纹理。两座山的闭合等高线（离线生成的静态 SVG，
+   * 见 ContourField.vue），铺在坐标格之下 —— 格是「仪器」，山是「被测的对象」。
+   * 登录页（guest）不显示坐标格，但保留等高线：窄屏设备看不到图纸底图时，
+   * 地形就是这页唯一的母题资产，不能再撤。 */
+  .decor-layer__contours {
+    position: absolute;
+    inset: -6% -4%;
+  }
+
+  .contour-field {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: var(--contour-line);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* 计曲线：测绘图里每几条加粗的那一根，读「大势」用的 */
+  .contour-field__major {
+    stroke: var(--contour-major);
+    stroke-width: 1.5;
+  }
+
+  /* 照准环：视口左下角的一件大尺度仪器（与登录页图纸的罗盘同语汇）。
+   * 双环 + 十字照准线 + 中心点，全部细发丝；它大部分面积被侧栏与内容面
+   * 盖住（这一层在所有内容之下），可见的是伸进页边的那几段弧 ——
+   * 「图纸外还有一台没画完的仪器」。古铜 22%（与计曲线同档）：
+   * 低于它就是底噪，高于它就抢边框。 */
+  .decor-layer__compass {
+    position: absolute;
+    /* 位置是权衡过的（2026-11-23）：侧栏纵向 130~660px 全是导航文字，
+       任何「在侧栏可见」的圆环都会从某几行文字后面经过 —— 刻度弧过导航文字
+       与等高线过导航文字是同一性质（细发丝、22% 古铜、文字本身是 66% 墨），
+       业主要求背景更丰富时明确接受这一点（纹理压文字红线的第二个例外，
+       不扩编到内容区）。若想完全避开文字：bottom 改 -48vmin，
+       环就几乎整台沉到屏外（已实测，业主认为那样等于没有）。 */
+    bottom: -34vmin;
+    left: -30vmin;
+    width: 88vmin;
+    height: 88vmin;
+    border: 1px solid var(--contour-major);
+    border-radius: 50%;
+    background-image:
+      radial-gradient(circle, var(--contour-major) 2px, transparent 2.6px),
+      linear-gradient(var(--contour-major) 1px, transparent 1px),
+      linear-gradient(90deg, var(--contour-major) 1px, transparent 1px);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size:
+      100% 100%,
+      34% 1px,
+      1px 34%;
+  }
+
+  /* 内环：外径的 62%，与外环同圆心。 */
+  .decor-layer__compass::after {
+    position: absolute;
+    inset: 19%;
+    border: 1px solid var(--contour-line);
+    border-radius: 50%;
+    content: '';
+  }
+
+  /* 刻度环：repeating-conic-gradient 画 40 根角刻度（9° 一根），
+     再用径向 mask 裁成细环 —— 没有这一圈，双环读作「一个圆」，
+     有了它才读作「一台仪器的度盘」。 */
+  .decor-layer__compass::before {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: repeating-conic-gradient(
+      var(--contour-major) 0 0.6deg,
+      transparent 0.6deg 9deg
+    );
+    content: '';
+    mask-image: radial-gradient(circle, transparent 69%, #000 69.4% 70.4%, transparent 70.8%);
+    -webkit-mask-image: radial-gradient(circle, transparent 69%, #000 69.4% 70.4%, transparent 70.8%);
+  }
+
+  /* 登录页有自己的图纸底图（含罗盘），照准环让位 —— 一页只有一台仪器。 */
+  .decor-layer[data-guest] .decor-layer__compass {
+    display: none;
+  }
+
   .decor-layer__grid {
     position: absolute;
     inset: -48px;
-    /* 双层：上面两层是 48px 的细线，下面两层是每 5 格一条的重线。
-       细线写在前面（画在上面），两线重合处会叠加 —— 那正好让"每 5 格一条"看起来更重。 */
+    /* 底纹是**三层结构**（2026-11-23 定稿）：
+         ① 240px 主格线 —— 大尺度骨架。48px 密线当年撤得对（网格纸文具感），
+            但 240px 的大格线是「结构」不是「纹理」，撤了之后页边只剩微观噪点，
+            背景读空 —— 恢复这一层；
+         ② 主格交点的十字准星 —— 测绘控制点。两段 11px 短划在瓦片中心合成 +，
+            与主格线同源（都按 240px、都从 center 起算，天然对齐）；
+         ③ 48px 点阵 —— 微观层（ignoredone 式 radial-gradient 圆点，
+            与 .sheet 的像元微噪同族）。
+       三层各自密度不同：线是 240px、十字是 240px、点是 48px ——
+       大中小三个尺度齐全，画面才不会「空」也不会「噪」。 */
     background-image:
+      /* 十字准星：双色渐变画不出「两轴都限长」的短划（单层渐变只能限一轴），
+         用内联 SVG 画一枚 240px 瓦片居中的 +。墨色与 --grid-cross 同值；
+         自定义属性插不进 data URI，色值在这里保留一份（改 --grid-cross 时同步）。 */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cpath d='M120 113v14M113 120h14' fill='none' stroke='%231b1917' stroke-opacity='0.13' stroke-width='1'/%3E%3C/svg%3E"),
       linear-gradient(var(--grid-line) 1px, transparent 1px),
       linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(var(--grid-major) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-major) 1px, transparent 1px);
-    background-size: 48px 48px, 48px 48px, 240px 240px, 240px 240px;
+      radial-gradient(var(--grid-dot) 1px, transparent 1.4px),
+      radial-gradient(var(--grid-dot-major) 1.5px, transparent 2px);
+    background-size:
+      240px 240px,
+      240px 240px,
+      240px 240px,
+      48px 48px,
+      240px 240px;
     background-position: center;
   }
 
@@ -509,18 +705,9 @@
     height: 100%;
   }
 
-  /* 标题栏：图纸右下角那一块。字段写的都是真事（产品名与版本戳），
-     不编图纸编号、不编比例尺 —— 装饰件可以无意义，但不该是假的。 */
-  .blueprint__block {
-    position: absolute;
-    bottom: 26px;
-    left: 26px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    border-left: 2px solid var(--blueprint-accent);
-    padding: 8px 12px;
-  }
+  /* （原 .blueprint__block 标题栏已撤：字号整体上移之后它与左侧品牌区页脚
+   *  在左下角相撞，而它写的内容（产品名 / 版号）品牌区的页头与页脚已各有一份 ——
+   *  图纸标题栏的信息在页面上重复三遍，留撞车的那一份没有道理。） */
 
   /* 主区的四角括角。用 8 层背景渐变画，**不用伪元素** —— 这样它和 .bracket、.panel
      上的伪元素互不打架，也能直接叠在任何容器上。
@@ -566,19 +753,26 @@
     clip-path: polygon(28% 0, 100% 0, 72% 100%, 0 100%);
   }
 
-  /* 超大水印：页面角落那枚几乎看不见的巨号编号。排版装饰，用的时候要配 aria-hidden。
+  /* 巨号幽灵字：每页一个英文大字，**出血**到视口右缘与下缘之外 ——
+     鹰角式排版的第一笔：字不是用来读的，是用来「占场」的。
+     词取自 route.meta.en（路由表是页名的单一事实来源），没有时退回页码。
+     右移 -0.06em、下沉 -0.1em 是刻意的：完整的字是「一张图」，裁掉的字才是「背景」。
      定位写在类里而不是调用处：底距在窄屏要变（见下），分散在两个 layout 的 class 上
      迟早改漏一处，改漏的表现是它被下面的栏切掉一截。 */
   .watermark {
     position: fixed;
-    right: 0;
-    bottom: 0.5rem;
+    right: -0.06em;
+    bottom: -0.1em;
     font-family: var(--stack-heading);
-    font-size: clamp(88px, 16vw, 220px);
+    font-size: clamp(130px, 17vw, 320px);
     font-weight: 700;
     line-height: 0.78;
-    letter-spacing: -0.07em;
-    color: color-mix(in srgb, var(--foreground) 5%, transparent);
+    letter-spacing: -0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    /* 琥珀回声：12% 的琥珀叠在暖纸上是一层温度而不是一块颜色 ——
+       字可以大到场场都在，但不能大到压过内容。 */
+    color: color-mix(in srgb, var(--endfield-amber) 12%, transparent);
     user-select: none;
     pointer-events: none;
   }
@@ -589,10 +783,91 @@
      而窄屏这个角只有栏上方是空的（栏以上那一段，正好是页面自己留出的底部留白）。
      让位距离与栏高共用 --chrome-tabbar-h —— 栏长高而水印不动，就是同一个 bug 回来。
      只管学生端：管理端窄屏没有底部栏（导航在顶栏里），那枚编号该留在原来的角上。 */
+  /* 窄屏：幽灵字太大，栏上方那一段留白摆不下 —— 窄屏直接降档为「半幅」：
+     字号收到 30vw 以内，保证它读起来是「一个字」而不是「一片色」。 */
   @media (width < 48rem) {
     [data-shell='student'] .watermark {
-      bottom: calc(var(--chrome-tabbar-h) + env(safe-area-inset-bottom) + 0.5rem);
+      bottom: calc(var(--chrome-tabbar-h) + env(safe-area-inset-bottom));
+      font-size: 30vw;
     }
+  }
+
+  /* （原 .header-beam 已撤：标题琥珀横幅是全页唯一的琥珀宣告，
+   *  下面再来一段小梁就是两处琥珀互相抢。字段行只留扫描基线。） */
+
+  /* 标题三层结构：眉题 → 巨题 → 斜梁。
+   *
+   *  ① .title-eyebrow：编号 + 英文页名的小号等宽眉题（古铜）。
+   *     它是「这页是什么」的档案注记 —— 大标题管气势，眉题管档案。
+   *  ② .title-beam：骑跨字脚下缘的斜切琥珀梁。**色块边界穿越字形在这里是
+   *     刻意的、也是经过确认的一笔**：梁是「垫在字下面的另一层版」，
+   *     穿越让两层版读得出叠印关系。两条约束：
+   *     · 穿越深度固定在字高的下 1/3（bottom 0.02em + 高 34%）——
+   *       浅了像下划线，深了糊字；
+   *     · 梁宽 hug 标题（父行 inline-flex），右端多走 28px 再斜切 ——
+   *       与标题等宽的梁读作「下划线」，探出头去的才是「另一层版」。
+   *  左缘出血到内容区外（-1.75rem）。黑字压琥珀 8.75:1，骑跨段可读性无损。 */
+  /* ── 平行四边形语族（/ 向同斜）────────────────────────────────
+   * 全站的「板」都向同一个方向斜：标题梁 22px、主按钮 9px、
+   * 状态标签与导航激活块 5~6px。斜率随面积递减 —— 小东西斜多了会吃掉内容。
+   * clip-path 会连 outline 一起裁掉，所以主按钮的焦点环改走 inset 内环。 */
+  .status-tag {
+    clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%);
+  }
+
+  .n-button--primary-type {
+    clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+  }
+  .n-button--primary-type:focus-visible {
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--primary-foreground);
+  }
+
+  /* 导航激活块：三处导航的激活色条都被 nav-slider 接管了，
+     clip 切到的只是这块 muted 底，内容居中、边缘 6px 让位足够。 */
+  .nav-link--active {
+    clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  }
+
+  /* inline-flex 是刻意的：眉题与巨题排在**同一行**（基线对齐），
+   * 读作「巨号主体左下角的小注记」—— ignoredone 式的大主体 + 注记构图。
+   * margin-right 是保险：英文页名最长的 [SETTINGS] 在 1440px 下与巨题首字
+   * 只剩不到 10px 间隙，不钉这一下，窄一点的屏就撞字（工单页实测撞过）。 */
+  .title-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 16px;
+    margin-bottom: 6px;
+    color: var(--accent-text);
+    font-family: var(--stack-mono);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  /* 黑块编号：纸面上的「对峙点」。ignoredone 式标签法 —— 纯黑小方块反白字，
+   * 整套界面里**只有眉题这一处**用黑块（黑与琥珀各司其职：黑管档案编号，
+   * 琥珀管动作与强调），所以它的分量不会被稀释。 */
+  .title-eyebrow__code {
+    background: var(--foreground);
+    color: var(--background);
+    padding: 3px 7px 2px;
+    letter-spacing: 0.08em;
+  }
+  .title-beam {
+    position: absolute;
+    bottom: 0.02em;
+    left: -0.5rem;
+    z-index: 0;
+    width: calc(100% + 30px);
+    height: 34%;
+    background: var(--primary);
+    /* 完整的平行四边形：两端同向（/）倾斜且都可见 —— 鹰角的签名形状。
+       只切一端的板读作「被裁掉的矩形」，两端同向斜的板才是「一块料」。 */
+    clip-path: polygon(22px 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
   }
 
   /* 技术读数：等宽大写的极小字，用于「SECTOR 01 / GRID 48」这类装饰读数。 */
@@ -669,18 +944,6 @@
     clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%);
   }
 
-  /* 条码块：三层周期互质的竖条（3px / 7px / 11px 步长）叠在一起，
-     叠出来的疏密在整段长度里不重复 —— 观感就是一条真条形码，但不需要生成编码。
-     它替代的是原来的半调网点块：网点做的是"油墨印在纸上"，
-     而屏幕上的同类记号是条码/扫描条（摄像头、扫码枪、标签机都在屏幕上画这个）。
-     整块纯装饰、不承载可扫的编码，调用方负责 aria-hidden。 */
-  .decor-bars {
-    background-image:
-      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 3px),
-      repeating-linear-gradient(90deg, var(--hazard-ink) 0 2px, transparent 2px 11px),
-      repeating-linear-gradient(90deg, var(--hazard-ink) 0 1px, transparent 1px 7px);
-  }
-
   /* 右缘读数沟（替代原来的穿孔边）：一条 1px 竖槽 + 一列长短交替的刻度，
      做的是**电子文档的滚动沟 / 代码编辑器的行号沟**。
      穿孔是纸的记号（装订线），沟槽是屏幕的记号（这一页在文档里有多长）——
@@ -688,6 +951,8 @@
      background-clip: padding-box 不能省：背景默认画到边框下面，
      刻度会压在槽线上，看着像脏了。 */
   .decor-rail {
+    display: flex;
+    justify-content: center;
     border-right: 1px solid var(--border);
     background-image:
       repeating-linear-gradient(to bottom, var(--text-quaternary) 0 1px, transparent 1px 12px),
@@ -698,24 +963,17 @@
     background-size: 3px 100%, 7px 100%;
   }
 
-  /* 数据转储块：等宽十六进制，越往下越淡。
-     这一件是整套语汇里**最能分辨"屏"与"纸"**的一件 —— 纸上不会印十六进制转储，
-     而屏幕上到处都是（调试面板、诊断输出、设备状态）。
-     内容是真的（调用方传进来的字符串的 UTF-8 字节），不是随机数：
-     装饰件可以"无意义"，但不该"假"——假数据在截图里和真数据长得一样，
-     可一旦有人真去数，它就会露馅。 */
-  .data-dump {
-    font-family: var(--stack-mono);
-    font-size: var(--text-2xs);
-    line-height: 1.6;
-    letter-spacing: 0.08em;
+  /* 沟内竖排读数：竖排英文是鹰角式排版的另一笔 —— 它不占阅读动线，
+     但让右缘那条沟从「刻度」变成「铭牌」。9px 纯拉丁（中文不走这一档）。 */
+  .decor-rail__text {
+    padding-top: 10px;
     color: var(--text-quaternary);
-    overflow: hidden;
-    /* 不折行：一行 16 字节是这个图案的**形状**，折了就不是转储了。
-       窄屏上被截断留在屏幕外，正好读成"后面还有"——真转储在窗格里也是这么被切的。 */
-    white-space: pre;
-    mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 92%);
+    font-family: var(--stack-mono);
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    writing-mode: vertical-rl;
   }
 
   /* 大号读数：尺码更大、字距更宽的技术读数，用于文件头/版号这类"铭牌"位置。 */
@@ -890,25 +1148,6 @@
     text-overflow: ellipsis;
   }
 
-  /* 细分隔线的强调段：一条 1px 线，左端 40px 用强调色。
-     区块标题下方、表头下方这类地方用来标「线的起点」。 */
-  .rule-accent {
-    height: 1px;
-    background-image: linear-gradient(
-        to right,
-        var(--accent-text) 0 40px,
-        transparent 40px
-      ),
-      linear-gradient(var(--border), var(--border));
-    background-repeat: no-repeat;
-  }
-
-  .grid-lines {
-    background-image: linear-gradient(var(--border-subtle) 1px, transparent 1px),
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
-    background-size: 32px 32px;
-  }
-
   /* ── 四个装饰元件 ────────────────────────────────────────────────
    * 都是「用编号、刻度、括角、斜纹来分区」这套做法的零件，替代卡片边界。
    * 共同纪律：一律用静态 background-image / 伪元素，不动画、不开新层。 */
@@ -984,6 +1223,13 @@
     position: relative;
     border-top: 1px solid var(--border);
     padding: 14px 0 14px 12px;
+    transition: background-color var(--motion-dur-fast) ease;
+  }
+  /* 行 hover：琥珀淡底 + 状态条加粗 —— 「指针扫过这行工单」的确认。
+     状态条宽度过渡走 width 会有 layout，但它是 3→6px 的绝对定位件，
+     每帧只重排它自己，代价比一次「看不见反馈」小。 */
+  .wo:hover {
+    background-color: var(--accent-tint);
   }
 
   .wo__bar {
@@ -993,6 +1239,10 @@
     left: 0;
     width: 3px;
     background-color: var(--wo-accent, var(--border));
+    transition: width var(--motion-dur-fast) var(--motion-ease-out);
+  }
+  .wo:hover .wo__bar {
+    width: 6px;
   }
 
   /* 仪表格：给一格读数加一条左缘竖刻度。
@@ -1769,64 +2019,61 @@
     visibility: visible;
   }
 
-  /* 擦除面板：一块斜切面板**单向穿过整屏**，两层。
+  /* 百叶板：五条斜切板**错峰咬合**封屏、同向依次让开（2026-11-23 重设计，
+   * 替代单板擦除）。每条板宽 28%、横向步进 24%（4% 重叠是为接缝不留光缝）；
+   * 斜切角会让板上下缘各偏出约 height·tan(4°)，左起 −9% 的余量就是为它留的。
    *
-   * 出相位：从屏幕左侧外滑到「正好完全盖住」；那一帧就是 DOM 换手帧（= @after-leave）。
-   * 入相位：不停留，沿**同一方向**继续滑出右侧，把新页让出来。
-   * 于是「全屏被遮死」的窗口只有换手那一帧，而不是更早那版两扇幕布咬合方案的 480/600ms。
-   *
-   * 宽度取 118%、左移 9%：斜切角会让面板上下缘各偏出约 height·tan(4°)，
-   * 不留这个余量，「完全盖住」那一帧会在上下角露出缝隙。
-   *
-   * 材质与 .route-stage 同尺度（48px 网格），换场时网格是"跟着面板一起走"而不是
-   * 被抹平成一块纯色。**不要**换成 .grid-lines —— 那是 32px，两套尺度会打架。 */
-  .route-veil__wipe,
+   * 错峰关系（恒等式的另一半，tokens.css 里是时长那一半）：
+   * 板 i 的起步 = latch + i·step，滑动时长 = gate − 4·step ——
+   * 于是**末条板恰好在 latch+gate 那帧咬合**（= @after-leave = 换手帧），
+   * 早一帧露馅、晚一帧白遮；让开相位同理，末条板在 hold+part 那帧走完。
+   * 起步位移用 vw 而不是自身宽度的百分比：板条 left 各不相同，
+   * −125vw 保证五条板全在屏外左侧，+125vw 保证全出右侧。 */
+  .route-veil__slat {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(-9% + var(--i) * 24%);
+    width: 28%;
+    background-color: var(--veil-mat);
+    transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
+    /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
+       前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
+       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
+    transition:
+      transform calc(var(--veil-gate) - 4 * var(--veil-slat-step)) var(--motion-ease-out)
+        calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
+  }
+
+  /* 黄层。**必须在板条之前出现在 DOM 里**（同一层叠层下 DOM 顺序就是绘制顺序）。
+     它整个行程都比板条多走一个 --motion-route-wipe-lead，于是两个相位里都能从板条的
+     边下露出一条黄边：出相位它领先、入相位它殿后 —— 与回执条「黄带先进后出」同一条规矩。
+     它是**整幅一层**（118% 宽、自身百分比位移，与板条的 vw 位移是两套路，别对齐错对象）：
+     黄层是衬边不是拼版，板缝的那几像素黄由板条的重叠自然切断，不需要它也分条。 */
   .route-veil__wipe-under {
     position: absolute;
     top: 0;
     bottom: 0;
     left: -9%;
     width: 118%;
+    background-color: var(--primary);
     transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
-    /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
-       前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
-       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
     transition: transform var(--veil-gate) var(--motion-ease-out) var(--veil-latch);
   }
 
-  .route-veil__wipe {
-    background-color: var(--veil-mat);
-    background-image:
-      linear-gradient(var(--veil-grid) 1px, transparent 1px),
-      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
-    background-size: 48px 48px;
-  }
-
-  /* 黄层。**必须在黑层之前出现在 DOM 里**（同一层叠层下 DOM 顺序就是绘制顺序）。
-     它整个行程都比黑层多走一个 --motion-route-wipe-lead，于是两个相位里都能从黑层的
-     边下露出一条黄边：出相位它领先（黑层的边还没扫到，它先铺过去了）、入相位它殿后
-     （黑层让开一条，它还在下面）—— 与回执条「黄带先进后出」是同一条规矩。
-     不画网格：黄层是黑层的衬边，铺满网格会让那条几像素的边看着发脏。 */
-  .route-veil__wipe-under {
-    background-color: var(--primary);
-  }
-
-  /* 面板前缘的扫描边：1px 发丝线 + 1px 青线 + 1px 白核心 + 光晕。
-   * 它挂在黑层自己**朝行进方向的那条边**上、跟着一起走，所以重绘面积只有那条窄边
-   * （全屏的百分之几），而不是"一条线横扫全屏"那种每秒几千像素的全屏重绘。
+  /* 每条板前缘的扫描边：1px 发丝线 + 1px 青线 + 1px 白核心 + 光晕。
+   * 它挂在板条自己**朝行进方向的那条边**上、跟着一起走，所以重绘面积只有那几条窄边。
+   * 五条错峰的发光边依次咬合，是这场换场「拼版感」的主要来源。
    *
    * 亮度走 --scan-line（取 --status-printing），它在暗面板上是看得见的；
    * 光晕用 --veil-accent-tint —— 面板恒暗，所以这一支也固定是暗底上的黄。 */
-  .route-veil__wipe::before {
+  .route-veil__slat::before {
     position: absolute;
     top: 0;
     bottom: 0;
     right: 0;
     width: 3px;
     content: '';
-    /* 三段而不是两段：内侧 1px 暗发丝线（面板的"厚度"）→ 中间 1px 青线 → 最外
-       1px 热核心。最外那一线落在**前缘本身**上，所以板子扫过来时最先看到的是一根
-       白亮的边，后面才跟着颜色 —— 单色 3px 条看着是"贴了一条胶带"。 */
     background: linear-gradient(
       to right,
       var(--veil-hairline) 0 1px,
@@ -1836,8 +2083,8 @@
     box-shadow: 0 0 10px 0 var(--veil-accent-tint);
   }
 
-  /* 离场：面板滑到「正好完全盖住」——这一帧就是换手帧。 */
-  .route-veil[data-phase='out'] .route-veil__wipe {
+  /* 封屏：板条滑到各自的拼版位 —— 末条板到位那一帧就是换手帧。 */
+  .route-veil[data-phase='out'] .route-veil__slat {
     transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
@@ -1845,36 +2092,58 @@
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 重入：上一次换场还没走完就又点了一次导航，面板多半已经在半路上了，
-     再等 --veil-latch 那一段空拍就是一次肉眼看得见的卡顿。
-     空拍只在一次完整换场的开头才有意义 —— 那一下是留给「旧页先自己淡掉一点」的。
-     闭合早于换手永远安全（多遮一段），闭合晚于换手才会露馅。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe,
+  /* 重入：上一次换场还没走完就又点了一次导航，板条多半已经在半路上了，
+     再等各自的错峰就是一次肉眼看得见的卡顿 —— 全部立即起步（滑动时长不变，
+     从当前计算值续上，天然不会跳）。 */
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__slat,
   .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under {
     transition-delay: 0ms;
   }
 
-  /* 入场：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
-     新建一条带新 delay 的过渡，于是「先停在盖住位等 --veil-hold，再以 --veil-part
-     沿同方向滑出去」完全由 CSS 排出来，不依赖任何 JS 计时器。
-     停在盖住位的这一段就是休止符，也是 DOM 换手真正发生的地方。
-   *
-   * 落点必须**显式写出来**：基类的落点是 −100%（屏外左侧），而入场要去屏外右侧。
-   * 黄层的落点同样把那个 lead 减掉，否则它收尾时会留一条 3% 宽的黄边贴在屏幕右边，
-   * 直到 settle() 把整层切掉才消失。 */
-  .route-veil[data-phase='in'] .route-veil__wipe,
+  /* 让开：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
+     新建一条带新 delay 的过渡，于是「先停在拼版位等 --veil-hold，再错峰滑出右侧」
+     完全由 CSS 排出来，不依赖任何 JS 计时器。
+     黄层的落点把那个 lead 减掉，否则它收尾时会留一条 3% 宽的黄边贴在屏幕右边。 */
+  .route-veil[data-phase='in'] .route-veil__slat {
+    transition-duration: calc(var(--veil-part) - 4 * var(--veil-slat-step-out));
+    transition-delay: calc(var(--veil-hold) + var(--i) * var(--veil-slat-step-out));
+    transform: translate3d(125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
+  }
+
   .route-veil[data-phase='in'] .route-veil__wipe-under {
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
-  }
-
-  .route-veil[data-phase='in'] .route-veil__wipe {
-    transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
-  }
-
-  .route-veil[data-phase='in'] .route-veil__wipe-under {
     transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
       skewX(var(--motion-route-wipe-skew));
+  }
+
+  /* 整版纹理：48px 网格 + 240px 十字准星，板条咬合之后压上来。
+   * 它独立成层而不是画在板条上 —— 板条有 4% 重叠，各画各的网格会在接缝处错位，
+   * 一层整版就没这个问题。两个相位各一段动画：封屏后淡入（带 1.5% 的「压版」缩放），
+   * 让开时比板条更快淡掉 —— 板缝一开的瞬间底下是新页，纹理必须已经走了。 */
+  .route-veil__plate {
+    position: absolute;
+    inset: 0;
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cpath d='M120 113v14M113 120h14' fill='none' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1'/%3E%3C/svg%3E"),
+      linear-gradient(var(--veil-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--veil-grid) 1px, transparent 1px);
+    background-size:
+      240px 240px,
+      48px 48px,
+      48px 48px;
+    background-position: center;
+    opacity: 0;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__plate {
+    animation: veil-plate-in calc(var(--veil-gate) * 0.45) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.55) both;
+  }
+
+  .route-veil[data-phase='in'] .route-veil__plate {
+    animation: veil-plate-out calc(var(--veil-part) * 0.4) var(--motion-ease-out)
+      var(--veil-hold) both;
   }
 
   /* 读数层：一个**固定在屏幕上的版面**，不跟面板走。
@@ -1939,13 +2208,13 @@
 
   .route-veil__hud-title {
     font-family: var(--stack-heading);
-    font-size: 36px;
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: 0.12em;
     margin-right: -0.12em;
-    /* 读数是打在暗面板上的「场记板」，用 --primary（荧光黄）而不是 --accent-text：
-       后者是深黄 #756a00，铺到暗面板上读不出来。 */
-    color: var(--primary);
+    /* 落版之后页名退到二级：主角是巨号词，页名是它的注记，用纸白不用琥珀
+       （琥珀在这一版里已经给了斜梁与编号块，第三处就花了）。 */
+    color: var(--background);
   }
 
   .route-veil__hud-code {
@@ -1954,6 +2223,135 @@
     font-weight: 700;
     letter-spacing: 0.2em;
     color: var(--veil-ink-code);
+  }
+
+  /* 巨号落版：纸白窄体词 + 琥珀骑字斜梁（2026-11-23）。
+   * 词就是页面上那个出血幽灵字的同一支（route.meta.en / 外壳代号），
+   * 暗版上的白字 + 琥珀梁对应官方 PV 里 VECTOR BREAKTHROUGH 那一类构图 ——
+   * 这也是全站斜梁唯一一次骑在**纸白**字上（页面上骑的是暖墨字）。 */
+  .route-veil__word-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    max-width: 94vw;
+  }
+
+  .route-veil__word {
+    position: relative;
+    z-index: 1;
+    overflow: hidden;
+    max-width: 94vw;
+    font-family: var(--stack-heading);
+    font-size: clamp(56px, 12vw, 190px);
+    font-weight: 700;
+    line-height: 0.94;
+    letter-spacing: 0.04em;
+    color: var(--background);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* 斜梁：与 .title-beam 同一几何（22px 斜切、34% 高、左右各出 18px），
+     进场是 scaleX 从左扫开 —— 「印色带」而不是「浮出来」。 */
+  .route-veil__beam {
+    position: absolute;
+    z-index: 0;
+    bottom: 2%;
+    left: -18px;
+    width: calc(100% + 36px);
+    height: 34%;
+    background-color: var(--primary);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
+    transform: scaleX(0);
+    transform-origin: left center;
+  }
+
+  /* 编号块：琥珀底暗字的小牌（暗版上的「黑块眉题」对应物 —— 页面上是黑块纸字，
+     这里底是暗的，块就反过来用琥珀）。与巨号词同词时不显示（外壳档 STAFF 之类，
+     模板里已经判了 word === code 不出这块）。 */
+  .route-veil__hud-chip {
+    align-self: center;
+    padding: 4px 9px 3px;
+    font-family: var(--stack-mono);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--veil-mat);
+    background-color: var(--primary);
+  }
+
+  /* 四角钉版准星：两条 1px 线在中心成 +，封屏后从 1.5 倍收紧钉入。
+     位置避开右下角的三角阵列（那一角归协议读数）。 */
+  .route-veil__cross {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    opacity: 0;
+  }
+
+  .route-veil__cross::before,
+  .route-veil__cross::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    content: '';
+    background-color: var(--veil-hairline);
+  }
+
+  .route-veil__cross::before {
+    width: 26px;
+    height: 1px;
+    transform: translate(-50%, -50%);
+  }
+
+  .route-veil__cross::after {
+    width: 1px;
+    height: 26px;
+    transform: translate(-50%, -50%);
+  }
+
+  .route-veil__cross--tl {
+    top: 7%;
+    left: 6%;
+  }
+
+  .route-veil__cross--tr {
+    top: 7%;
+    right: 6%;
+  }
+
+  .route-veil__cross--bl {
+    bottom: 9%;
+    left: 6%;
+  }
+
+  .route-veil__cross--br {
+    right: 6%;
+    bottom: 22%;
+  }
+
+  /* 制版扫描线：一条窄的青光束从左向右扫过一次。轨道左右各留 8%，
+     光束本身两头淡出去 —— 扫的是「制版机在走版」，不是一根实线划过去。 */
+  .route-veil__scanline {
+    position: absolute;
+    right: 8%;
+    bottom: 20%;
+    left: 8%;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  .route-veil__scanline::before {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--veil-ink-code) 30% 70%,
+      transparent
+    );
+    transform: translate3d(-100%, 0, 0);
   }
 
   /* 右下角：三角阵列 + 协议号。**位置对着页面自己的水印大字**（那份也是右下角贴边的
@@ -2039,6 +2437,47 @@
       calc(var(--veil-hold) + var(--veil-part) * 0.08) both;
   }
 
+  /* 落版四件的进场时序（封屏相位内）：巨号词 0.35×gate 起步（板条咬到第三条时），
+     斜梁等词基本落位后从左扫开，准星分两批钉入（对角一批，读起来是「自检」而不是排队），
+     扫描线在盖死那一拍之后走完整的一趟 —— 它的时长横跨封屏尾段与停留开头，
+     正好覆盖「等数据」那段不确定的空白。 */
+  .route-veil[data-phase='out'] .route-veil__word {
+    animation: veil-word-in calc(var(--veil-gate) * 0.65) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.35) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__beam {
+    animation: veil-beam-in calc(var(--veil-gate) * 0.4) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.68) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__cross--tl,
+  .route-veil[data-phase='out'] .route-veil__cross--br {
+    animation: veil-cross-in calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.6) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__cross--tr,
+  .route-veil[data-phase='out'] .route-veil__cross--bl {
+    animation: veil-cross-in calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
+      calc(var(--veil-latch) + var(--veil-gate) * 0.74) both;
+  }
+
+  .route-veil[data-phase='out'] .route-veil__scanline::before {
+    animation: veil-scanline calc(var(--veil-gate) * 0.5 + var(--veil-hold)) linear
+      calc(var(--veil-latch) + var(--veil-gate) * 0.8) both;
+  }
+
+  /* 打断（连点导航）：巨号与斜梁**已经在版上**了，重播落版就是一次闪。
+     同 read 一样只「重新对准」；准星与扫描线是氛围件，打断时不重播（保留现状）。 */
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__word,
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__beam {
+    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
+  }
+
+  /* 让开相位：巨号词与斜梁不另演退场 —— 它们包在 .route-veil__read 里，
+     跟着读数层那 14% 的快退一起走（veil-read-out），再晚就会留下「字浮在新页面上」。 */
+
   /* 窄屏：同比收一档（桌面那套撑到 36px 页名 / 40px 三角，小屏放不下）。
      页名是这一层存在的理由，不能砍；代号掉到第二行。 */
   @media (max-width: 640px) {
@@ -2051,9 +2490,17 @@
       margin-right: -0.24em;
     }
     .route-veil__hud-title {
-      font-size: 26px;
+      font-size: 18px;
       letter-spacing: 0.08em;
       margin-right: -0.08em;
+    }
+
+    /* 巨号词在窄屏保持 vw 驱动（clamp 下限 56px），不用另调；
+       斜梁的左右出血收窄，免得贴到屏边。 */
+    .route-veil__beam {
+      right: -10px;
+      left: -10px;
+      width: calc(100% + 20px);
     }
     .route-veil__hud-code {
       font-size: 13px;
@@ -2084,7 +2531,7 @@
   /* 触屏：发光半径收一档。390px 宽的屏上 12px 的柔和光晕会糊成一片，
      8px 才看得出「是一条边在发光」而不是「屏幕上有一团黄」。 */
   @media (hover: none) {
-    .route-veil__wipe::before {
+    .route-veil__slat::before {
       box-shadow: 0 0 8px 0 var(--veil-accent-tint);
     }
   }
@@ -2092,57 +2539,69 @@
 
 /* ══ 开屏层的出场 ══════════════════════════════════════════════════
  * 开屏层的结构与它自己的样子写在 index.html 里（它必须在样式表之前就能画出来），
- * **只有出场这一段在这儿** —— 因为出场必须与换场面板是同一件事：一块宽出两侧的
- * 斜切面板单向穿过屏幕，黄层殿后一个 --motion-route-wipe-lead。写在这里才读得到
+ * **只有出场这一段在这儿** —— 因为出场必须与换场是同一件事：五条斜切百叶板
+ * 错峰滑出右侧，黄层殿后一个 --motion-route-wipe-lead。写在这里才读得到
  * 那几支令牌；两处各写一份的话，斜角与时长迟早对不上，而「启动的最后一下和一次
  * 切页不是同一个动作」这件事，看的人是能感觉出来的。
  *
- * 节拍与换场同构：先一拍，再让面板走。换场那一拍是 --veil-latch（留给"旧页先自己
- * 淡掉一点"），这里那一拍是读数退场。面板让开用的是换场的**入相位**那一段
- * （--motion-dur-route-enter）：开屏层本来就是"盖着"的状态，它只需要让开。
+ * 2026-11-23：单板改为百叶（与换场「百叶拼版」同一几何与错峰令牌）。
+ * 节拍与换场同构：先一拍（--motion-dur-fast，读数退场），再让板条走。
+ * 板条让开用换场的**入相位**那一段（--motion-dur-route-enter）：开屏层本来就是
+ * "盖着"的状态，它只需要让开。错峰用 --motion-route-slat-step-out，
+ * 每条板实际滑动 = enter − 4×step-out —— 末条板（--i:4）最晚收尾，
+ * index.html 的控制器就听它的 transitionend。
  */
-.boot__mat,
+.boot__slat,
 .boot__under {
-  /* 静止时就带上斜角（换场面板也是常驻斜角），出场才是纯平移 ——
+  /* 静止时就带上斜角（换场板条也是常驻斜角），出场才是纯平移 ——
      斜角在出场过程中由 0 渐变到 4deg 的话，那条让开中的边会一边走一边转。
-     **两层必须同时带上**：只给黑层的话，黄层的斜角是从 0 度渐变的，
+     **两层必须同时带上**：只给板条的话，黄层的斜角是从 0 度渐变的，
      整段扫动里两条边都不平行 —— 那条黄边会变成一头宽一头窄的楔形（实测差 17px）。 */
   transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
 }
 
 .boot[data-phase='exit'] {
-  /* 出场期间不再吃指针：面板还在扫开的时候，页面已经该能点了 ——
+  /* 出场期间不再吃指针：板条还在扫开的时候，页面已经该能点了 ——
      与换场层一样是"盖着但不当路"（那一层也一直 pointer-events: none）。 */
   pointer-events: none;
 }
 
-.boot[data-phase='exit'] .boot__hud {
+.boot[data-phase='exit'] .boot__hud,
+.boot[data-phase='exit'] .boot__plate {
   opacity: 0;
   transition: opacity var(--motion-dur-fast) var(--motion-ease-out);
 }
 
-.boot[data-phase='exit'] .boot__mat,
-.boot[data-phase='exit'] .boot__under {
-  transition: transform var(--motion-dur-route-enter) var(--motion-ease-out) var(--motion-dur-fast);
+.boot[data-phase='exit'] .boot__slat {
+  transition:
+    transform calc(var(--motion-dur-route-enter) - 4 * var(--motion-route-slat-step-out))
+      var(--motion-ease-out)
+      calc(var(--motion-dur-fast) + var(--i) * var(--motion-route-slat-step-out));
+  transform: translate3d(125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
   will-change: transform;
 }
 
-.boot[data-phase='exit'] .boot__mat {
-  transform: translate3d(100%, 0, 0) skewX(var(--motion-route-wipe-skew));
-}
-
-/* 黄层比黑层少走一个 --motion-route-wipe-lead，于是它殿后：黑层让开的每一寸里，
-   最先露出来的都是那条黄边（与换场入相位、回执条同一条规矩：黄带先进后出）。 */
 .boot[data-phase='exit'] .boot__under {
+  transition: transform var(--motion-dur-route-enter) var(--motion-ease-out) var(--motion-dur-fast);
+  /* 黄层比板条少走一个 --motion-route-wipe-lead，于是它殿后：板条让开的每一寸里，
+     最先露出来的都是那条黄边（与换场入相位、回执条同一条规矩：黄带先进后出）。 */
   transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
     skewX(var(--motion-route-wipe-skew));
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 减少动效下不做横扫：一块全屏面板斜着划过、外加一条黄带闪过，正好踩在前庭与闪阈
-     那两条上（与换场那一段同一个判断）。这里只留一次明暗 —— 就地淡掉，黄层整块不出现。 */
+  /* 减少动效下不做横扫：五条全屏板条斜着划过、外加一条黄带闪过，正好踩在前庭与闪阈
+     那两条上（与换场那一段同一个判断）。这里只留一次明暗 —— 就地淡掉。
+     板条撤掉之后底色由根元素自己顶上（平时根元素故意不画底色，见 index.html），
+     否则淡出的就是个透明层 —— 页面会先从板缝里漏出来，再被"淡"一次。 */
+  .boot__slat,
   .boot__under {
     display: none;
+  }
+
+  .boot {
+    background-color: var(--veil-mat);
   }
 
   .boot[data-phase='exit'] {
@@ -2153,7 +2612,7 @@
     transition: opacity var(--motion-dur-route-still) var(--motion-ease-out) !important;
   }
 
-  .boot[data-phase='exit'] .boot__mat,
+  .boot[data-phase='exit'] .boot__slat,
   .boot[data-phase='exit'] .boot__under {
     transform: none;
     transition: none;
@@ -2178,8 +2637,7 @@
   animation: decor-measure var(--motion-dur-decor) var(--motion-ease-out);
 }
 
-:root.decor-pulse .cut,
-:root.decor-pulse .data-dump {
+:root.decor-pulse .cut {
   animation: decor-nudge var(--motion-dur-decor) var(--motion-ease-out);
 }
 
@@ -2203,8 +2661,7 @@
   animation: decor-drift var(--motion-dur-decor) var(--motion-ease-out);
 }
 
-:root[data-veil-phase='out'] .cut,
-:root[data-veil-phase='out'] .data-dump {
+:root[data-veil-phase='out'] .cut {
   animation: decor-nudge var(--motion-dur-decor) var(--motion-ease-out);
 }
 
@@ -2336,6 +2793,78 @@
   }
 }
 
+/* ── 百叶拼版换场的关键帧（2026-11-23）────────────────────────────── */
+
+/* 整版纹理压上来：淡入 + 1.5% 的「压版」缩放。 */
+@keyframes veil-plate-in {
+  from {
+    opacity: 0;
+    transform: scale(1.015);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes veil-plate-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 巨号落版：从下方 0.22em 浮起、字距从 0.22em 收到 0.04em —— 「活字落进版框」。
+   前 22% 停着不动：那时板条还在咬合，词先出场会飘在页面上。 */
+@keyframes veil-word-in {
+  0%,
+  22% {
+    opacity: 0;
+    letter-spacing: 0.22em;
+    transform: translate3d(0, 0.22em, 0);
+  }
+  62%,
+  100% {
+    opacity: 1;
+    letter-spacing: 0.04em;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* 斜梁从左扫开：transform-origin 已在样式里钉在左边。 */
+@keyframes veil-beam-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 准星钉版：从 1.5 倍收紧到原位 —— 由外向内「钉」，不是淡出来。 */
+@keyframes veil-cross-in {
+  from {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 制版扫描：光束从左到右一趟。 */
+@keyframes veil-scanline {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(100%, 0, 0);
+  }
+}
+
 
 /* 尊重系统的减少动效设置 —— 与旧前端的可访问性约定保持一致 */
 @media (prefers-reduced-motion: reduce) {
@@ -2408,13 +2937,16 @@
  */
 @media (prefers-reduced-motion: reduce) {
   /* 位移与扫掠类动作**整层撤掉**，不是变慢。
-     一块横扫全屏的暗面板同时踩两类风险：它是「大面积平移」（前庭触发器），
-     又是一次全屏亮度反转（闪阈）。对这类元素，减少动效的正确降级是让它不存在，
+     五条横扫全屏的暗板条同时踩两类风险：「大面积平移」（前庭触发器），
+     又是全屏亮度反转（闪阈）。对这类元素，减少动效的正确降级是让它不存在，
      而不是把同样的动作放慢 —— 放宽慢的一秒比没有过渡更难接受。
-     display:none 在这里安全：这些层本来就不该动，覆盖层里唯一需要保留的信息（读数）
-     挂在 .route-veil__hud 上。 */
-  .route-veil__wipe,
-  .route-veil__wipe-under {
+     display:none 在这里安全：这些层本来就不该动，覆盖层里唯一需要保留的信息
+     （场记读数与巨号词）挂在 .route-veil__hud 上。 */
+  .route-veil__slat,
+  .route-veil__wipe-under,
+  .route-veil__plate,
+  .route-veil__cross,
+  .route-veil__scanline {
     display: none !important;
   }
 
@@ -2435,11 +2967,16 @@
   }
 
   /* 读数不参与扫掠：面板整层不出现，它只是跟着整层的明暗一起到位、一起退走。
-     这里必须显式关掉动画 —— 读数在减少动效下是这一层**唯一**的信息，不能连坐吃掉。 */
+     这里必须显式关掉动画 —— 读数在减少动效下是这一层**唯一**的信息，不能连坐吃掉。
+     巨号词与斜梁同理（词就是目标页名本身）；斜梁是静态装饰，留下无碍，
+     但它的 scaleX(0) 初始态必须一并复位，否则词下面永远是空的。 */
   .route-veil__read,
-  .route-veil__corner {
+  .route-veil__corner,
+  .route-veil__word,
+  .route-veil__beam {
     animation: none !important;
     opacity: 1 !important;
+    transform: none !important;
   }
 
   /* 内容层：位移去掉，时长换成一档慢的，并且**显式把 delay 归零** ——
@@ -2485,6 +3022,94 @@
 .n-modal,
 .n-drawer {
   border: 1px solid var(--border) !important;
+}
+
+/* ══ 弹层细节（2026-11 打磨批）══════════════════════════════════
+ * 纪律：弹层面板本身**不加 clip-path**（会弄坏焦点环与切角，既定红线）。
+ * 形状语言靠「面板内的零件」说话，不靠裁面板。
+ *
+ * ① 卡顶双色亮线：与登录卡 .login-card::after 同一条渐变 ——
+ *    「凭证家族」的胎记，弹窗与登录卡是同一套文书。
+ * ② 标题前的琥珀小平行四边形：用 skewX 而不是 clip-path（小零件
+ *    没有焦点环要保，skew 是更干净的斜法），与标题梁 / 主按钮同向。
+ * ③ 遮罩暖化：从纯黑透明换成暖墨透明 —— 压暗的是暖纸，不是一间黑屋。 */
+.n-modal.n-card::before,
+.n-modal.n-dialog::before {
+  position: absolute;
+  top: 0;
+  right: 22px;
+  left: 22px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-text), var(--secondary), transparent);
+  content: '';
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.n-modal .n-card-header__main,
+.n-dialog .n-dialog__title {
+  font-family: var(--stack-heading);
+  letter-spacing: -0.01em;
+}
+.n-modal .n-card-header__main::before,
+.n-dialog .n-dialog__title::before {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  background: var(--primary);
+  transform: skewX(-18deg);
+  content: '';
+}
+
+/* 头部分隔用发丝线而不是 Naive 默认的实线：弹窗内部的分层要「轻一度」 */
+.n-modal.n-card .n-card__header {
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+.n-modal-mask {
+  background-color: rgb(27 25 23 / 0.42) !important;
+}
+
+/* 抽屉的自由边：2px 琥珀边 —— 抽屉是「从图纸柜里抽出来的一页」，
+   琥珀边是它的书脊。方向类名是 Naive 自己的（left/right-placement）。 */
+.n-drawer--left-placement {
+  border-right: 2px solid var(--primary) !important;
+}
+.n-drawer--right-placement {
+  border-left: 2px solid var(--primary) !important;
+}
+
+/* 关闭钮：hover 转 90° 并提色 —— 「拧上」的手势，全站关闭钮统一 */
+.n-base-close {
+  transition:
+    color var(--motion-dur-fast) ease,
+    transform var(--motion-dur-base) var(--motion-ease-out) !important;
+}
+.n-base-close:hover {
+  color: var(--accent-text) !important;
+  transform: rotate(90deg);
+}
+
+/* Message 的左缘状态条：消息是「飞进来的工单」，工单就有状态条。
+   底框保持 1px，左缘加粗到 3px 并着状态色。 */
+.n-message {
+  border-left-width: 3px !important;
+}
+.n-message--success-type {
+  border-left-color: var(--ok) !important;
+}
+.n-message--error-type {
+  border-left-color: var(--err) !important;
+}
+.n-message--warning-type {
+  border-left-color: var(--warn) !important;
+}
+.n-message--info-type {
+  border-left-color: var(--info) !important;
+}
+.n-message--loading-type {
+  border-left-color: var(--accent-text) !important;
 }
 
 /* Naive 浮层自带一套进出场：150ms + cubic-bezier(0,0,.2,1)。时长碰巧和
@@ -2671,7 +3296,6 @@
   :root[data-veil-phase='out'] .watermark,
   :root[data-veil-phase='out'] .cut,
   :root[data-veil-phase='out'] .decor-rail,
-  :root[data-veil-phase='out'] .data-dump,
   :root[data-veil-phase='out'] .readout {
     animation: none !important;
   }
@@ -2739,8 +3363,7 @@
   :root.decor-pulse .watermark,
   :root.decor-pulse .ticks,
   :root.decor-pulse .vticks,
-  :root.decor-pulse .cut,
-  :root.decor-pulse .data-dump {
+  :root.decor-pulse .cut {
     animation: none !important;
   }
 }

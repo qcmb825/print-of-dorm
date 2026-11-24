@@ -363,7 +363,7 @@ onMounted(load)
 
         <div class="mt-3 flex flex-wrap items-end gap-3">
           <label class="flex cursor-pointer items-center gap-2 pb-2 text-sm">
-            <NSwitch v-model:value="rules.enabled" size="small" />
+            <NSwitch v-model:value="rules.enabled" :round="false" size="small" />
             <span :style="{ color: rules.enabled ? undefined : 'var(--text-tertiary)' }">
               {{ rules.enabled ? '已启用自动估价' : '已关闭（订单不再显示预估价）' }}
             </span>

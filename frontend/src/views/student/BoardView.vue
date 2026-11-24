@@ -22,6 +22,7 @@ import { ApiError } from '@/api/client'
 import { boardApi } from '@/api/endpoints'
 import type { Board, ServiceBoard } from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
+import StatCell from '@/components/StatCell.vue'
 import { notify } from '@/composables/feedback'
 import { useValueTick } from '@/composables/motion'
 import { STATUS_COLOR_VAR } from '@/utils/format'
@@ -145,33 +146,12 @@ onMounted(load)
     </div>
 
     <template v-else-if="board">
-      <!-- 四格读数：每格左缘立一条竖刻度（.gauge），读起来像仪表的读数窗。
-           pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
+      <!-- 四格读数：统一走 StatCell（刻度轨小读数格）。「待我取件」hot+accent。 -->
       <div class="motion-stagger mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-3 tech-label--cn text-xs">待我取件</div>
-          <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
-            {{ mine?.ready ?? 0 }}
-          </div>
-        </div>
-        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-3 tech-label--cn text-xs">进行中</div>
-          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
-            {{ mine?.active ?? 0 }}
-          </div>
-        </div>
-        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-3 tech-label--cn text-xs">我的单数</div>
-          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickTotal && 'value-tick--on'">
-            {{ mine?.total ?? 0 }}
-          </div>
-        </div>
-        <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-          <div class="tech-label text-ink-3 tech-label--cn text-xs">我的名次</div>
-          <div class="value-tick tnum font-heading text-xl font-bold" :class="tickRank && 'value-tick--on'">
-            {{ mineRankText }}
-          </div>
-        </div>
+        <StatCell label="待我取件" :value="mine?.ready ?? 0" accent hot />
+        <StatCell label="进行中" :value="mine?.active ?? 0" :ticking="tickActive" />
+        <StatCell label="我的单数" :value="mine?.total ?? 0" :ticking="tickTotal" />
+        <StatCell label="我的名次" :value="mineRankText" :ticking="tickRank" />
       </div>
 
       <section class="panel panel-raised mb-3 p-3.5 sm:p-4">

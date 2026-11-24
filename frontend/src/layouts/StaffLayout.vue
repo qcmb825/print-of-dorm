@@ -18,6 +18,7 @@ import {
 import { NDrawer, NDrawerContent, useMessage } from 'naive-ui'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
+import MainChrome from '@/components/MainChrome.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BotHintCard from '@/components/BotHintCard.vue'
 import BrandMark from '@/components/BrandMark.vue'
@@ -176,28 +177,28 @@ onMounted(() => {
     <!-- 侧栏同样去掉了卡底（原先是 60% 的 --card 半透明底）。现在全站的区块都只有
          细线与留白，侧栏也只剩右侧那一条描边 —— 它是页面 chrome 的一部分，不再是一块面板。 -->
     <aside
-      class="sticky top-0 hidden h-screen w-[236px] shrink-0 flex-col border-r lg:flex"
+      class="sticky top-0 hidden h-screen w-[264px] shrink-0 flex-col border-r lg:flex"
       style="border-color: var(--border)"
     >
       <span class="vticks pointer-events-none absolute top-0 right-0 bottom-0" aria-hidden="true" />
       <!-- 品牌图标上挂着高级视图的隐藏入口（连点 5 次，见 onBrandClick）。
            .capture 是必须的：要在 RouterLink 自己处理之前决定这一下要不要放行。 -->
-      <div class="px-5 pt-5 pb-4" @click.capture="onBrandClick">
+      <div class="px-6 pt-6 pb-5" @click.capture="onBrandClick">
         <BrandMark />
         <!-- 状态牌：纯装饰的技术读数，与页面标题下那行同一套字（.readout）。 -->
         <p class="readout mt-3">STAFF CONSOLE</p>
       </div>
       <!-- 导航一项的文字：激活态走 --accent-text 而不是 --primary ——
-           --primary 是给色条/色块用的，#d4a017 铺在 --muted 上只有 2.16:1，
-           13px 读不清。左边那根色条（.nav-link--active::before）仍是 --primary，
+           --primary 是给色条/色块用的，琥珀压在 --muted 上只有约 1.7:1，
+           13px 读不清。左边那根色条（.nav-link--active::before）是 --accent-text，
            所以激活态本来就不止颜色一条线索，这里换的只是「文字」这一层。
-           未激活态用 --text-tertiary（60% 黑，等效 #6e6e6e，在 --muted 上 4.77:1）。 -->
-      <nav ref="sideNav" class="relative flex flex-col gap-1 px-3" data-nav-slider aria-label="管理导航">
+           未激活态用 --text-tertiary（66% 墨，暖纸底 5.41:1）。 -->
+      <nav ref="sideNav" class="relative flex flex-col gap-1.5 px-4" data-nav-slider aria-label="管理导航">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
+          class="nav-link flex items-center gap-3 px-4 py-3 text-base font-semibold no-underline"
           :class="activeNav === item.to && 'nav-link--active'"
           :style="
             activeNav === item.to
@@ -205,7 +206,7 @@ onMounted(() => {
               : { color: 'var(--text-tertiary)' }
           "
         >
-          <component :is="item.icon" :size="16" />
+          <component :is="item.icon" :size="18" />
           {{ item.label }}
         </RouterLink>
       </nav>
@@ -232,8 +233,16 @@ onMounted(() => {
           退出
         </button>
       </div>
+      <!-- 侧栏收尾带：整段 hazard 斜纹 + 超大 REV 读数 —— 侧栏底部的「封条」。 -->
+      <div class="mt-auto" aria-hidden="true">
+        <div class="hazard h-7" />
+        <div class="flex items-end justify-between px-3 pt-1.5">
+          <span class="font-heading text-xl leading-none font-bold whitespace-nowrap" style="color: var(--text-quaternary)">REV 2.006</span>
+          <span class="readout pb-0.5">AUTH · STAFF</span>
+        </div>
+      </div>
       <div
-        class="mt-auto flex flex-col gap-1 border-t px-3 py-3"
+        class="flex flex-col gap-1 border-t px-3 py-3"
         style="border-color: var(--border)"
       >
         <UserMenu stacked class="min-w-0" />
@@ -268,7 +277,7 @@ onMounted(() => {
                 v-for="item in navItems"
                 :key="item.to"
                 :to="item.to"
-                class="nav-link flex items-center gap-2.5 px-3 py-2.5 text-sm font-semibold no-underline"
+                class="nav-link flex items-center gap-3 px-4 py-3 text-base font-semibold no-underline"
                 :class="activeNav === item.to && 'nav-link--active'"
                 :style="
                   activeNav === item.to
@@ -277,7 +286,7 @@ onMounted(() => {
                 "
                 @click="drawerOpen = false"
               >
-                <component :is="item.icon" :size="16" />
+                <component :is="item.icon" :size="18" />
                 {{ item.label }}
               </RouterLink>
             </div>
@@ -317,37 +326,10 @@ onMounted(() => {
 
       <AnnouncementBar />
 
-      <main class="sheet relative min-w-0 flex-1 overflow-x-clip px-3 py-4 sm:px-5 sm:py-6 lg:pl-8">
-        <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
-        <span
-          class="frame-brackets pointer-events-none absolute inset-1.5"
-          data-parallax
-style="--depth: 4px"
-          aria-hidden="true"
-        />
-        <span
-          class="vticks pointer-events-none absolute top-0 bottom-0 left-0 lg:left-2"
-          data-parallax
-style="--depth: 4px"
-          aria-hidden="true"
-        />
-        <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
-             所以不会像之前括角与竖刻度那样叠在一起。
-             （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
-        <span
-          class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
-          data-parallax
-style="--depth: 3px"
-          aria-hidden="true"
-        />
-      <span
-        class="watermark"
-        data-parallax
-style="--depth: 20px"
-        aria-hidden="true"
-      >
-        {{ route.meta.code }}
-      </span>
+      <main class="sheet relative min-w-0 flex-1 overflow-x-clip px-4 py-6 sm:px-8 sm:py-10 lg:pr-10 lg:pl-12">
+        <!-- 装饰四件套（括角/竖刻度/读数沟/幽灵字）见 MainChrome.vue；
+             管理端的竖刻度要给侧栏让 8px。 -->
+        <MainChrome vticks-class="lg:left-2" />
         <!-- profile="inline"：这层 stage 只包 <main> 里的页面组件，左侧 sticky 侧栏、
              窄屏 sticky 顶栏与站内唯一的 fixed 底栏都在它之外，所以可以接回横向接入语汇。 -->
         <!-- ⚠️ **页面内容本体不参与视差**（`data-parallax` 已经从这一层摘掉）。

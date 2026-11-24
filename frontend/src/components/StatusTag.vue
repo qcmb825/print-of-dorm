@@ -43,10 +43,13 @@ let seen = 0
 
 function readMs(name: string, fallback: number): number {
   if (typeof document === 'undefined') return fallback
-  const value = Number.parseFloat(
-    getComputedStyle(document.documentElement).getPropertyValue(name),
-  )
-  return Number.isFinite(value) ? value : fallback
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const value = Number.parseFloat(raw)
+  if (!Number.isFinite(value)) return fallback
+  // 单位必须看：构建期压缩会把 180ms 改写成等价的 .18s（省一个字节），
+  // parseFloat 读出来是 0.18 —— 直接当毫秒用，落章就只有 0.18ms，等于没播
+  // （2026-11-23 拍帧实测 dur=0.18 追到此处；dev 下单位是 ms 所以开发时看不出来）。
+  return raw.endsWith('ms') ? value : value * 1000
 }
 
 watch(
@@ -54,6 +57,10 @@ watch(
   () => {
     seen += 1
     if (seen === 1 || prefersReducedMotion.value) return
+    // immediate: true 让「首次渲染」这一次真的发生（挂载即 seen=1 并被跳过）——
+    // 没有它，非 immediate 的 watch 在挂载时不触发，seen=1 会被**第一次真正的
+    // 状态变化**消耗掉：管理员第一次改状态永远看不到落章（2026-11-23 动效
+    // 校准拍帧实测发现：连拍 8 帧 × 280ms 无任何缩放，追到这一行）。
     const el = stampRef.value
     if (!el || typeof el.animate !== 'function') return
     stampAnim?.cancel()
@@ -70,6 +77,7 @@ watch(
       },
     )
   },
+  { immediate: true },
 )
 
 onBeforeUnmount(() => {
@@ -80,7 +88,7 @@ onBeforeUnmount(() => {
 
 <template>
   <span
-    class="inline-flex items-center gap-1.5 border font-bold whitespace-nowrap transition-colors duration-[var(--motion-dur-slow)] ease-out"
+    class="status-tag inline-flex items-center gap-1.5 border font-bold whitespace-nowrap transition-colors duration-[var(--motion-dur-slow)] ease-out"
     :class="size === 'sm' ? 'px-2 py-[1px] text-xs' : 'px-2.5 py-0.5 text-sm'"
     :style="style"
   >

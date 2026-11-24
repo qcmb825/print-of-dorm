@@ -18,7 +18,7 @@
 
     <!-- ══ 开屏层 ══════════════════════════════════════════════════════════════
          整站启动时盖住屏幕的那一块：把首屏盖住、把启动进度读出来，最后像换场那样
-         用一块斜切面板扫开，把页面让出来。
+         用五条斜切百叶板错峰扫开，把页面让出来。
 
          **为什么它写在 index.html 里，而不是做成 Vue 组件**
          它要盖住的正是「CSS 与 JS 产物还没到」的那一段 —— 宿舍 wifi 上这段是整次加载
@@ -26,22 +26,25 @@
          等于没盖。
          代价是这一层读不到 tokens.css / base.css（那时还没解析到），所以下面这段自带
          排版与颜色，**与样式表无关地自成一体的**；只有出场那一下例外 —— 那时样式表一定
-         已经装上了，于是它交给 base.css 去写，好与换场面板共用同一套几何与时长
+         已经装上了，于是它交给 base.css 去写，好与换场百叶板共用同一套几何与时长
          （见 base.css 的 .boot__*）。
+
+         2026-11-23 重设计：与换场「百叶拼版 · 巨号落版」同一张脸 —— 暖墨底 #312f2d
+         （--veil-mat 的计算结果，写死在这里）、琥珀 #f5a800（--primary）、纸白 #f8f7f4、
+         纸白窄体巨号 + 骑字斜梁 + 四角准星 + 整版网格。这一层曾经是旧身份的
+         纯黑 #050505 + 荧光黄 #fffa00 —— 那是全站最后一块没换令牌的地方。
 
          几条与站内一致的纪律：
          · 会动的读数不进朗读流（视觉部分整块 aria-hidden），只留一句 sr-only 给读屏；
-         · 读数**必须是真的**：下面三行里程碑各自对应一件真实发生过的事
+         · 读数**必须是真的**：三行里程碑各自对应一件真实发生过的事
            （产物执行完 / 字体就位 / 应用报出第一帧），没有一行是定时器编出来的；
-         · 参考站那一屏的语汇是"仪表在自检"，本站的对应物是刻度、机读读数、
-           一条竖着的进度柱与右下的三角阵列；
          · 减少动效下不做横扫（与换场同一个判断，理由见 base.css）。
     ═══════════════════════════════════════════════════════════════════════ -->
     <style>
-      /* 这一段在样式表之前就要画出来，所以全是字面值。
-         两个颜色与站内同源：底色 #050505 就是上面 theme-color 的那个值（也是深色主题的
-         换场面板色），进度黄 #fffa00 就是 --primary 的取值。刻意不跟随浅色主题 ——
-         开屏那一下属于"屏"而不是"纸"，深底在深浅两个主题下都是对的。 */
+      /* 这一段在样式表之前就要画出来，所以全是字面值（2026-11-23 与令牌对表）：
+         暖墨 #312f2d = --veil-mat 的计算结果（color-mix(#1b1917 90%, #f8f7f4)），
+         琥珀 #f5a800 = --primary，纸白 #f8f7f4 = --background，青 #5eead4 = --veil-ink-code。
+         刻意写死：开屏那一下属于"屏"而不是"纸"，深底在任何系统主题下都是对的。 */
       .boot {
         position: fixed;
         top: 0;
@@ -51,8 +54,8 @@
         height: 100dvh;
         z-index: 200; /* 布局 chrome 的 20、换场层的 100 之上，Naive 弹层最低的 2000 之下 */
         overflow: hidden;
-        /* **容器自己不画任何东西**：盖住屏幕的是下面的 .boot__mat。
-           这里给一块底色看起来更保险，但那样面板扫开之后露出来的还是这块底色 ——
+        /* **容器自己不画任何东西**：盖住屏幕的是下面的五条板。
+           这里给一块底色看起来更保险，但那样板条扫开之后露出来的还是这块底色 ——
            整屏黑到底，页面永远不出现（踩过一次：出场动画全对，就是看不见应用）。
            启动期间这一层是"还没轮到你操作"：吃掉指针与触摸（含滚动手势）。 */
         touch-action: none;
@@ -60,44 +63,87 @@
         -webkit-font-smoothing: antialiased;
       }
 
-      .boot__mat,
+      /* 五条百叶板：与换场同一几何（28% 宽、24% 步进、4% 重叠防光缝、左起 -9%）。
+         **不给 transform** —— 常驻斜角与出场平移都由 base.css 写，两处各写一份迟早对不上。 */
+      .boot__slat {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: calc(-9% + var(--i) * 24%);
+        width: 28%;
+        background-color: #312f2d;
+      }
+
+      /* 黄层：垫在板条下面，出场时殿后一个 --motion-route-wipe-lead（黄带先进后出）。
+         比屏幕宽出两侧：出场要斜切滑走，不留余量会在上下角先露出页面。 */
       .boot__under {
         position: absolute;
         top: 0;
         bottom: 0;
-        /* 比屏幕宽出两侧各 12%：出场时面板要斜切 4deg 滑走，不留这个余量，
-           斜过去的那条边会在上下角先露出页面（换场面板留余量出于同一个理由）。 */
         left: -12%;
         width: 124%;
+        background-color: #f5a800;
       }
 
-      /* 黑层：一直盖着屏幕的那一块。**不给它 transform** —— 出场那一下由 base.css
-         平移它，两处各写一份平移量迟早对不上。 */
-      .boot__mat {
-        background-color: #050505;
-      }
-
-      /* 黄层：垫在黑层下面，出场时殿后一个 --motion-route-wipe-lead。露出的那条黄边
-         就是参考站"载入完成"那一下的闪光，只是换成本站的规矩（与换场、回执条同一条：
-         黄带先进后出）。出场之前它整个在黑层底下，看不见。 */
-      .boot__under {
-        background-color: #fffa00;
+      /* 整版纹理：48px 网格 + 240px 十字准星，铺在板条上面 —— 板条有 4% 重叠，
+         各画各的网格会在接缝处错位，一层整版就没这个问题（与换场同一解法）。 */
+      .boot__plate {
+        position: absolute;
+        inset: 0;
+        background-image:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cpath d='M120 113v14M113 120h14' fill='none' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1'/%3E%3C/svg%3E"),
+          linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+        background-size: 240px 240px, 48px 48px, 48px 48px;
+        background-position: center;
       }
 
       .boot__hud {
         position: absolute;
         inset: 0;
         font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-        color: #ffffff;
+        color: #f8f7f4;
       }
 
-      /* 一圈内缩的细框：与登录页那张图纸的图框、页面四角的括角是同一件事 ——
-         读作"一块被框起来的屏"，不是一张无边无际的黑。 */
+      /* 一圈内缩的细框：与登录页那张图纸的图框、页面四角的括角是同一件事。 */
       .boot__frame {
         position: absolute;
         inset: 14px;
         border: 1px solid rgba(255, 255, 255, 0.1);
       }
+
+      /* 四角钉版准星：与换场同一记号。 */
+      .boot__cross {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+      }
+
+      .boot__cross::before,
+      .boot__cross::after {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        content: '';
+        background-color: rgba(255, 255, 255, 0.14);
+      }
+
+      .boot__cross::before {
+        width: 26px;
+        height: 1px;
+        transform: translate(-50%, -50%);
+      }
+
+      .boot__cross::after {
+        width: 1px;
+        height: 26px;
+        transform: translate(-50%, -50%);
+      }
+
+      .boot__cross--tl { top: 7%; left: 6%; }
+      .boot__cross--tr { top: 7%; right: 6%; }
+      .boot__cross--bl { bottom: 9%; left: 6%; }
+      .boot__cross--br { right: 6%; bottom: 22%; }
 
       .boot__top,
       .boot__band {
@@ -111,7 +157,7 @@
         font-size: 11px;
         letter-spacing: 0.16em;
         text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.4);
+        color: rgba(248, 247, 244, 0.42);
       }
 
       .boot__top {
@@ -122,15 +168,80 @@
         bottom: 22px;
       }
 
-      .boot__cn {
-        font-size: 13px;
-        letter-spacing: 0.06em;
-        color: rgba(255, 255, 255, 0.78);
+      /* 编号块：琥珀底暖墨字 —— 暗版上的「黑块眉题」对应物（与换场的编号块同规矩）。 */
+      .boot__chip {
+        padding: 2px 7px;
+        font-weight: 700;
+        color: #312f2d;
+        background-color: #f5a800;
       }
 
       /* 靠右那一格走 margin-left:auto，不为它单开一层容器。 */
       .boot__right {
         margin-left: auto;
+      }
+
+      /* 中央场记板：警戒条 → 巨号词（骑琥珀梁）→ 中文副题。与换场 HUD 同一张脸。 */
+      .boot__center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 0 24px;
+      }
+
+      .boot__hazard {
+        width: 200px;
+        height: 8px;
+        background-image: repeating-linear-gradient(
+          -45deg,
+          #f5a800 0 8px,
+          transparent 8px 16px
+        );
+      }
+
+      .boot__word-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        max-width: 94vw;
+      }
+
+      /* 巨号词：纸白窄体。Oswald 此刻多半还没到（脚本在抢下载，到了自动换上），
+         兜底用系统窄体 —— 开屏层的字不能等字体，先画出来再说。 */
+      .boot__word {
+        position: relative;
+        z-index: 1;
+        overflow: hidden;
+        max-width: 94vw;
+        font-family: 'Oswald Variable', 'Oswald', 'Arial Narrow', 'Liberation Sans Narrow', sans-serif;
+        font-size: clamp(52px, 11vw, 168px);
+        font-weight: 700;
+        line-height: 0.94;
+        letter-spacing: 0.04em;
+        color: #f8f7f4;
+        white-space: nowrap;
+      }
+
+      /* 斜梁：与页头 .title-beam 同一几何（两端同向斜的平行四边形，骑字脚下缘）。 */
+      .boot__beam {
+        position: absolute;
+        z-index: 0;
+        bottom: 2%;
+        left: -18px;
+        width: calc(100% + 36px);
+        height: 34%;
+        background-color: #f5a800;
+        clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
+      }
+
+      .boot__sub {
+        font-size: 15px;
+        letter-spacing: 0.12em;
+        color: rgba(248, 247, 244, 0.78);
       }
 
       /* 左下角那一块：三角阵列（中间那格刻意空着 —— 与换场读数右下角同一处记号）
@@ -150,14 +261,13 @@
       .boot__tri > i {
         width: 9px;
         height: 9px;
-        background-color: #fffa00;
+        background-color: #f5a800;
         /* 下左三角。用 clip-path 画而不是用「◣」那个字形：字形随平台字体变，阵列会歪。 */
         clip-path: polygon(0 100%, 0 0, 100% 100%);
       }
 
-      /* 空着的那一格**什么都不画**：换场读数右下角那组三角也是这么处理的（.is-blank
-         只把底色去掉）。给它描一圈边就变成了"没勾选的复选框" —— 那是个表单控件的形状，
-         而这里的语汇是"阵列里没点亮的一格"。 */
+      /* 空着的那一格**什么都不画**：给它描一圈边就变成了"没勾选的复选框" ——
+         那是个表单控件的形状，而这里的语汇是"阵列里没点亮的一格"。 */
       .boot__tri > .is-blank {
         background-color: transparent;
       }
@@ -165,11 +275,12 @@
       .boot__num {
         display: flex;
         align-items: baseline;
+        font-family: 'Oswald Variable', 'Oswald', 'Arial Narrow', 'Liberation Sans Narrow', sans-serif;
         font-size: clamp(44px, 7vw, 76px);
         font-weight: 700;
         line-height: 0.9;
         letter-spacing: -0.02em;
-        color: #fffa00;
+        color: #f5a800;
         font-variant-numeric: tabular-nums;
       }
 
@@ -192,16 +303,15 @@
         margin-top: 10px;
       }
 
-      /* 左边那条竖着的进度柱：参考站那一屏最有辨识度的一件，也是"进度"最直白的写法
-         （高度就是读数）。整条只有 6px 宽，占屏面积不到 1%，合站内「黄是点不是面」
-         那条分工。只动 transform，不去改 height。 */
+      /* 左边那条竖着的进度柱："进度"最直白的写法（高度就是读数）。
+         整条只有 6px 宽，合站内「琥珀是点不是面」那条分工。只动 transform。 */
       .boot__fill {
         position: absolute;
         top: 0;
         left: 0;
         width: 6px;
         height: 100%;
-        background-color: #fffa00;
+        background-color: #f5a800;
         transform: scaleY(var(--boot-p, 0));
         transform-origin: top;
       }
@@ -226,13 +336,13 @@
         display: flex;
         gap: 8px;
         align-items: center;
-        color: rgba(255, 255, 255, 0.36);
+        color: rgba(248, 247, 244, 0.36);
       }
 
       .boot__row > i {
         width: 5px;
         height: 5px;
-        border: 1px solid rgba(255, 255, 255, 0.32);
+        border: 1px solid rgba(248, 247, 244, 0.32);
       }
 
       .boot__row > b {
@@ -243,23 +353,23 @@
         margin-left: auto;
       }
 
-      /* 里程碑点亮：方块填实、读数转成强调黄。状态是**真的**，见下面的脚本。 */
+      /* 里程碑点亮：方块填实、读数转青色（与换场读数的机读青同源）。状态是**真的**。 */
       .boot__row[data-state='ok'] {
-        color: rgba(255, 255, 255, 0.66);
+        color: rgba(248, 247, 244, 0.66);
       }
 
       .boot__row[data-state='ok'] > i {
-        background-color: #fffa00;
-        border-color: #fffa00;
+        background-color: #5eead4;
+        border-color: #5eead4;
       }
 
       .boot__row[data-state='ok'] > span {
-        color: #fffa00;
+        color: #5eead4;
       }
 
       /* 入场：几块依次升起落位，像一次读数从上往下扫过。
          曲线与 --motion-ease-out 是同一条（这里读不到 token，值只能抄一份）。
-         排期与控制器里的 MIN_MS 对齐：六块错开 40ms 起步、240ms 落位，最后一块
+         排期与控制器里的 MIN_MS 对齐：几块错开起步、240ms 落位，最后一块
          恰好在**放行那一刻**到位。于是本机这种几百毫秒就起来的加载也能看见完整版面，
          而不是只闪一下数字就扫走；加载真慢的那次（窄带上产物还没到）本来就停得久。
          改这里的延时就要回头看一眼 MIN_MS —— 早了会出现"数字还半透明就开始扫"，
@@ -297,18 +407,38 @@
     <div id="boot" class="boot" role="status">
       <span class="boot__sr">正在接入服务</span>
 
-      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在黑层下面。 -->
+      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在板条下面。 -->
       <i class="boot__under" aria-hidden="true"></i>
-      <i class="boot__mat" aria-hidden="true"></i>
+      <!-- 五条百叶板：--i 是板序（0 在最左），几何与错峰与换场同一套。 -->
+      <i class="boot__slat" style="--i: 0" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 1" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 2" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 3" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 4" aria-hidden="true"></i>
+      <!-- 整版纹理：铺在板条上面（板缝网格连续的原因见样式注释）。 -->
+      <i class="boot__plate" aria-hidden="true"></i>
 
       <div class="boot__hud" aria-hidden="true">
         <i class="boot__frame boot__in" style="--d: 0ms"></i>
         <i class="boot__fill boot__in" style="--d: 120ms"></i>
+        <i class="boot__cross boot__cross--tl boot__in" style="--d: 60ms"></i>
+        <i class="boot__cross boot__cross--tr boot__in" style="--d: 100ms"></i>
+        <i class="boot__cross boot__cross--bl boot__in" style="--d: 100ms"></i>
+        <i class="boot__cross boot__cross--br boot__in" style="--d: 60ms"></i>
 
         <div class="boot__top boot__in" style="--d: 40ms">
-          <span class="boot__cn">正在接入</span>
-          <span>NEKO PRINT SERVICE</span>
-          <span class="boot__right">SEC 00</span>
+          <span class="boot__chip">00</span>
+          <span>// [BOOT]</span>
+          <span class="boot__right">SEC 00 / HFUT-CS</span>
+        </div>
+
+        <div class="boot__center boot__in" style="--d: 80ms">
+          <span class="boot__hazard"></span>
+          <span class="boot__word-wrap">
+            <span class="boot__word">NEKO PRINT</span>
+            <span class="boot__beam"></span>
+          </span>
+          <span class="boot__sub">猫娘打印服务 · 校园代打印服务站</span>
         </div>
 
         <ul class="boot__log boot__in" style="--d: 160ms">
@@ -324,8 +454,8 @@
         </div>
 
         <div class="boot__band boot__in" style="--d: 200ms">
-          <span>猫娘打印服务 · NEKO PRINT SERVICE</span>
-          <span class="boot__right">SEC 00</span>
+          <span>正在接入 · LOADING SERVICE</span>
+          <span class="boot__right">REV 2.006</span>
         </div>
       </div>
 
@@ -416,6 +546,9 @@
             document.fonts.load('15px "Space Grotesk Variable"', sampleLatin),
             document.fonts.load('15px "DM Sans Variable"', sampleLatin),
             document.fonts.load('15px "JetBrains Mono Variable"', sampleLatin),
+            // 巨号词与百分比用的窄体：抢在版面还盖着屏的时候下载，
+            // 到了自动换上（没到就用系统窄体兜底，不挡出场）。
+            document.fonts.load('700 64px "Oswald Variable"', 'NEKO PRINT 0123456789'),
           ])
           fontsReady.then(function () {
             mark('fonts', true)
@@ -435,10 +568,12 @@
           boot.setAttribute('data-phase', 'exit')
           cap.textContent = 'READY'
 
-          // 摘除时机：面板扫完的那一刻。**听 transitionend 而不是定时器** ——
-          // 定时器要猜一个时长，而那个时长归 base.css 的令牌管；猜短了会把还在扫的面板
+          // 摘除时机：末条板扫完的那一刻。**听 transitionend 而不是定时器** ——
+          // 定时器要猜一个时长，而那个时长归 base.css 的令牌管；猜短了会把还在扫的板条
           // 掐掉（露一半），猜长了这一层会在页面上多留一会儿。
-          var mat = boot.querySelector('.boot__mat')
+          // 末条板的错峰最大、最晚收尾（与换场 exitDone 的选法一致）。
+          var slats = boot.querySelectorAll('.boot__slat')
+          var lastSlat = slats.length ? slats[slats.length - 1] : null
           var removed = false
           function finish() {
             if (removed) return
@@ -449,8 +584,8 @@
               boot.remove()
             }, 200)
           }
-          if (mat) {
-            mat.addEventListener('transitionend', function (event) {
+          if (lastSlat) {
+            lastSlat.addEventListener('transitionend', function (event) {
               if (event.propertyName === 'transform') finish()
             })
           }

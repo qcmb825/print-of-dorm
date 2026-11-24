@@ -18,10 +18,9 @@ export interface Tokens {
   primaryForeground: string
   /** 强调色**当文字、图标、描边、细线、图表序列用**的深度。
    *
-   *  与 primary 的分工不是审美选择，是测量结果：浅色下 primary 是荧光黄 #fffa00，
-   *  压在浅底上只有 1.01~1.10:1 —— 当文字、当描边、当图表线全都看不见（整条黄谱都救不回来，
-   *  最深的 #a89a00 也只有 2.74:1，到不了非文本图形的 3:1）。深色下 primary 本身有 18.37:1，
-   *  这支就等于 primary。
+   *  与 primary 的分工不是审美选择，是测量结果：primary 是琥珀 #f5a800，
+   *  压在暖纸底上只有 1.81:1 —— 当文字、当描边、当图表线都到不了非文本图形的 3:1。
+   *  古铜 #7c4a00 与琥珀同属约 40° 色相，暖纸底上 6.68:1，线状用途一律走它。
    *
    *  **凡是「线」而不是「面」的用途都读它，不要读 primary。** primary 只用于
    *  可承载 primaryForeground 的大面积填充（主按钮、菜单/分页激活块）。 */
@@ -114,7 +113,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
    * Tokens.accentText 的注释。 */
   const at = derive(t.accentText)
   const panel = t.surfaceOverlay
-  const brandFont = '17px'
+  const brandFont = '19px'
   /* 聚焦光晕。原先是写死的 #d4a01726 / #ffd00026，等于把 primary 的 hex 抄了一份 ——
    * 强调色一换它就静默漂移。改成从令牌派生的 color-mix。 */
   /* 聚焦提示：**2px 实心环**，不是柔和光晕。
@@ -150,8 +149,8 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       textColor2: t.textSecondary,
       textColor3: t.textTertiary,
       textColorDisabled: t.textDisabled,
-      /* 输入框占位符原先是 t.textQuaternary（40% 黑，2.61:1）—— 占位符是**要读的**
-       * 提示文字，不是装饰。mutedForeground 是现成的合格值（#71717a，4.59:1）。 */
+      /* 输入框占位符不能用 textQuaternary（45% 墨，2.84:1）—— 占位符是**要读的**
+       * 提示文字，不是装饰。mutedForeground 是现成的合格值（#6e675c，暖纸底 5.04:1）。 */
       placeholderColor: t.mutedForeground,
       placeholderColorDisabled: t.textDisabled,
       iconColor: t.textTertiary,
@@ -188,15 +187,15 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
 
       fontFamily: t.stackBody,
       fontFamilyMono: t.stackMono,
-      /* 字号对齐 tokens.css 的 --text-* 阶梯（正文收窄、标题放大，拉开落差）。
+      /* 字号对齐 tokens.css 的 --text-* 阶梯（落差即层级，2026-11-22 整体上移一档）。
        * 改这里之前先看 tokens.css 里那张阶梯表。 */
-      fontSize: '15px',
-      fontSizeMini: '11px',
-      fontSizeTiny: '12px',
-      fontSizeSmall: '13px',
-      fontSizeMedium: '15px',
-      fontSizeLarge: '17px',
-      fontSizeHuge: '20px',
+      fontSize: '16px',
+      fontSizeMini: '12px',
+      fontSizeTiny: '13px',
+      fontSizeSmall: '14px',
+      fontSizeMedium: '16px',
+      fontSizeLarge: '18px',
+      fontSizeHuge: '22px',
       lineHeight: '1.6',
 
       // 参考站的面板圆角是 12px、主按钮是方角；这里圆角给中等值，
@@ -209,12 +208,12 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
        * NProgress 是组件 prop（UploadView 里两处已改 0）、NBadge 的计数泡硬编码 9px（见 base.css 末尾）。 */
       borderRadius: '0',
       borderRadiusSmall: '0',
-      heightMini: '24px',
-      heightTiny: '28px',
-      heightSmall: '32px',
-      heightMedium: '38px',
-      heightLarge: '44px',
-      heightHuge: '50px',
+      heightMini: '26px',
+      heightTiny: '30px',
+      heightSmall: '36px',
+      heightMedium: '42px',
+      heightLarge: '48px',
+      heightHuge: '54px',
       /* 三级投影全部置 none。这套语言用黑色半透明遮罩（--scrim-*）压暗下层来分层，
        * 不给上层加投影 —— 实测鹰角官网主 CSS 里 box-shadow 总共只出现一次。
        * 弹层因此失去与背景的分离手段，所以 base.css 末尾给它们补了 1px 硬描边。 */
@@ -235,7 +234,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       textColorHoverPrimary: t.primaryForeground,
       textColorPressedPrimary: t.primaryForeground,
       textColorFocusPrimary: t.primaryForeground,
-      paddingMedium: '0 18px',
+      paddingMedium: '0 22px',
       /* 禁用态。Naive 的默认是「主按钮仍然黄底，字换成 baseColor（浅色下就是白）」，
        * 再乘一层 --n-opacity-disabled（0.5）—— 实测 1.03:1，浅色下那颗禁用的「提交订单」
        * 整个读不出来（用户截图报的就是它）。
@@ -277,9 +276,9 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       thFontWeight: '700',
       tdColorHover: '#00000005',
       tdColorStriped: '#00000002',
-      thPaddingMedium: '10px 14px',
-      tdPaddingMedium: '12px 14px',
-      fontSizeMedium: '13px',
+      thPaddingMedium: '12px 16px',
+      tdPaddingMedium: '15px 16px',
+      fontSizeMedium: '14px',
     },
     Input: {
       color: t.surfaceInput,
@@ -298,7 +297,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       boxShadowActive: focusRing,
     },
     Tag: {
-      heightMedium: '26px',
+      heightMedium: '28px',
       fontWeightStrong: '700',
       colorBordered: 'transparent',
     },
@@ -308,7 +307,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       itemColorActiveHover: p.hover,
       itemTextColorActiveHover: t.primaryForeground,
       itemTextColorActiveHoverHorizontal: t.primaryForeground,
-      itemHeight: '42px',
+      itemHeight: '46px',
     },
     Tabs: {
       tabTextColorActiveLine: t.foreground,
@@ -320,7 +319,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
     },
     Dialog: {
       color: panel,
-      titleFontSize: '17px',
+      titleFontSize: '19px',
       titleFontWeight: '700',
     },
     Upload: {
@@ -329,10 +328,10 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       draggerBorderHover: `1px dashed ${t.accentText}`,
     },
     Statistic: {
-      /* 指标值是全站字号落差的顶端（正文 13、面板小标题 11，这里是 44）。
+      /* 指标值是全站字号落差的顶端（正文 16、面板小标题 12，这里是 52）。
        * 目标风格靠这种极端落差建立层级，而不是靠卡片与阴影。 */
-      valueFontSize: '44px',
-      labelFontSize: '12px',
+      valueFontSize: '52px',
+      labelFontSize: '13px',
       labelTextColor: t.textTertiary,
       valueTextColor: t.textPrimary,
     },
@@ -364,8 +363,6 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       // 提示框底在深浅主题下都是深色，所以文字固定用白色，不跟着主题走
       textColor: '#ffffff',
     },
-    Alert: {
-    },
     Message: {
       colorInfo: panel,
       colorSuccess: panel,
@@ -380,7 +377,7 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
     Form: {
       labelFontWeight: '600',
       labelTextColor: t.textSecondary,
-      feedbackHeightMedium: '22px',
+      feedbackHeightMedium: '24px',
     },
     Empty: {
       /* 空态的插图是「图形」，WCAG 要 3:1；textQuaternary 只有 2.61:1。 */

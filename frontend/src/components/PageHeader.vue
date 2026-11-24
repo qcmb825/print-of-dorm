@@ -1,20 +1,19 @@
 <script setup lang="ts">
 /** 页面标题区：**一份电子文档的头**。
  *
- *  自上而下四层，对应真实在线文档/终端界面的头部结构：
- *    ① 文件头铭牌 —— 密级、版号、网格基准。密级写 INTERNAL USE ONLY 而不是
- *      CLASSIFIED：这个系统确实是登录才能进的内部工具，但没有分类分级制度，
- *      编一个"绝密"出来就是扮演，不是设计。
- *    ② 标题行 —— 斜切强调块 + 页面编号 + 大标题
- *    ③ 字段行 —— 等宽标签 + 点线引导 + 等宽值。这是"记录视图"的形状，
- *      而纸上同名信息的形状是实线格子；三个值都取自真实状态。
- *    ④ 收尾 —— 扫描基线 + 扇区读数 + 刻度尺
+ *  自上而下三层（2026-11-22 从四层减到三层：原来还有一行「文件头铭牌」
+ *  （INTERNAL USE ONLY / REV 2.006）和一行 PATH/CODE/SYNC 字段行，全是装饰性
+ *  微小字，两行叠在标题上下让整页读出发闷 —— 铭牌整行撤掉，字段行只留下
+ *  有功能的 SYNC（通道健康度挂在它的光标上）并进收尾行）：
+ *    ① 眉题 —— 编号 + 英文页名（古铜等宽）
+ *    ② 标题行 —— 骑字斜梁 + 巨题
+ *    ③ 收尾行 —— 扫描基线 + 扇区读数 + SYNC 校时 + 刻度尺
  *
  *  编号从路由 meta.code 取，不要求调用方传 ——「页面编号」只有一个事实来源
  *  （router/index.ts），页面增删时不会出现"界面上的编号和导航对不上"。
  *
- *  heading：管理端用 lg（30/44），学生端用 md（20/30）。手机屏幕高度有限，
- *  44px 标题会占掉近 1/6 屏高，而学生端以手机为主。
+ *  heading：管理端用 lg，学生端用 md。手机屏幕高度有限，
+ *  巨题会占掉过多屏高，而学生端以手机为主。
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
@@ -35,8 +34,12 @@ const props = defineProps<{
 
 const route = useRoute()
 const pageCode = computed(() => route.meta.code as string | undefined)
+/** 英文页名（眉题的第二段）。与巨号幽灵字同一个事实来源（route.meta.en）。 */
+const enName = computed(() => route.meta.en as string | undefined)
+/** 字号落差即层级：lg 档桌面 100px（--text-6xl），md 档 52px。
+ *  上一版封顶 44px 被评「太规矩」—— 这套语言的层级本来就靠极端落差建立。 */
 const headingClass = computed(() =>
-  props.heading === 'md' ? 'text-xl sm:text-3xl' : 'text-3xl sm:text-4xl',
+  props.heading === 'md' ? 'text-2xl sm:text-4xl' : 'text-4xl sm:text-6xl',
 )
 
 /** 同步时钟（SYNC 字段）。它是把"文档"读成"电子文档"最省力的一处 ——
@@ -45,72 +48,51 @@ const clock = useClock()
 </script>
 
 <template>
-  <header class="relative mb-5">
-    <!-- ① 文件头铭牌。真实的工单/技术文件顶部都会有这类铭牌；
-         这里的信息全部来自系统真实状态（页面编号、构建基准）。 -->
-    <div
-      class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b pb-1.5"
-      style="border-color: var(--border)"
-    >
-      <span class="readout">
-        <template v-if="pageCode">{{ pageCode }} // </template>INTERNAL USE ONLY
-      </span>
-      <span class="readout hidden sm:inline">REV 2.006 / GRID 48</span>
-    </div>
-
-    <div class="relative mt-4 flex flex-wrap items-start justify-between gap-3">
+  <header class="relative mb-8">
+    <div class="relative flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
-        <div class="flex items-baseline gap-2.5">
-          <!-- 斜切强调块：整套视觉里最"宣传片"的一笔，用 clip-path 切出平行四边形。
-               它是纯装饰、不可交互，所以不违反 clip-path 的两条禁令。 -->
-          <span class="cut h-5 w-2.5 shrink-0 bg-[var(--accent-text)]" aria-hidden="true" />
-          <span v-if="pageCode" class="readout shrink-0">{{ pageCode }} //</span>
-          <h1 class="font-heading leading-none font-bold tracking-tight" :class="headingClass">
-            {{ title }}
-          </h1>
-          <!-- 标题行右侧的补充记号（未读角标之类）。做成槽而不是 prop：
-               它承载的是"这一页独有的东西"，写进 prop 就得为每个调用方加一个字段。 -->
-          <slot name="title-append" />
+        <div class="min-w-0">
+          <!-- ① 眉题：黑块编号 + 方括号英文页名（古铜等宽），档案注记层。
+               黑块与方括号词组来自 ignoredone.space 的语汇（SLEEP [CYCLE] 结构）：
+               纯黑小方块是纸面上与巨题呼应的「对峙点」，方括号把英文页名切成「机读段」。 -->
+          <span v-if="pageCode" class="title-eyebrow">
+            <span class="title-eyebrow__code">{{ pageCode }}</span>
+            <template v-if="enName"> // [{{ enName }}]</template>
+          </span>
+          <div class="relative inline-flex max-w-full items-center gap-2.5">
+            <!-- ② 斜梁：骑跨字脚下缘的斜切琥珀（.title-beam），穿越是刻意的一笔。
+                 纯装饰、不可交互，z-0 垫在标题之下。 -->
+            <span class="title-beam" aria-hidden="true" />
+            <h1 class="relative z-10 font-heading leading-none font-bold tracking-tight" :class="headingClass">
+              {{ title }}
+            </h1>
+            <!-- 标题行右侧的补充记号（未读角标之类）。做成槽而不是 prop：
+                 它承载的是"这一页独有的东西"，写进 prop 就得为每个调用方加一个字段。 -->
+            <slot name="title-append" />
+          </div>
         </div>
-        <p v-if="subtitle" class="mt-2 max-w-2xl text-sm text-ink-3">{{ subtitle }}</p>
+        <p v-if="subtitle" class="mt-3 max-w-2xl text-base text-ink-3">{{ subtitle }}</p>
       </div>
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         <slot name="actions" />
       </div>
     </div>
 
-    <!-- ③ 字段行：等宽标签 + 点线引导 + 等宽值。
-         窄屏**整行撤掉**（2026-10-11 改）：这一行是装饰性读数，不携带任务信息，
-         而手机上它把订单卡顶到一屏半之外 —— 回访学生最想看的恰恰是订单卡。
-         「退到静态等价形态或整件撤掉」是 DESIGN_RULES §1 的既定选项，这里选撤掉。
-         sm 以上并排。 -->
-    <div class="mt-3.5 hidden flex-wrap gap-x-5 gap-y-1.5 sm:flex" aria-hidden="true">
-      <span class="field w-full sm:w-auto sm:min-w-[13rem]">
-        <span class="field__k">PATH</span>
-        <span class="field__lead" />
-        <span class="field__v">{{ route.path }}</span>
-      </span>
-      <span v-if="pageCode" class="field w-full sm:w-auto sm:min-w-[9rem]">
-        <span class="field__k">CODE</span>
-        <span class="field__lead" />
-        <span class="field__v">{{ pageCode }}</span>
-      </span>
-      <span class="field w-full sm:w-auto sm:min-w-[10rem]">
+    <!-- ③ 收尾行：扫描基线 + 扇区读数 + SYNC 校时 + 刻度尺。
+         扫描高光走的就是这条 1px 基线本身，所以它永远压在**没有正文**的位置上。
+         SYNC 是唯一有功能的读数（通道健康度挂在它的光标上），
+         PATH/CODE 两个纯装饰字段已撤（编号在眉题里，路径没有阅读价值）。
+         窄屏整行撤掉：这一行不携带任务信息，而手机上它把内容顶到一屏半之外。 -->
+    <div class="relative mt-5 hidden items-center gap-4 sm:flex">
+      <span class="scan-rule flex-1" aria-hidden="true" />
+      <span v-if="pageCode" class="readout shrink-0">SECTOR {{ pageCode }} / GRID 48</span>
+      <span class="field shrink-0" aria-hidden="true">
         <span class="field__k">SYNC</span>
-        <span class="field__lead" />
-        <span class="field__v">{{ clock || '--:--:--' }}</span>
+        <span class="field__v tnum">{{ clock || '--:--:--' }}</span>
         <!-- 光标跟在时间后面：这行的读数是"活的"，光标是它最小的证据。
              通道出问题时变成双闪（见 props.channel 的注释）。 -->
         <span class="caret" :class="channel === 'alarm' && 'caret--alarm'" />
       </span>
-    </div>
-
-    <!-- ④ 收尾：扫描基线 + 扇区读数 + 刻度尺。
-         扫描高光走的就是这条 1px 基线本身，所以它永远压在**没有正文**的位置上。
-         窄屏整行撤掉，理由同 ③。 -->
-    <div class="relative mt-4 hidden items-center gap-3 sm:flex">
-      <span class="scan-rule flex-1" aria-hidden="true" />
-      <span v-if="pageCode" class="readout shrink-0">SECTOR {{ pageCode }} / GRID 48</span>
       <span class="ticks w-20 shrink-0" aria-hidden="true" />
     </div>
   </header>
