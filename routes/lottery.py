@@ -2,9 +2,14 @@
 
 业务口径全部定死在这一段，别在调用方再推一遍：
 
-  资格  **下单时间与取件时间都落在近 30 个自然日内**。取件时刻以
-        order_logs 里 action='pickup' 的留痕为准（orders 表上没有取件时刻列，
-        update_time 会被任何改动刷掉，见 db.py 那两列的注释）。资格在**加入时
+  资格  **近 30 个自然日内下过单，且这一单取件成功**。取件成功有两条落库路径，
+        两条都得认：柜台凭单号确认取件（order_logs 里 action='pickup'），以及
+        在订单台上把状态直接点成「已取件」（只有一条 status 留痕，见
+        config.py 那段「取件和改状态分开说」）。只认前者的话，走下拉框结单的
+        学生在「我的订单」里明明写着已取件，抽奖页却说他没有取件记录。
+        取件时刻不单独卡窗口：orders 表没有这一列（update_time 会被任何改动
+        刷掉，见 db.py 的注释），而取件必然发生在下单之后、此刻之前 ——
+        下单时间已经卡在窗口里了。资格在**加入时
         快照**：开奖时不重算 —— 开奖那一刻他仍是参与者，事后订单怎么变都不追溯，
         不然「撤回旧订单会不会取消我已中的奖」这种问题永远答不清。
   人数  一人一期一票。lottery_entries 的唯一索引就是这条规矩本身：
@@ -31,7 +36,7 @@ from flask import Blueprint, g, jsonify, request, send_file
 from auth import login_required, roles_required
 from config import (LOTTERY_IMAGE_EXTENSIONS, LOTTERY_IMAGE_FOLDER, LOTTERY_IMAGE_MAX_BYTES,
                     LOTTERY_PARTICIPANT_LIMIT, ORDER_LOG_PICKUP, ROLE_ADMIN, ROLE_SUPER,
-                    logger)
+                    ST_DONE, logger)
 from db import db_conn
 from security import actor_label, client_ip, security_event
 from utils import content_signature_error
@@ -135,19 +140,29 @@ def _current_lottery(conn):
 def _is_eligible(conn, user_id):
     """近 30 个自然日内「下过单且取件成功」。口径见模块头。
 
+    「取件成功」认两条路：订单当前状态是「已取件」，或这一单有 pickup 留痕。
+    两个条件只要一个成立 —— 柜台通常直接在订单台上把状态点成「已取件」，
+    那条路只写 status 留痕；只查 pickup 留痕会把这些人挡在门外，
+    而他们在「我的订单」里看到的明明是已取件（线上真出现过：订单已取件，
+    抽奖页却提示「近 30 天内没有取件成功的订单」）。
+
     日期比较沿用榜单那套写法（-29 days 含今天共 30 个自然日，见
     routes/orders.py 的 RECENT）—— 同一个口径在两处各写一份是因为
     它们描述的是两件不同的事（榜单看下单、抽奖看整条链），不共用常量。"""
     row = conn.execute('''
         SELECT 1
         FROM orders o
-        JOIN order_logs l ON l.order_id = o.id
         WHERE o.user_id = ?
-          AND l.action = ?
           AND date(o.create_time, 'localtime') >= date('now', 'localtime', '-29 days')
-          AND date(l.create_time, 'localtime') >= date('now', 'localtime', '-29 days')
+          AND (
+              o.status = ?
+              OR EXISTS (
+                  SELECT 1 FROM order_logs l
+                  WHERE l.order_id = o.id AND l.action = ?
+              )
+          )
         LIMIT 1
-    ''', (user_id, ORDER_LOG_PICKUP)).fetchone()
+    ''', (user_id, ST_DONE, ORDER_LOG_PICKUP)).fetchone()
     return row is not None
 
 
