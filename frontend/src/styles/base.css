@@ -2475,18 +2475,14 @@
     animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
   }
 
-  /* 让开相位：巨号词不另演退场 —— 它包在 .route-veil__read 里，
+  /* 让开相位：巨号词与斜梁不另演退场 —— 它们包在 .route-veil__read 里，
      跟着读数层那 14% 的快退一起走（veil-read-out），再晚就会留下「字浮在新页面上」。
-     斜梁是个例外，见下面那条。 */
-
-  /* 斜梁必须有**自己**的退场。它的静止态是 scaleX(0)，而「扫开」那条规则绑在
-     [data-phase='out'] 上：相位一切到 'in'，规则不再匹配，梁在换手那一帧当场弹回零宽 ——
-     结果就是只有入场没有出场（实测采样：phase 从 out 切到 in 时 transform 直接回到 matrix(0,0,0,1)，
-     而读数层要到 --veil-hold 之后才开始淡）。
-     补法不是「缩回去」（倒带读作撤销，且与板条让开的方向相反），而是顺着进场的方向
-     被抽离画面：与板条的错峰右扫同向，并且恰好在读数层开始淡掉之前抽完。 */
+     斜梁这一度是坏的：它的静止态是 scaleX(0)，而「扫开」那条规则绑在 [data-phase='out'] 上，
+     相位一切到 'in' 规则就不匹配了，于是它在换手那一帧当场弹回零宽 —— 字还在淡，梁已经没了，
+     读起来就是「动画演到一半突然消失」。这里不补第二套动作，只把**已经扫开**这个状态钉住，
+     让它照原设计跟着层一起退走。 */
   .route-veil[data-phase='in'] .route-veil__beam {
-    animation: veil-beam-out var(--veil-hold) var(--motion-ease-in-out) both;
+    transform: scaleX(1);
   }
 
   /* 窄屏：同比收一档（桌面那套撑到 36px 页名 / 40px 三角，小屏放不下）。
@@ -2851,18 +2847,6 @@
   }
   to {
     transform: scaleX(1);
-  }
-}
-
-/* 斜梁退场：顺着进场方向被抽走（不反向倒带 —— 那读作「撤销」，而且与板条
-   让开的方向相反）。`from` 必须显式写 scaleX(1)：静止态是 scaleX(0)，
-   省略就等于第一帧又弹回零宽，正是这条修复要消掉的那个毛病。 */
-@keyframes veil-beam-out {
-  from {
-    transform: scaleX(1) translate3d(0, 0, 0);
-  }
-  to {
-    transform: scaleX(1) translate3d(112%, 0, 0);
   }
 }
 
