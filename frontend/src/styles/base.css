@@ -2092,12 +2092,32 @@
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 重入：上一次换场还没走完就又点了一次导航，板条多半已经在半路上了，
-     再等各自的错峰就是一次肉眼看得见的卡顿 —— 全部立即起步（滑动时长不变，
-     从当前计算值续上，天然不会跳）。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__slat,
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__wipe-under {
-    transition-delay: 0ms;
+  /* 重入分流（2026-11-24 修复，用户实测抓到「转场会乱、变成横滑、每次都不一样」）。
+   *
+   * 从 'out' 重入（盖着屏等数据时连点）：**什么都不做**。旧规则在这里给所有板条
+   * delay:0 —— 那是 --veil-latch 还存在时为了跳过起手空拍写的；latch 早已归零，
+   * 这条规则剩下的唯一作用就是把错峰抹平：还没起步的板条一起动，五条板抱成
+   * 一整块横着滑 —— 就是用户看到的「横滑」。
+   *
+   * 从 'in' 重入（板条正在让开时连点）：板条散在屏幕右侧各处（最远已出屏 2 个屏宽），
+   * 让它们沿过渡倒着飞回拼版位就是「每次都不同的乱」。这里换成**动画**而不是过渡：
+   * 动画从关键帧起步、与板条当前位置无关 —— 板条瞬回屏外左侧（看不见），
+   * 再按同样的错峰重新扫入，方向永远一致，乱的可能性被结构性消掉。
+   * 底层那条指向拼版位的过渡照常跑完（被动画压在下面），动画规则随相位离开
+   * 失效时落点恰好一致，不会回跳。 */
+  /* 填充模式只能是 backwards 不能是 both（实测教训）：动画演完后底层值与动画
+     终点相同（都是拼版位），不需要 forwards 填充来保持；而留着它，相位切 'in' 时
+     浏览器会把「动画填充被摘掉」当作这次值变化的来源 —— 动画驱动的值变化不触发
+     过渡，于是让开那一趟**没有任何过渡事件**、板条瞬跳到屏外右侧，
+     exitDone 等不到 transitionend，只能靠 3s 看门狗收尾（事件日志实证）。
+     backwards 在错峰延迟期间把板条钉在起点（屏外左侧），演完即交还底层值。 */
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__slat {
+    animation: veil-slat-recover calc(var(--veil-gate) - 4 * var(--veil-slat-step))
+      var(--motion-ease-out) calc(var(--i) * var(--veil-slat-step)) backwards;
+  }
+
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__wipe-under {
+    animation: veil-under-recover var(--veil-gate) var(--motion-ease-out) backwards;
   }
 
   /* 让开：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
@@ -2869,6 +2889,27 @@
   }
   to {
     transform: translate3d(100%, 0, 0);
+  }
+}
+
+/* 重入收回（从 'in' 相位被打断）：板条/黄层从屏外左侧重新扫到拼版位。
+ * 与正常封屏同落点、同时长令牌 —— 动画与过渡的终点一致，规则失效时不回跳。 */
+@keyframes veil-slat-recover {
+  from {
+    transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
+  }
+  to {
+    transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
+  }
+}
+
+@keyframes veil-under-recover {
+  from {
+    transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
+  }
+  to {
+    transform: translate3d(var(--motion-route-wipe-lead), 0, 0)
+      skewX(var(--motion-route-wipe-skew));
   }
 }
 

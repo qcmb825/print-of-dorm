@@ -24,13 +24,15 @@
  *
  *  这一层永远挂在 DOM 里，靠 [data-phase] 切状态、靠 visibility 收掉。
  *  不用 v-if：一是 v-if 每次重挂都拿不到「从屏外滑进来」的那条过渡（初始样式即终态，
- *  不产生 transition）；二是快速连点时重建节点会让面板跳回屏外重播，
- *  而过渡是从当前计算值续上的，天然不会跳。也不能用 display:none —— 那会让过渡彻底不跑。
+ *  不产生 transition）；二是快速连点时重建节点会让面板跳回屏外重播。
+ *  也不能用 display:none —— 那会让过渡彻底不跑。
+ *  连点重入的分流见 base.css「重入分流」段与 composables/route-veil.ts 的 reFrom：
+ *  从让开相位打断时板条走 recover 动画（瞬回左侧重新扫入），不倒飞。
  */
 import { useRouteVeil } from '@/composables/route-veil'
 
 // 解构出来是顶层 ref，模板里自动解包；readonly 的那几个只读不写。
-const { phase, profile, target, reentrant, exitDone } = useRouteVeil()
+const { phase, profile, target, reentrant, reFrom, exitDone } = useRouteVeil()
 
 /** 「让开演完」的回报：两个信号都算 ——
  *  1. 末条板条的 transform transitionend（常规路径：板条错峰让开，末条最晚收尾）；
@@ -69,6 +71,7 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       :data-phase="phase"
       :data-profile="profile"
       :data-run="reentrant ? 're' : 'first'"
+      :data-re-from="reentrant ? reFrom : undefined"
       aria-hidden="true"
       @transitionend="onTransitionEnd"
     >

@@ -38,11 +38,16 @@ const phase = ref<VeilPhase>('idle')
 const profile = ref<VeilProfile>('inline')
 const target = ref<VeilTarget>({ code: '', title: '', word: '' })
 
-/** 本次 out 是不是「上一次换场还没走完就又点了一次」。
- *  重入时不能再留那一段空拍（--veil-latch）：面板多半已经滑到半路，
- *  再等 120ms 就是一次肉眼看得见的卡顿。它只在一次完整换场的开头有意义 ——
- *  那一下是留给「旧页先自己淡掉一点」的。 */
+/** 本次 out 是不是「上一次换场还没走完就又点了一次」。 */
 const reentrant = ref(false)
+
+/** 重入发生的那一刻状态机停在哪个相位（'out' | 'in' | ''）。CSS 靠它分流：
+ *  - 从 'out' 重入（数据等待中连点）：板条多半盖着屏，什么都不用做；
+ *  - 从 'in' 重入（板条正在让开时连点）：板条散在屏幕右侧各处，
+ *    让它们「倒着飞回来」就是 2026-11-24 用户实测抓到的乱 ——
+ *    这一档改走 veil-slat-recover 动画：瞬回屏外左侧、按错峰重新扫入，
+ *    方向永远一致。 */
+const reFrom = ref<'' | 'out' | 'in'>('')
 
 let runSeq = 0
 let enterDone = false
@@ -131,6 +136,7 @@ export function useRouteVeil() {
   function begin(next: VeilProfile, nextTarget: VeilTarget): number {
     const id = ++runSeq
     reentrant.value = phase.value !== 'idle'
+    reFrom.value = phase.value === 'idle' ? '' : phase.value
     enterDone = false
     exitDoneFlag = false
     profile.value = next
@@ -194,6 +200,7 @@ export function useRouteVeil() {
     disarmWatchdog()
     phase.value = 'idle'
     reentrant.value = false
+    reFrom.value = ''
   }
 
   /** 换场进行中又导航了一次时，把场记读数改写到新的目标上。
@@ -216,6 +223,7 @@ export function useRouteVeil() {
     profile: readonly(profile),
     target: readonly(target),
     reentrant: readonly(reentrant),
+    reFrom: readonly(reFrom),
     begin,
     open,
     settle,
