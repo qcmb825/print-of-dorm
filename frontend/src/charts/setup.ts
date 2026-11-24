@@ -27,8 +27,12 @@ export interface ChartPalette {
  *  读不到（SSR、令牌还没解析）时回落到 300：那个值等于 --motion-dur-decor。 */
 function motionMs(name: string, fallback: number): number {
   if (typeof document === 'undefined') return fallback
-  const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name))
-  return Number.isFinite(value) ? value : fallback
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const value = Number.parseFloat(raw)
+  if (!Number.isFinite(value)) return fallback
+  // 与 StatusTag.readMs 同一处坑：构建期压缩把 300ms 改写成 .3s，
+  // parseFloat 得 0.3 —— 不看单位，图表入场动画就只有 0.3ms。
+  return raw.endsWith('ms') ? value : value * 1000
 }
 
 /** 图表配色全部从令牌推导，改配色时只需要动 tokens.css。 */

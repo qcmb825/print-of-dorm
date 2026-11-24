@@ -48,6 +48,8 @@ import {
   NTimePicker,
 } from 'naive-ui'
 import { useRouter } from 'vue-router'
+import PageHeader from '@/components/PageHeader.vue'
+import StatCell from '@/components/StatCell.vue'
 import { ApiError } from '@/api/client'
 import { BOT_QR_URL, botHintApi } from '@/api/endpoints'
 import type { BotHint } from '@/api/types'
@@ -567,16 +569,18 @@ onMounted(() => {
 
 <template>
   <div class="mx-auto max-w-3xl">
-    <header class="mb-4 flex items-center justify-between gap-3">
-      <div>
-        <h1 class="font-heading text-lg font-bold sm:text-xl">设置</h1>
-        <p class="mt-0.5 text-sm text-ink-3">账号资料 / 密码 / 取件提醒 / 通知与默认参数 / 存储用量</p>
-      </div>
-      <NButton size="small" quaternary :loading="loading" @click="refresh()">
-        <template #icon><RefreshCw :size="15" /></template>
-        刷新
-      </NButton>
-    </header>
+    <PageHeader
+      heading="md"
+      title="设置"
+      subtitle="账号资料 / 密码 / 取件提醒 / 通知与默认参数 / 存储用量"
+    >
+      <template #actions>
+        <NButton size="small" quaternary :loading="loading" @click="refresh()">
+          <template #icon><RefreshCw :size="15" /></template>
+          刷新
+        </NButton>
+      </template>
+    </PageHeader>
 
     <div v-if="loading && !overview" class="flex flex-col gap-3">
       <NSkeleton v-for="index in 4" :key="index" height="120px" :sharp="false" />
@@ -601,30 +605,14 @@ onMounted(() => {
         在下方「QQ 号」一栏补填（5-12 位数字）。
       </NAlert>
 
-      <!-- 我的下单概况 -->
+      <!-- 我的下单概况：统一走 StatCell（刻度轨小读数格，此处原先把刻度轨弄丢了） -->
       <section class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-        <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-3 tech-label--cn">我的单数</div>
-          <div class="tnum font-heading text-xl font-bold">{{ orders?.total ?? 0 }}</div>
-        </div>
-        <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-3 tech-label--cn">进行中</div>
-          <div class="tnum font-heading text-xl font-bold">{{ orders?.in_progress ?? 0 }}</div>
-        </div>
-        <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-3 tech-label--cn">待取件</div>
-          <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
-            {{ orders?.ready ?? 0 }}
-          </div>
-        </div>
-        <div class="panel panel-raised px-3 py-2.5">
-          <div class="tech-label text-ink-3 tech-label--cn">累计花费</div>
-          <!-- 金额走 format.ts 的 priceLabel，不在模板里 toFixed：
-               同一个数在别处显示成另一种写法时，没人会去查是哪一处写的。 -->
-          <div class="tnum font-heading text-xl font-bold">
-            {{ orders ? priceLabel(orders.spent) : '—' }}
-          </div>
-        </div>
+        <StatCell label="我的单数" :value="orders?.total ?? 0" />
+        <StatCell label="进行中" :value="orders?.in_progress ?? 0" />
+        <StatCell label="待取件" :value="orders?.ready ?? 0" accent />
+        <!-- 金额走 format.ts 的 priceLabel，不在模板里 toFixed：
+             同一个数在别处显示成另一种写法时，没人会去查是哪一处写的。 -->
+        <StatCell label="累计花费" :value="orders ? priceLabel(orders.spent) : '—'" />
       </section>
 
       <!-- 存储用量 -->
@@ -657,7 +645,7 @@ onMounted(() => {
 
         <dl class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">订单里的文件</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">订单里的文件</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.orders_count ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.orders_bytes) : '—' }}</span>
@@ -665,7 +653,7 @@ onMounted(() => {
             </dd>
           </div>
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">未完成的上传</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">未完成的上传</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               {{ usage?.chunks_count ?? 0 }} / {{ usage?.chunks_max ?? 0 }} 个 ·
               <span class="tnum">{{ usage ? formatBytes(usage.chunks_bytes) : '—' }}</span>
@@ -692,26 +680,26 @@ onMounted(() => {
 
         <dl class="mb-3 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-3 tech-label--cn">学号（登录名）</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">学号（登录名）</dt>
             <dd class="tnum m-0 font-semibold">{{ account?.student_id }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-3 tech-label--cn">姓名</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">姓名</dt>
             <dd class="m-0 font-semibold">{{ account?.real_name }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-3 tech-label--cn">注册时间</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">注册时间</dt>
             <dd class="tnum m-0 text-ink-2">{{ shortTime(account?.create_time) }}</dd>
           </div>
           <div class="flex items-baseline justify-between gap-2 border-b pb-1.5" style="border-color: var(--border)">
-            <dt class="tech-label text-ink-3 tech-label--cn">上次登录</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">上次登录</dt>
             <dd class="tnum m-0 text-ink-2">{{ shortTime(account?.last_login) }}</dd>
           </div>
         </dl>
 
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">昵称</span>
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">昵称</span>
             <NInput
               v-model:value="profileForm.nickname"
               :maxlength="20"
@@ -719,7 +707,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">宿舍</span>
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">宿舍</span>
             <NInput
               v-model:value="profileForm.dorm"
               :maxlength="50"
@@ -727,7 +715,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">
               QQ 号
               <span class="ml-1 font-normal">（取件提醒用，必填）</span>
             </span>
@@ -738,7 +726,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">
               其他联系方式
               <span class="ml-1 font-normal">（选填，可整组留空）</span>
             </span>
@@ -801,7 +789,7 @@ onMounted(() => {
 
         <dl class="grid gap-2 text-sm sm:grid-cols-2">
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">收件邮箱</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">收件邮箱</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               <template v-if="account?.qq">
                 <span class="tnum font-semibold">&lt;{{ account.qq }}&gt;@qq.com</span>
@@ -816,7 +804,7 @@ onMounted(() => {
             </dd>
           </div>
           <div class="px-2.5 py-2" style="background-color: var(--muted)">
-            <dt class="tech-label text-ink-3 tech-label--cn">发送时机</dt>
+            <dt class="tech-label text-ink-3 tech-label--cn text-xs">发送时机</dt>
             <dd class="mt-1 mb-0 text-ink-2">
               订单状态变为「可取件」时
               <span class="mt-0.5 block text-ink-3">
@@ -874,7 +862,7 @@ onMounted(() => {
                 <span class="block text-sm font-semibold">QQ 推送</span>
                 <span class="mt-0.5 block text-xs text-ink-3">可取件时通过 QQ 提醒 · 需先填写 QQ 号</span>
               </span>
-              <NSwitch v-model:value="prefsForm.notify_qq" size="small" aria-label="QQ 推送" />
+              <NSwitch v-model:value="prefsForm.notify_qq" :round="false" size="small" aria-label="QQ 推送" />
             </div>
             <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
@@ -889,7 +877,7 @@ onMounted(() => {
                   可取件时发一封到 &lt;QQ号&gt;@qq.com · 仅限本人的取件提醒
                 </span>
               </span>
-              <NSwitch v-model:value="prefsForm.notify_mail" size="small" aria-label="邮件提醒" />
+              <NSwitch v-model:value="prefsForm.notify_mail" :round="false" size="small" aria-label="邮件提醒" />
             </div>
             <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
@@ -903,7 +891,7 @@ onMounted(() => {
                 <span class="block text-sm font-semibold">隐藏已取件的单</span>
                 <span class="mt-0.5 block text-xs text-ink-3">「我的订单」与机器人「订单」均不再列出</span>
               </span>
-              <NSwitch v-model:value="prefsForm.hide_done_orders" size="small" aria-label="隐藏已取件的单" />
+              <NSwitch v-model:value="prefsForm.hide_done_orders" :round="false" size="small" aria-label="隐藏已取件的单" />
             </div>
             <!-- 口径同上：文字可点、开关走自己的 v-model，各自只生效一次 -->
             <div
@@ -914,7 +902,7 @@ onMounted(() => {
                 <span class="block text-sm font-semibold">机器人用卡片回</span>
                 <span class="mt-0.5 block text-xs text-ink-3">停用后订单 / 工单查询改为纯文字 · 省流量</span>
               </span>
-              <NSwitch v-model:value="prefsForm.card_replies" size="small" aria-label="机器人用卡片回" />
+              <NSwitch v-model:value="prefsForm.card_replies" :round="false" size="small" aria-label="机器人用卡片回" />
             </div>
           </div>
 
@@ -931,7 +919,7 @@ onMounted(() => {
                   时段内的提醒<strong>不丢失</strong> · 攒到时段结束后再推。单号有时效，夜里静音不等于不需要
                 </span>
               </span>
-              <NSwitch v-model:value="prefsForm.quietOn" size="small" aria-label="免打扰时段" />
+              <NSwitch v-model:value="prefsForm.quietOn" :round="false" size="small" aria-label="免打扰时段" />
             </div>
             <div v-if="prefsForm.quietOn" class="mt-2.5 flex flex-wrap items-center gap-2">
               <NTimePicker
@@ -961,7 +949,7 @@ onMounted(() => {
                  纸张、颜色、单价现在都在价目项这一条里（v20），再留那两个下拉，
                  就会出现「默认颜色=彩色、默认价目项=黑白」这种自相矛盾的组合。 -->
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">默认价目项</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">默认价目项</span>
               <NSelect
                 v-model:value="prefsForm.default_price_item_id"
                 :options="itemOptions"
@@ -973,11 +961,11 @@ onMounted(() => {
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">默认单双面</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">默认单双面</span>
               <NSelect v-model:value="prefsForm.default_duplex" :options="duplexOptions" size="small" />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">默认份数</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">默认份数</span>
               <!-- 清空 = 「没设过」= 每次下单都问。不写 1 当兜底：
                    1 是个**决定**，代替用户决定「就打一份」是最不该做的默认值。 -->
               <!-- 上下限与下单接口同一套常量：这里放宽到 99 的话，
@@ -992,7 +980,7 @@ onMounted(() => {
               />
             </label>
             <label class="flex flex-col gap-1">
-              <span class="tech-label text-ink-3 tech-label--cn">机器人「订单」每页条数</span>
+              <span class="tech-label text-ink-3 tech-label--cn text-xs">机器人「订单」每页条数</span>
               <NInputNumber
                 v-model:value="prefsForm.orders_page_size"
                 size="small"
@@ -1120,7 +1108,7 @@ onMounted(() => {
 
         <div class="grid gap-3 sm:grid-cols-3">
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">当前密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">当前密码</span>
             <NInput
               v-model:value="passwordForm.current"
               type="password"
@@ -1131,7 +1119,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">新密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">新密码</span>
             <NInput
               v-model:value="passwordForm.next"
               type="password"
@@ -1142,7 +1130,7 @@ onMounted(() => {
             />
           </label>
           <label class="flex flex-col gap-1">
-            <span class="tech-label text-ink-3 tech-label--cn">确认新密码</span>
+            <span class="tech-label text-ink-3 tech-label--cn text-xs">确认新密码</span>
             <NInput
               v-model:value="passwordForm.confirm"
               type="password"

@@ -5,6 +5,7 @@ import { ClipboardList, LayoutDashboard, MessageSquare, TrendingUp, Upload } fro
 import { NAlert } from 'naive-ui'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import DecorStrip from '@/components/DecorStrip.vue'
+import MainChrome from '@/components/MainChrome.vue'
 import AnnouncementBar from '@/components/AnnouncementBar.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import BotHintCard from '@/components/BotHintCard.vue'
@@ -168,7 +169,7 @@ onMounted(() => {
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="nav-link flex items-center gap-1.5 px-3 py-2 text-sm font-semibold no-underline"
+            class="nav-link flex items-center gap-2 px-4 py-2.5 text-base font-semibold no-underline"
             :class="currentPath === item.to && 'nav-link--active'"
             :style="
               currentPath === item.to
@@ -176,7 +177,7 @@ onMounted(() => {
                 : { color: 'var(--text-tertiary)' }
             "
           >
-            <component :is="item.icon" :size="15" />
+            <component :is="item.icon" :size="17" />
             {{ item.label }}
           </RouterLink>
         </nav>
@@ -206,37 +207,9 @@ onMounted(() => {
 
     <!-- min-w-0 不能省：main 是 flex 子项，默认的 min-width:auto 会让它被内部
          min-content 顶宽（窄屏下表现为整页多出 24px 横向滚动），必须显式允许收缩。 -->
-    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-x-clip px-3 pt-4 pb-24 sm:px-5 sm:pt-6 sm:pb-10">
-        <!-- 括角与竖向刻度各自独立成层：视差要给它们不同的速率，而背景图没法单独 transform。 -->
-        <span
-          class="frame-brackets pointer-events-none absolute inset-1.5"
-          data-parallax
-style="--depth: 4px"
-          aria-hidden="true"
-        />
-        <span
-          class="vticks pointer-events-none absolute top-0 bottom-0 left-0"
-          data-parallax
-style="--depth: 4px"
-          aria-hidden="true"
-        />
-        <!-- 右边是读数沟：左尺右沟，像一块屏的标尺与滚动沟。两件东西分列内容区两缘，
-             所以不会像之前括角与竖刻度那样叠在一起。
-             （它上一版是"穿孔边"—— 那是装订线的语言，属于纸；沟槽是屏的语言。） -->
-        <span
-          class="decor-rail pointer-events-none absolute top-2 right-0 bottom-2 w-4"
-          data-parallax
-style="--depth: 3px"
-          aria-hidden="true"
-        />
-      <span
-        class="watermark"
-        data-parallax
-style="--depth: 20px"
-        aria-hidden="true"
-      >
-        {{ route.meta.code }}
-      </span>
+    <main class="sheet relative mx-auto w-full min-w-0 max-w-6xl flex-1 overflow-x-clip px-4 pt-6 pb-24 sm:px-8 sm:pt-10 sm:pb-14">
+      <!-- 装饰四件套（括角/竖刻度/读数沟/幽灵字）见 MainChrome.vue。 -->
+      <MainChrome />
       <!-- profile="inline"：这一层 stage 只包 <main> 里的页面组件，本站唯一的 fixed
            （下面那条底部标签栏）与各条 sticky 顶栏都在它之外，所以可以接回横向接入语汇。
            换场覆盖层的档位由它决定：子页档短、缝窄，外壳档（App.vue）拉满。 -->
@@ -299,10 +272,9 @@ style="--depth: 6px"
     <!-- 底部标签栏：窄屏用，与上面横向导航在 md 断点交接。
          列数跟着导航项走，管理员会多一条"管理控制台"
 
-         这一栏的字只有 11px，是全站最小的一档，所以两态都得按小字的 4.5:1 来选色：
-         激活态原来读 --primary(#d4a017)，在页面底上只有 2.26:1；未激活态原来读
-         --text-quaternary(40% 黑，等效 #9c9c9c)只有 2.61:1。这里换成 --accent-text
-         （5.20:1）与 --text-tertiary（等效 #6e6e6e，4.84:1）。
+         这一栏的字是全站最小的一档，所以两态都得按小字的 4.5:1 来选色：
+         激活态读 --accent-text（古铜，暖纸底 6.68:1），未激活态读
+         --text-tertiary（66% 墨，5.41:1）。
          这一栏没有色条/下划线，激活态本来就只靠颜色区分，因此必须真的过 AA。
          上面那排横向导航不同：它的文字是 --foreground，本来就合格，不动。 -->
     <!-- 高度写死（含安全区），而不是让内容把它撑出来：它读 tokens.css 的 --chrome-tabbar-h，
@@ -340,7 +312,7 @@ style="--depth: 6px"
         <!-- 激活记号由共享滑块接管（见 composables/motion.ts 的 useNavSlider）：
              原来这里是一小段斜切色条，现在改成一条横贯整格的指示器滑过来。
              滑块由 JS 插进 nav，data-nav-slider 让它把逐项记号让位（见 base.css）。 -->
-        <component :is="item.icon" :size="19" />
+        <component :is="item.icon" :size="20" />
         <!-- w-full + truncate 是给「管理员看学生端」那种情形兜底的：
              他的标签栏比别人多一格（6 列），320px 屏上每列只剩 ~52px，
              「管理控制台」五个字放不下。不加的话是硬溢出，会把整页顶出横向滚动条，

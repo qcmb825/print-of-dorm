@@ -994,7 +994,7 @@ onMounted(async () => {
       <div class="min-w-0 flex-1">
         <p class="truncate text-sm font-semibold">
           《{{ session.filename }}》
-          <span v-if="session.resumed" class="text-primary">（续传）</span>
+          <span v-if="session.resumed" class="text-accent-text">（续传）</span>
         </p>
         <p class="mt-0.5 text-xs text-ink-3">
           {{ prettySize(session.size) }} · {{ session.received_count }}/

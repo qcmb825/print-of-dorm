@@ -52,6 +52,8 @@ function currentTarget(): VeilTarget {
   return {
     code: props.veilCode ?? `SECTOR ${(route.meta.code as string | undefined) ?? '--'}`,
     title: props.veilTitle ?? (route.meta.title as string | undefined) ?? props.transitionKey,
+    // 巨号词：外壳档就是代号本身（STAFF…），子页档取路由表里的英文页名（与幽灵字同源）
+    word: props.veilCode ?? (route.meta.en as string | undefined) ?? '',
   }
 }
 

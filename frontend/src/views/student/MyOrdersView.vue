@@ -10,6 +10,7 @@ import { authApi, orderApi } from '@/api/endpoints'
 import { DUPLEX_LABELS, type Order, type SitePickup } from '@/api/types'
 import StatusTag from '@/components/StatusTag.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import StatCell from '@/components/StatCell.vue'
 import {
   COLOR_TYPE_LABEL,
   STATUS_COLOR_VAR,
@@ -251,6 +252,7 @@ async function withdraw(order: Order): Promise<void> {
         <div class="mr-1 flex items-center gap-1.5 text-xs text-ink-3">
           <NSwitch
             :value="hideDone"
+            :round="false"
             size="small"
             :loading="savingHideDone"
             aria-label="隐藏已取件"
@@ -268,33 +270,13 @@ async function withdraw(order: Order): Promise<void> {
     <!-- 四格汇总：与「服务数据」的指标格同一件东西 —— 左缘立一条竖刻度（.gauge），
          读起来像仪表读数窗。pl-4 不能省：刻度占的是内边距，压到标签上就成了脏东西。 -->
     <div v-if="orders.length" class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-      <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-3 tech-label--cn text-xs">进行中</div>
-        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickActive && 'value-tick--on'">
-          {{ summary.active }}
-        </div>
-      </div>
-      <!-- 「可取件」那格的数字本来就是强调色，所以这一跳在它身上看不见 ——
+      <StatCell label="进行中" :value="summary.active" :ticking="tickActive" />
+      <!-- 「可取件」那格不接 value-tick：数字本来就是强调色，那一跳在它身上看不见 ——
            不给它另发明第二种信号（同一页里两种变化反馈比少一种更容易误读）。 -->
-      <div class="gauge panel panel-raised border-[var(--accent-tint-border)] py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-3 tech-label--cn text-xs">可取件</div>
-        <div class="tnum font-heading text-xl font-bold" style="color: var(--accent-text)">
-          {{ summary.ready }}
-        </div>
-      </div>
-      <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-3 tech-label--cn text-xs">已取件</div>
-        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickDone && 'value-tick--on'">
-          {{ summary.done }}
-        </div>
-      </div>
+      <StatCell label="可取件" :value="summary.ready" accent hot />
+      <StatCell label="已取件" :value="summary.done" :ticking="tickDone" />
       <!-- 合计只统计当前这一页拉到的订单（此接口不带分页，学生自己能看到全部） -->
-      <div class="gauge panel panel-raised py-2.5 pr-3 pl-4">
-        <div class="tech-label text-ink-3 tech-label--cn text-xs">已计费合计</div>
-        <div class="value-tick tnum font-heading text-xl font-bold" :class="tickSpent && 'value-tick--on'">
-          ¥{{ spent.toFixed(2) }}
-        </div>
-      </div>
+      <StatCell label="已计费合计" :value="`¥${spent.toFixed(2)}`" :ticking="tickSpent" />
     </div>
 
     <!-- 空态之一：真的没有订单 -->

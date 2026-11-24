@@ -285,6 +285,69 @@ export function useTypewriter(
   return { text, typing }
 }
 
+/** 数字滚动（odometer）：值变化时从旧值滚到新值。
+ *
+ *  与 useValueTick 的分工：tick 回答「这格刚更新过」，odometer 回答「变了多少、
+ *  往哪边变」—— 滚动方向本身就是信息（数字往下滚 = 变少）。两者不冲突：
+ *  滚动由这里驱动，落定后那一跳仍由 tick 的颜色完成。
+ *
+ *  三条边界，与这套语言里的其他数值动效同一套：
+ *  1. **只在值真变时滚**，首次到达（骨架 → 真实值）不滚 —— 那一滚的语义是
+ *     「你正在看的数变了」，而第一次有值时还没有「你正在看的」那个数；
+ *  2. **非数值（'—' 之类）与减少动效下直接给终值**，不是「滚快一点」；
+ *  3. 连续变化时旧滚动当场作废（cancelAnimationFrame），从**当前显示值**继续滚，
+ *     轮询 10~20s 的节奏下不会出现两行数字叠跑。
+ */
+export function useOdometer(
+  source: () => number | string,
+  { durationMs = 560 }: { durationMs?: number } = {},
+): Ref<string> {
+  const display = ref(String(source()))
+  let raf = 0
+  let seen = 0
+
+  watch(source, (next, prev) => {
+    seen += 1
+    if (raf) {
+      cancelAnimationFrame(raf)
+      raf = 0
+    }
+    const to = typeof next === 'number' && Number.isFinite(next) ? next : NaN
+    const fromShown = Number(display.value)
+    const canRoll =
+      seen > 1 &&
+      !prefersReducedMotion.value &&
+      Number.isFinite(to) &&
+      Number.isFinite(fromShown) &&
+      typeof prev !== 'undefined' &&
+      to !== fromShown
+    if (!canRoll) {
+      display.value = String(next)
+      return
+    }
+    const from = fromShown
+    const start = performance.now()
+    const tick = (now: number): void => {
+      const t = Math.min((now - start) / durationMs, 1)
+      // easeOutCubic：起步快、尾段长 —— 与 --motion-ease-out 同一手感
+      const e = 1 - Math.pow(1 - t, 3)
+      display.value = String(Math.round(from + (to - from) * e))
+      if (t < 1) {
+        raf = requestAnimationFrame(tick)
+      } else {
+        raf = 0
+      }
+    }
+    raf = requestAnimationFrame(tick)
+  })
+
+  onBeforeUnmount(() => {
+    if (raf) cancelAnimationFrame(raf)
+  })
+
+  return display
+}
+
 /** 断路器跳闸后的复位时间（ms）。要盖住最长的那一段跳闸动画（斜纹带 + 边框闪），
  *  否则类会在动画中途被摘掉，读到的是"闪了一下就没了"。 */
 const TRIP_MS = 600

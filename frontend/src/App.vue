@@ -3,6 +3,7 @@ import { NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider
 import { computed, nextTick, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppBridge from '@/components/AppBridge.vue'
+import ContourField from '@/components/ContourField.vue'
 import TransitionReceipt from '@/components/TransitionReceipt.vue'
 import RouteTransition from '@/components/RouteTransition.vue'
 import RouteVeil from '@/components/RouteVeil.vue'
@@ -98,6 +99,11 @@ const shellLabel = computed(() => {
          **一页只能有一套底线** —— 48px 网格与图纸叠在一起就是"两层网格"那个老问题。 -->
     <div class="decor-layer" :data-guest="shellTransitionKey === 'guest' ? '' : undefined" aria-hidden="true">
       <span class="decor-layer__grid" data-parallax style="--depth: 9px" />
+      <ContourField class="decor-layer__contours" data-parallax style="--depth: 5px" />
+      <!-- 照准环：钉在视口左下角的大尺度仪器。底纹（格/点/等高线）解决的是
+           「纹理」，背景要「不空」还需要一件**大尺度的东西**——它的可见部分
+           只有伸进页边的那几段弧，与登录页图纸的罗盘同一件仪器。 -->
+      <span class="decor-layer__compass" data-parallax style="--depth: 7px" />
     </div>
 
     <NMessageProvider :max="3" placement="top">

@@ -28,11 +28,15 @@ export interface VeilTarget {
   code: string
   /** 目标页名，中文 */
   title: string
+  /** 巨号落版的拉丁代号（2026-11-23 百叶拼版换场新增）：外壳档是 STAFF / STUDENT / GUEST，
+   *  子页档是 route.meta.en（ORDERS / METRICS…）—— 就是页面上那个出血幽灵字的同一支词。
+   *  空串时场记板退化为只显示 code。 */
+  word: string
 }
 
 const phase = ref<VeilPhase>('idle')
 const profile = ref<VeilProfile>('inline')
-const target = ref<VeilTarget>({ code: '', title: '' })
+const target = ref<VeilTarget>({ code: '', title: '', word: '' })
 
 /** 本次 out 是不是「上一次换场还没走完就又点了一次」。
  *  重入时不能再留那一段空拍（--veil-latch）：面板多半已经滑到半路，
@@ -41,13 +45,16 @@ const target = ref<VeilTarget>({ code: '', title: '' })
 const reentrant = ref(false)
 
 let runSeq = 0
+let enterDone = false
+let exitDoneFlag = false
 let watchdog: ReturnType<typeof setTimeout> | null = null
 
-/** 兜底复位。正常路径永远由 @after-enter 收尾，这里只防一种情况：
- *  正在播的 enter 被一次新的 leave 取消（Vue 的 leave() 会先取消同元素的 enter），
- *  取消走的是 onEnterCancelled 而不是 onAfterEnter，settle() 就永远不会被调用。
+/** 兜底复位。正常路径由 settle（内容进场演完）+ exitDone（板条让开演完）双信号
+ *  收尾（见 settle 的注释），这里只防意外路径：比如正在播的 enter 被一次新的
+ *  leave 取消（走 onEnterCancelled 而不是 onAfterEnter，enterDone 就永远等不到）。
  *  那种情况下用户必然已经点了下一次导航 —— 新的一次 begin() 会重新计时并自行收尾，
- *  所以这个计时器存在的意义只是「万一」，给得比任何一档总时长都宽。 */
+ *  所以这个计时器存在的意义只是「万一」，给得比任何一档总时长都宽
+ *  （生产最差：gate 380 + 等数据 800 + hold 340 + part 420 ≈ 1.94s）。 */
 const WATCHDOG_MS = 3000
 
 /** 面板盖着屏、等新页面把首屏数据拿回来的上限（毫秒）。
@@ -84,6 +91,8 @@ export function useRouteVeil() {
   function begin(next: VeilProfile, nextTarget: VeilTarget): number {
     const id = ++runSeq
     reentrant.value = phase.value !== 'idle'
+    enterDone = false
+    exitDoneFlag = false
     profile.value = next
     target.value = nextTarget
     phase.value = 'out'
@@ -117,11 +126,31 @@ export function useRouteVeil() {
     phase.value = 'in'
   }
 
-  /** @after-enter 调用。Vue 的 getTimeout() 算的是 max(duration + delay)，
-   *  而内容层的 transition-delay 就是 --veil-hold，所以这一刻恰好等于
-   *  「停留 + 开幕」走完的那一帧，和面板滑到屏外同帧。 */
+  /** @after-enter 调用 —— 标记「内容进场演完」。这只是收尾的两个条件之一：
+   *  另一个是覆盖层自己让开演完（RouteVeil 在末条板/根淡出的 transitionend 时报
+   *  exitDone()）。两个都齐了才回 idle。
+   *
+   *  为什么不能再让 after-enter 单独收尾：等数据（DATA_WAIT_MAX_MS）一旦超过
+   *  hold+part，after-enter 会在**板条还盖着屏**的 out 相位里提前到来，
+   *  此时回 idle 会让 [data-phase='in'] 的规则整片脱落 —— 板条带着基类的
+   *  过渡时长**向左弹回起点**，而不是向右让开。2026-11-23 拍帧实测抓到现场。 */
   function settle(id: number): void {
-    if (id !== runSeq) return
+    if (id !== runSeq || phase.value === 'idle') return
+    enterDone = true
+    tryFinalize()
+  }
+
+  /** RouteVeil 在「让开」演完时调用（末条板条的 transform transitionend，
+   *  或减少动效下根元素的 opacity transitionend —— 两个都是 CSS 时长驱动，
+   *  不在这里放任何计时器）。 */
+  function exitDone(): void {
+    if (phase.value !== 'in') return
+    exitDoneFlag = true
+    tryFinalize()
+  }
+
+  function tryFinalize(): void {
+    if (!enterDone || !exitDoneFlag || phase.value !== 'in') return
     disarmWatchdog()
     phase.value = 'idle'
     reentrant.value = false
@@ -150,6 +179,7 @@ export function useRouteVeil() {
     begin,
     open,
     settle,
+    exitDone,
     retarget,
   }
 }

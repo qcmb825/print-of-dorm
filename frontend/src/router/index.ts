@@ -22,7 +22,7 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'login',
     component: () => import('@/views/LoginView.vue'),
-    meta: { guest: true, title: '登录', code: '00' },
+    meta: { guest: true, title: '登录', code: '00', en: 'AUTH' },
   },
   {
     // 学生端：手机优先
@@ -35,25 +35,25 @@ const routes: RouteRecordRaw[] = [
         path: 'upload',
         name: 'student-upload',
         component: () => import('@/views/student/UploadView.vue'),
-        meta: { title: '下单打印', code: '01' },
+        meta: { title: '下单打印', code: '01', en: 'UPLOAD' },
       },
       {
         path: 'my-orders',
         name: 'student-orders',
         component: () => import('@/views/student/MyOrdersView.vue'),
-        meta: { title: '我的订单', code: '02' },
+        meta: { title: '我的订单', code: '02', en: 'ORDERS' },
       },
       {
         path: 'board',
         name: 'student-board',
         component: () => import('@/views/student/BoardView.vue'),
-        meta: { title: '服务数据', code: '03' },
+        meta: { title: '服务数据', code: '03', en: 'BOARD' },
       },
       {
         path: 'tickets',
         name: 'student-tickets',
         component: () => import('@/views/student/TicketsView.vue'),
-        meta: { title: '问题反馈', code: '04' },
+        meta: { title: '问题反馈', code: '04', en: 'TICKETS' },
       },
       {
         // 设置**不进底部标签栏**：那一栏的 4 项都是「来干一件事」的目的地，
@@ -63,7 +63,7 @@ const routes: RouteRecordRaw[] = [
         path: 'settings',
         name: 'student-settings',
         component: () => import('@/views/student/SettingsView.vue'),
-        meta: { title: '设置', code: '05' },
+        meta: { title: '设置', code: '05', en: 'CONFIG' },
       },
       {
         // 3D 打印是广告页不是流程页：不进导航栏，入口只放在下单页那排方式按钮
@@ -71,7 +71,7 @@ const routes: RouteRecordRaw[] = [
         path: '3d',
         name: 'student-3d',
         component: () => import('@/views/student/Print3DView.vue'),
-        meta: { title: '3D 打印', code: '06' },
+        meta: { title: '3D 打印', code: '06', en: '3D LAB' },
       },
       {
         // 抽奖也不进底部标签栏：入口是顶栏品牌标题旁那枚徽标（有活动才出现），
@@ -79,7 +79,7 @@ const routes: RouteRecordRaw[] = [
         path: 'lottery',
         name: 'student-lottery',
         component: () => import('@/views/student/LotteryView.vue'),
-        meta: { title: '抽奖', code: '07' },
+        meta: { title: '抽奖', code: '07', en: 'LOTTERY' },
       },
     ],
   },
@@ -94,7 +94,7 @@ const routes: RouteRecordRaw[] = [
         path: 'orders',
         name: 'staff-orders',
         component: () => import('@/views/staff/OrdersView.vue'),
-        meta: { title: '订单台', code: '01' },
+        meta: { title: '订单台', code: '01', en: 'ORDERS' },
       },
       {
         // 详情页是订单台的子页面，所以 `staff: true` 从父级继承，这里不用再写一遍。
@@ -103,7 +103,7 @@ const routes: RouteRecordRaw[] = [
         path: 'orders/:id',
         name: 'staff-order-detail',
         component: () => import('@/views/staff/OrderDetailView.vue'),
-        meta: { title: '订单详情', code: '01' },
+        meta: { title: '订单详情', code: '01', en: 'DETAIL' },
       },
       {
         // 历史记录对所有管理员开放（与后端 roles_required(ROLE_ADMIN, ROLE_SUPER) 对齐）：
@@ -112,31 +112,31 @@ const routes: RouteRecordRaw[] = [
         name: 'staff-logs',
         component: () => import('@/views/staff/LogsView.vue'),
         // 页码同「订单台 / 订单详情」一族的 01：它读的就是同一批订单的留痕
-        meta: { title: '历史记录', code: '01' },
+        meta: { title: '历史记录', code: '01', en: 'ARCHIVE' },
       },
       {
         path: 'dashboard',
         name: 'staff-dashboard',
         component: () => import('@/views/staff/DashboardView.vue'),
-        meta: { title: '数据看板', code: '02' },
+        meta: { title: '数据看板', code: '02', en: 'METRICS' },
       },
       {
         path: 'audits',
         name: 'staff-audits',
         component: () => import('@/views/staff/AuditView.vue'),
-        meta: { title: '身份审核', code: '03' },
+        meta: { title: '身份审核', code: '03', en: 'AUDIT' },
       },
       {
         path: 'users',
         name: 'staff-users',
         component: () => import('@/views/staff/UsersView.vue'),
-        meta: { title: '账号管理', code: '04' },
+        meta: { title: '账号管理', code: '04', en: 'USERS' },
       },
       {
         path: 'announcements',
         name: 'staff-announcements',
         component: () => import('@/views/staff/AnnouncementsView.vue'),
-        meta: { title: '公告管理', code: '05' },
+        meta: { title: '公告管理', code: '05', en: 'NOTICES' },
       },
       {
         // 打印选项对所有管理员开放（**不按角色收窄**）：
@@ -146,7 +146,7 @@ const routes: RouteRecordRaw[] = [
         path: 'print-options',
         name: 'staff-print-options',
         component: () => import('@/views/staff/PrintOptionsView.vue'),
-        meta: { title: '打印选项', code: '06' },
+        meta: { title: '打印选项', code: '06', en: 'DEVICES' },
       },
       {
         // 价目表（一条 = 纸张 + 类型 + 单面/双面单价）与打印选项同一类，
@@ -156,13 +156,13 @@ const routes: RouteRecordRaw[] = [
         path: 'pricing',
         name: 'staff-pricing',
         component: () => import('@/views/staff/PricingView.vue'),
-        meta: { title: '价目表', code: '07' },
+        meta: { title: '价目表', code: '07', en: 'PRICING' },
       },
       {
         path: 'tickets',
         name: 'staff-tickets',
         component: () => import('@/views/staff/TicketsView.vue'),
-        meta: { title: '工单处理', code: '08' },
+        meta: { title: '工单处理', code: '08', en: 'TICKETS' },
       },
       {
         // 抽奖后台**常驻**导航（业主要求）：没有活动时这一页就是建活动的地方，
@@ -170,7 +170,7 @@ const routes: RouteRecordRaw[] = [
         path: 'lottery',
         name: 'staff-lottery',
         component: () => import('@/views/staff/LotteryView.vue'),
-        meta: { title: '抽奖', code: '09' },
+        meta: { title: '抽奖', code: '09', en: 'LOTTERY' },
       },
     ],
   },

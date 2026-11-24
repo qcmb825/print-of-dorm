@@ -139,12 +139,31 @@ async function copyAdminQq(): Promise<void> {
   copiedTimer = setTimeout(() => { copiedQq.value = false }, 2200)
 }
 
-// 组件卸载时把「复制成功」的定时器收掉：LoginView 在登录/注册两栏间切换会整个卸载，
-// 定时器到点仍会写 copiedQq —— 不报错，但与全站「计时器在卸载时清掉」的口径
+/** 「帮忙宣传」的顺手动件：一键复制站内链接。复制的文案比光说「帮忙宣传」
+ *  多给一样能直接发出去的东西。与 QQ 按钮同一回显模式，也因此同一套纪律：
+ *  按 copyText 的返回值决定文案（失败也说失败），定时器在卸载时收掉。 */
+const copiedLink = ref(false)
+let copiedLinkTimer: ReturnType<typeof setTimeout> | null = null
+
+async function copySiteLink(): Promise<void> {
+  const ok = await copyText(window.location.origin)
+  if (!ok) {
+    message.error('复制失败 · 选中地址栏手动复制')
+    return
+  }
+  copiedLink.value = true
+  if (copiedLinkTimer) clearTimeout(copiedLinkTimer)
+  copiedLinkTimer = setTimeout(() => { copiedLink.value = false }, 2200)
+}
+
+// 组件卸载时把两处「已复制」的定时器收掉：LoginView 在登录/注册两栏间切换会整个卸载，
+// 定时器到点仍会写回显状态 —— 不报错，但与全站「计时器在卸载时清掉」的口径
 // （ForgotPasswordDialog 那条注释）不一致。
 onBeforeUnmount(() => {
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = null
+  if (copiedLinkTimer) clearTimeout(copiedLinkTimer)
+  copiedLinkTimer = null
 })
 
 
@@ -153,15 +172,29 @@ const contactOptions = OTHER_CONTACT_TYPES.map((value) => ({
   value,
 }))
 
-/** 品牌行的「喵」个数：**每次刷新都不一样**（主人点名要的，全站唯一一处不走简报体）。
+/** 品牌行的随机问候（2026-11-23 由「一串喵」改为问候语池，每次刷新抽一条）。
  *
- *  为什么在本地掷骰子、不向服务端要：它是个纯装饰，一次刷新变一次就是它全部的意义，
- *  为它多跑一个请求反而会在打开页面时抖一下。
- *  上下限的由来：3 是「比原来那两行多一点」的下限，9 是上限 —— 再多就会把
- *  lg 断点左边那一栏（只有 1fr 宽）撑到难看地折行。 */
-const MEOW_MIN = 3
-const MEOW_MAX = 9
-const meowCount = MEOW_MIN + Math.floor(Math.random() * (MEOW_MAX - MEOW_MIN + 1))
+ *  猫娘语气是全站唯一不走简报体的例外（主人点名），每条以「喵」收尾；
+ *  池底那条「喵~」是原来那串喵留下的彩蛋位。两段式配色与页头巨题一致：
+ *  前段墨色、后段古铜 —— 斜梁从字脚下骑过去。
+ *
+ *  为什么在本地掷骰子、不向服务端要：它是纯装饰，一次刷新变一条就是它全部的意义，
+ *  为它多跑一个请求反而会让打开页面时抖一下。 */
+const GREETINGS: ReadonlyArray<readonly [string, string]> = [
+  ['今天想印点什么', '喵？'],
+  ['资料发来，人去上课', '喵'],
+  ['讲义错题论文，都印', '喵'],
+  ['你发文件，我开机器', '喵'],
+  ['下课顺路取件', '喵'],
+  ['考前救命，平时省心', '喵'],
+  ['少跑腿，多睡觉', '喵'],
+  ['又见面了，欢迎回来', '喵'],
+  ['新来的？注册一分钟', '喵'],
+  ['印好了就喊你', '喵'],
+  ['取件别忘看单号', '喵'],
+  ['喵', '~'],
+]
+const greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)]
 
 /** 品牌区那三条流程说明。编号写死在这里而不是从路由取：它们描述的是**服务流程**，
  *  不是页面 —— 与导航栏那几项没有一一对应关系，混用会让以后改导航的人莫名背锅。 */
@@ -171,13 +204,13 @@ const flowRows = [
   { code: '03', label: '凭单号取件' },
 ]
 
-/** 认证告示上的三行范围读数。三行都对应系统里真实存在的东西：
- *  本页只发放普通用户权限（见页面底部那句）、服务范围是校园打印、
- *  进页面时会话尚未建立。**不写"机密/绝密"一类的分级** —— 这个系统没有
- *  分类分级制度，编一个出来是扮演；学那套版式就够了，密级那一栏留空。 */
+/** 认证告示上的三行范围读数。三行都对应真实存在的东西：运维者是计院学生
+ *  （上面身份块的机读版）、服务范围是校内代打印、进页面时会话尚未建立。
+ *  **不写"机密/绝密"一类的分级** —— 这个系统没有分类分级制度，
+ *  编一个出来是扮演；学那套版式就够了，密级那一栏留空。 */
 const scopeRows = [
-  { key: 'SCOPE', value: '校园打印服务' },
-  { key: 'CLEARANCE', value: '普通用户（USER）' },
+  { key: 'OPERATOR', value: '计院学生（课余运维）' },
+  { key: 'SCOPE', value: '校园代打印 · 校内' },
   { key: 'SESSION', value: '未建立 · PENDING' },
 ]
 
@@ -437,6 +470,8 @@ onMounted(async () => {
   <!-- 图纸底图：整页那么大，框住四边，内容浮在它上面。
        它是 position:absolute 的，所以这一层容器必须是 relative（下面的 relative 不能删）。 -->
   <BlueprintSheet />
+  <!-- 左缘竖排巨字：纸上的「另一层版」。9% 墨，允许与图纸笔画相交（两层都是装饰）。 -->
+  <span class="login-rail-ghost hidden xl:block" aria-hidden="true">NEKO PRINT</span>
   <!-- min-h-dvh 而不是 min-h-full：min-h-full 是 min-height:100%，而它的父链上
        （.route-stage）高度是 auto，百分比解析不出结果 —— 实测外壳只有 673px 高、
        内容贴在顶上，下面留一大片空。dvh 直接对视口取高度，不依赖父链，
@@ -459,33 +494,69 @@ onMounted(async () => {
           class="flex items-center justify-between gap-4 border-b pb-1.5"
           style="border-color: var(--border)"
         >
-          <span class="readout">NEKO PRINT // 校园打印服务</span>
-          <span class="readout">REV 2.006 / AUTH</span>
+          <span class="readout">NEKO PRINT // 校园代打印服务站</span>
+          <span class="readout">REV 2.006 / HFUT-CS</span>
         </div>
 
-        <div class="mt-7">
-          <!-- 品牌行：一堆「喵」（主人点名要的，全站唯一一处不走简报体的地方，
-               别按文案规范「改回去」）。**个数每次刷新都不同**，交替上色、
-               最后一个带波浪号 —— 它是这一页的招牌，不是一条读数，所以允许它不一致。
-               下面那行才是这页真正要说的事。 -->
-          <p
-            class="flex max-w-md flex-wrap items-baseline gap-x-2 font-heading text-4xl leading-[1.15] font-bold tracking-[-0.04em]"
-          >
-            <span
-              v-for="n in meowCount"
-              :key="n"
-              :style="n % 2 === 0 ? 'color: var(--accent-text)' : undefined"
-            >{{ n === meowCount ? '喵~' : '喵' }}</span>
-          </p>
-          <p class="mt-4 max-w-sm text-base leading-7 text-ink-3">
+        <div class="mt-5">
+          <!-- 眉题：黑块编号 + 方括号机读段（与页头同一语汇）。登录页是全站的 00 号闸机。 -->
+          <span class="title-eyebrow">
+            <span class="title-eyebrow__code">00</span>
+            <span> // [GATE]</span>
+          </span>
+          <!-- 品牌行：随机问候（猫娘语气，以「喵」收尾），每次刷新抽一条。
+               前段墨色、后段古铜；斜梁骑字脚 —— 与页头巨题同一签名（z-10 把字抬到梁上）。
+               字号压在两行以内（4xl/5xl）：左栏只有 1fr 宽，6xl 下长问候折成三行，
+               整栏会把页脚内容顶出视口（实测 900px 高窗口页脚被裁）。 -->
+          <div class="relative inline-flex max-w-full items-center">
+            <span class="title-beam" aria-hidden="true" />
+            <p
+              class="relative z-10 max-w-md font-heading text-4xl leading-[1.1] font-bold tracking-[-0.04em] sm:text-5xl"
+            >
+              {{ greeting[0] }}<span style="color: var(--accent-text)">{{ greeting[1] }}</span>
+            </p>
+          </div>
+          <p class="mt-3 max-w-sm text-base leading-7 text-ink-3">
             上传文件 → 接单打印 → 凭单号取件
           </p>
+        </div>
+
+        <!-- 这个站是谁在跑：学生自建这件事要说在明处 —— 它不是官方服务，
+             也不该让人误以为是官方服务。淡黄底 + 竖标与站内其它「要你知道一件事」
+             的提示同一语法；最后一行是唯一的「请求」：帮忙宣传。 -->
+        <div
+          class="mt-5 flex max-w-md items-center gap-3 border px-4 py-2.5"
+          style="border-color: var(--accent-tint-border); background: var(--accent-tint-soft)"
+        >
+          <span class="h-11 w-[2px] shrink-0" style="background: var(--accent)" aria-hidden="true" />
+          <div class="min-w-0 leading-snug">
+            <p class="text-sm font-bold text-ink-1">
+              合肥工业大学 · 计院学生自行搭建的代打印服务站
+            </p>
+            <p class="mt-0.5 text-xs text-ink-3">
+              课余时间搭建与运维 · 非学校官方服务
+            </p>
+            <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold" style="color: var(--accent-text)">
+              <span>觉得好用，欢迎告诉身边的同学 —— 帮忙宣传就是最大的支持</span>
+              <button
+                type="button"
+                class="tnum border px-1.5 py-0.5 text-2xs font-bold transition-colors duration-[var(--motion-dur-fast)]"
+                :style="copiedLink
+                  ? 'color: var(--secondary-foreground); background: var(--secondary); border-color: var(--secondary)'
+                  : 'color: var(--accent-foreground); background: var(--accent); border-color: var(--accent)'"
+                aria-live="polite"
+                @click="copySiteLink"
+              >
+                {{ copiedLink ? '已复制' : '复制链接' }}
+              </button>
+            </p>
+          </div>
         </div>
 
         <!-- 三条流程说明用**字段行**排（等宽标签 + 点线引导），而不是三个格子：
              它是"这份服务的规格表"，不是三块卖点卡片 —— 页面里的信息越像记录，
              越不像广告。 -->
-        <div class="mt-7 grid max-w-md gap-2.5">
+        <div class="mt-5 grid max-w-md gap-2.5">
           <span v-for="item in flowRows" :key="item.code" class="field">
             <span class="field__k">{{ item.code }}</span>
             <span class="field__lead" />
@@ -497,7 +568,7 @@ onMounted(async () => {
              本页只开放普通用户权限（页面底部也写着同一件事），这里是同一信息的
              机读版本。**刻意不写"机密/绝密"分级**：这个系统没有分级制度，
              编一个出来是扮演，不是设计；学它的版式就够了，密级那一栏留空。 -->
-        <div class="mt-6 grid max-w-md gap-2.5 border-t pt-4" style="border-color: var(--border)">
+        <div class="mt-5 grid max-w-md gap-2.5 border-t pt-3.5" style="border-color: var(--border)">
           <span v-for="row in scopeRows" :key="row.key" class="field">
             <span class="field__k">{{ row.key }}</span>
             <span class="field__lead" />
@@ -506,13 +577,13 @@ onMounted(async () => {
         </div>
 
         <!-- 收尾：斜切色带 + 刻度尺 + 大号读数。告示底部那一排印刷标记。 -->
-        <div class="mt-8 flex items-end gap-5" aria-hidden="true">
+        <div class="mt-6 flex items-end gap-5" aria-hidden="true">
           <span class="decor-band h-10 w-36 shrink-0" />
           <span class="ticks mb-1 flex-1" />
         </div>
         <!-- 只写名字，不写营业时间或取件点：那些是管理员在公告里维护的内容，
              写死在海报上就等于抄了一份会过期的副本。 -->
-        <p class="readout-lg mt-3">NEKO PRINT SERVICE / CAMPUS</p>
+        <p class="readout-lg mt-3">NEKO PRINT SERVICE / HFUT</p>
       </section>
 
       <div class="w-full">
@@ -544,13 +615,14 @@ onMounted(async () => {
            配色分工（全站唯一一处）：这里让青色主导（仪器/核验语汇），
            黄色只留给**动作**（登录按钮、强调数）。进到业务区仍然只有一种强调色，
            所以这条分工不会渗出去。 -->
-      <div
-        ref="loginCard"
-        class="panel login-card"
-        :class="breakerTripped && 'trip trip--on'"
-        data-parallax
-        style="--depth: 10px"
-      >
+      <div class="relative" data-parallax style="--depth: 10px">
+        <!-- 琥珀衬板：卡的「另一版」，旋转 1.8° 错开（叠印感）。纯装饰。 -->
+        <span class="login-card__sheet" aria-hidden="true" />
+        <div
+          ref="loginCard"
+          class="panel login-card relative"
+          :class="breakerTripped && 'trip trip--on'"
+        >
         <div
           class="flex items-center justify-between gap-3 border-b px-5 py-2"
           style="border-color: var(--border)"
@@ -827,14 +899,31 @@ onMounted(async () => {
           <span class="readout shrink-0">SYNC {{ clock || '--:--:--' }}</span>
           <span class="caret" />
         </div>
+        </div>
       </div>
 
-      <p class="mt-4 text-center text-xs text-ink-3">
+      <!-- 身份行放在卡片外的页脚：左栏品牌区在窄屏是整块隐藏的，
+           「学生自建」这句话在所有屏宽都要能读到。
+           relative z-10 不能省：登录卡的琥珀衬板（.login-card__sheet）是绝对定位，
+           绘制层级高于普通流内文字，旋转 1.8° 后它的下角会探出卡底，
+           不把页脚抬到同一层叠层，这一行就会被衬板裁掉一截（实测截图可见）。 -->
+      <p class="relative z-10 mt-4 text-center text-xs text-ink-3">
+        合工大计院学生自行搭建的代打印服务站 · 觉得好用，欢迎帮忙宣传
+        <button
+          type="button"
+          class="underline decoration-dotted underline-offset-2 hover:text-ink-2 lg:hidden"
+          aria-live="polite"
+          @click="copySiteLink"
+        >
+          {{ copiedLink ? '已复制' : '复制链接' }}
+        </button>
+      </p>
+      <p class="relative z-10 mt-2 text-center text-xs text-ink-3">
         管理员账号由管理端开通，注册一律为普通用户。
       </p>
       <!-- 这里曾经还有一个「换个界面」链接。全站已经锁死新版（app.py 的
            UI_SWITCH_ENABLED），点过去也只会回到同一套外壳，留着反而像是坏了。 -->
-      <p class="mt-2 text-center text-xs text-ink-3">
+      <p class="relative z-10 mt-2 text-center text-xs text-ink-3">
         <button
           type="button"
           class="underline decoration-dotted underline-offset-2 hover:text-ink-2"

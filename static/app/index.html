@@ -18,7 +18,7 @@
 
     <!-- ══ 开屏层 ══════════════════════════════════════════════════════════════
          整站启动时盖住屏幕的那一块：把首屏盖住、把启动进度读出来，最后像换场那样
-         用一块斜切面板扫开，把页面让出来。
+         用五条斜切百叶板错峰扫开，把页面让出来。
 
          **为什么它写在 index.html 里，而不是做成 Vue 组件**
          它要盖住的正是「CSS 与 JS 产物还没到」的那一段 —— 宿舍 wifi 上这段是整次加载
@@ -26,42 +26,65 @@
          等于没盖。
          代价是这一层读不到 tokens.css / base.css（那时还没解析到），所以下面这段自带
          排版与颜色，**与样式表无关地自成一体的**；只有出场那一下例外 —— 那时样式表一定
-         已经装上了，于是它交给 base.css 去写，好与换场面板共用同一套几何与时长
+         已经装上了，于是它交给 base.css 去写，好与换场百叶板共用同一套几何与时长
          （见 base.css 的 .boot__*）。
+
+         2026-11-23 重设计：与换场「百叶拼版 · 巨号落版」同一张脸 —— 暖墨底 #312f2d
+         （--veil-mat 的计算结果，写死在这里）、琥珀 #f5a800（--primary）、纸白 #f8f7f4、
+         纸白窄体巨号 + 骑字斜梁 + 四角准星 + 整版网格。这一层曾经是旧身份的
+         纯黑 #050505 + 荧光黄 #fffa00 —— 那是全站最后一块没换令牌的地方。
 
          几条与站内一致的纪律：
          · 会动的读数不进朗读流（视觉部分整块 aria-hidden），只留一句 sr-only 给读屏；
-         · 读数**必须是真的**：下面三行里程碑各自对应一件真实发生过的事
+         · 读数**必须是真的**：三行里程碑各自对应一件真实发生过的事
            （产物执行完 / 字体就位 / 应用报出第一帧），没有一行是定时器编出来的；
-         · 参考站那一屏的语汇是"仪表在自检"，本站的对应物是刻度、机读读数、
-           一条竖着的进度柱与右下的三角阵列；
          · 减少动效下不做横扫（与换场同一个判断，理由见 base.css）。
     ═══════════════════════════════════════════════════════════════════════ -->
-    <style>.boot{z-index:200;touch-action:none;-webkit-font-smoothing:antialiased;width:100%;height:100dvh;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace;position:fixed;top:0;left:0;overflow:hidden}.boot__mat,.boot__under{width:124%;position:absolute;top:0;bottom:0;left:-12%}.boot__mat{background-color:#050505}.boot__under{background-color:#fffa00}.boot__hud{color:#fff;font-family:system-ui,-apple-system,Segoe UI,Microsoft YaHei,sans-serif;position:absolute;inset:0}.boot__frame{border:1px solid #ffffff1a;position:absolute;inset:14px}.boot__top,.boot__band{letter-spacing:.16em;text-transform:uppercase;color:#fff6;flex-wrap:wrap;align-items:baseline;gap:4px 14px;font-size:11px;display:flex;position:absolute;left:26px;right:26px}.boot__top{top:26px}.boot__band{bottom:22px}.boot__cn{letter-spacing:.06em;color:#ffffffc7;font-size:13px}.boot__right{margin-left:auto}.boot__foot{position:absolute;bottom:54px;left:26px}.boot__tri{gap:5px;margin-bottom:12px;display:flex}.boot__tri>i{clip-path:polygon(0 100%,0 0,100% 100%);background-color:#fffa00;width:9px;height:9px}.boot__tri>.is-blank{background-color:#0000}.boot__num{letter-spacing:-.02em;color:#fffa00;font-variant-numeric:tabular-nums;align-items:baseline;font-size:clamp(44px,7vw,76px);font-weight:700;line-height:.9;display:flex}.boot__num>span{text-align:right;min-width:3ch;display:inline-block}.boot__num>b{letter-spacing:.06em;font-size:.34em;font-weight:700}.boot__cap{margin-top:10px;display:block}.boot__fill{width:6px;height:100%;transform:scaleY(var(--boot-p,0));transform-origin:top;background-color:#fffa00;position:absolute;top:0;left:0}.boot__log{letter-spacing:.16em;text-transform:uppercase;flex-direction:column;gap:7px;margin:0;padding:0;font-size:11px;list-style:none;display:flex;position:absolute;bottom:54px;right:26px}.boot__row{color:#ffffff5c;align-items:center;gap:8px;display:flex}.boot__row>i{border:1px solid #ffffff52;width:5px;height:5px}.boot__row>b{font-weight:600}.boot__row>span{margin-left:auto}.boot__row[data-state=ok]{color:#ffffffa8}.boot__row[data-state=ok]>i{background-color:#fffa00;border-color:#fffa00}.boot__row[data-state=ok]>span{color:#fffa00}@keyframes boot-in{0%{opacity:0;transform:translateY(8px)}}.boot__in{animation:.24s cubic-bezier(.23,1,.32,1) both boot-in;animation-delay:var(--d,0s)}.boot__sr{clip:rect(0 0 0 0);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}@media (prefers-reduced-motion:reduce){.boot__in{animation:none}}</style>
-    <script type="module" crossorigin src="/static/app/assets/index-CvcyE5aS.js"></script>
+    <style>.boot{z-index:200;touch-action:none;-webkit-font-smoothing:antialiased;width:100%;height:100dvh;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace;position:fixed;top:0;left:0;overflow:hidden}.boot__slat{top:0;bottom:0;left:calc(-9% + var(--i) * 24%);background-color:#312f2d;width:28%;position:absolute}.boot__under{background-color:#f5a800;width:124%;position:absolute;top:0;bottom:0;left:-12%}.boot__plate{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cpath d='M120 113v14M113 120h14' fill='none' stroke='%23ffffff' stroke-opacity='0.13' stroke-width='1'/%3E%3C/svg%3E"),linear-gradient(#ffffff0f 1px,#0000 1px),linear-gradient(90deg,#ffffff0f 1px,#0000 1px);background-position:50%;background-size:240px 240px,48px 48px,48px 48px;position:absolute;inset:0}.boot__hud{color:#f8f7f4;font-family:system-ui,-apple-system,Segoe UI,Microsoft YaHei,sans-serif;position:absolute;inset:0}.boot__frame{border:1px solid #ffffff1a;position:absolute;inset:14px}.boot__cross{width:26px;height:26px;position:absolute}.boot__cross:before,.boot__cross:after{content:"";background-color:#ffffff24;position:absolute;top:50%;left:50%}.boot__cross:before{width:26px;height:1px;transform:translate(-50%,-50%)}.boot__cross:after{width:1px;height:26px;transform:translate(-50%,-50%)}.boot__cross--tl{top:7%;left:6%}.boot__cross--tr{top:7%;right:6%}.boot__cross--bl{bottom:9%;left:6%}.boot__cross--br{bottom:22%;right:6%}.boot__top,.boot__band{letter-spacing:.16em;text-transform:uppercase;color:#f8f7f46b;flex-wrap:wrap;align-items:baseline;gap:4px 14px;font-size:11px;display:flex;position:absolute;left:26px;right:26px}.boot__top{top:26px}.boot__band{bottom:22px}.boot__chip{color:#312f2d;background-color:#f5a800;padding:2px 7px;font-weight:700}.boot__right{margin-left:auto}.boot__center{flex-direction:column;justify-content:center;align-items:center;gap:14px;padding:0 24px;display:flex;position:absolute;inset:0}.boot__hazard{background-image:repeating-linear-gradient(-45deg,#f5a800 0 8px,#0000 8px 16px);width:200px;height:8px}.boot__word-wrap{align-items:center;max-width:94vw;display:inline-flex;position:relative}.boot__word{z-index:1;letter-spacing:.04em;color:#f8f7f4;white-space:nowrap;max-width:94vw;font-family:Oswald Variable,Oswald,Arial Narrow,Liberation Sans Narrow,sans-serif;font-size:clamp(52px,11vw,168px);font-weight:700;line-height:.94;position:relative;overflow:hidden}.boot__beam{z-index:0;clip-path:polygon(0 0,100% 0,calc(100% - 22px) 100%,0 100%);background-color:#f5a800;width:calc(100% + 36px);height:34%;position:absolute;bottom:2%;left:-18px}.boot__sub{letter-spacing:.12em;color:#f8f7f4c7;font-size:15px}.boot__foot{position:absolute;bottom:54px;left:26px}.boot__tri{gap:5px;margin-bottom:12px;display:flex}.boot__tri>i{clip-path:polygon(0 100%,0 0,100% 100%);background-color:#f5a800;width:9px;height:9px}.boot__tri>.is-blank{background-color:#0000}.boot__num{letter-spacing:-.02em;color:#f5a800;font-variant-numeric:tabular-nums;align-items:baseline;font-family:Oswald Variable,Oswald,Arial Narrow,Liberation Sans Narrow,sans-serif;font-size:clamp(44px,7vw,76px);font-weight:700;line-height:.9;display:flex}.boot__num>span{text-align:right;min-width:3ch;display:inline-block}.boot__num>b{letter-spacing:.06em;font-size:.34em;font-weight:700}.boot__cap{margin-top:10px;display:block}.boot__fill{width:6px;height:100%;transform:scaleY(var(--boot-p,0));transform-origin:top;background-color:#f5a800;position:absolute;top:0;left:0}.boot__log{letter-spacing:.16em;text-transform:uppercase;flex-direction:column;gap:7px;margin:0;padding:0;font-size:11px;list-style:none;display:flex;position:absolute;bottom:54px;right:26px}.boot__row{color:#f8f7f45c;align-items:center;gap:8px;display:flex}.boot__row>i{border:1px solid #f8f7f452;width:5px;height:5px}.boot__row>b{font-weight:600}.boot__row>span{margin-left:auto}.boot__row[data-state=ok]{color:#f8f7f4a8}.boot__row[data-state=ok]>i{background-color:#5eead4;border-color:#5eead4}.boot__row[data-state=ok]>span{color:#5eead4}@keyframes boot-in{0%{opacity:0;transform:translateY(8px)}}.boot__in{animation:.24s cubic-bezier(.23,1,.32,1) both boot-in;animation-delay:var(--d,0s)}.boot__sr{clip:rect(0 0 0 0);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}@media (prefers-reduced-motion:reduce){.boot__in{animation:none}}</style>
+    <script type="module" crossorigin src="/static/app/assets/index-ixQukJYj.js"></script>
     <link rel="modulepreload" crossorigin href="/static/app/assets/endpoints-DS4vsVAK.js">
     <link rel="modulepreload" crossorigin href="/static/app/assets/useApi-BPuI6ZR9-B4cwgxoE.js">
     <link rel="modulepreload" crossorigin href="/static/app/assets/createLucideIcon-DOmk2xkk.js">
     <link rel="modulepreload" crossorigin href="/static/app/assets/pinia-BxiX6Lzy.js">
     <link rel="modulepreload" crossorigin href="/static/app/assets/preload-helper-BVe9q52S.js">
-    <link rel="stylesheet" crossorigin href="/static/app/assets/index-BccPFS4R.css">
+    <link rel="stylesheet" crossorigin href="/static/app/assets/index-BqGC-GkT.css">
   </head>
   <body>
     <div id="boot" class="boot" role="status">
       <span class="boot__sr">正在接入服务</span>
 
-      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在黑层下面。 -->
+      <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在板条下面。 -->
       <i class="boot__under" aria-hidden="true"></i>
-      <i class="boot__mat" aria-hidden="true"></i>
+      <!-- 五条百叶板：--i 是板序（0 在最左），几何与错峰与换场同一套。 -->
+      <i class="boot__slat" style="--i: 0" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 1" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 2" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 3" aria-hidden="true"></i>
+      <i class="boot__slat" style="--i: 4" aria-hidden="true"></i>
+      <!-- 整版纹理：铺在板条上面（板缝网格连续的原因见样式注释）。 -->
+      <i class="boot__plate" aria-hidden="true"></i>
 
       <div class="boot__hud" aria-hidden="true">
         <i class="boot__frame boot__in" style="--d: 0ms"></i>
         <i class="boot__fill boot__in" style="--d: 120ms"></i>
+        <i class="boot__cross boot__cross--tl boot__in" style="--d: 60ms"></i>
+        <i class="boot__cross boot__cross--tr boot__in" style="--d: 100ms"></i>
+        <i class="boot__cross boot__cross--bl boot__in" style="--d: 100ms"></i>
+        <i class="boot__cross boot__cross--br boot__in" style="--d: 60ms"></i>
 
         <div class="boot__top boot__in" style="--d: 40ms">
-          <span class="boot__cn">正在接入</span>
-          <span>NEKO PRINT SERVICE</span>
-          <span class="boot__right">SEC 00</span>
+          <span class="boot__chip">00</span>
+          <span>// [BOOT]</span>
+          <span class="boot__right">SEC 00 / HFUT-CS</span>
+        </div>
+
+        <div class="boot__center boot__in" style="--d: 80ms">
+          <span class="boot__hazard"></span>
+          <span class="boot__word-wrap">
+            <span class="boot__word">NEKO PRINT</span>
+            <span class="boot__beam"></span>
+          </span>
+          <span class="boot__sub">猫娘打印服务 · 校园代打印服务站</span>
         </div>
 
         <ul class="boot__log boot__in" style="--d: 160ms">
@@ -77,8 +100,8 @@
         </div>
 
         <div class="boot__band boot__in" style="--d: 200ms">
-          <span>猫娘打印服务 · NEKO PRINT SERVICE</span>
-          <span class="boot__right">SEC 00</span>
+          <span>正在接入 · LOADING SERVICE</span>
+          <span class="boot__right">REV 2.006</span>
         </div>
       </div>
 
@@ -165,6 +188,9 @@
             document.fonts.load('15px "Space Grotesk Variable"', sampleLatin),
             document.fonts.load('15px "DM Sans Variable"', sampleLatin),
             document.fonts.load('15px "JetBrains Mono Variable"', sampleLatin),
+            // 巨号词与百分比用的窄体：抢在版面还盖着屏的时候下载，
+            // 到了自动换上（没到就用系统窄体兜底，不挡出场）。
+            document.fonts.load('700 64px "Oswald Variable"', 'NEKO PRINT 0123456789'),
           ])
           fontsReady.then(function () {
             mark('fonts', true)
@@ -184,10 +210,12 @@
           boot.setAttribute('data-phase', 'exit')
           cap.textContent = 'READY'
 
-          // 摘除时机：面板扫完的那一刻。**听 transitionend 而不是定时器** ——
-          // 定时器要猜一个时长，而那个时长归 base.css 的令牌管；猜短了会把还在扫的面板
+          // 摘除时机：末条板扫完的那一刻。**听 transitionend 而不是定时器** ——
+          // 定时器要猜一个时长，而那个时长归 base.css 的令牌管；猜短了会把还在扫的板条
           // 掐掉（露一半），猜长了这一层会在页面上多留一会儿。
-          var mat = boot.querySelector('.boot__mat')
+          // 末条板的错峰最大、最晚收尾（与换场 exitDone 的选法一致）。
+          var slats = boot.querySelectorAll('.boot__slat')
+          var lastSlat = slats.length ? slats[slats.length - 1] : null
           var removed = false
           function finish() {
             if (removed) return
@@ -198,8 +226,8 @@
               boot.remove()
             }, 200)
           }
-          if (mat) {
-            mat.addEventListener('transitionend', function (event) {
+          if (lastSlat) {
+            lastSlat.addEventListener('transitionend', function (event) {
               if (event.propertyName === 'transform') finish()
             })
           }
