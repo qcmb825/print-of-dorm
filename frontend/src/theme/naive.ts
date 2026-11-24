@@ -280,8 +280,12 @@ export function buildOverrides(t: Tokens): GlobalThemeOverrides {
       thFontWeight: '700',
       tdColorHover: '#00000005',
       tdColorStriped: '#00000002',
-      thPaddingMedium: '12px 16px',
-      tdPaddingMedium: '15px 16px',
+      /* 横向内边距从 16 收到 12：订单台有九列，1440 视口里表格可用宽约 1040，
+         左右 16px 一列就吃掉 32、九列 288 —— 被挤扁的正是「单面/双面」和接单人
+         （实测 7 行里 6 行把单双面裁掉 4~7px）。拿错单双面是要在柜台出事的错，
+         不该靠悬停补救，所以先从 padding 里把宽度要回来。 */
+      thPaddingMedium: '12px 12px',
+      tdPaddingMedium: '15px 12px',
       fontSizeMedium: '14px',
     },
     Input: {

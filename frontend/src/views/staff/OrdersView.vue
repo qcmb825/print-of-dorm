@@ -934,7 +934,9 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 最该被读到的东西），内部编号和时间跟在同一行后面。
     title: '订单',
     key: 'id',
-    width: 156,
+    // 156 → 146：九列在 1440 视口里总宽要 ≤ 可用宽，多出来的 10px 给的是
+    // 「拿错就会出事」的规格列（见 spec 列注释）。文件名本来就是 truncate + title。
+    width: 146,
     render: (row) => {
       const names = orderFileNames(row)
       //    一单多文件（2026-09-28 起的批量打印）：**逐份列出来**，让这一行自己变高。
@@ -1089,16 +1091,20 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 显示成「1 份」等于替它们编了一个没人记得的数字。
     title: '规格',
     key: 'spec',
-    // 从 150 收到 114：这一格里最长的组合是「1 份 + 双面」和「黑白 · 纸张名」，
-    // 114 − 16 内边距 = 98px 刚好放下 6 个汉字（纸名超了会 truncate，title 看全）。
-    width: 102,
+    // 116：这一格里最长的一线组合是「未记录」牌 + 「双面」（42+16 牌子内边距 + 6 间距 + 28 字）
+    // = 92 内容宽，加上单元格左右 12×2 内边距刚好放下。
+    // 之前是 102，于是「单面/双面」被裁成「单…」「双…」—— 而这一格是拿错就会出事的字段，
+    // 不该靠悬停补救。第二行（颜色·纸名）超了仍然 truncate + title。
+    width: 116,
     render: (row) =>
       h('div', { class: 'min-w-0' }, [
         h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
-          h('span', { class: 'spec-chip tnum' }, copiesLabel(row.copies)),
+          h('span', { class: 'spec-chip tnum shrink-0' }, copiesLabel(row.copies)),
           h(
             'span',
-            { class: 'truncate text-sm font-semibold' },
+            // truncate + title：宽度给够了才留 truncate 当兜底（更长的档位名、更窄的屏幕），
+            // 但兜底必须能读回来 —— 备注列与打印服务列都是这个写法，这一格之前漏了 title。
+            { class: 'truncate text-sm font-semibold', title: row.duplex ? DUPLEX_LABELS[row.duplex] : '单面' },
             // DUPLEX_LABELS 认 'mixed'（各份不同）：混合单不能用「双面」替它顶上
             // （那是在替这一单瞎猜）。
             row.duplex ? DUPLEX_LABELS[row.duplex] : '单面',
@@ -1134,62 +1140,69 @@ const columns = computed<DataTableColumns<Order>>(() => [
     // 不碰金额、不碰状态）。
     title: '打印服务',
     key: 'preset',
-    // 从 200 收到 140：正文本来就是 truncate + title（预设是一整句话，
-    // 200 也放不下），少掉的宽度只影响同时能看几个字，不影响「看不看得到」。
-    width: 112,
+    // 104：正文本来就是 truncate + title（预设是一整句话，再宽也放不下），
+    // 少掉的宽度只影响同时能看几个字，不影响「看不看得到」。
+    width: 104,
     render: (row) => {
       const label =
         row.preset_id !== null && row.preset_id !== undefined
           ? (row.preset_content ?? row.preset_group_content ?? null)
           : (row.preset_group_content ?? null)
       const noPresets = presets.value.length === 0
+      // 名单是空的（或没读到）就**不出这颗归类按钮**：没有可归的目标，
+      // 而一行一个禁用按钮还会把「这里没东西」念成「这里出错了」。
+      // 已归类过的单例外 —— 它需要这颗按钮来取消归类。
+      const showGroupButton = !noPresets || hasGroup(row)
       return h('div', { class: 'flex min-w-0 items-center gap-1' }, [
         label
           ? h('span', { class: 'truncate text-xs opacity-80', title: label }, label)
           : h('span', { class: 'text-xs opacity-40' }, '—'),
-        h(
-          NDropdown,
-          {
-            options: groupDropdownOptions(row),
-            trigger: 'click',
-            disabled: busyIds.value.has(row.id) || noPresets,
-            onSelect: (key: string) => void setGroup(row, key),
-          },
-          {
-            // #trigger（这里是 default 插槽）**必须恰好一个子节点** ——
-            // 把 v-if 塞进来，条件不成立时插槽为空，Naive UI 会当面抛
-            // slot[trigger] should have exactly one child。要条件渲染就把
-            // v-if 提到 NDropdown 本身上。
-            default: () =>
-              h(
-                NButton,
-                {
-                  size: 'tiny',
-                  quaternary: true,
-                  // primary 态的黄图标修正，见 base.css 的 .btn-accent-ink。
-                  class: hasGroup(row) ? 'btn-accent-ink !h-7 !w-7 !p-0' : '!h-7 !w-7 !p-0',
-                  type: hasGroup(row) ? 'primary' : 'default',
-                  disabled: busyIds.value.has(row.id) || noPresets,
-                  title: noPresets
-                    ? '打印服务名单读取失败 · 到「打印服务」页确认是否为空'
-                    : hasGroup(row)
-                      ? '改分组 / 取消归类'
-                      : '归入某条打印服务后 · 可按服务筛选查看',
-                },
-                { icon: () => h(FolderPlus, { size: 13 }) },
-              ),
-          },
-        ),
+        ...(showGroupButton
+          ? [h(
+              NDropdown,
+              {
+                options: groupDropdownOptions(row),
+                trigger: 'click',
+                disabled: busyIds.value.has(row.id) || noPresets,
+                onSelect: (key: string) => void setGroup(row, key),
+              },
+              {
+                // #trigger（这里是 default 插槽）**必须恰好一个子节点** ——
+                // 把 v-if 塞进来，条件不成立时插槽为空，Naive UI 会当面抛
+                // slot[trigger] should have exactly one child。要条件渲染就把
+                // v-if 提到 NDropdown 本身上。
+                default: () =>
+                  h(
+                    NButton,
+                    {
+                      size: 'tiny',
+                      quaternary: true,
+                      // primary 态的黄图标修正，见 base.css 的 .btn-accent-ink。
+                      class: hasGroup(row) ? 'btn-accent-ink !h-7 !w-7 !p-0' : '!h-7 !w-7 !p-0',
+                      type: hasGroup(row) ? 'primary' : 'default',
+                      disabled: busyIds.value.has(row.id) || noPresets,
+                      // 「打印服务」这一页在导航里叫「打印选项」，指错了地方就找不到。
+                      title: noPresets
+                        ? '还没有可归入的打印服务 · 到「打印选项」页添加'
+                        : hasGroup(row)
+                          ? '改分组 / 取消归类'
+                          : '归入某条打印服务后 · 可按服务筛选查看',
+                    },
+                    { icon: () => h(FolderPlus, { size: 13 }) },
+                  ),
+              },
+            )]
+          : []),
       ])
     },
   },
   {
     title: '备注',
     key: 'remark',
-    // 从 150 收到 112。备注里有价值的是「只打第 3 页」这类短要求，
+    // 从 100 收到 92：备注里有价值的是「只打第 3 页」这类短要求，
     // 长句子本来就靠 title 看全文。**这一列只显示学生自己写的话** ——
     // 系统曾经往里面塞过「通过 QQ 机器人下单」，那已经被搬到 source 字段了。
-    width: 100,
+    width: 92,
     // 备注是学生写的要求（「只打第 3 页」「A4 双面」）。之前这一列压根不存在，
     // 于是管理员只能挨个点开文件才发现要求写在了备注里。
     // 空备注显示一个淡淡的「—」而不是空白：空白会让人怀疑是没渲染出来。
@@ -1225,8 +1238,8 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '费用',
     key: 'price',
-    // 从 92 放到 114：多了一行**预估价**（见下面的渲染）。
-    width: 108,
+    // 108 → 102：金额这一格最宽的也就是「¥6.00 + 一行预估价」，102 − 24 内边距够。
+    width: 102,
     // 未计费时金额是 null 而不是 0（老库遗留订单也走这条路）——
     // 显示成「￥0.00」会让人以为这单免费。
     render: (row) => {
@@ -1260,12 +1273,17 @@ const columns = computed<DataTableColumns<Order>>(() => [
   {
     title: '接单人',
     key: 'claimer_nickname',
-    // 从 96 收到 76：昵称是 truncate + title，短名照样看得到。
-    width: 72,
+    // 96：这一格最长的是拉丁昵称（superadmin 这类），72 时整列会**在词中间断行**
+    // （看成 superad / min）。注释里写着「truncate + title」但代码没有 —— 补上，
+    // 短名照常看得见，长名一行截断且悬停读得回全名。
+    width: 96,
     render: (row) =>
       h(
         'span',
-        { class: 'text-xs' },
+        {
+          class: 'block truncate text-xs',
+          title: row.claimer_nickname ?? undefined,
+        },
         row.claimer_nickname ?? h('span', { class: 'text-ink-3' }, '未接单'),
       ),
   },

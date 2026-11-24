@@ -85,6 +85,46 @@ if (typeof document !== 'undefined') {
   })
 }
 
+/** 等屏幕上那两层「盖住整屏」的东西都让开：开屏层（index.html 里的 #boot，
+ *  让位之后会把自己从 DOM 摘掉）与换场幕布（相位回到 idle）。
+ *
+ *  给谁用：挂在内容树里、却必须在**所有层之上**出现的东西。QQ 引导弹窗就是撞上这一条的 ——
+ *  NModal 的层级本来就压过幕布，于是它在开屏还没走完、幕布还盖着屏时浮到最前面，
+ *  看着像「弹窗从黑幕里钻出来」。这没法靠排层级解决（要的就是它在幕布之上），
+ *  只能等两层都让开再出现。
+ *
+ *  认的是 DOM 上的事实而不是事件：<html> 上的 data-veil-phase、以及 #boot 还在不在。
+ *  与开屏层自己的做法一致（它轮询属性，因此不依赖谁先执行）。 */
+export function whenScreenLayersIdle(): Promise<void> {
+  if (typeof document === 'undefined') return Promise.resolve()
+  const root = document.documentElement
+  const idle = () =>
+    document.getElementById('boot') === null &&
+    root.dataset.veilPhase !== 'out' &&
+    root.dataset.veilPhase !== 'in'
+  if (idle()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const attrObserver = new MutationObserver(check)
+    const bodyObserver = new MutationObserver(check)
+    function check(): void {
+      if (!idle()) return
+      window.clearTimeout(cap)
+      attrObserver.disconnect()
+      bodyObserver.disconnect()
+      resolve()
+    }
+    // 保险：正常路径上开屏层有自己的兜底摘除、幕布有 WATCHDOG_MS，两个信号都会到；
+    // 万一某个没到，宁可让"等层让开"退化成"最多等这么久"，也不要让调用方永远悬着。
+    const cap = window.setTimeout(() => {
+      attrObserver.disconnect()
+      bodyObserver.disconnect()
+      resolve()
+    }, WATCHDOG_MS)
+    attrObserver.observe(root, { attributes: true, attributeFilter: ['data-veil-phase', 'data-boot'] })
+    bodyObserver.observe(document.body, { childList: true })
+  })
+}
+
 export function useRouteVeil() {
   /** @before-leave 调用。此刻 vue-router 已经提交了新路由（路由先落、组件后换），
    *  所以传进来的就是**要去哪**，不是从哪来 —— 场记板上写的是目标页名。 */

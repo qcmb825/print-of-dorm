@@ -27,7 +27,7 @@
  *  「点几次之后就不再自动出现」—— 把「永久别看」做成主按钮，
  *  等于替用户做了他没想过的决定；写清楚规则，让他自己点几次。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowUpToLine, Check, QrCode } from '@lucide/vue'
 import { NButton, NModal } from 'naive-ui'
@@ -35,6 +35,7 @@ import { ApiError } from '@/api/client'
 import { BOT_QR_URL, botHintApi } from '@/api/endpoints'
 import type { BotHint } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+import { whenScreenLayersIdle } from '@/composables/route-veil'
 
 const props = withDefaults(
   defineProps<{
@@ -65,14 +66,31 @@ const dismissRule = ref('')
 /** 管理端催办变体：只有「超管 + 还没上传二维码」这一种情况会弹（onMounted 把关）。 */
 const uploadNag = computed(() => props.staff && hint.value !== null && !hint.value.has_qr)
 
+/** 出现之前先等开屏层与换场幕布让开。
+ *
+ *  弹窗的层级**本来就该**在幕布之上（引导要看得见），所以问题不能用 z-index 修：
+ *  实测过它在开屏 19% LOADING 时就从黑幕里钻出来，登录后也会在幕布还盖着屏时弹出，
+ *  既打断开屏的收尾，也让「换场 = 内容已经在」这条承诺当场破功。
+ *  等两层都让开再出现，用户看到的就是「页面落定 → 才有多余的话要说」。 */
+let disposed = false
+onBeforeUnmount(() => { disposed = true })
+
+async function reveal(): Promise<void> {
+  await whenScreenLayersIdle()
+  if (disposed) return
+  visible.value = true
+}
+
 onMounted(async () => {
   // 未登录：只看这一屏会话关没关过（不碰服务端，也没有账号可记）
   if (props.guest) {
+    let hiddenThisSession = false
     try {
-      visible.value = sessionStorage.getItem(SESSION_KEY) !== '1'
+      hiddenThisSession = sessionStorage.getItem(SESSION_KEY) === '1'
     } catch {
-      visible.value = true        // 隐私模式下 sessionStorage 会抛，那就照常显示
+      hiddenThisSession = false   // 隐私模式下 sessionStorage 会抛，那就照常显示
     }
+    if (!hiddenThisSession) await reveal()
     return
   }
   try {
@@ -82,11 +100,11 @@ onMounted(async () => {
       // 管理端：普通管理员没有上传权限，弹了也只是拦路；超管只在缺码时催办。
       if (!auth.advancedAllowed || data.has_qr) return
       dismissRule.value = `上传二维码后不再出现 · 关闭 ${data.max_clicks} 次内还会提醒`
-      visible.value = !data.closed
+      if (!data.closed) await reveal()
       return
     }
     dismissRule.value = `关闭 ${data.max_clicks} 次后不再自动出现 · 可在「设置」里重新打开`
-    visible.value = !data.closed
+    if (!data.closed) await reveal()
   } catch (error) {
     //    拿不到就不显示。这是**引导**，不是功能：为它弹一个错误提示
     //    （「偏好没拉到」那种）只会让页面看起来像坏了，而用户什么都没做错。
