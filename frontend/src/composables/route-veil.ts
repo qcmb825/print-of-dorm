@@ -179,8 +179,8 @@ export function useRouteVeil() {
   }
 
   /** @after-enter 调用 —— 标记「内容进场演完」。这只是收尾的两个条件之一：
-   *  另一个是覆盖层自己让开演完（RouteVeil 在最后一个实际运行的板条过渡结束时，
-   *  或减少动效的根淡出结束时调用 exitDone()）。两个都齐了才回 idle。
+   *  另一个是覆盖层自己让开演完（首轮等待实际板条过渡，重入等待显式 release 动画，
+   *  减少动效等待根淡出；RouteVeil 据以调用 exitDone()）。两个都齐了才回 idle。
    *
    *  为什么不能再让 after-enter 单独收尾：等数据（DATA_WAIT_MAX_MS）一旦超过
    *  hold+part，after-enter 会在**板条还盖着屏**的 out 相位里提前到来，
@@ -192,9 +192,9 @@ export function useRouteVeil() {
     tryFinalize()
   }
 
-  /** RouteVeil 在「让开」演完时调用（最后一个实际运行的板条 transform 过渡结束，
-   *  或减少动效下根元素的 opacity 过渡结束 —— 两者都是 CSS 时长驱动，
-   *  不在这里放任何计时器）。 */
+  /** RouteVeil 在「让开」演完时调用（首轮的实际板条 transform 过渡结束、
+   *  重入的显式 release 动画结束，或减少动效下根元素的 opacity 过渡结束）。
+   *  时长均由 CSS 驱动，不在这里另抄一份毫秒数。 */
   function exitDone(): void {
     if (phase.value !== 'in') return
     exitDoneFlag = true

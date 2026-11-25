@@ -27,33 +27,33 @@
  *  不产生 transition）；二是快速连点时重建节点会让面板跳回屏外重播。
  *  也不能用 display:none —— 那会让过渡彻底不跑。
  *  连点重入的分流见 base.css「重入分流」段与 composables/route-veil.ts 的 reFrom：
- *  从让开相位打断时板条走 recover 动画（瞬回左侧重新扫入），不倒飞。
+ *  从让开相位打断时板条走 recover 动画（瞬回左侧重新扫入），不倒飞；
+ *  随后的揭幕走独立的 release 动画，不依赖恢复动画结束后可能并不存在的过渡。
  */
 import { useRouteVeil } from '@/composables/route-veil'
 
 // 解构出来是顶层 ref，模板里自动解包；readonly 的那几个只读不写。
 const { phase, profile, target, reentrant, reFrom, exitDone } = useRouteVeil()
 
-/** 这一相位里是否还有实际运行的板条过渡。
- *  不能把「第五条板条的 transitionend」当作完成信号：重入时它可能已经在终点，
- *  浏览器不会再创建 transition，那条事件便永远不会到来（强连点实测可稳定触发看门狗）。
- *  实际创建了哪些过渡由 getAnimations() 回答；最后一个**真实运行的**结束即可收尾。 */
-function hasRunningSlatTransition(root: HTMLElement): boolean {
+/** 这一相位里是否还有实际运行的板条动作。
+ *  常规场次是 transform transition；重入场次的让开改走显式 CSS animation，
+ *  避免恢复动画与 transition 叠加时浏览器根本没有创建下一轮 transition。
+ *  两者都按 DOM 上真实存在的动画判断，不能押注某一条板条必定发事件。 */
+function hasRunningSlatMotion(root: HTMLElement): boolean {
+  const active = (animation: Animation): boolean => {
+    const isTransition =
+      animation instanceof CSSTransition && animation.transitionProperty === 'transform'
+    const isRelease = animation instanceof CSSAnimation && animation.animationName === 'veil-slat-release'
+    return (isTransition || isRelease) && animation.playState !== 'finished' && animation.playState !== 'idle'
+  }
   return [...root.querySelectorAll<HTMLElement>('.route-veil__slat')].some((slat) =>
-    slat.getAnimations().some(
-      (animation) =>
-        animation instanceof CSSTransition &&
-        animation.transitionProperty === 'transform' &&
-        animation.playState !== 'finished' &&
-        animation.playState !== 'idle',
-    ),
+    slat.getAnimations().some(active),
   )
 }
 
-/** 「让开演完」的回报：两个信号都算 ——
- *  1. 常规路径：板条 transform transitionend 后，确认已没有仍在运行的板条过渡；
- *  2. 减少动效路径：根元素的 opacity transitionend（板条整层 display:none）。
- *  其余 transitionend（黄层、读数）一律忽略。时长判断仍全在 CSS 里。 */
+/** 「让开演完」的回报：常规路径在板条 transitionend 后核对是否仍有动作；
+ *  减少动效路径由根元素的 opacity transitionend 收尾（板条整层 display:none）。
+ *  重入场次另由 onAnimationEnd 收集 release。其余事件一律忽略，时长仍全在 CSS 里。 */
 function onTransitionEnd(e: TransitionEvent): void {
   const el = e.target as HTMLElement
   const root = e.currentTarget as HTMLElement
@@ -62,7 +62,14 @@ function onTransitionEnd(e: TransitionEvent): void {
     return
   }
   if (e.propertyName !== 'transform' || !el.classList.contains('route-veil__slat')) return
-  if (!hasRunningSlatTransition(root)) exitDone()
+  if (!hasRunningSlatMotion(root)) exitDone()
+}
+
+/** 重入场次不看 transition，而看本轮 release 动画；其他氛围动画一律忽略。 */
+function onAnimationEnd(e: AnimationEvent): void {
+  const el = e.target as HTMLElement
+  if (e.animationName !== 'veil-slat-release' || !el.classList.contains('route-veil__slat')) return
+  if (!hasRunningSlatMotion(e.currentTarget as HTMLElement)) exitDone()
 }
 
 /** 百叶板条数。板宽 / 步进 / 错峰全部按 5 条算死在 base.css（28% 宽、24% 步进、
@@ -89,6 +96,8 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       aria-hidden="true"
       @transitionend="onTransitionEnd"
       @transitioncancel="onTransitionEnd"
+      @animationend="onAnimationEnd"
+      @animationcancel="onAnimationEnd"
     >
       <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在百叶板下面。
            整个行程比板条多走一个 --motion-route-wipe-lead，于是两个相位里都能从
