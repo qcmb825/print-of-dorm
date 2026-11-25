@@ -382,7 +382,7 @@
   /* 子页档：布局内子页之间换场（StudentLayout 的 3 页 / StaffLayout 的 5 页）
    * 外壳档：登录 / 学生端 / 管理端之间的整壳切换。
    *
-   * 三幕总时长 = latch + gate + hold + part：子页 1420ms，外壳 1540ms。
+   * 三幕总时长 = latch + gate + hold + part：子页 1460ms，外壳 1620ms。
    * 转场是打印服务的品牌展示，不按效率型后台压缩成普通淡入淡出。
    * 2026-09-18 起比上一版慢一倍以上（子页原来是 300ms 一场）。慢下来的原因不是"想要更
    * 隆重"，而是屏幕正中现在有一行字要读：**中文字的停留时长由阅读决定，不由动画决定**。
@@ -406,11 +406,11 @@
    * 但旧页的离场曲线前 1/3 几乎不动，那段时间等于白等；点击后由百叶立即响应。 */
   --motion-dur-route-latch: 0ms;
   --motion-dur-route-gate: 540ms;
-  --motion-dur-route-hold: 400ms;
+  --motion-dur-route-hold: 480ms;
   --motion-dur-route-latch-inline: 0ms;
   --motion-dur-route-gate-inline: 500ms;
   /* 子页与外壳都在完全覆盖后落字；hold 同时保证词读完前不会开始揭幕。 */
-  --motion-dur-route-hold-inline: 360ms;
+  --motion-dur-route-hold-inline: 400ms;
 
   /* 百叶板的错峰步进（进/出各一支）：5 条板，末条延迟 4×step，于是每条板的
    * 实际滑动时长 = gate − 4×step（进）/ part − 4×step-out（出）—— 这个关系

@@ -2040,11 +2040,9 @@
     /* 左侧套准线让相邻板在拼版位也有边界，而不是五条同色板融成一整块。 */
     box-shadow: -1px 0 0 var(--veil-hairline);
     transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
-    /* **封屏**这一趟走 --motion-ease-out：换成 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
+    /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
-       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。
-       让开相位不带这份紧迫、重入收回要「先制动」，那两处走 --motion-ease-in-out，
-       见下面 [data-phase='in'] 与 [data-re-from='in'] 几条。 */
+       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
     transition:
       transform calc(var(--veil-gate) - 4 * var(--veil-slat-step)) var(--motion-ease-out)
         calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
@@ -2180,7 +2178,7 @@
   }
 
   .route-veil[data-phase='in'] .route-veil__plate {
-    animation: veil-plate-in calc(var(--veil-hold) * 0.22) var(--motion-ease-out) both;
+    animation: veil-plate-in calc(var(--veil-hold) * 0.18) var(--motion-ease-out) both;
   }
 
   /* 读数层：一个**固定在屏幕上的版面**，不跟面板走。
@@ -2493,12 +2491,12 @@
   /* gate 结束已经进入 in：第二幕全部使用 hold 内的相对时序。
      首趟读数从轻淡入开始；重入保留当前读数，只让巨号词重新落版。 */
   .route-veil[data-phase='in'] .route-veil__read {
-    animation: veil-read-in calc(var(--veil-hold) * 0.4) var(--motion-ease-out) both;
+    animation: veil-read-in calc(var(--veil-hold) * 0.36) var(--motion-ease-out) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__corner {
-    animation: veil-read-in calc(var(--veil-hold) * 0.4) var(--motion-ease-out)
-      calc(var(--veil-hold) * 0.1) both;
+    animation: veil-read-in calc(var(--veil-hold) * 0.36) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.08) both;
   }
 
   /* out 相位内改目标不会重播读数；in 相位重入只重印巨号词，父层不熄灭。 */
@@ -2511,24 +2509,26 @@
     transform: none;
   }
 
-  /* 完全覆盖后的落字顺序：巨号遮罩揭示 → 斜梁扫开；网格与准星只作一次就位。 */
+  /* 落字使用同一条归一化时间线：
+   * 读数满亮 = 0.36×0.30 = 10.8% hold；巨号开始显形 = 0.06+0.375×0.12 = 10.5% hold。
+   * 斜梁在巨号揭示后段接入，55% hold 完成，余下 45% hold 静版阅读（180/216ms）。 */
   .route-veil[data-phase='in'] .route-veil__word {
-    animation: veil-word-in calc(var(--veil-hold) * 0.5) var(--motion-ease-out)
-      calc(var(--veil-hold) * 0.12) both;
+    animation: veil-word-in calc(var(--veil-hold) * 0.375) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.06) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__beam {
-    animation: veil-beam-in calc(var(--veil-hold) * 0.28) var(--motion-ease-out)
-      calc(var(--veil-hold) * 0.48) both;
+    animation: veil-beam-in calc(var(--veil-hold) * 0.2) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.35) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__cross {
-    animation: veil-cross-in calc(var(--veil-hold) * 0.2) var(--motion-ease-out) both;
+    animation: veil-cross-in calc(var(--veil-hold) * 0.16) var(--motion-ease-out) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__scanline {
-    animation: veil-scanline-in calc(var(--veil-hold) * 0.22) var(--motion-ease-out)
-      calc(var(--veil-hold) * 0.18) both;
+    animation: veil-scanline-in calc(var(--veil-hold) * 0.18) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.16) both;
   }
 
   /* 细线随 HUD 父层统一退场。 */

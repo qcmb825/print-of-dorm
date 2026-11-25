@@ -1,0 +1,1 @@
+import{X as e,q as t}from"./useApi-BPuI6ZR9-BM-pFei4.js";import{qt as n}from"./createLucideIcon-ClRkaCjD.js";import{Q as r}from"./index-3j4QgkOE.js";var i=r?document?.fonts?.ready:void 0,a=!1;i===void 0?a=!0:i.then(()=>{a=!0});function o(n){if(a)return;let r=!1;e(()=>{a||i?.then(()=>{r||n()})}),t(()=>{r=!0})}var{c:s}=n(),c=`vueuc-style`;export{c as n,o as r,s as t};
