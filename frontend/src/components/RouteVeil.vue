@@ -34,21 +34,35 @@ import { useRouteVeil } from '@/composables/route-veil'
 // 解构出来是顶层 ref，模板里自动解包；readonly 的那几个只读不写。
 const { phase, profile, target, reentrant, reFrom, exitDone } = useRouteVeil()
 
+/** 这一相位里是否还有实际运行的板条过渡。
+ *  不能把「第五条板条的 transitionend」当作完成信号：重入时它可能已经在终点，
+ *  浏览器不会再创建 transition，那条事件便永远不会到来（强连点实测可稳定触发看门狗）。
+ *  实际创建了哪些过渡由 getAnimations() 回答；最后一个**真实运行的**结束即可收尾。 */
+function hasRunningSlatTransition(root: HTMLElement): boolean {
+  return [...root.querySelectorAll<HTMLElement>('.route-veil__slat')].some((slat) =>
+    slat.getAnimations().some(
+      (animation) =>
+        animation instanceof CSSTransition &&
+        animation.transitionProperty === 'transform' &&
+        animation.playState !== 'finished' &&
+        animation.playState !== 'idle',
+    ),
+  )
+}
+
 /** 「让开演完」的回报：两个信号都算 ——
- *  1. 末条板条的 transform transitionend（常规路径：板条错峰让开，末条最晚收尾）；
- *  2. 根元素的 opacity transitionend（减少动效路径：板条整层 display:none，
- *     唯一在动的过渡是根元素那次明暗）。
- *  只认这两个，其余 transitionend（黄层、其他板条）一律忽略。
- *  时长判断全在 CSS 里，这里只做事件路由 —— 状态机不放计时器的规矩不变。 */
+ *  1. 常规路径：板条 transform transitionend 后，确认已没有仍在运行的板条过渡；
+ *  2. 减少动效路径：根元素的 opacity transitionend（板条整层 display:none）。
+ *  其余 transitionend（黄层、读数）一律忽略。时长判断仍全在 CSS 里。 */
 function onTransitionEnd(e: TransitionEvent): void {
   const el = e.target as HTMLElement
-  if (el === e.currentTarget) {
+  const root = e.currentTarget as HTMLElement
+  if (el === root) {
     if (e.propertyName === 'opacity') exitDone()
     return
   }
   if (e.propertyName !== 'transform' || !el.classList.contains('route-veil__slat')) return
-  const slats = (e.currentTarget as HTMLElement).querySelectorAll('.route-veil__slat')
-  if (el === slats[slats.length - 1]) exitDone()
+  if (!hasRunningSlatTransition(root)) exitDone()
 }
 
 /** 百叶板条数。板宽 / 步进 / 错峰全部按 5 条算死在 base.css（28% 宽、24% 步进、
@@ -74,6 +88,7 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
       :data-re-from="reentrant ? reFrom : undefined"
       aria-hidden="true"
       @transitionend="onTransitionEnd"
+      @transitioncancel="onTransitionEnd"
     >
       <!-- 黄层写在**前**：同一层叠层下 DOM 顺序就是绘制顺序，它必须垫在百叶板下面。
            整个行程比板条多走一个 --motion-route-wipe-lead，于是两个相位里都能从

@@ -27,6 +27,8 @@ const props = withDefaults(
     transitionKey: string
     /** 不传就是布局内子页档 */
     profile?: VeilProfile
+    /** 子页档所属的路由记录。跨 shell 时旧布局仍在离场，但它不能再认领全局换场。 */
+    routeRoot?: string
     /** 外壳档的代号与页名，见 App.vue；子页档留空则自动取 meta.code / meta.title */
     veilCode?: string
     veilTitle?: string
@@ -40,9 +42,18 @@ const veil = useRouteVeil()
 /** 这一次换场的编号。三个钩子都是异步到场的（after-leave 在离场结束时、
  *  after-enter 在入场结束时），必须带着编号回去认领 —— 否则连点导航时，
  *  上一次的 after-enter 会把新一次换场提前收掉，面板在半路被切掉。 */
-let runId = 0
+let runId: number | null = null
 /** 本实例是不是正拥有一次在飞的换场。用来判断「这次 props 变化该不该改写场记读数」。 */
 let inFlight = false
+
+/** 路由已经切到别的外壳时，旧布局直到 shell 离场结束才卸载。
+ *  这段存活期内它也会看到新的 route.path；若不按 matched 路由记录做归属判断，
+ *  它会和 App 的 shell Transition 同时 begin()，并把自己卸载前的 run 变成无人收尾的孤儿。 */
+function ownsCurrentRoute(): boolean {
+  if (props.profile === 'shell') return true
+  if (!props.routeRoot) return false
+  return route.matched.some((record) => record.path === props.routeRoot)
+}
 
 /** 目标页。before-leave 那一刻 vue-router 已经提交了新路由（路由先落、组件后换），
  *  所以 route 上读到的是**要去哪**，不是从哪来。
@@ -58,17 +69,23 @@ function currentTarget(): VeilTarget {
 }
 
 function onBeforeLeave(): void {
-  inFlight = true
+  if (!ownsCurrentRoute()) {
+    // shell 已接管这次跨布局导航；旧内层只做自己的 DOM 离场，不碰全局状态。
+    inFlight = false
+    runId = null
+    return
+  }
   runId = veil.begin(props.profile, currentTarget())
+  inFlight = runId !== null
 }
 
 function onAfterLeave(): void {
-  veil.open(runId)
+  if (runId !== null) veil.open(runId)
 }
 
 function onAfterEnter(): void {
   inFlight = false
-  veil.settle(runId)
+  if (runId !== null) veil.settle(runId)
 }
 
 /** 换场还没演完又导航了一次时，Vue 不会再调 before-leave（见 route-veil.ts 的 retarget），
@@ -78,8 +95,8 @@ function onAfterEnter(): void {
 watch(
   () => props.transitionKey,
   () => {
-    if (!inFlight) return
-    veil.retarget(props.profile, currentTarget())
+    if (!inFlight || runId === null || !ownsCurrentRoute()) return
+    veil.retarget(runId, props.profile, currentTarget())
   },
 )
 </script>

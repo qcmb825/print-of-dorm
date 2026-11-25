@@ -132,8 +132,13 @@ export function whenScreenLayersIdle(): Promise<void> {
 
 export function useRouteVeil() {
   /** @before-leave 调用。此刻 vue-router 已经提交了新路由（路由先落、组件后换），
-   *  所以传进来的就是**要去哪**，不是从哪来 —— 场记板上写的是目标页名。 */
-  function begin(next: VeilProfile, nextTarget: VeilTarget): number {
+   *  所以传进来的就是**要去哪**，不是从哪来 —— 场记板上写的是目标页名。
+   *
+   *  跨 shell 时旧 inline 在外壳离场结束前仍然挂载。RouteTransition 会先用 routeRoot
+   *  排除它；这里再设一道仲裁：shell 在飞时拒绝迟到的 inline，且 shell 可以抢占旧 inline。
+   *  返回 null 表示本次没有取得所有权，调用方的 open / settle / retarget 都必须保持静默。 */
+  function begin(next: VeilProfile, nextTarget: VeilTarget): number | null {
+    if (phase.value !== 'idle' && profile.value === 'shell' && next === 'inline') return null
     const id = ++runSeq
     reentrant.value = phase.value !== 'idle'
     reFrom.value = phase.value === 'idle' ? '' : phase.value
@@ -149,6 +154,7 @@ export function useRouteVeil() {
       if (id === runSeq) {
         phase.value = 'idle'
         reentrant.value = false
+        reFrom.value = ''
       }
     }, WATCHDOG_MS)
 
@@ -173,8 +179,8 @@ export function useRouteVeil() {
   }
 
   /** @after-enter 调用 —— 标记「内容进场演完」。这只是收尾的两个条件之一：
-   *  另一个是覆盖层自己让开演完（RouteVeil 在末条板/根淡出的 transitionend 时报
-   *  exitDone()）。两个都齐了才回 idle。
+   *  另一个是覆盖层自己让开演完（RouteVeil 在最后一个实际运行的板条过渡结束时，
+   *  或减少动效的根淡出结束时调用 exitDone()）。两个都齐了才回 idle。
    *
    *  为什么不能再让 after-enter 单独收尾：等数据（DATA_WAIT_MAX_MS）一旦超过
    *  hold+part，after-enter 会在**板条还盖着屏**的 out 相位里提前到来，
@@ -186,8 +192,8 @@ export function useRouteVeil() {
     tryFinalize()
   }
 
-  /** RouteVeil 在「让开」演完时调用（末条板条的 transform transitionend，
-   *  或减少动效下根元素的 opacity transitionend —— 两个都是 CSS 时长驱动，
+  /** RouteVeil 在「让开」演完时调用（最后一个实际运行的板条 transform 过渡结束，
+   *  或减少动效下根元素的 opacity 过渡结束 —— 两者都是 CSS 时长驱动，
    *  不在这里放任何计时器）。 */
   function exitDone(): void {
     if (phase.value !== 'in') return
@@ -212,8 +218,9 @@ export function useRouteVeil() {
    *  而 settle() 照样用同一个 runId 正常收尾、不报错 —— 错误只体现在读数上。
    *
    *  只在换场进行中生效（idle 时由紧接着的 begin() 写正确值，这里插手反而会写早一步）。 */
-  function retarget(next: VeilProfile, nextTarget: VeilTarget): void {
-    if (phase.value === 'idle') return
+  function retarget(id: number, next: VeilProfile, nextTarget: VeilTarget): void {
+    // 本实例 still inFlight 不等于它仍拥有全局 run：shell 可能已经抢走了跨布局导航。
+    if (id !== runSeq || phase.value === 'idle') return
     profile.value = next
     target.value = nextTarget
   }

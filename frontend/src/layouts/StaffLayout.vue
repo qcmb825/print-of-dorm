@@ -341,7 +341,7 @@ onMounted(() => {
              要在这一层上加回视差之前，先问一句「这里面有没有会重排或重绘的东西」。 -->
         <div>
           <RouterView v-slot="{ Component }">
-            <RouteTransition :transition-key="currentPath" profile="inline">
+            <RouteTransition :transition-key="currentPath" profile="inline" route-root="/staff">
               <component :is="Component" />
             </RouteTransition>
           </RouterView>
