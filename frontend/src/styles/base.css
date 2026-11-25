@@ -2027,7 +2027,7 @@
    * 板 i 的起步 = latch + i·step，滑动时长 = gate − 4·step ——
    * 于是**末条板恰好在 latch+gate 那帧咬合**（= @after-leave = 换手帧），
    * 早一帧露馅、晚一帧白遮；让开相位同理，末条板在 hold+part 那帧走完。
-   * step 只是相位偏移，不是等待上一片结束的间隔：单片时长 gate−4·step 远大于 step，
+   * step 只是相位偏移，不是等待上一片结束的间隔：单片时长 gate−4·step 大于 step，
    * 相邻叶片在运动中重叠，不是逐片接力。
    * 起步位移用 vw 而不是自身宽度的百分比：板条 left 各不相同，
    * −125vw 保证五条板全在屏外左侧，+125vw 保证全出右侧。 */
@@ -2099,20 +2099,27 @@
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 连点击只换目标，不重新演一遍封屏。
+  /* 连点不重新演一遍封屏。
    * 从 'out' 重入：不改 transform 与 animation-name，正在封屏的板条沿原曲线继续。
-   * 从 'in' 重入：上一轮的揭幕立即收束为完整拼版，停掉仍在运行的位移与 CSS 动画。
-   * 不从屏外重播、不倒飞，也不把 HUD 熄灭后再点亮；换手期间目标词可以原地更新。
+   * 从 'in' 重入：以下规则只提供静态终点与**供 RouteVeil 读取的计算时长**。
+   * transition-property:none 防止 CSS 再建一条竞争动画；RouteVeil 已在更新前捕获
+   * 每片板条的实际矩阵，随后用 WAAPI 从该矩阵连续收到终点，不会瞬间盖黑。
    * 下一轮揭开仍由独立的 release 动画给出确定的完成事件。 */
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__slat {
     animation: none;
-    transition: none;
+    transition-property: none;
+    transition-duration: calc(var(--veil-gate) - 4 * var(--veil-slat-step));
+    transition-delay: calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
+    transition-timing-function: var(--motion-ease-out);
     transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__wipe-under {
     animation: none;
-    transition: none;
+    transition-property: none;
+    transition-duration: var(--veil-gate);
+    transition-delay: 0ms;
+    transition-timing-function: var(--motion-ease-out);
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
@@ -2138,7 +2145,7 @@
   }
 
   /* 重入场次的「让开」仍是一条新的显式动画。它既避免重入时缺失 transitionend，
-   * 又让「处理点击」与「最终揭幕」保持分离：中途只稳定幕布、换字，此处才柔和退场。
+   * 又让「处理点击」与「最终揭幕」保持分离：中途连续收回幕布、换字，此处才柔和退场。
    * backwards 让每片在错峰前保持拼版位；演完由 forwards 钉在屏外右侧。
    * 每条片上确实有 veil-slat-release，RouteVeil 可以按真实 CSSAnimation 收尾。 */
   .route-veil[data-phase='in'][data-run='re'] .route-veil__slat {
@@ -2234,11 +2241,19 @@
      窄屏放不下这一排时让它换行（页名一行、代号一行），而不是砍掉哪一个 ——
      两个都是信息，挤着读不出来的才该砍。 */
   .route-veil__hud-line {
+    display: grid;
+    width: 100%;
+    justify-items: center;
+  }
+
+  .route-veil__hud-value {
+    grid-area: 1 / 1;
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
     justify-content: center;
     gap: 10px 20px;
+    max-width: 100%;
   }
 
   .route-veil__hud-title {
@@ -2274,6 +2289,7 @@
   .route-veil__word {
     position: relative;
     z-index: 1;
+    display: grid;
     overflow: hidden;
     max-width: 94vw;
     font-family: var(--stack-heading);
@@ -2286,6 +2302,36 @@
     white-space: nowrap;
   }
 
+  .route-veil__word-value {
+    grid-area: 1 / 1;
+    white-space: nowrap;
+  }
+
+  /* 只交叉过渡目标值，不重建外层巨号版式。默认 mode 允许新旧值短暂同帧：
+   * 旧值退出 fast，新值进入 base；grid 同格叠放保证换词时容器不跳高、不左右甩。
+   * 离场保持较小上移，入场从下方就位，连续点击时 Vue 会接管尚未结束的旧过渡。 */
+  .veil-target-enter-active {
+    transition:
+      opacity var(--motion-dur-base) var(--motion-ease-out),
+      transform var(--motion-dur-base) var(--motion-ease-out);
+  }
+
+  .veil-target-leave-active {
+    pointer-events: none;
+    transition:
+      opacity var(--motion-dur-fast) var(--motion-ease-in-out),
+      transform var(--motion-dur-fast) var(--motion-ease-in-out);
+  }
+
+  .veil-target-enter-from {
+    opacity: 0;
+    transform: translate3d(0, 0.12em, 0);
+  }
+
+  .veil-target-leave-to {
+    opacity: 0;
+    transform: translate3d(0, -0.12em, 0);
+  }
   /* 斜梁：与 .title-beam 同一几何（22px 斜切、34% 高、左右各出 18px），
      进场是 scaleX 从左扫开 —— 「印色带」而不是「浮出来」。 */
   .route-veil__beam {
@@ -2499,15 +2545,19 @@
     animation: veil-scanline-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
   }
 
-  /* 揭幕途中改目标：这一组只**稳定当前版式**，不添加任何新位移、透明度或缩放动画。
-     目标词、中文章名由 Vue 单独更新；板面、斜梁、准星与细线都不熄灭、不回放。
-     选择器必须带上 data-re-from='in'，不能误伤仍在首次封屏、尚未亮起的读数。 */
+  /* 揭幕途中改目标：静态值是中断动作的终点，不是立即绘制的新画面。
+     RouteVeil 从旧帧插值到这里；duration/delay/easing 保留供 WAAPI 读取。
+     目标词与中文章名另由局部 veil-target 过渡，不触发整层 HUD 重播。 */
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__plate,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__read,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__corner,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__cross,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__scanline {
     animation: none;
+    transition-property: none;
+    transition-duration: calc(var(--veil-gate) * 0.3);
+    transition-delay: 0ms;
+    transition-timing-function: var(--motion-ease-out);
     opacity: 1;
     transform: none;
   }
@@ -2526,6 +2576,11 @@
 
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__scanline {
     opacity: 0.45;
+  }
+
+  /* 原揭幕相位里准星已经退出，重入不能把它重新钉亮一次。 */
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__cross {
+    opacity: 0;
   }
 
   /* 让开相位：巨号词与斜梁不另演退场 —— 它们包在 .route-veil__read 里，
@@ -2924,7 +2979,7 @@
   }
 }
 
-/* 揭幕途中重入不再配置 recover 动画：当前版式原地稳定，只更新场记文字。 */
+/* 揭幕途中重入不使用 recover 关键帧：RouteVeil 从实际旧帧插值，文字独立交叉过渡。 */
 
 /* 重入场次从拼版位继续向右揭开。首轮场次仍走 CSS transition；这一轮使用 animation
  * 是为了避免恢复动画让底层过渡失去可观测的 start/end，两套时长仍读同一组令牌。 */
@@ -3041,17 +3096,29 @@
   }
 
   .route-veil[data-phase='out'] {
-    opacity: 1 !important;
+    /* 不加 !important：WAAPI 的中断插值必须能覆盖普通 opacity 声明。 */
+    opacity: 1;
   }
 
-  /* 揭幕途中再选目标时也只做一次最终提亮，不在每次点击之间来回压暗、提亮。 */
+  /* 同样只提供 1 的目标值；RouteVeil 用旧帧不透明度连续接回，禁止硬切全黑。 */
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] {
-    transition: none !important;
-    opacity: 1 !important;
+    transition-property: none !important;
+    transition-duration: var(--motion-dur-route-still) !important;
+    transition-delay: 0ms !important;
+    transition-timing-function: var(--motion-ease-out) !important;
+    opacity: 1;
   }
 
   .route-veil[data-phase='in'] {
-    opacity: 0 !important;
+    opacity: 0;
+  }
+
+  /* 与重入板条 release 同理：静态 opacity 只给终点，WAAPI 提供连续动作和 finished。 */
+  .route-veil[data-phase='in'][data-run='re'] {
+    transition-property: none !important;
+    transition-duration: var(--motion-dur-route-still) !important;
+    transition-delay: 0ms !important;
+    transition-timing-function: var(--motion-ease-out) !important;
   }
 
   /* 读数不参与扫掠：面板整层不出现，它只是跟着整层的明暗一起到位、一起退走。
@@ -3064,6 +3131,12 @@
   .route-veil__beam {
     animation: none !important;
     opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* 目标词仍保留值的变化，但减少动效下不做上下位移。 */
+  .veil-target-enter-from,
+  .veil-target-leave-to {
     transform: none !important;
   }
 

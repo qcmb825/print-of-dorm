@@ -26,18 +26,20 @@
  *  不用 v-if：一是 v-if 每次重挂都拿不到「从屏外滑进来」的那条过渡（初始样式即终态，
  *  不产生 transition）；二是快速连点时重建节点会让面板跳回屏外重播。
  *  也不能用 display:none —— 那会让过渡彻底不跑。
- *  连点重入不再整屏重播：从 out 重入沿用当前封屏，从 in 重入原地稳定拼版，
- *  只有目标文字更新。随后由独立的 release 动画柔和揭开并给出确定的完成信号。
+ *  连点重入不再整屏重播：从 out 重入沿用当前封屏，从 in 重入先捕获每片板条的
+ *  实际计算位置，再由 WAAPI 连续收回拼版位；目标词与页名有各自的淡出、淡入。
+ *  随后由独立的 release 动画柔和揭开并给出确定的完成信号。
  */
+import { onBeforeUnmount, onBeforeUpdate, onUpdated, ref, watch } from 'vue'
 import { useRouteVeil } from '@/composables/route-veil'
 
 // 解构出来是顶层 ref，模板里自动解包；readonly 的那几个只读不写。
 const { phase, profile, target, reentrant, reFrom, exitDone } = useRouteVeil()
 
 /** 这一相位里是否还有实际运行的板条动作。
- *  常规场次是 transform transition；重入场次的让开改走显式 CSS animation，
- *  避免恢复动画与 transition 叠加时浏览器根本没有创建下一轮 transition。
- *  两者都按 DOM 上真实存在的动画判断，不能押注某一条板条必定发事件。 */
+ *  常规场次是 transform transition；普通重入场次是显式 release CSS animation。
+ *  两者都按 DOM 上真实存在的动画判断，不能押注某一条板条必定发事件。
+ *  减少动效重入没有板条，由 syncMotionAfterUpdate 中根 WAAPI 的 finished 单独收尾。 */
 function hasRunningSlatMotion(root: HTMLElement): boolean {
   const active = (animation: Animation): boolean => {
     const isTransition =
@@ -51,8 +53,8 @@ function hasRunningSlatMotion(root: HTMLElement): boolean {
 }
 
 /** 「让开演完」的回报：常规路径在板条 transitionend 后核对是否仍有动作；
- *  减少动效路径由根元素的 opacity transitionend 收尾（板条整层 display:none）。
- *  重入场次另由 onAnimationEnd 收集 release。其余事件一律忽略，时长仍全在 CSS 里。 */
+ *  减少动效首轮由根元素 opacity transitionend 收尾（板条整层 display:none）。
+ *  普通重入由 onAnimationEnd 收集 release，减少动效重入由根 WAAPI finished 收尾。 */
 function onTransitionEnd(e: TransitionEvent): void {
   const el = e.target as HTMLElement
   const root = e.currentTarget as HTMLElement
@@ -71,6 +73,171 @@ function onAnimationEnd(e: AnimationEvent): void {
   if (!hasRunningSlatMotion(e.currentTarget as HTMLElement)) exitDone()
 }
 
+/**
+ * 揭幕被点击打断时，CSS 的静态终点只负责提供目标值；真正的运动从旧帧开始。
+ *
+ * onBeforeUpdate 看到的是旧 DOM（仍是 in），此时 getComputedStyle 能读到 transition
+ * 或 CSS animation 正在呈现的实际矩阵。onUpdated 看到的是新 DOM（已是 out），此时
+ * CSS 中保留的 transition-duration / delay / timing-function 就是本轮中断动作的参数。
+ * 两段钩子在同一帧提交之间执行，WAAPI 接管前不会把静态终点绘制出来。
+ */
+interface InterruptedFrame {
+  element: HTMLElement
+  transform: string
+  opacity: string
+}
+
+const veilRoot = ref<HTMLElement | null>(null)
+let pendingFrames: InterruptedFrame[] = []
+let pendingRootOpacity: string | null = null
+let interruptedAnimations: Animation[] = []
+let reducedRelease: Animation | null = null
+
+function cancelInterruptedMotion(): void {
+  interruptedAnimations.forEach((animation) => animation.cancel())
+  interruptedAnimations = []
+  reducedRelease = null
+}
+
+function cssMilliseconds(value: string): number {
+  const parsed = Number.parseFloat(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0
+  return value.endsWith('ms') ? parsed : parsed * 1000
+}
+
+function captureInterruptedFrame(): void {
+  const root = veilRoot.value
+  pendingFrames = []
+  pendingRootOpacity = null
+  if (
+    !root ||
+    root.dataset.phase !== 'in' ||
+    phase.value !== 'out' ||
+    !reentrant.value ||
+    reFrom.value !== 'in'
+  ) {
+    return
+  }
+
+  const parts = root.querySelectorAll<HTMLElement>(
+    '.route-veil__slat, .route-veil__wipe-under, .route-veil__plate, .route-veil__read, ' +
+      '.route-veil__corner, .route-veil__cross, .route-veil__scanline',
+  )
+  pendingFrames = [...parts].map((element) => {
+    const style = getComputedStyle(element)
+    return { element, transform: style.transform, opacity: style.opacity }
+  })
+  pendingRootOpacity = getComputedStyle(root).opacity
+}
+
+function playInterruptedFrames(): void {
+  const root = veilRoot.value
+  if (
+    !root ||
+    !pendingFrames.length ||
+    root.dataset.phase !== 'out' ||
+    root.dataset.run !== 're' ||
+    root.dataset.reFrom !== 'in'
+  ) {
+    pendingFrames = []
+    pendingRootOpacity = null
+    return
+  }
+
+  cancelInterruptedMotion()
+  for (const frame of pendingFrames) {
+    const style = getComputedStyle(frame.element)
+    const duration = cssMilliseconds(style.transitionDuration)
+    const samePlace = style.transform === frame.transform && style.opacity === frame.opacity
+    if (!duration || samePlace) continue
+
+    // 去掉旧 CSS 动作再创建新动作发生在同一个 JS 任务里，不会插入一帧静态终点。
+    frame.element.getAnimations().forEach((animation) => animation.cancel())
+    const animation = frame.element.animate(
+      [
+        { transform: frame.transform, opacity: frame.opacity },
+        { transform: style.transform, opacity: style.opacity },
+      ],
+      {
+        duration,
+        delay: cssMilliseconds(style.transitionDelay),
+        easing: style.transitionTimingFunction,
+        fill: 'both',
+      },
+    )
+    interruptedAnimations.push(animation)
+  }
+
+  // 减少动效下板条不显示，只把当前根不透明度连续接回 1，不闪一次全黑。
+  if (pendingRootOpacity !== null) {
+    const style = getComputedStyle(root)
+    const duration = cssMilliseconds(style.transitionDuration)
+    if (duration && style.opacity !== pendingRootOpacity) {
+      root.getAnimations().forEach((animation) => animation.cancel())
+      interruptedAnimations.push(
+        root.animate(
+          [{ opacity: pendingRootOpacity }, { opacity: style.opacity }],
+          {
+            duration,
+            delay: cssMilliseconds(style.transitionDelay),
+            easing: style.transitionTimingFunction,
+            fill: 'both',
+          },
+        ),
+      )
+    }
+  }
+  pendingFrames = []
+  pendingRootOpacity = null
+}
+
+function syncMotionAfterUpdate(): void {
+  playInterruptedFrames()
+
+  const root = veilRoot.value
+  const firstSlat = root?.querySelector<HTMLElement>('.route-veil__slat')
+  if (
+    !root ||
+    root.dataset.phase !== 'in' ||
+    root.dataset.run !== 're' ||
+    !firstSlat ||
+    getComputedStyle(firstSlat).display !== 'none' ||
+    reducedRelease
+  ) {
+    return
+  }
+
+  // 减少动效重入也不能押注“取消旧 transition 后浏览器一定再建一条”。
+  // 显式 WAAPI 的 finished 是本轮唯一收尾信号；重入取消时 finished 会 reject，不会误收尾新场次。
+  const style = getComputedStyle(root)
+  const duration = cssMilliseconds(style.transitionDuration)
+  if (!duration) return
+  reducedRelease = root.animate([{ opacity: 1 }, { opacity: style.opacity }], {
+    duration,
+    delay: cssMilliseconds(style.transitionDelay),
+    easing: style.transitionTimingFunction,
+    fill: 'both',
+  })
+  interruptedAnimations.push(reducedRelease)
+  reducedRelease.finished
+    .then(() => {
+      if (root.dataset.phase === 'in') exitDone()
+    })
+    .catch(() => {
+      // 下一次导航取消本次揭幕属于正常控制流。
+    })
+}
+
+onBeforeUpdate(captureInterruptedFrame)
+onUpdated(syncMotionAfterUpdate)
+onBeforeUnmount(cancelInterruptedMotion)
+
+// 最终揭幕或真正离场前取消中断 WAAPI；out → out 的连点保持已有收回动作。
+watch(phase, (next, previous) => {
+  if (next === 'out' && previous === 'in') return
+  cancelInterruptedMotion()
+})
+
 /** 百叶板条数。板宽 / 步进 / 错峰全部按 5 条算死在 base.css（28% 宽、24% 步进、
  *  错峰走 --veil-slat-step），改条数必须连同那几处的 nth 计算一起改 ——
  *  所以这里写成常量而不是魔法数。 */
@@ -87,6 +254,7 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
 <template>
   <Teleport to="body">
     <div
+      ref="veilRoot"
       class="route-veil"
       :data-phase="phase"
       :data-profile="profile"
@@ -123,14 +291,23 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
           <!-- 落版主体：纸白窄体巨号词 + 琥珀骑字斜梁（与页头 .title-beam 同一签名，
                暗版上对应官方 PV 里白字 + 黄块的那一类构图）。 -->
           <span v-if="target.word" class="route-veil__word-wrap">
-            <span class="route-veil__word">{{ target.word }}</span>
+            <span class="route-veil__word">
+              <!-- 外层字距、斜梁与尺寸保持稳定；只有目标值本身交叉淡出／淡入。 -->
+              <Transition name="veil-target">
+                <span :key="target.word" class="route-veil__word-value">{{ target.word }}</span>
+              </Transition>
+            </span>
             <span class="route-veil__beam" />
           </span>
           <span class="route-veil__hud-line">
-            <span v-if="target.code && target.code !== target.word" class="route-veil__hud-chip">
-              {{ target.code }}
-            </span>
-            <span class="route-veil__hud-title">{{ target.title }}</span>
+            <Transition name="veil-target">
+              <span :key="`${target.code}:${target.title}`" class="route-veil__hud-value">
+                <span v-if="target.code && target.code !== target.word" class="route-veil__hud-chip">
+                  {{ target.code }}
+                </span>
+                <span class="route-veil__hud-title">{{ target.title }}</span>
+              </span>
+            </Transition>
           </span>
         </span>
         <!-- 制版细线：固定在轨道内，仅在版式就位时微微亮起，不再横穿屏幕。 -->

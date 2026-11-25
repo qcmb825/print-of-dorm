@@ -1,0 +1,1 @@
+import{E as e,lt as t}from"./useApi-BPuI6ZR9-BM-pFei4.js";function n(n,r){return t(n,e=>{e!==void 0&&(r.value=e)}),e(()=>n.value===void 0?r.value:n.value)}export{n as t};

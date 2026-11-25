@@ -396,7 +396,7 @@
 
   /* 换场三拍：起手空拍 → 百叶板错峰咬合封屏 → 盖住之后的停留。
    * 2026-11-23「百叶拼版」重设计后三拍都拉长了一档：gate 里要容纳 5 条板
-   * 20ms 的错峰（末条板恰好在 gate 结束那一帧咬合），hold 是**落版可读时长** ——
+   * 60ms 的错峰（末条板恰好在 gate 结束那一帧咬合），hold 是**落版可读时长** ——
    * 巨号词浮起 + 斜梁扫过 + 准星钉版的整套动作在 gate 末段开始，hold 给它读完。
    * 两档都必须满足「空拍 + 封屏 = 对应的 leave 时长」这个恒等式 ——
    * 末条板必须恰好在 @after-leave 那一刻完全盖住屏幕，早一帧露馅、晚一帧白遮。
@@ -422,14 +422,13 @@
    * 实际滑动时长 = gate − 4×step（进）/ part − 4×step-out（出）—— 这个关系
    * 写在 base.css 的 calc 里，改 step 不用改别的东西，恒等式也不受影响
    * （末条板的落点恒等于 gate / hold+part 的末尾）。 */
-  /* 20ms 是启动间隔，不是单片动画时长。相邻叶片的大部分行程必须重叠，
-   * 不能做成「前一片演完，后一片再开始」的接力。单片仍持续 gate−80ms /
-   * part−80ms：子页封屏 260ms、揭幕 300ms，外壳封屏 300ms、揭幕 340ms；
+  /* 60ms 是启动间隔，不是单片动画时长。单片持续 gate−240ms / part−240ms：
+   * 子页封屏 100ms、揭幕 140ms，外壳封屏 140ms、揭幕 180ms；
    * 五片各自的末帧不变，换场总时长与换手帧都不变。 */
-  --motion-route-slat-step: 20ms;
-  --motion-route-slat-step-out: 20ms;
-  --motion-route-slat-step-inline: 20ms;
-  --motion-route-slat-step-out-inline: 20ms;
+  --motion-route-slat-step: 60ms;
+  --motion-route-slat-step-out: 60ms;
+  --motion-route-slat-step-inline: 60ms;
+  --motion-route-slat-step-out-inline: 60ms;
 
   /* 减少动效下唯一保留的那一次明暗过渡（压暗一次、提亮一次，总时长是它的两倍）。
      跟换场一起收短：对前庭敏感的用户，一次全屏亮度大幅摇摆 1 秒以上，比"没有过渡"更难接受。 */

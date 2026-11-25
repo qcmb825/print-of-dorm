@@ -9,8 +9,9 @@
  *  这里**不放任何驱动动画的定时器** —— 时长只有 tokens.css 一份事实来源，
  *  改令牌不用改这里，也不会出现"CSS 改了 100ms、JS 没跟"的错位。
  *
- *  JS 侧刻意不读 prefers-reduced-motion：减少动效下的降级完全由 CSS 承担
- *  （面板整层不出现、只留一次缓慢的明暗过渡）。少一处可能和 CSS 漂移的状态。
+ *  JS 侧刻意不读 prefers-reduced-motion：CSS 决定板条是否显示及全部时长，
+ *  RouteVeil 只根据计算样式选择板条事件或根 WAAPI finished 作为收尾信号。
+ *  少一处可能和 CSS 漂移的媒体查询状态。
  *  也正因为这里不依赖任何时长，全局那条 `transition-duration: 0.001ms !important`
  *  兜底不会把状态机压坏 —— 时长被压短只是让钩子更早回来，状态流转照旧。
  */
@@ -43,8 +44,8 @@ const reentrant = ref(false)
 
 /** 重入发生的那一刻状态机停在哪个相位（'out' | 'in' | ''）。CSS 靠它分流：
  *  - 从 'out' 重入（数据等待中连点）：原有封屏动作继续，不重新播放；
- *  - 从 'in' 重入（板条正在让开时连点）：停掉旧揭幕并稳定在拼版位，
- *    不重新扫入、不重播读数，只更新目标文字；下一轮由 release 柔和揭开。 */
+ *  - 从 'in' 重入（板条正在让开时连点）：RouteVeil 捕获旧帧并连续收回拼版位，
+ *    不重新扫入、不重播整块读数，只交叉切换目标文字；下一轮由 release 柔和揭开。 */
 const reFrom = ref<'' | 'out' | 'in'>('')
 
 let runSeq = 0
@@ -178,7 +179,7 @@ export function useRouteVeil() {
 
   /** @after-enter 调用 —— 标记「内容进场演完」。这只是收尾的两个条件之一：
    *  另一个是覆盖层自己让开演完（首轮等待实际板条过渡，重入等待显式 release 动画，
-   *  减少动效等待根淡出；RouteVeil 据以调用 exitDone()）。两个都齐了才回 idle。
+   *  减少动效首轮等待根淡出、重入等待根 WAAPI finished；RouteVeil 据以调用 exitDone()）。两个都齐了才回 idle。
    *
    *  为什么不能再让 after-enter 单独收尾：等数据（DATA_WAIT_MAX_MS）一旦超过
    *  hold+part，after-enter 会在**板条还盖着屏**的 out 相位里提前到来，
@@ -191,7 +192,7 @@ export function useRouteVeil() {
   }
 
   /** RouteVeil 在「让开」演完时调用（首轮的实际板条 transform 过渡结束、
-   *  重入的显式 release 动画结束，或减少动效下根元素的 opacity 过渡结束）。
+   *  重入的显式 release 动画结束，或减少动效下根元素的首轮淡出／重入 WAAPI 完成）。
    *  时长均由 CSS 驱动，不在这里另抄一份毫秒数。 */
   function exitDone(): void {
     if (phase.value !== 'in') return
