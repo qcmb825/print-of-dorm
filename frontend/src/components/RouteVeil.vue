@@ -120,7 +120,7 @@ function captureInterruptedFrame(): void {
   }
 
   const parts = root.querySelectorAll<HTMLElement>(
-    '.route-veil__slat, .route-veil__wipe-under, .route-veil__plate, .route-veil__read, ' +
+    '.route-veil__hud, .route-veil__slat, .route-veil__wipe-under, .route-veil__plate, .route-veil__read, ' +
       '.route-veil__corner, .route-veil__cross, .route-veil__scanline',
   )
   pendingFrames = [...parts].map((element) => {
@@ -292,15 +292,15 @@ const TRI_CELLS = [true, true, true, true, true, true, false, true]
                暗版上对应官方 PV 里白字 + 黄块的那一类构图）。 -->
           <span v-if="target.word" class="route-veil__word-wrap">
             <span class="route-veil__word">
-              <!-- 外层字距、斜梁与尺寸保持稳定；只有目标值本身交叉淡出／淡入。 -->
-              <Transition name="veil-target">
+              <!-- 外层字距、斜梁与尺寸保持稳定；目标值先退出再进入，避免巨词重影。 -->
+              <Transition name="veil-target" mode="out-in">
                 <span :key="target.word" class="route-veil__word-value">{{ target.word }}</span>
               </Transition>
             </span>
             <span class="route-veil__beam" />
           </span>
           <span class="route-veil__hud-line">
-            <Transition name="veil-target">
+            <Transition name="veil-target" mode="out-in">
               <span :key="`${target.code}:${target.title}`" class="route-veil__hud-value">
                 <span v-if="target.code && target.code !== target.word" class="route-veil__hud-chip">
                   {{ target.code }}

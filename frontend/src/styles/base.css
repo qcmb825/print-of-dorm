@@ -1954,8 +1954,7 @@
     opacity: 0;
   }
 
-  /* 子页档：接回站点既有的横向接入语汇。--motion-route-enter-x / -leave-x 这两条令牌
-     本来就是为它预留的。 */
+  /* 子页新页只做 1.5% 的纵深归位；视觉冲击由百叶承担，不附加横向滑动。 */
   .route-stage[data-profile='inline'].route-enter-active {
     transition:
       opacity var(--veil-part) var(--motion-ease-out) var(--veil-hold),
@@ -1969,11 +1968,11 @@
   }
 
   .route-stage[data-profile='inline'].route-enter-from {
-    transform: translateX(var(--motion-route-enter-x));
+    transform: scale(var(--motion-route-enter-scale));
   }
 
   .route-stage[data-profile='inline'].route-leave-to {
-    transform: translateX(var(--motion-route-leave-x));
+    transform: scale(var(--motion-route-leave-scale));
   }
 
   /* 外壳档的显式护栏：万一哪天有人给 .route-enter-from 补了一句位移，
@@ -2041,10 +2040,11 @@
     /* 左侧套准线让相邻板在拼版位也有边界，而不是五条同色板融成一整块。 */
     box-shadow: -1px 0 0 var(--veil-hairline);
     transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
-    /* **封屏**这一趟走 --motion-ease-out：用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
+    /* **封屏**这一趟走 --motion-ease-out：换成 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
        而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。
-       让开相位不带这份紧迫，走更柔和的曲线，见下面 [data-phase='in'] 那条。 */
+       让开相位不带这份紧迫、重入收回要「先制动」，那两处走 --motion-ease-in-out，
+       见下面 [data-phase='in'] 与 [data-re-from='in'] 几条。 */
     transition:
       transform calc(var(--veil-gate) - 4 * var(--veil-slat-step)) var(--motion-ease-out)
         calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
@@ -2110,7 +2110,8 @@
     transition-property: none;
     transition-duration: calc(var(--veil-gate) - 4 * var(--veil-slat-step));
     transition-delay: calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
-    transition-timing-function: var(--motion-ease-out);
+    /* 起步速度为零：先制动再收回，避免中断瞬间猛然后退。 */
+    transition-timing-function: var(--motion-ease-in-out);
     transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
@@ -2119,7 +2120,7 @@
     transition-property: none;
     transition-duration: var(--veil-gate);
     transition-delay: 0ms;
-    transition-timing-function: var(--motion-ease-out);
+    transition-timing-function: var(--motion-ease-in-out);
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
@@ -2178,14 +2179,8 @@
     opacity: 0;
   }
 
-  .route-veil[data-phase='out'] .route-veil__plate {
-    animation: veil-plate-in calc(var(--veil-gate) * 0.45) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.55) both;
-  }
-
   .route-veil[data-phase='in'] .route-veil__plate {
-    animation: veil-plate-out calc(var(--veil-part) * 0.4) var(--motion-ease-out)
-      var(--veil-hold) both;
+    animation: veil-plate-in calc(var(--veil-hold) * 0.22) var(--motion-ease-out) both;
   }
 
   /* 读数层：一个**固定在屏幕上的版面**，不跟面板走。
@@ -2196,6 +2191,16 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
+  }
+
+  /* out 只负责合版，HUD 不提前压到旧页上；in 的 hold 才执行第二幕。
+     hold 结束后由父层统一退出，避免每个装饰各跑一套退场动画。 */
+  .route-veil[data-phase='out'] .route-veil__hud {
+    opacity: 0;
+  }
+
+  .route-veil[data-phase='in'] .route-veil__hud {
+    animation: veil-read-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
   }
 
   /* 中心读数：横竖都在正中。读数占着屏幕中心这件事，是那条 2px 套准线被删掉的原因
@@ -2243,6 +2248,7 @@
   .route-veil__hud-line {
     display: grid;
     width: 100%;
+    min-height: 40px;
     justify-items: center;
   }
 
@@ -2296,6 +2302,7 @@
     font-size: clamp(56px, 12vw, 190px);
     font-weight: 700;
     line-height: 0.94;
+    min-height: 0.94em;
     letter-spacing: 0.04em;
     color: var(--background);
     text-transform: uppercase;
@@ -2307,30 +2314,29 @@
     white-space: nowrap;
   }
 
-  /* 只交叉过渡目标值，不重建外层巨号版式。默认 mode 允许新旧值短暂同帧：
-   * 旧值退出 fast，新值进入 base；grid 同格叠放保证换词时容器不跳高、不左右甩。
-   * 离场保持较小上移，入场从下方就位，连续点击时 Vue 会接管尚未结束的旧过渡。 */
+  /* out-in：90ms 退出完成后才让 140ms 新值进入，巨号词不叠影。
+   * 外层 min-height 保留行框，空场时不挤压上下版面；位移只保留很小的方向提示。 */
   .veil-target-enter-active {
     transition:
-      opacity var(--motion-dur-base) var(--motion-ease-out),
-      transform var(--motion-dur-base) var(--motion-ease-out);
+      opacity var(--motion-dur-route-target-in) var(--motion-ease-out),
+      transform var(--motion-dur-route-target-in) var(--motion-ease-out);
   }
 
   .veil-target-leave-active {
     pointer-events: none;
     transition:
-      opacity var(--motion-dur-fast) var(--motion-ease-in-out),
-      transform var(--motion-dur-fast) var(--motion-ease-in-out);
+      opacity var(--motion-dur-route-target-out) var(--motion-ease-in-out),
+      transform var(--motion-dur-route-target-out) var(--motion-ease-in-out);
   }
 
   .veil-target-enter-from {
     opacity: 0;
-    transform: translate3d(0, 0.12em, 0);
+    transform: translate3d(0, 0.1em, 0);
   }
 
   .veil-target-leave-to {
     opacity: 0;
-    transform: translate3d(0, -0.12em, 0);
+    transform: translate3d(0, -0.08em, 0);
   }
   /* 斜梁：与 .title-beam 同一几何（22px 斜切、34% 高、左右各出 18px），
      进场是 scaleX 从左扫开 —— 「印色带」而不是「浮出来」。 */
@@ -2484,70 +2490,53 @@
     background-color: transparent;
   }
 
-  /* 读数的进出**与面板的滑动同时**，不再等"盖死"那一拍：
-     出相位它跟着面板一起进来（淡入 + 14px 滑动，方向与面板一致，读起来是"边扫过、字浮出"），
-     入相位它跟着面板一起退走。两段各自挂在所在相位的时长上 —— 进场用 --veil-gate、
-     退场用 --veil-part —— 所以关键帧里的百分比永远是"这一次滑动内部的切分"，
-     改令牌不用回来动这里，也不存在动画与相位各跑一套时钟的错位。
-     三角阵列与协议号各晚 8% 起步：两块错开两帧，是同一块版面在自检，不是排队进场。 */
-  .route-veil[data-phase='out'] .route-veil__read {
-    animation: veil-read-in var(--veil-gate) var(--motion-ease-out) var(--veil-latch) both;
-  }
-
-  .route-veil[data-phase='out'] .route-veil__corner {
-    animation: veil-read-in var(--veil-gate) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.08) both;
-  }
-
-  /* 连点重建场记时**不改变 animation-name**，所以首趟正在播的读数不会因重定向
-     从头再亮一次；已经揭幕后的重入另由下面的静态稳定组处理。 */
-
+  /* gate 结束已经进入 in：第二幕全部使用 hold 内的相对时序。
+     首趟读数从轻淡入开始；重入保留当前读数，只让巨号词重新落版。 */
   .route-veil[data-phase='in'] .route-veil__read {
-    animation: veil-read-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
+    animation: veil-read-in calc(var(--veil-hold) * 0.4) var(--motion-ease-out) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__corner {
-    animation: veil-read-out var(--veil-part) var(--motion-ease-in-out)
-      calc(var(--veil-hold) + var(--veil-part) * 0.08) both;
+    animation: veil-read-in calc(var(--veil-hold) * 0.4) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.1) both;
   }
 
-  /* 落版四件的进场时序（封屏相位内）：巨号词 0.35×gate 起步（板条咬到第三条时），
-     斜梁等词基本落位后从左扫开，准星分两批钉入（对角一批，读起来是「自检」而不是排队），
-     制版细线在盖死那一拍之后淡入 —— 随后只保留微弱的存在感，
-     不再与巨号和板条争抢注意力。 */
-  .route-veil[data-phase='out'] .route-veil__word {
-    animation: veil-word-in calc(var(--veil-gate) * 0.65) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.35) both;
+  /* out 相位内改目标不会重播读数；in 相位重入只重印巨号词，父层不熄灭。 */
+
+  /* 读数与右下角的退场统一交给 .route-veil__hud，不在子层重复执行。 */
+  .route-veil[data-phase='in'][data-run='re'] .route-veil__read,
+  .route-veil[data-phase='in'][data-run='re'] .route-veil__corner {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 
-  .route-veil[data-phase='out'] .route-veil__beam {
-    animation: veil-beam-in calc(var(--veil-gate) * 0.4) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.68) both;
+  /* 完全覆盖后的落字顺序：巨号遮罩揭示 → 斜梁扫开；网格与准星只作一次就位。 */
+  .route-veil[data-phase='in'] .route-veil__word {
+    animation: veil-word-in calc(var(--veil-hold) * 0.5) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.12) both;
   }
 
-  .route-veil[data-phase='out'] .route-veil__cross--tl,
-  .route-veil[data-phase='out'] .route-veil__cross--br {
-    animation: veil-cross-in calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.6) both;
+  .route-veil[data-phase='in'] .route-veil__beam {
+    animation: veil-beam-in calc(var(--veil-hold) * 0.28) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.48) both;
   }
 
-  .route-veil[data-phase='out'] .route-veil__cross--tr,
-  .route-veil[data-phase='out'] .route-veil__cross--bl {
-    animation: veil-cross-in calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
-      calc(var(--veil-latch) + var(--veil-gate) * 0.74) both;
-  }
-
-  .route-veil[data-phase='out'] .route-veil__scanline {
-    animation: veil-scanline-in var(--veil-gate) var(--motion-ease-out) var(--veil-latch) both;
+  .route-veil[data-phase='in'] .route-veil__cross {
+    animation: veil-cross-in calc(var(--veil-hold) * 0.2) var(--motion-ease-out) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__scanline {
-    animation: veil-scanline-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
+    animation: veil-scanline-in calc(var(--veil-hold) * 0.22) var(--motion-ease-out)
+      calc(var(--veil-hold) * 0.18) both;
   }
+
+  /* 细线随 HUD 父层统一退场。 */
 
   /* 揭幕途中改目标：静态值是中断动作的终点，不是立即绘制的新画面。
      RouteVeil 从旧帧插值到这里；duration/delay/easing 保留供 WAAPI 读取。
      目标词与中文章名另由局部 veil-target 过渡，不触发整层 HUD 重播。 */
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__hud,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__plate,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__read,
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__corner,
@@ -2562,15 +2551,15 @@
     transform: none;
   }
 
-  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__word,
-  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__beam {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__word,
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__beam {
     animation: none;
     opacity: 1;
     letter-spacing: 0.04em;
     transform: none;
   }
 
-  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__beam {
+  .route-veil[data-phase='out'][data-run='re'] .route-veil__beam {
     transform: scaleX(1);
   }
 
@@ -2578,17 +2567,10 @@
     opacity: 0.45;
   }
 
-  /* 原揭幕相位里准星已经退出，重入不能把它重新钉亮一次。 */
-  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__cross {
-    opacity: 0;
-  }
+  /* 准星在最终 hold 内只重新落版一次；中断收回期间保持现状，不额外闪现。 */
 
-  /* 让开相位：巨号词与斜梁不另演退场 —— 它们包在 .route-veil__read 里，
-     跟着读数层那 42% 的柔和退出一一起走（veil-read-out），再晚就会留下「字浮在新页面上」。
-     斜梁这一度是坏的：它的静止态是 scaleX(0)，而「扫开」那条规则绑在 [data-phase='out'] 上，
-     相位一切到 'in' 规则就不匹配了，于是它在换手那一帧当场弹回零宽 —— 字还在淡，梁已经没了，
-     读起来就是「动画演到一半突然消失」。这里不补第二套动作，只把**已经扫开**这个状态钉住，
-     让它照原设计跟着层一起退走。 */
+  /* 巨号词与斜梁不另演退场，随 HUD 父层在揭幕前 42% 柔和退出。
+     斜梁已经扫开的几何在 hold 结束后继续保持，避免先缩回零宽再消失。 */
   .route-veil[data-phase='in'] .route-veil__beam {
     transform: scaleX(1);
   }
@@ -2909,27 +2891,24 @@
   }
 }
 
-@keyframes veil-plate-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
+/* 纹理随 HUD 父层退出，不再另设 plate-out 动画。 */
 
-/* 巨号落版：从下方 0.22em 浮起、字距从 0.22em 收到 0.04em —— 「活字落进版框」。
-   前 22% 停着不动：那时板条还在咬合，词先出场会飘在页面上。 */
+/* 巨号落版只有一个主动作：左侧遮罩揭示、字距收紧，轻微上浮后锁定。
+   动画本身在 gate 结束后才启动，因此不再需要为了等待合版而空出大半关键帧。 */
 @keyframes veil-word-in {
   0%,
-  22% {
+  12% {
     opacity: 0;
-    letter-spacing: 0.22em;
-    transform: translate3d(0, 0.22em, 0);
+    clip-path: inset(-12% 100% -12% 0);
+    letter-spacing: 0.18em;
+    transform: translate3d(0, 0.12em, 0);
   }
-  62%,
+  32% {
+    opacity: 1;
+  }
   100% {
     opacity: 1;
+    clip-path: inset(-12% 0 -12% 0);
     letter-spacing: 0.04em;
     transform: translate3d(0, 0, 0);
   }
@@ -2969,17 +2948,9 @@
   }
 }
 
-@keyframes veil-scanline-out {
-  from {
-    opacity: 0.45;
-  }
-  35%,
-  100% {
-    opacity: 0;
-  }
-}
+/* 细线随 HUD 父层退出，不再另设 scanline-out 动画。 */
 
-/* 揭幕途中重入不使用 recover 关键帧：RouteVeil 从实际旧帧插值，文字独立交叉过渡。 */
+/* 揭幕途中重入不使用 recover 关键帧：RouteVeil 从实际旧帧插值，文字先退后进。 */
 
 /* 重入场次从拼版位继续向右揭开。首轮场次仍走 CSS transition；这一轮使用 animation
  * 是为了避免恢复动画让底层过渡失去可观测的 start/end，两套时长仍读同一组令牌。 */
@@ -3125,6 +3096,7 @@
      这里必须显式关掉动画 —— 读数在减少动效下是这一层**唯一**的信息，不能连坐吃掉。
      巨号词与斜梁同理（词就是目标页名本身）；斜梁是静态装饰，留下无碍，
      但它的 scaleX(0) 初始态必须一并复位，否则词下面永远是空的。 */
+  .route-veil__hud,
   .route-veil__read,
   .route-veil__corner,
   .route-veil__word,

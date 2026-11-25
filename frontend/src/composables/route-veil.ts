@@ -58,7 +58,7 @@ let watchdog: ReturnType<typeof setTimeout> | null = null
  *  leave 取消（走 onEnterCancelled 而不是 onAfterEnter，enterDone 就永远等不到）。
  *  那种情况下用户必然已经点了下一次导航 —— 新的一次 begin() 会重新计时并自行收尾，
  *  所以这个计时器存在的意义只是「万一」，给得比任何一档总时长都宽
- *  （生产最差：gate 380 + 等数据 800 + hold 340 + part 420 ≈ 1.94s）。 */
+ *  （生产最差：gate 540 + 等数据 800 + hold 400 + part 600 = 2.34s）。 */
 const WATCHDOG_MS = 3000
 
 /** 面板盖着屏、等新页面把首屏数据拿回来的上限（毫秒）。
@@ -68,9 +68,8 @@ const WATCHDOG_MS = 3000
  *  后者至少能看见页面骨架、知道自己在哪一页。
  *  取 800ms：本机与校园网的首屏请求都在 100ms 上下，这个数基本只在真的慢时才用满。
  *
- *  整段换场的时长因此是「原有的一拍（0.8s）+ 等数据的 0~0.8s」——
- *  业主要求的「最短 0.7 秒」由前者保证（子页档本来就是 0.32+0.16+0.32=0.8s），
- *  而「加载慢就跟着走」由这一段保证。 */
+ *  三幕本体子页 1.42s、外壳 1.54s，慢请求最多再等待 0.8s；
+ *  即使触发等待上限，也仍低于 3s watchdog。 */
 const DATA_WAIT_MAX_MS = 800
 
 function disarmWatchdog(): void {
