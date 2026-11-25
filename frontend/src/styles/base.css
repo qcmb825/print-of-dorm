@@ -2027,6 +2027,8 @@
    * 板 i 的起步 = latch + i·step，滑动时长 = gate − 4·step ——
    * 于是**末条板恰好在 latch+gate 那帧咬合**（= @after-leave = 换手帧），
    * 早一帧露馅、晚一帧白遮；让开相位同理，末条板在 hold+part 那帧走完。
+   * step 只是相位偏移，不是等待上一片结束的间隔：单片时长 gate−4·step 远大于 step，
+   * 相邻叶片在运动中重叠，不是逐片接力。
    * 起步位移用 vw 而不是自身宽度的百分比：板条 left 各不相同，
    * −125vw 保证五条板全在屏外左侧，+125vw 保证全出右侧。 */
   .route-veil__slat {
@@ -2039,19 +2041,16 @@
     /* 左侧套准线让相邻板在拼版位也有边界，而不是五条同色板融成一整块。 */
     box-shadow: -1px 0 0 var(--veil-hairline);
     transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
-    /* 机械动作一律 --motion-ease-out。用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
+    /* **封屏**这一趟走 --motion-ease-out：用 --motion-ease-in-out（cubic-bezier(.77,0,.175,1)）
        前 1/3 时间几乎不动，点下导航后会有约 100ms 的「没反应」，
-       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。 */
+       而那正是用户盯着看的瞬间 —— 观感比同时长的 ease-out 还慢。
+       让开相位不带这份紧迫，走更柔和的曲线，见下面 [data-phase='in'] 那条。 */
     transition:
       transform calc(var(--veil-gate) - 4 * var(--veil-slat-step)) var(--motion-ease-out)
         calc(var(--veil-latch) + var(--i) * var(--veil-slat-step));
   }
 
-  /* 黄层底下是 DOM 第 1 个 span，因此这里的偶数子格恰是第 1 / 3 / 5 片百叶。
-   * 只用同色令牌做轻微明暗差：运动时分片更可辨，拼版时又不像两种品牌色在抢视觉。 */
-  .route-veil__slat:nth-child(even) {
-    background-color: color-mix(in srgb, var(--veil-mat) 91%, var(--background));
-  }
+  /* 五片统一 --veil-mat，不再交替黑灰；片间分界只由几何错峰与前缘套准线表达。 */
 
   /* 黄层。**必须在板条之前出现在 DOM 里**（同一层叠层下 DOM 顺序就是绘制顺序）。
      它整个行程都比板条多走一个 --motion-route-wipe-lead，于是两个相位里都能从板条的
@@ -2100,32 +2099,21 @@
     transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 重入分流（2026-11-24 修复，用户实测抓到「转场会乱、变成横滑、每次都不一样」）。
-   *
-   * 从 'out' 重入（盖着屏等数据时连点）：**什么都不做**。旧规则在这里给所有板条
-   * delay:0 —— 那是 --veil-latch 还存在时为了跳过起手空拍写的；latch 早已归零，
-   * 这条规则剩下的唯一作用就是把错峰抹平：还没起步的板条一起动，五条板抱成
-   * 一整块横着滑 —— 就是用户看到的「横滑」。
-   *
-   * 从 'in' 重入（板条正在让开时连点）：板条散在屏幕右侧各处（最远已出屏 2 个屏宽），
-   * 让它们沿过渡倒着飞回拼版位就是「每次都不同的乱」。这里换成**动画**而不是过渡：
-   * 动画从关键帧起步、与板条当前位置无关 —— 板条瞬回屏外左侧（看不见），
-   * 再按同样的错峰重新扫入，方向永远一致，乱的可能性被结构性消掉。
-   * 底层那条指向拼版位的过渡照常跑完（被动画压在下面），动画规则随相位离开
-   * 失效时落点恰好一致，不会回跳。 */
-  /* 填充模式只能是 backwards 不能是 both（实测教训）：动画演完后底层值与动画
-     终点相同（都是拼版位），不需要 forwards 填充来保持；而留着它，相位切 'in' 时
-     浏览器会把「动画填充被摘掉」当作这次值变化的来源 —— 动画驱动的值变化不触发
-     过渡，于是让开那一趟**没有任何过渡事件**、板条瞬跳到屏外右侧，
-     exitDone 等不到 transitionend，只能靠 3s 看门狗收尾（事件日志实证）。
-     backwards 在错峰延迟期间把板条钉在起点（屏外左侧），演完即交还底层值。 */
+  /* 连点击只换目标，不重新演一遍封屏。
+   * 从 'out' 重入：不改 transform 与 animation-name，正在封屏的板条沿原曲线继续。
+   * 从 'in' 重入：上一轮的揭幕立即收束为完整拼版，停掉仍在运行的位移与 CSS 动画。
+   * 不从屏外重播、不倒飞，也不把 HUD 熄灭后再点亮；换手期间目标词可以原地更新。
+   * 下一轮揭开仍由独立的 release 动画给出确定的完成事件。 */
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__slat {
-    animation: veil-slat-recover calc(var(--veil-gate) - 4 * var(--veil-slat-step))
-      var(--motion-ease-out) calc(var(--i) * var(--veil-slat-step)) backwards;
+    animation: none;
+    transition: none;
+    transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
   .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__wipe-under {
-    animation: veil-under-recover var(--veil-gate) var(--motion-ease-out) backwards;
+    animation: none;
+    transition: none;
+    transform: translate3d(var(--motion-route-wipe-lead), 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
   /* 让开：transform 与 transition-* 在同一次样式重算里一起变，浏览器会为这次变化
@@ -2135,30 +2123,33 @@
   .route-veil[data-phase='in'] .route-veil__slat {
     transition-duration: calc(var(--veil-part) - 4 * var(--veil-slat-step-out));
     transition-delay: calc(var(--veil-hold) + var(--i) * var(--veil-slat-step-out));
+    /* 封屏要快，揭开不能被 ease-out 一脚踢出去。进出场共用总时长令牌，
+       仅在让开相位换成起步与收尾都柔和的曲线。 */
+    transition-timing-function: var(--motion-ease-in-out);
     transform: translate3d(125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
   }
 
   .route-veil[data-phase='in'] .route-veil__wipe-under {
     transition-duration: var(--veil-part);
     transition-delay: var(--veil-hold);
+    transition-timing-function: var(--motion-ease-in-out);
     transform: translate3d(calc(100% - var(--motion-route-wipe-lead)), 0, 0)
       skewX(var(--motion-route-wipe-skew));
   }
 
-  /* 重入场次的「让开」必须是一条新的显式动画，不能继续等 transitionend。
-   * 实测：从 in 反向进入 recover 时，transition 被 CSS 动画的变化吞掉；下一次 in
-   * 只在 DOM 上留下目标 transform，五条板都不产生过渡事件，状态机因此等满看门狗。
+  /* 重入场次的「让开」仍是一条新的显式动画。它既避免重入时缺失 transitionend，
+   * 又让「处理点击」与「最终揭幕」保持分离：中途只稳定幕布、换字，此处才柔和退场。
    * backwards 让每片在错峰前保持拼版位；演完由 forwards 钉在屏外右侧。
    * 每条片上确实有 veil-slat-release，RouteVeil 可以按真实 CSSAnimation 收尾。 */
   .route-veil[data-phase='in'][data-run='re'] .route-veil__slat {
     transition: none;
     animation: veil-slat-release calc(var(--veil-part) - 4 * var(--veil-slat-step-out))
-      var(--motion-ease-out) calc(var(--veil-hold) + var(--i) * var(--veil-slat-step-out)) both;
+      var(--motion-ease-in-out) calc(var(--veil-hold) + var(--i) * var(--veil-slat-step-out)) both;
   }
 
   .route-veil[data-phase='in'][data-run='re'] .route-veil__wipe-under {
     transition: none;
-    animation: veil-under-release var(--veil-part) var(--motion-ease-out) var(--veil-hold) both;
+    animation: veil-under-release var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
   }
 
   /* 整版纹理：48px 网格 + 240px 十字准星，板条咬合之后压上来。
@@ -2374,15 +2365,16 @@
     bottom: 22%;
   }
 
-  /* 制版扫描线：一条窄的青光束从左向右扫过一次。轨道左右各留 8%，
-     光束本身两头淡出去 —— 扫的是「制版机在走版」，不是一根实线划过去。 */
+  /* 制版细线：两端淡出，固定在中下部 64% 宽的轨道内。只随版式明暗，
+     不再用一次横穿屏幕的扫动制造额外的视觉噪声。 */
   .route-veil__scanline {
     position: absolute;
-    right: 8%;
+    right: 18%;
     bottom: 20%;
-    left: 8%;
+    left: 18%;
     height: 1px;
     overflow: hidden;
+    opacity: 0;
   }
 
   .route-veil__scanline::before {
@@ -2395,7 +2387,9 @@
       var(--veil-ink-code) 30% 70%,
       transparent
     );
-    transform: translate3d(-100%, 0, 0);
+    /* 固定在轨道内，只改变透明度。旧版整条青光从左侧扫到右侧，
+       相位切换时又跳回起点，运动方向与板条、读数都互相争抢。 */
+    transform: none;
   }
 
   /* 右下角：三角阵列 + 协议号。**位置对着页面自己的水印大字**（那份也是右下角贴边的
@@ -2459,32 +2453,22 @@
       calc(var(--veil-latch) + var(--veil-gate) * 0.08) both;
   }
 
-  /* 打断（连点导航）时走另一条：读数**已经在屏幕上亮着了**，再演一遍"从零浮现"
-     就是一次肉眼可见的闪。这里换成"重新对准" —— 从半亮起、很快回到满亮，
-     文字在同一个动作里换成新的目标页（retarget 已经把 target 改写过了）。
-     三角阵列晚一点点，与正常进场保持同一条节奏；特异性比上面那条高，所以自然胜出。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__read {
-    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
-  }
-
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__corner {
-    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out)
-      calc(var(--veil-gate) * 0.06) both;
-  }
+  /* 连点重建场记时**不改变 animation-name**，所以首趟正在播的读数不会因重定向
+     从头再亮一次；已经揭幕后的重入另由下面的静态稳定组处理。 */
 
   .route-veil[data-phase='in'] .route-veil__read {
-    animation: veil-read-out var(--veil-part) var(--motion-ease-out) var(--veil-hold) both;
+    animation: veil-read-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
   }
 
   .route-veil[data-phase='in'] .route-veil__corner {
-    animation: veil-read-out var(--veil-part) var(--motion-ease-out)
+    animation: veil-read-out var(--veil-part) var(--motion-ease-in-out)
       calc(var(--veil-hold) + var(--veil-part) * 0.08) both;
   }
 
   /* 落版四件的进场时序（封屏相位内）：巨号词 0.35×gate 起步（板条咬到第三条时），
      斜梁等词基本落位后从左扫开，准星分两批钉入（对角一批，读起来是「自检」而不是排队），
-     扫描线在盖死那一拍之后走完整的一趟 —— 它的时长横跨封屏尾段与停留开头，
-     正好覆盖「等数据」那段不确定的空白。 */
+     制版细线在盖死那一拍之后淡入 —— 随后只保留微弱的存在感，
+     不再与巨号和板条争抢注意力。 */
   .route-veil[data-phase='out'] .route-veil__word {
     animation: veil-word-in calc(var(--veil-gate) * 0.65) var(--motion-ease-out)
       calc(var(--veil-latch) + var(--veil-gate) * 0.35) both;
@@ -2507,20 +2491,45 @@
       calc(var(--veil-latch) + var(--veil-gate) * 0.74) both;
   }
 
-  .route-veil[data-phase='out'] .route-veil__scanline::before {
-    animation: veil-scanline calc(var(--veil-gate) * 0.5 + var(--veil-hold)) linear
-      calc(var(--veil-latch) + var(--veil-gate) * 0.8) both;
+  .route-veil[data-phase='out'] .route-veil__scanline {
+    animation: veil-scanline-in var(--veil-gate) var(--motion-ease-out) var(--veil-latch) both;
   }
 
-  /* 打断（连点导航）：巨号与斜梁**已经在版上**了，重播落版就是一次闪。
-     同 read 一样只「重新对准」；准星与扫描线是氛围件，打断时不重播（保留现状）。 */
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__word,
-  .route-veil[data-phase='out'][data-run='re'] .route-veil__beam {
-    animation: veil-read-resync calc(var(--veil-gate) * 0.3) var(--motion-ease-out) both;
+  .route-veil[data-phase='in'] .route-veil__scanline {
+    animation: veil-scanline-out var(--veil-part) var(--motion-ease-in-out) var(--veil-hold) both;
+  }
+
+  /* 揭幕途中改目标：这一组只**稳定当前版式**，不添加任何新位移、透明度或缩放动画。
+     目标词、中文章名由 Vue 单独更新；板面、斜梁、准星与细线都不熄灭、不回放。
+     选择器必须带上 data-re-from='in'，不能误伤仍在首次封屏、尚未亮起的读数。 */
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__plate,
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__read,
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__corner,
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__cross,
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__scanline {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__word,
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__beam {
+    animation: none;
+    opacity: 1;
+    letter-spacing: 0.04em;
+    transform: none;
+  }
+
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__beam {
+    transform: scaleX(1);
+  }
+
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] .route-veil__scanline {
+    opacity: 0.45;
   }
 
   /* 让开相位：巨号词与斜梁不另演退场 —— 它们包在 .route-veil__read 里，
-     跟着读数层那 14% 的快退一起走（veil-read-out），再晚就会留下「字浮在新页面上」。
+     跟着读数层那 42% 的柔和退出一一起走（veil-read-out），再晚就会留下「字浮在新页面上」。
      斜梁这一度是坏的：它的静止态是 scaleX(0)，而「扫开」那条规则绑在 [data-phase='out'] 上，
      相位一切到 'in' 规则就不匹配了，于是它在换手那一帧当场弹回零宽 —— 字还在淡，梁已经没了，
      读起来就是「动画演到一半突然消失」。这里不补第二套动作，只把**已经扫开**这个状态钉住，
@@ -2817,27 +2826,14 @@
   }
 }
 
-/* 读数退场。与面板退场同时开始，14% 内退干净 —— 面板的尾边回到屏幕中线大约就在那一刻，
- * 再晚就会留下一段"字浮在新页面上"。 */
-/* 读数"重新对准"（连点打断时用）。起点不是 0 而是 0.35：字本来就在那儿，
- * 要换的只是目标与落位，所以它只淡一下、不上浮。 */
-@keyframes veil-read-resync {
-  from {
-    opacity: 0.35;
-    transform: translate3d(-6px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
+/* 读数退场与板条同时开始。旧版在 14%（约 50ms）内直接消失，视觉上像被切掉；
+ * 拉长到 42%，配合 ease-in-out 完成淡出，同时仍早于最后一片板条离场。 */
 @keyframes veil-read-out {
   0% {
     opacity: 1;
     transform: translate3d(0, 0, 0);
   }
-  14%,
+  42%,
   100% {
     opacity: 0;
     transform: translate3d(14px, 0, 0);
@@ -2906,36 +2902,29 @@
   }
 }
 
-/* 制版扫描：光束从左到右一趟。 */
-@keyframes veil-scanline {
-  from {
-    transform: translate3d(-100%, 0, 0);
+/* 制版细线只表达「版面已就位」，不再承担扫掠。 */
+@keyframes veil-scanline-in {
+  0%,
+  30% {
+    opacity: 0;
   }
-  to {
-    transform: translate3d(100%, 0, 0);
-  }
-}
-
-/* 重入收回（从 'in' 相位被打断）：板条/黄层从屏外左侧重新扫到拼版位。
- * 与正常封屏同落点、同时长令牌 —— 动画与过渡的终点一致，规则失效时不回跳。 */
-@keyframes veil-slat-recover {
-  from {
-    transform: translate3d(-125vw, 0, 0) skewX(var(--motion-route-wipe-skew));
-  }
-  to {
-    transform: translate3d(0, 0, 0) skewX(var(--motion-route-wipe-skew));
+  80%,
+  100% {
+    opacity: 0.45;
   }
 }
 
-@keyframes veil-under-recover {
+@keyframes veil-scanline-out {
   from {
-    transform: translate3d(-100%, 0, 0) skewX(var(--motion-route-wipe-skew));
+    opacity: 0.45;
   }
-  to {
-    transform: translate3d(var(--motion-route-wipe-lead), 0, 0)
-      skewX(var(--motion-route-wipe-skew));
+  35%,
+  100% {
+    opacity: 0;
   }
 }
+
+/* 揭幕途中重入不再配置 recover 动画：当前版式原地稳定，只更新场记文字。 */
 
 /* 重入场次从拼版位继续向右揭开。首轮场次仍走 CSS transition；这一轮使用 animation
  * 是为了避免恢复动画让底层过渡失去可观测的 start/end，两套时长仍读同一组令牌。 */
@@ -3052,6 +3041,12 @@
   }
 
   .route-veil[data-phase='out'] {
+    opacity: 1 !important;
+  }
+
+  /* 揭幕途中再选目标时也只做一次最终提亮，不在每次点击之间来回压暗、提亮。 */
+  .route-veil[data-phase='out'][data-run='re'][data-re-from='in'] {
+    transition: none !important;
     opacity: 1 !important;
   }
 
