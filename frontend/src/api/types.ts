@@ -1336,6 +1336,11 @@ export interface LotteryHint {
   status: 'open' | 'drawn' | null
 }
 
+/** 参与资格口径（后端 routes/lottery.py 的 AUDIENCES）：
+ *  all = 登录即可参与；pickup = 近 30 天取件成功才能参与。
+ *  这是**每期活动自己的设定**，不是全局开关 —— 学生端那句副标题照它写。 */
+export type LotteryAudience = 'all' | 'pickup'
+
 export interface Lottery {
   exists: true
   id: number
@@ -1345,6 +1350,7 @@ export interface Lottery {
   prize_quantity: number
   /** 建活动时带入的上期同奖品结余 */
   carry_in: number
+  audience: LotteryAudience
   draw_at: string
   archive_at: string | null
   drawn_at: string | null
@@ -1364,7 +1370,8 @@ export interface Lottery {
   joined: boolean
   is_winner: boolean
   eligible: boolean
-  /** no_pickup=近 30 天没有取件成功的订单；closed=已截止/已开奖 */
+  /** no_pickup=近 30 天没有取件成功的订单（只有 pickup 口径会出现）；
+   *  closed=已截止/已开奖 */
   ineligible_reason: 'no_pickup' | 'closed' | null
 }
 
@@ -1380,6 +1387,8 @@ export interface LotteryAdminItem {
   prize_name: string
   prize_quantity: number
   carry_in: number
+  /** 参与资格口径（见 LotteryAudience）：建活动时定，开奖前可改 */
+  audience: LotteryAudience
   draw_at: string
   archive_at: string | null
   status: 'open' | 'drawn' | 'archived'
@@ -1418,6 +1427,7 @@ export interface LotteryAdminDetail extends LotteryAdminItem {
 export interface LotteryInput {
   prize_name: string
   prize_quantity: number
+  audience: LotteryAudience
   draw_at_ms: number
   archive_at_ms?: number | null
 }

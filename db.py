@@ -398,7 +398,9 @@ def get_pickup_info(conn=None, apply_fallback=True):
 # v27 -> v28：抽奖（促活新功能）。新表 lotteries（一期活动：奖品、份数、开奖/归档时刻、
 #            状态）与 lottery_entries（参与记录 + 中奖标记 + 中奖邮件通知凭证）。
 #            纯加表，老数据一概不动。结余「同奖品才累计」的口径见 routes/lottery.py。
-SCHEMA_VERSION = '28'
+# v28 -> v29：lotteries 加 audience（参与资格口径：pickup=近 30 天取件成功 / all=登录即可）。
+#            纯加列、默认 'pickup'：老活动建的时候只有这一种口径，迁移不许替它们放宽。
+SCHEMA_VERSION = '29'
 
 
 
@@ -1770,6 +1772,10 @@ def init_database():
         # 不在库里存本地时间（展示层统一 datetime(col,'localtime') 转换）。
         # status 三态：open（可参与）→ drawn（已开奖）→ archived（归档隐藏）。
         # open/drawn 都算「在架上」，同一时间只允许一个在架（业务校验在路由层）。
+        # audience 是参与资格口径：pickup=近 30 天取件成功（默认，也是 v28 时代
+        # 唯一的口径），all=登录即可参与。口径的判据在 routes/lottery.py，
+        # 库里只存这个名字，不存「谁有资格」的结果 —— 资格在加入时快照进
+        # lottery_entries，事后改口径不追溯。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS lotteries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1777,6 +1783,7 @@ def init_database():
                 prize_image_file TEXT,
                 prize_quantity INTEGER NOT NULL,
                 carry_in INTEGER NOT NULL DEFAULT 0,
+                audience TEXT NOT NULL DEFAULT 'pickup',
                 draw_at TIMESTAMP NOT NULL,
                 archive_at TIMESTAMP,
                 status TEXT NOT NULL DEFAULT 'open',
@@ -1785,6 +1792,14 @@ def init_database():
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        #    v29 补列：**必须排在上面那句 CREATE 之后**（全新库的表已经带着这一列，
+        #    对不存在的列 ALTER 才是该做的事）。默认值取 'pickup'，把老活动原样搬过来。
+        lottery_columns = {row[1] for row in
+                           cursor.execute('PRAGMA table_info(lotteries)').fetchall()}
+        if 'audience' not in lottery_columns:
+            cursor.execute(
+                "ALTER TABLE lotteries ADD COLUMN audience TEXT NOT NULL DEFAULT 'pickup'")
+
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_lotteries_status ON lotteries(status, id)'
         )

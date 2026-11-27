@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /** 抽奖（学生端）：奖品、参与名单、我也要参与。
  *
- *  口径全部在后端（routes/lottery.py 模块头）：资格=近 30 天内下单且取件成功、
- *  一人一期一票、开奖前可撤回。这里只照单显示 —— 前端不复制资格判断，
- *  服务端 403/409 回来什么就说什么，两边各算一套必然漂移。
+ *  口径全部在后端（routes/lottery.py 模块头）：**每期活动自己定参与资格**
+ *  （audience：登录即可 / 近 30 天取件成功）、一人一期一票、开奖前可撤回。
+ *  这里只照单显示 —— 前端不复制资格判断，服务端 403/409 回来什么就说什么，
+ *  两边各算一套必然漂移。
  *
  *  参与人名单**只有昵称**：后端就没给别的字段（分级见 api/types.ts 那段注释），
  *  别为了「卡片好看」在前端拼任何真实信息。
@@ -36,6 +37,13 @@ const acting = ref(false)
 const imageFailed = ref(false)
 
 const isDrawn = computed(() => lottery.value?.status === 'drawn')
+/** 副标题照**这一期自己的口径**写：all 的活动再去说「近 30 天取件成功」就是
+ *  一句谎话，而后端并不会拦人。数据没到之前按默认口径显示（不闪一句空话）。 */
+const audienceHint = computed(() =>
+  lottery.value?.audience === 'all'
+    ? '登录即可参与'
+    : '近 30 天内下单并取件成功的账号可参与',
+)
 const prizeImageSrc = computed(() =>
   lottery.value
     ? lotteryApi.prizeImageUrl(lottery.value.id, lottery.value.image_version)
@@ -102,7 +110,7 @@ onMounted(load)
     <PageHeader
       heading="md"
       title="抽奖"
-      subtitle="近 30 天内下单并取件成功的账号可参与"
+      :subtitle="audienceHint"
     >
       <template #actions>
         <NButton size="small" quaternary :loading="loading" @click="load()">

@@ -17,12 +17,19 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
+  NRadioButton,
+  NRadioGroup,
   NSkeleton,
   useMessage,
 } from 'naive-ui'
 import { ApiError } from '@/api/client'
 import { lotteryApi } from '@/api/endpoints'
-import type { LotteryAdminDetail, LotteryAdminEntry, LotteryAdminItem } from '@/api/types'
+import type {
+  LotteryAdminDetail,
+  LotteryAdminEntry,
+  LotteryAdminItem,
+  LotteryAudience,
+} from '@/api/types'
 import EmptyState from '@/components/EmptyState.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { confirmAction } from '@/composables/feedback'
@@ -55,6 +62,9 @@ const editingId = ref<number | null>(null)
 const form = reactive({
   prize_name: '',
   prize_quantity: 1,
+  /** 参与资格口径。默认沿用老规则（近 30 天取件成功）：新建一期时
+   *  「谁都能抽」应该是**主动选**的结果，不能因为升级就放宽。 */
+  audience: 'pickup' as LotteryAudience,
   draw_at_ms: null as number | null,
   archive_at_ms: null as number | null,
 })
@@ -67,11 +77,18 @@ const STATUS_LABEL: Record<LotteryAdminItem['status'], string> = {
   archived: '已归档',
 }
 
+/** 列表里那一列的字面量（与上面表单的两个选项同源，不另起一套叫法）。 */
+const AUDIENCE_LABEL: Record<LotteryAudience, string> = {
+  pickup: '30 天取件',
+  all: '所有人',
+}
+
 function fillForm(item: LotteryAdminItem | null): void {
   if (item && item.status === 'open') {
     editingId.value = item.id
     form.prize_name = item.prize_name
     form.prize_quantity = item.prize_quantity
+    form.audience = item.audience
     form.draw_at_ms = Date.parse(`${item.draw_at.replace(' ', 'T')}`) || null
     form.archive_at_ms = item.archive_at
       ? Date.parse(`${item.archive_at.replace(' ', 'T')}`) || null
@@ -80,6 +97,7 @@ function fillForm(item: LotteryAdminItem | null): void {
     editingId.value = null
     form.prize_name = ''
     form.prize_quantity = 1
+    form.audience = 'pickup'
     form.draw_at_ms = null
     form.archive_at_ms = null
   }
@@ -190,6 +208,7 @@ async function save(): Promise<void> {
   const payload = {
     prize_name: form.prize_name.trim(),
     prize_quantity: form.prize_quantity,
+    audience: form.audience,
     draw_at_ms: form.draw_at_ms,
     archive_at_ms: form.archive_at_ms,
   }
@@ -368,6 +387,27 @@ onMounted(load)
               class="w-full"
             />
           </NFormItem>
+          <!-- 参与资格：**每期活动自己的设定**，不是全局开关。「谁都能抽」的
+               拉新活动和「取过件的才能抽」的回馈活动可以轮流开。
+               选了之后学生端副标题也跟着变（后端把 audience 一起发给学生端）。 -->
+          <NFormItem label="谁可以参与" :show-feedback="false" class="sm:col-span-2">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <NRadioGroup
+                v-model:value="form.audience"
+                size="small"
+                name="audience"
+                :disabled="saving"
+              >
+                <NRadioButton value="pickup">近 30 天取件成功</NRadioButton>
+                <NRadioButton value="all">所有人可参与</NRadioButton>
+              </NRadioGroup>
+              <span class="text-xs text-ink-3">
+                {{ form.audience === 'all'
+                  ? '登录账号都能参与，不校验订单'
+                  : '近 30 天内下过单、且这一单已取件成功才能参与' }}
+              </span>
+            </div>
+          </NFormItem>
           <NFormItem label="开奖时间" :show-feedback="false">
             <NDatePicker
               :value="form.draw_at_ms"
@@ -427,6 +467,7 @@ onMounted(load)
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">状态</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">奖品</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">份数</th>
+                <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">资格</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">参与</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">中奖</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">结余</th>
@@ -449,6 +490,7 @@ onMounted(load)
                   <span v-if="item.has_image" class="readout ml-1.5">图</span>
                 </td>
                 <td class="tnum px-2 py-2">{{ item.prize_quantity }}</td>
+                <td class="px-2 py-2">{{ AUDIENCE_LABEL[item.audience] }}</td>
                 <td class="tnum px-2 py-2">{{ item.participant_count }}</td>
                 <td class="tnum px-2 py-2">{{ item.status === 'open' ? '—' : item.winner_count }}</td>
                 <td class="tnum px-2 py-2">{{ item.leftover ?? '—' }}</td>

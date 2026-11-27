@@ -2,16 +2,20 @@
 
 业务口径全部定死在这一段，别在调用方再推一遍：
 
-  资格  **近 30 个自然日内下过单，且这一单取件成功**。取件成功有两条落库路径，
-        两条都得认：柜台凭单号确认取件（order_logs 里 action='pickup'），以及
-        在订单台上把状态直接点成「已取件」（只有一条 status 留痕，见
-        config.py 那段「取件和改状态分开说」）。只认前者的话，走下拉框结单的
-        学生在「我的订单」里明明写着已取件，抽奖页却说他没有取件记录。
-        取件时刻不单独卡窗口：orders 表没有这一列（update_time 会被任何改动
-        刷掉，见 db.py 的注释），而取件必然发生在下单之后、此刻之前 ——
-        下单时间已经卡在窗口里了。资格在**加入时
-        快照**：开奖时不重算 —— 开奖那一刻他仍是参与者，事后订单怎么变都不追溯，
-        不然「撤回旧订单会不会取消我已中的奖」这种问题永远答不清。
+  资格  两档口径，建活动时选，存在 lotteries.audience 里：
+          · pickup（默认）—— **近 30 个自然日内下过单，且这一单取件成功**。
+            取件成功有两条落库路径，两条都得认：柜台凭单号确认取件（order_logs
+            里 action='pickup'），以及在订单台上把状态直接点成「已取件」
+            （只有一条 status 留痕，见 config.py 那段「取件和改状态分开说」）。
+            只认前者的话，走下拉框结单的学生在「我的订单」里明明写着已取件，
+            抽奖页却说他没有取件记录。
+            取件时刻不单独卡窗口：orders 表没有这一列（update_time 会被任何改动
+            刷掉，见 db.py 的注释），而取件必然发生在下单之后、此刻之前 ——
+            下单时间已经卡在窗口里了。
+          · all —— 登录即可参与（拉新/开学季那种「谁都能抽」的活动）。
+        资格在**加入时快照**：开奖时不重算 —— 开奖那一刻他仍是参与者，
+        事后订单怎么变、口径怎么改都不追溯，不然「撤回旧订单会不会取消我
+        已中的奖」「换口径会不会把已经在名单里的人踢掉」这类问题永远答不清。
   人数  一人一期一票。lottery_entries 的唯一索引就是这条规矩本身：
         并发下两个 POST 同时过校验，也只插得进一行。
   结余  「同奖品才累计」：建新一期时看**最近一条**已开奖/已归档的活动，
@@ -53,6 +57,15 @@ _MIME_TYPES = {
 
 _PRIZE_NAME_MAX = 40
 _QUANTITY_MAX = 10000
+
+# 参与资格口径（存 lotteries.audience）。库里只存名字，判据只在这一段：
+#   pickup —— 近 30 天取件成功（v28 时代唯一的规则，老活动迁移后都是它）
+#   all    —— 登录即可参与
+# 写成常量是因为前后端共用同一组字符串（前端 types.ts 的 LotteryAudience），
+# 散着打字面量的话，拼错的那一处不会报错，只会让所有人都「没资格」。
+AUDIENCE_PICKUP = 'pickup'
+AUDIENCE_ALL = 'all'
+AUDIENCES = (AUDIENCE_PICKUP, AUDIENCE_ALL)
 
 
 # ---- 小工具 ----
@@ -118,9 +131,14 @@ def _validate_lottery(data):
         return None, '归档时间不合法'
     if archive_at and archive_at <= draw_at:
         return None, '归档时间必须晚于开奖时间'
+    # 老客户端不带这个字段：按 pickup 处理，等于原来那条规则，不因为升级就放宽活动。
+    audience = (data.get('audience') or AUDIENCE_PICKUP)
+    if audience not in AUDIENCES:
+        return None, '参与资格口径不合法'
     return {
         'prize_name': prize_name,
         'prize_quantity': quantity,
+        'audience': audience,
         'draw_at': draw_at,
         'archive_at': archive_at,
     }, ''
@@ -137,8 +155,11 @@ def _current_lottery(conn):
     ''').fetchone()
 
 
-def _is_eligible(conn, user_id):
-    """近 30 个自然日内「下过单且取件成功」。口径见模块头。
+def _is_eligible(conn, user_id, audience):
+    """这一期该账号有没有资格参与。口径见模块头。
+
+    audience='all' 时不查订单：活动本身说了「谁都能抽」，再去问订单就是
+    替管理员加了一道他没选的规则。'pickup' 的判据如下：
 
     「取件成功」认两条路：订单当前状态是「已取件」，或这一单有 pickup 留痕。
     两个条件只要一个成立 —— 柜台通常直接在订单台上把状态点成「已取件」，
@@ -149,6 +170,8 @@ def _is_eligible(conn, user_id):
     日期比较沿用榜单那套写法（-29 days 含今天共 30 个自然日，见
     routes/orders.py 的 RECENT）—— 同一个口径在两处各写一份是因为
     它们描述的是两件不同的事（榜单看下单、抽奖看整条链），不共用常量。"""
+    if audience == AUDIENCE_ALL:
+        return True
     row = conn.execute('''
         SELECT 1
         FROM orders o
@@ -220,7 +243,7 @@ def _payload(conn, lot, user_id):
     elif lot['draw_at'] <= _utcnow():
         eligible, reason = False, 'closed'
     else:
-        eligible = _is_eligible(conn, user_id)
+        eligible = _is_eligible(conn, user_id, lot['audience'])
         reason = None if eligible else 'no_pickup'
     return {
         'exists': True,
@@ -229,6 +252,9 @@ def _payload(conn, lot, user_id):
         'prize_name': lot['prize_name'],
         'prize_quantity': lot['prize_quantity'],
         'carry_in': lot['carry_in'],
+        #    资格口径也发给学生端：页面副标题要照它写（「谁都能抽」与
+        #    「近 30 天取件成功可抽」是两句不同的话），前端不该自己猜。
+        'audience': lot['audience'],
         'draw_at': _to_local(lot['draw_at']),
         'archive_at': _to_local(lot['archive_at']),
         'drawn_at': _to_local(lot['drawn_at']),
@@ -297,7 +323,8 @@ def api_join():
             return jsonify({'code': 409, 'msg': '当前没有进行中的抽奖'}), 409
         if lot['status'] != 'open' or lot['draw_at'] <= _utcnow():
             return jsonify({'code': 409, 'msg': '参与已截止'}), 409
-        if not _is_eligible(conn, g.user['id']):
+        if not _is_eligible(conn, g.user['id'], lot['audience']):
+            # 只有 pickup 口径会走到这里：all 口径下 _is_eligible 恒真。
             return jsonify({'code': 403, 'msg': '近 30 天内没有取件成功的订单'}), 403
         try:
             conn.execute(
@@ -474,6 +501,7 @@ def _admin_row(conn, lot):
         'prize_name': lot['prize_name'],
         'prize_quantity': lot['prize_quantity'],
         'carry_in': lot['carry_in'],
+        'audience': lot['audience'],
         'draw_at': _to_local(lot['draw_at']),
         'archive_at': _to_local(lot['archive_at']),
         'status': lot['status'],
@@ -535,9 +563,10 @@ def api_admin_create():
         try:
             cursor = conn.execute('''
                 INSERT INTO lotteries
-                    (prize_name, prize_quantity, carry_in, draw_at, archive_at, created_by)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (vals['prize_name'], vals['prize_quantity'], carry,
+                    (prize_name, prize_quantity, carry_in, audience,
+                     draw_at, archive_at, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (vals['prize_name'], vals['prize_quantity'], carry, vals['audience'],
                   vals['draw_at'], vals['archive_at'], g.user['id']))
             conn.commit()
         except sqlite3.IntegrityError:
@@ -547,9 +576,9 @@ def api_admin_create():
             #    是两期 open 并存，其中一期谁都看不见却照样开奖、照样发中奖邮件。
             return jsonify({'code': 409,
                             'msg': '已有一个进行中/未归档的抽奖，先归档或删除'}), 409
-    logger.info('抽奖：%s 建立第 %s 期（奖品 %s × %d，结余 %d）ip=%s',
+    logger.info('抽奖：%s 建立第 %s 期（奖品 %s × %d，资格 %s，结余 %d）ip=%s',
                 actor_label(), cursor.lastrowid, vals['prize_name'],
-                vals['prize_quantity'], carry, client_ip())
+                vals['prize_quantity'], vals['audience'], carry, client_ip())
     return jsonify({'code': 0, 'msg': '已创建', 'id': cursor.lastrowid, 'carry_in': carry})
 
 
@@ -571,10 +600,10 @@ def api_admin_update(lottery_id):
             return jsonify({'code': 409, 'msg': '已开奖的活动不能再修改'}), 409
         conn.execute('''
             UPDATE lotteries
-            SET prize_name = ?, prize_quantity = ?, draw_at = ?, archive_at = ?
+            SET prize_name = ?, prize_quantity = ?, audience = ?, draw_at = ?, archive_at = ?
             WHERE id = ?
-        ''', (vals['prize_name'], vals['prize_quantity'], vals['draw_at'],
-              vals['archive_at'], lottery_id))
+        ''', (vals['prize_name'], vals['prize_quantity'], vals['audience'],
+              vals['draw_at'], vals['archive_at'], lottery_id))
         conn.commit()
     return jsonify({'code': 0, 'msg': '已保存'})
 
