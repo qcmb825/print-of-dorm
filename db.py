@@ -400,7 +400,13 @@ def get_pickup_info(conn=None, apply_fallback=True):
 #            纯加表，老数据一概不动。结余「同奖品才累计」的口径见 routes/lottery.py。
 # v28 -> v29：lotteries 加 audience（参与资格口径：pickup=近 30 天取件成功 / all=登录即可）。
 #            纯加列、默认 'pickup'：老活动建的时候只有这一种口径，迁移不许替它们放宽。
-SCHEMA_VERSION = '29'
+# v29 -> v30：一期可以放多个奖品、也可以同时开多期。奖品从 lotteries 拆到新表
+#            lottery_prizes（一期多行，各自份数/结余/配图/中奖名额）；去掉
+#            idx_lotteries_live —— 「同一时间只有一期在架」不再是业务规矩，
+#            学生端变成「列出所有在架的活动」。老数据迁成一个奖品行，份数原样搬过来，
+#            所以这一版之后 lotteries 上那三列（prize_name / prize_quantity /
+#            carry_in / prize_image_file）只是**首奖品的快照**，读写一律走 prize 表。
+SCHEMA_VERSION = '30'
 
 
 
@@ -492,6 +498,23 @@ def _schema_work_pending(cursor, current_version):
         pending.append('lotteries(新表)')
     if not _table_exists(cursor, 'lottery_entries'):
         pending.append('lottery_entries(新表)')
+    # v29：lotteries.audience（缺了就是老库还没升到 29）。
+    if _table_exists(cursor, 'lotteries') and 'audience' not in _table_columns(cursor, 'lotteries'):
+        pending.append('lotteries.audience')
+
+    # v30：奖品拆表 + 中奖标记挪到「哪一档奖品」上。这两项都不是纯加列：
+    #   ① lottery_prizes 是新表，老数据要**搬**进去（一期一个奖品行）；
+    #   ② lottery_entries.win_prize_id 是新列，而 is_winner 从「这期中没中」
+    #      变成「这期中没中（任一份奖品）」的派生位 —— 搬完之后老行要一并回填。
+    # 判据看表/列在不在，与上面几条同一口径：版本号是记录，结构才是事实。
+    if not _table_exists(cursor, 'lottery_prizes'):
+        pending.append('lottery_prizes(新表)')
+    if _table_exists(cursor, 'lottery_entries') and \
+            'win_prize_id' not in _table_columns(cursor, 'lottery_entries'):
+        pending.append('lottery_entries.win_prize_id')
+    # v30 要拆掉 idx_lotteries_live（多期并存）—— 只在它还在的老库上算待办。
+    if _table_exists(cursor, 'lotteries') and _index_exists(cursor, 'idx_lotteries_live'):
+        pending.append('idx_lotteries_live(拆掉)')
 
     # v24：一单多文件里的「每份文件自己的参数」。
     if _table_exists(cursor, 'order_files'):
@@ -566,6 +589,15 @@ def _table_columns(cursor, name):
     以为「该迁移」，或者在老库上以为「已经迁过了」。
     """
     return {row[1] for row in cursor.execute('PRAGMA table_info("%s")' % name).fetchall()}
+
+
+
+def _index_exists(cursor, name):
+    """这个索引在不在。名字全部来自本文件的字面量，不接外部输入。"""
+    row = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", (name,)
+    ).fetchone()
+    return row is not None
 
 
 
@@ -882,6 +914,119 @@ def _migrate_ready_at(cursor, current_version):
             'WHERE status = ? AND ready_at IS NULL', (ST_READY,)).rowcount
     if filled:
         logger.info('迁移：给 %s 张「可取件」老单补上进件时刻（超期归档按它算天数）', filled)
+
+
+def _migrate_lottery_prizes(cursor, current_version):
+    """v29 -> v30：奖品从活动上拆出来（一期可以多档），中奖标记改指向具体那一档。
+
+    三件事，顺序都不能换：
+
+      ① **先把老数据搬进 lottery_prizes**，再拆 lotteries 上的那四列。
+         反过来的话，搬的源头已经没了 —— 是一次不可逆的数据丢失。
+      ② 老库的 lottery_entries 只有 is_winner（0/1），搬完要回填 win_prize_id：
+         期里只有一个奖品行，所以「中了的那些行」全部指向它。不回填的后果不是
+         报错，而是历史中奖名单在管理端显示成「没人中」—— 而那期的份数照旧
+         算着结余（_compute_carry_in 用中奖人数减）。
+      ③ 最后才 DROP idx_lotteries_live。多期并存从这一版起合法，索引还在
+         就会把「再建一期」直接拒掉（IntegrityError → 接口 500）。
+
+    只在**老库**上做：全新库的 lotteries 建出来就没有那四列，lottery_prizes 直接
+    建好是空的（判据与 _migrate_price_table 同一口径 —— 空表是有意义的状态）。
+    老库重建 lotteries 而不是留着那四列：留着就是第二份会漂移的真相，
+    下一个读代码的人会以为奖品还从那儿来。
+    """
+    # 新列先补上（重建 lotteries 不影响它，entries 那张表不动结构）
+    if _table_exists(cursor, 'lottery_entries') and \
+            'win_prize_id' not in _table_columns(cursor, 'lottery_entries'):
+        cursor.execute('ALTER TABLE lottery_entries ADD COLUMN win_prize_id INTEGER')
+
+    if _table_exists(cursor, 'lotteries') and 'prize_name' in _table_columns(cursor, 'lotteries'):
+        #    ① 一期一个奖品行。份数/结余/配图原样搬，sort_order 全 0（那会儿只有一档）。
+        #    INSERT 的条件是「这期还没有奖品行」—— 迁移中途被杀再跑一遍时不会翻倍。
+        moved = cursor.execute('''
+            INSERT INTO lottery_prizes
+                (lottery_id, prize_name, prize_quantity, carry_in, prize_image_file, sort_order)
+            SELECT l.id, l.prize_name, l.prize_quantity, l.carry_in, l.prize_image_file, 0
+            FROM lotteries l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM lottery_prizes p WHERE p.lottery_id = l.id
+            )
+        ''').rowcount
+        #    ② 回填中奖指向：老库里每期至多一档，中了的行都归它。
+        #    只补 win_prize_id 为空的行（幂等），且只在 is_winner 列还在时。
+        if 'is_winner' in _table_columns(cursor, 'lottery_entries'):
+            backfilled = cursor.execute('''
+                UPDATE lottery_entries SET win_prize_id = (
+                    SELECT p.id FROM lottery_prizes p
+                    WHERE p.lottery_id = lottery_entries.lottery_id
+                    ORDER BY p.sort_order ASC, p.id ASC LIMIT 1
+                )
+                WHERE is_winner = 1 AND win_prize_id IS NULL
+            ''').rowcount
+        else:
+            backfilled = 0
+        #    重建 lotteries：去掉 prize_name / prize_image_file / prize_quantity /
+        #    carry_in 与 is_winner 之外的旧结构差异。改名 → 建新 → 拷 → 删旧，
+        #    与 _migrate_price_table 同一手法（中途被杀时旧表还在，能重来）。
+        cursor.execute('ALTER TABLE lotteries RENAME TO lotteries_v29')
+        cursor.execute('''
+            CREATE TABLE lotteries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audience TEXT NOT NULL DEFAULT 'pickup',
+                draw_at TIMESTAMP NOT NULL,
+                archive_at TIMESTAMP,
+                status TEXT NOT NULL DEFAULT 'open',
+                drawn_at TIMESTAMP,
+                created_by INTEGER,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            INSERT INTO lotteries
+                (id, audience, draw_at, archive_at, status, drawn_at, created_by, create_time)
+            SELECT id, audience, draw_at, archive_at, status, drawn_at, created_by, create_time
+            FROM lotteries_v29
+        ''')
+        cursor.execute('DROP TABLE lotteries_v29')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_lotteries_status ON lotteries(status, id)')
+        logger.info('迁移：抽奖奖品拆表（搬了 %s 期，回填 %s 条中奖记录）', moved, backfilled)
+
+    #    老库的 entries 还有 is_winner 列，留着会让「中没中」有第二份真相：
+    #    重建一次把它去掉（口径永远是 win_prize_id IS NOT NULL）。
+    if _table_exists(cursor, 'lottery_entries') and \
+            'is_winner' in _table_columns(cursor, 'lottery_entries'):
+        cursor.execute('ALTER TABLE lottery_entries RENAME TO lottery_entries_v29')
+        cursor.execute('''
+            CREATE TABLE lottery_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lottery_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                win_prize_id INTEGER,
+                notify_time TIMESTAMP,
+                notify_error TEXT
+            )
+        ''')
+        cursor.execute('''
+            INSERT INTO lottery_entries
+                (id, lottery_id, user_id, create_time, win_prize_id, notify_time, notify_error)
+            SELECT id, lottery_id, user_id, create_time, win_prize_id, notify_time, notify_error
+            FROM lottery_entries_v29
+        ''')
+        cursor.execute('DROP TABLE lottery_entries_v29')
+        cursor.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_lottery_entries_user '
+            'ON lottery_entries(lottery_id, user_id)')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_lottery_entries_lottery '
+            'ON lottery_entries(lottery_id, win_prize_id)')
+        logger.info('迁移：抽奖参与记录去掉 is_winner（中没中改看 win_prize_id）')
+
+    #    ③ 多期并存从这一版起合法。
+    if _index_exists(cursor, 'idx_lotteries_live'):
+        cursor.execute('DROP INDEX idx_lotteries_live')
+        logger.info('迁移：拆掉抽奖「同一时间只有一期在架」的唯一索引（现在允许多期并存）')
 
 
 def _migrate_relax_real_name_unique(cursor, current_version):
@@ -1766,23 +1911,22 @@ def init_database():
         )
 
         # ---- v28：抽奖 ----
-        # 一期活动一张 lotteries 行。份数存**本期总份数（含 carry_in）**：管理端表单
-        # 里管理员改的就是这个总数，结余只是它的一部分，拆开存反而对不上账。
+        # 一期活动一张 lotteries 行。**v30 起一期可以放多个奖品**，奖品各自的
+        # 名称/份数/结余/配图搬到 lottery_prizes（见下面那段建表）；
+        # 活动本身只剩「什么时候开、什么条件可参与」。老库上那四列 prize_* 由
+        # _migrate_lottery_prizes 搬走并从表里拆掉 —— 留着就是第二份会漂移的真相。
         # draw_at/archive_at 与全库一致存 UTC 字符串；「可见与否」的比较都用它，
         # 不在库里存本地时间（展示层统一 datetime(col,'localtime') 转换）。
         # status 三态：open（可参与）→ drawn（已开奖）→ archived（归档隐藏）。
-        # open/drawn 都算「在架上」，同一时间只允许一个在架（业务校验在路由层）。
-        # audience 是参与资格口径：pickup=近 30 天取件成功（默认，也是 v28 时代
-        # 唯一的口径），all=登录即可参与。口径的判据在 routes/lottery.py，
-        # 库里只存这个名字，不存「谁有资格」的结果 —— 资格在加入时快照进
-        # lottery_entries，事后改口径不追溯。
+        # **v30 起 open/drawn 可以同时有多个**：学生端列出全部在架的活动，
+        # 进哪一期由他自己点。原先那条 idx_lotteries_live 唯一索引就是为
+        # 「只能有一期」建的，v30 把它拆掉（迁移里 DROP）。
+        # audience 是参与资格口径：pickup=近 30 天取件成功（默认），all=登录即可。
+        # 口径的判据在 routes/lottery.py，库里只存这个名字，不存「谁有资格」的
+        # 结果 —— 资格在加入时快照进 lottery_entries，事后改口径不追溯。
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS lotteries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                prize_name TEXT NOT NULL,
-                prize_image_file TEXT,
-                prize_quantity INTEGER NOT NULL,
-                carry_in INTEGER NOT NULL DEFAULT 0,
                 audience TEXT NOT NULL DEFAULT 'pickup',
                 draw_at TIMESTAMP NOT NULL,
                 archive_at TIMESTAMP,
@@ -1792,36 +1936,38 @@ def init_database():
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        #    v29 补列：**必须排在上面那句 CREATE 之后**（全新库的表已经带着这一列，
-        #    对不存在的列 ALTER 才是该做的事）。默认值取 'pickup'，把老活动原样搬过来。
-        lottery_columns = {row[1] for row in
-                           cursor.execute('PRAGMA table_info(lotteries)').fetchall()}
-        if 'audience' not in lottery_columns:
-            cursor.execute(
-                "ALTER TABLE lotteries ADD COLUMN audience TEXT NOT NULL DEFAULT 'pickup'")
-
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_lotteries_status ON lotteries(status, id)'
         )
-        #    「同一时间只允许一期在架」不能只靠路由层那句「先查后插」：两条并发 POST
-        #    会各自查不到、各自插进去，于是两期 open 并存。展示侧被 _current_lottery
-        #    的 ORDER BY id DESC 兜住（只有最新那期看得见），但**另一期到点照样开奖、
-        #    照样给中奖者发邮件** —— 学生会收到一封「你中奖了」，而他从来没见过那期活动。
-        #    约束落在数据库里才是真的（与 v15 的 idx_users_qq_live 同一做法）。
-        #    建失败（存量里已经并存两期及以上）只记 error、不影响启动：
-        #    路由层那道先查后插仍然是第二道网。
-        try:
-            cursor.execute('''
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_lotteries_live
-                    ON lotteries(status) WHERE status IN ('open', 'drawn')
-            ''')
-        except sqlite3.IntegrityError:
-            logger.error('抽奖「同一时间只有一期在架」的唯一索引没建成：库里已有两期以上'
-                         '并存（open/drawn），请先在抽奖页把多余的归档或删除；'
-                         '本次仍会继续启动，但并发建期暂时挡不住')
+
+        # 奖品：一期 N 行，sort_order 决定开奖与展示顺序（一等奖在前）。
+        # 份数是**这一档自己的总份数（含 carry_in）**：管理员在表单里改的就是
+        # 这个数，结余只是它的一部分，拆开存反而对不上账。
+        # carry_in 在建这一期的那一刻定格存档 —— 之后改奖品名也不重算，
+        # 「这档奖品是从多少结余起跑的」要能对账（口径见 routes/lottery.py）。
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS lottery_prizes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lottery_id INTEGER NOT NULL,
+                prize_name TEXT NOT NULL,
+                prize_quantity INTEGER NOT NULL,
+                carry_in INTEGER NOT NULL DEFAULT 0,
+                prize_image_file TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS idx_lottery_prizes_lottery '
+            'ON lottery_prizes(lottery_id, sort_order, id)'
+        )
 
         # 参与记录。(lottery_id, user_id) 唯一索引就是「一人一期一票」本身：
         # 并发下两个 POST 同时过校验，也只插得进一行（另一个 IntegrityError）。
+        # win_prize_id 指向中到的那一档奖品，NULL = 没中。**一人一期至多中一个奖**
+        # 由开奖算法保证（见 lottery_worker._draw_one：抽走的人从池子里移除），
+        # 落库形态就是这一列单值 —— 用一张「中奖记录表」反而允许写出
+        # 「同一个人在同一期里中两档」这种算法不允许出现的状态。
         # notify_time/notify_error 是中奖邮件的凭证列 —— 与 claim_alert_time /
         # ready_notify_time 同一哲学：状态在库里，不在内存，重启不重发。
         cursor.execute('''
@@ -1830,7 +1976,7 @@ def init_database():
                 lottery_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_winner INTEGER NOT NULL DEFAULT 0,
+                win_prize_id INTEGER,
                 notify_time TIMESTAMP,
                 notify_error TEXT
             )
@@ -1839,10 +1985,16 @@ def init_database():
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_lottery_entries_user '
             'ON lottery_entries(lottery_id, user_id)'
         )
-        cursor.execute(
-            'CREATE INDEX IF NOT EXISTS idx_lottery_entries_lottery '
-            'ON lottery_entries(lottery_id, is_winner)'
-        )
+        #    ⚠️ 这条索引指向 win_prize_id，而**老库的 entries 此刻还没有那一列**
+        #    （补列在下面 _migrate_lottery_prizes 里做 —— 它必须在建表之后）。
+        #    不判列就建索引，老库一升级当场 `no such column: win_prize_id`，
+        #    整个 init_database 挂掉（这正是本文件反复记着的「索引建在补列之前」）。
+        #    老库跳过即可：迁移末尾会用新结构重建这张表并建同一条索引。
+        if 'win_prize_id' in _table_columns(cursor, 'lottery_entries'):
+            cursor.execute(
+                'CREATE INDEX IF NOT EXISTS idx_lottery_entries_lottery '
+                'ON lottery_entries(lottery_id, win_prize_id)'
+            )
 
         # ⚠️ 数据迁移必须排在**所有建表与补列之后**：v17 要把 order_logs.to_status 里的
         # 旧状态值改掉，而老库的这列是上面那段 v16 ALTER 才补上的 —— 挪到前面去，
@@ -1865,6 +2017,10 @@ def init_database():
         # 免得又出现「用结构的语句排在产生结构的语句之前」那一类坑。
         _migrate_order_files_backfill(cursor, current_version)
         _migrate_ready_at(cursor, current_version)
+
+        # v30：奖品拆表。必须排在 lottery_prizes / lottery_entries 建成之后
+        # （它在两张表之间搬数据、还要给 entries 补 win_prize_id），理由同上那段。
+        _migrate_lottery_prizes(cursor, current_version)
 
         if _pickup_index_ok and _qq_index_ok:
             cursor.execute(

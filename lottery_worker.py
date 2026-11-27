@@ -37,14 +37,20 @@ def _draw_one(conn, lottery_id, manual=False):
 
     manual=True 时无视开奖时刻（管理端「立即开奖」）；条件 UPDATE 里的
     status='open' 仍然在 —— 手动开奖与线程/惰性触发并发时，只有一方生效。
+
+    多档奖品的抽法（一人一期至多中一个，见 routes/lottery.py 模块头）：
+    **按 sort_order 从前往后逐档抽，抽中的人从池子里移除**。所以一等奖的人
+    不会掉进二等奖池 —— 「一人至多中一个」是这条循环顺序的直接结果，
+    不需要事后去重（事后去重会让后一档的名额凭空少一个，而份数写的是那个数）。
+    某一档的份数多于剩余人数时全部中奖，剩下的名额**不往下挪**：结余留在
+    这一档上（下一期同奖品接着带），挪给别的奖品等于偷换奖品。
+
     抽取用 secrets.SystemRandom().sample：crypto 级随机源，样本不重复，
-    数量不足时 sample 自己会抛 —— 所以先 min() 截住。参与人数少于份数时
-    全部中奖，剩余份数留给下一期同奖品（结余口径见 routes/lottery.py）。
+    数量不足时 sample 自己会抛 —— 所以先 min() 截住。
     """
     conn.execute('BEGIN IMMEDIATE')
     try:
-        query = ('SELECT id, prize_quantity FROM lotteries '
-                 "WHERE id = ? AND status = 'open'")
+        query = "SELECT id FROM lotteries WHERE id = ? AND status = 'open'"
         params = [lottery_id]
         if not manual:
             query += ' AND draw_at <= CURRENT_TIMESTAMP'
@@ -53,19 +59,30 @@ def _draw_one(conn, lottery_id, manual=False):
             # 别人已经开过、或者还没到点（被并发路径抢先）：不算错，安静退出。
             conn.rollback()
             return False
-        entry_ids = [
-            r['id']
-            for r in conn.execute(
-                'SELECT id FROM lottery_entries WHERE lottery_id = ?', (lottery_id,)
-            ).fetchall()
-        ]
-        count = min(max(0, int(row['prize_quantity'])), len(entry_ids))
-        if count:
-            winners = secrets.SystemRandom().sample(entry_ids, count)
+        #    池子是这个期次的全部参与记录 id；每档抽走的人从这里删掉。
+        pool = [r['id'] for r in conn.execute(
+            'SELECT id FROM lottery_entries WHERE lottery_id = ? ORDER BY id ASC',
+            (lottery_id,)).fetchall()]
+        total_entries = len(pool)
+        prizes = conn.execute(
+            'SELECT id, prize_name, prize_quantity FROM lottery_prizes '
+            'WHERE lottery_id = ? ORDER BY sort_order ASC, id ASC',
+            (lottery_id,)).fetchall()
+        summary = []
+        awarded = 0
+        for prize in prizes:
+            slots = min(max(0, int(prize['prize_quantity'])), len(pool))
+            summary.append('%s×%d' % (prize['prize_name'], slots))
+            if not slots:
+                continue
+            picked = secrets.SystemRandom().sample(pool, slots)
             conn.executemany(
-                'UPDATE lottery_entries SET is_winner = 1 WHERE id = ?',
-                [(w,) for w in winners],
+                'UPDATE lottery_entries SET win_prize_id = ? WHERE id = ?',
+                [(prize['id'], entry_id) for entry_id in picked],
             )
+            taken = set(picked)
+            pool = [entry_id for entry_id in pool if entry_id not in taken]
+            awarded += slots
         conn.execute(
             "UPDATE lotteries SET status = 'drawn', drawn_at = CURRENT_TIMESTAMP "
             'WHERE id = ?',
@@ -75,13 +92,16 @@ def _draw_one(conn, lottery_id, manual=False):
     except Exception:
         conn.rollback()
         raise
-    logger.info('抽奖：第 %s 期已开奖（奖品 %s，中奖 %d / 参与 %d）',
-                lottery_id, _prize_name(conn, lottery_id), count, len(entry_ids))
+    logger.info('抽奖：第 %s 期已开奖（中奖 %d / 参与 %d；%s）',
+                lottery_id, awarded, total_entries, '、'.join(summary) or '无奖品')
     return True
 
 
 def _prize_name(conn, lottery_id):
-    row = conn.execute('SELECT prize_name FROM lotteries WHERE id = ?', (lottery_id,)).fetchone()
+    """这一期的「首奖品」名 —— 只在日志与兼容路径上用。"""
+    row = conn.execute(
+        'SELECT prize_name FROM lottery_prizes WHERE lottery_id = ? '
+        'ORDER BY sort_order ASC, id ASC LIMIT 1', (lottery_id,)).fetchone()
     return row['prize_name'] if row else '?'
 
 
@@ -115,22 +135,22 @@ def _notify_pending(conn):
     「通知失败但还没写原因」的窗口只有一行代码宽，用「两个字段都空」当判据
     比只看一个稳。失败不再重试（见模块头），管理员在参与名单里看得见原因。"""
     rows = conn.execute('''
-        SELECT e.id AS entry_id, e.is_winner,
+        SELECT e.id AS entry_id, e.win_prize_id, p.prize_name AS prize_name,
                u.id AS user_id, u.student_id, u.qq, u.contact_type, u.contact
         FROM lottery_entries e
         JOIN users u ON u.id = e.user_id
         JOIN lotteries l ON l.id = e.lottery_id
-        WHERE e.is_winner = 1 AND e.notify_time IS NULL AND e.notify_error IS NULL
+        JOIN lottery_prizes p ON p.id = e.win_prize_id
+        WHERE e.win_prize_id IS NOT NULL
+          AND e.notify_time IS NULL AND e.notify_error IS NULL
         ORDER BY e.id ASC
         LIMIT ?
     ''', (_NOTIFY_BATCH,)).fetchall()
     sent = failed = 0
     for row in rows:
-        prize = conn.execute(
-            'SELECT prize_name FROM lotteries WHERE id = ('
-            '  SELECT lottery_id FROM lottery_entries WHERE id = ?)', (row['entry_id'],)
-        ).fetchone()
-        prize_name = prize['prize_name'] if prize else ''
+        #    奖品名直接来自中奖那一档（多奖品之后「这一期抽什么」不再唯一，
+        #    信里必须写清他中的是哪一档）。
+        prize_name = row['prize_name']
         ok, why = lottery_mail.send_winner_mail(row, prize_name)
         if ok:
             conn.execute(

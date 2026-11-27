@@ -663,48 +663,63 @@ export const presetDocApi = {
   binary: (presetId: number) => getBinary(`/api/preset-doc/${presetId}`),
 }
 
-/* ---- 抽奖（v28，2026-11 加）：学生参与 + 管理端管理。----
+/* ---- 抽奖（v28 加，v30 起一期多奖品、可多期并存）：学生参与 + 管理端管理。----
  * 资格/结余/开奖口径见 routes/lottery.py 模块头；前端只照单显示，不复制口径。 */
 export const lotteryApi = {
-  /** 导航徽标探针：有没有在架活动。布局每次路由切换都调，保持最轻。 */
+  /** 导航徽标探针：有没有在架活动、共有几期。布局每次路由切换都调，保持最轻。 */
   hint: () => get<LotteryHint & { code: number }>('/api/lottery/hint'),
-  /** 当前活动 + 我的参与状态 + 参与人昵称。无在架活动回 exists:false。 */
+  /** 全部在架活动 + 我的参与状态 + 参与人昵称。无在架活动回 exists:false。 */
   get: () => get<LotteryResponse>('/api/lottery'),
-  /** 确认参与（资格在服务端校验，403 = 近 30 天没有取件成功的订单） */
-  join: () => post<{ code: number; msg: string }>('/api/lottery/join'),
+  /** 确认参与某一期（多期并存时**必须带 id**，否则后端会退回到列表第一期）。
+   *  资格在服务端校验，403 = 近 30 天没有取件成功的订单。 */
+  join: (lotteryId: number) =>
+    post<{ code: number; msg: string; lottery_id: number }>(
+      '/api/lottery/join',
+      { lottery_id: lotteryId },
+    ),
   /** 撤回参与（仅 open 且未到开奖时刻；409 = 已开奖/已截止） */
-  withdraw: () => del<{ code: number; msg: string; removed: number }>('/api/lottery/join'),
-  /** 奖品配图（登录即可看）。
+  withdraw: (lotteryId: number) =>
+    del<{ code: number; msg: string; removed: number }>(
+      '/api/lottery/join',
+      { lottery_id: lotteryId },
+    ),
+  /** 某档奖品的配图（登录即可看）。
    *  ⚠️ 必须带 version（= 后端给的 image_version，也就是库里的文件名）：
    *  这条路的 URL 是固定路径，后端又给了 `max-age=86400`，不带版本号时
    *  管理员换完图学生端最长一天仍看旧图 —— 而且不报错，只是图不对。 */
-  prizeImageUrl: (id: number, version = '') =>
-    `/api/lottery/${id}/prize-image${version ? `?v=${encodeURIComponent(version)}` : ''}`,
+  prizeImageUrl: (lotteryId: number, prizeId: number, version = '') => {
+    const query = new URLSearchParams({ prize: String(prizeId) })
+    if (version) query.set('v', version)
+    return `/api/lottery/${lotteryId}/prize-image?${query.toString()}`
+  },
   adminList: () => get<{ code: number; items: LotteryAdminItem[] }>('/api/admin/lotteries'),
   adminDetail: (id: number) =>
     get<LotteryAdminDetail & { code: number }>(`/api/admin/lotteries/${id}`),
-  /** 表单的「上期同奖品结余」提示（奖品名是结余的钥匙） */
+  /** 表单的「上期同奖品结余」提示（奖品名是结余的钥匙，逐档查） */
   adminCarry: (prizeName: string) =>
     get<{ code: number; carry_in: number }>(
       `/api/admin/lotteries/carry?prize_name=${encodeURIComponent(prizeName)}`,
     ),
   adminCreate: (input: LotteryInput) =>
-    post<{ code: number; msg: string; id: number; carry_in: number }>('/api/admin/lotteries', input),
+    post<{ code: number; msg: string; id: number; carry_in: number[] }>(
+      '/api/admin/lotteries', input),
   /** 仅 open 可改；drawn 之后名单冻结，只有「立即归档」能继续 */
   adminUpdate: (id: number, input: LotteryInput) =>
     put<{ code: number; msg: string }>(`/api/admin/lotteries/${id}`, input),
   /** 立即开奖（可在设定时刻之前；开完不可改） */
   adminDraw: (id: number) =>
     post<{ code: number; msg: string }>(`/api/admin/lotteries/${id}/draw`),
-  /** 立即归档（学生端从此隐藏，管理端历史保留；用于提前开下一期） */
+  /** 立即归档（学生端从此隐藏，管理端历史保留） */
   adminArchive: (id: number) =>
     post<{ code: number; msg: string }>(`/api/admin/lotteries/${id}/archive`),
   adminDelete: (id: number) =>
     del<{ code: number; msg: string }>(`/api/admin/lotteries/${id}`),
-  adminUploadImage: (id: number, file: File) => {
+  /** 换某一档的配图。prizeId 省略时后端落在第一档（老行为）。 */
+  adminUploadImage: (id: number, file: File, prizeId?: number) => {
     const form = new FormData()
     form.append('file', file)
-    return upload<{ code: number; msg: string; image_version: string }>(
+    if (prizeId) form.append('prize', String(prizeId))
+    return upload<{ code: number; msg: string; image_version: string; prize_id: number }>(
       `/api/admin/lotteries/${id}/prize-image`,
       form,
     )

@@ -42,6 +42,10 @@ const message = useMessage()
  *  所以它写死在这里可以，但后端调小时这里要跟着调（否则用户能选、传上去才被拒）。 */
 const LOTTERY_IMAGE_MAX_BYTES = 4 * 1024 * 1024
 
+/** 一期最多几档奖品 —— 与后端 routes/lottery.py 的 _PRIZES_MAX 同一档。
+ *  前端这一道只为提前说清，真正的边界在服务端。 */
+const PRIZES_MAX = 12
+
 const items = ref<LotteryAdminItem[]>([])
 const detail = ref<LotteryAdminDetail | null>(null)
 const selectedId = ref<number | null>(null)
@@ -59,17 +63,33 @@ const inShelfItem = computed(
 
 // ---- 表单（建新一期，或编辑进行中的那一期）----
 const editingId = ref<number | null>(null)
+/** 一期可以有多档奖品。每行一个奖品：名称 + 份数。
+ *  id 只有编辑已有档时才有 —— 带上它后端才会「就地改这一档」，
+ *  从而保住已经上传的配图和建期时定格的 carry_in（见 api/types.ts 的注释）。 */
+interface PrizeDraft {
+  key: number         // 前端自己的行键（拖动/删除时不该用后端 id，新行还没有 id）
+  id?: number         // 后端档位 id（编辑已有档才有）
+  prize_name: string
+  prize_quantity: number | null
+  /** 这一档的配图版本（= 文件名）；无图为空串。编辑时从后端带回来。 */
+  image_version: string
+}
+let prizeKeySeed = 0
+function newPrizeDraft(): PrizeDraft {
+  prizeKeySeed += 1
+  return { key: prizeKeySeed, prize_name: '', prize_quantity: 1, image_version: '' }
+}
+
 const form = reactive({
-  prize_name: '',
-  prize_quantity: 1,
+  prizes: [newPrizeDraft()] as PrizeDraft[],
   /** 参与资格口径。默认沿用老规则（近 30 天取件成功）：新建一期时
    *  「谁都能抽」应该是**主动选**的结果，不能因为升级就放宽。 */
   audience: 'pickup' as LotteryAudience,
   draw_at_ms: null as number | null,
   archive_at_ms: null as number | null,
 })
-/** 上期同奖品结余（结余口径在后端，这里只显示它）。 */
-const carryHint = ref<number | null>(null)
+/** 各档的「上期同奖品结余」（结余口径在后端，这里只显示它）。按行键记。 */
+const carryHints = ref<Record<number, number>>({})
 
 const STATUS_LABEL: Record<LotteryAdminItem['status'], string> = {
   open: '进行中',
@@ -83,11 +103,22 @@ const AUDIENCE_LABEL: Record<LotteryAudience, string> = {
   all: '所有人',
 }
 
+/** 表单里正在编辑的那一期（详情带配图版本，比列表项全）。 */
 function fillForm(item: LotteryAdminItem | null): void {
   if (item && item.status === 'open') {
     editingId.value = item.id
-    form.prize_name = item.prize_name
-    form.prize_quantity = item.prize_quantity
+    form.prizes = item.prizes.length
+      ? item.prizes.map((prize) => {
+        prizeKeySeed += 1
+        return {
+          key: prizeKeySeed,
+          id: prize.id,
+          prize_name: prize.prize_name,
+          prize_quantity: prize.prize_quantity,
+          image_version: prize.image_version,
+        }
+      })
+      : [newPrizeDraft()]
     form.audience = item.audience
     form.draw_at_ms = Date.parse(`${item.draw_at.replace(' ', 'T')}`) || null
     form.archive_at_ms = item.archive_at
@@ -95,13 +126,30 @@ function fillForm(item: LotteryAdminItem | null): void {
       : null
   } else {
     editingId.value = null
-    form.prize_name = ''
-    form.prize_quantity = 1
+    form.prizes = [newPrizeDraft()]
     form.audience = 'pickup'
     form.draw_at_ms = null
     form.archive_at_ms = null
   }
-  carryHint.value = null
+  carryHints.value = {}
+}
+
+function addPrize(): void {
+  if (form.prizes.length >= PRIZES_MAX) {
+    message.warning(`一期最多 ${PRIZES_MAX} 个奖品`)
+    return
+  }
+  form.prizes.push(newPrizeDraft())
+}
+
+/** 删一档。**不能删到 0 档**：一期没有奖品的活动没有意义，后端也会回 400。 */
+function removePrize(index: number): void {
+  if (form.prizes.length <= 1) {
+    message.warning('至少要留一个奖品')
+    return
+  }
+  const [removed] = form.prizes.splice(index, 1)
+  delete carryHints.value[removed.key]
 }
 
 /** 归档默认跟开奖走 +7 天（清空 = 不自动归档）。管理员自己挑过就不动。 */
@@ -112,29 +160,43 @@ function onDrawPicked(value: number | null): void {
   }
 }
 
-// 结余随奖品名变：500ms 抖一下再查，别每敲一个字打一次接口。
-let carryTimer: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => form.prize_name,
-  (name) => {
-    if (editingId.value) return // 编辑时结余已定格在 carry_in 里，不重算
-    if (carryTimer) clearTimeout(carryTimer)
-    if (!name.trim()) {
-      carryHint.value = null
-      return
-    }
-    carryTimer = setTimeout(async () => {
-      try {
-        const data = await lotteryApi.adminCarry(name.trim())
-        carryHint.value = data.carry_in
-      } catch {
-        carryHint.value = null
+// 结余随各档奖品名变：每档自己抖 500ms 再查，别每敲一个字打一次接口。
+const carryTimers = new Map<number, ReturnType<typeof setTimeout>>()
+function scheduleCarryLookup(draft: PrizeDraft): void {
+  //    编辑时结余已定格在 carry_in 里，不重算（改名字也不重算 —— 口径见后端模块头）。
+  if (editingId.value && draft.id) return
+  const timer = carryTimers.get(draft.key)
+  if (timer) clearTimeout(timer)
+  const name = draft.prize_name.trim()
+  if (!name) {
+    delete carryHints.value[draft.key]
+    return
+  }
+  carryTimers.set(draft.key, setTimeout(async () => {
+    try {
+      const data = await lotteryApi.adminCarry(name)
+      if (data.carry_in > 0) carryHints.value = { ...carryHints.value, [draft.key]: data.carry_in }
+      else {
+        const next = { ...carryHints.value }
+        delete next[draft.key]
+        carryHints.value = next
       }
-    }, 500)
+    } catch {
+      const next = { ...carryHints.value }
+      delete next[draft.key]
+      carryHints.value = next
+    }
+  }, 500))
+}
+watch(
+  () => form.prizes.map((prize) => prize.prize_name).join('\u0000'),
+  () => {
+    for (const draft of form.prizes) scheduleCarryLookup(draft)
   },
 )
 onBeforeUnmount(() => {
-  if (carryTimer) clearTimeout(carryTimer)
+  for (const timer of carryTimers.values()) clearTimeout(timer)
+  carryTimers.clear()
 })
 
 // ---- 读取 ----
@@ -143,10 +205,17 @@ async function load(): Promise<void> {
   try {
     const data = await lotteryApi.adminList()
     items.value = data.items
-    // 默认选中在架那期；没有就选最近一期，详情区不至于整块空白。
-    const target = inShelfItem.value ?? data.items[0] ?? null
+    //    默认选中在架那期；没有就选最近一期，详情区不至于整块空白。
+    //    **已经在看某一期时不要把手挪走**：多期并存之后「在架那期」不再是唯一
+    //    说法，保存完第一期的份数却被跳到第二期上，等于把人刚看的地方抽掉。
+    const stillThere = data.items.find((item) => item.id === selectedId.value)
+    const target = stillThere ?? inShelfItem.value ?? data.items[0] ?? null
     selectedId.value = target ? target.id : null
-    fillForm(openItem.value)
+    //    表单编辑哪一期：跟着选中走（选中那期可编辑就编它），否则退回第一个进行中的。
+    const editable = data.items.find(
+      (item) => item.id === selectedId.value && item.status === 'open',
+    )
+    fillForm(editable ?? openItem.value)
     if (selectedId.value) await loadDetail(selectedId.value)
     else detail.value = null
   } catch {
@@ -174,21 +243,29 @@ async function loadDetail(id: number): Promise<void> {
 
 async function select(id: number): Promise<void> {
   selectedId.value = id
+  //    点哪一期，表单就编哪一期（多期并存后「编辑进行中的那一期」没有唯一解）。
+  //    选中的是已开奖/已归档的期时，表单退回「新建」—— 那两档不能改。
+  const picked = items.value.find((item) => item.id === id) ?? null
+  fillForm(picked && picked.status === 'open' ? picked : null)
   await loadDetail(id)
 }
 
 // ---- 动作 ----
 async function save(): Promise<void> {
   if (saving.value) return
-  if (!form.prize_name.trim()) {
-    message.warning('奖品名称不能为空')
-    return
-  }
-  //    NInputNumber 清空之后是 null，而 `!Number.isInteger(null)` 为真 —— 不挡这一下，
-  //    提交上去就是后端一句「份数必须是正整数」，而 400 在这页上原本是无声的。
-  if (!Number.isInteger(form.prize_quantity) || (form.prize_quantity as number) < 1) {
-    message.warning('份数至少 1 份')
-    return
+  //    逐档校验：哪一档有问题就说清是第几档。一次性把 NInputNumber 的 null
+  //    （清空后是 null，而 `!Number.isInteger(null)` 为真）和空名字都挡在这儿 ——
+  //    不挡的话提交上去就是后端一句 400，而 400 在这页上原本是无声的。
+  for (const [index, draft] of form.prizes.entries()) {
+    const label = form.prizes.length > 1 ? `第 ${index + 1} 个奖品` : '奖品名称'
+    if (!draft.prize_name.trim()) {
+      message.warning(`${label}不能为空`)
+      return
+    }
+    if (!Number.isInteger(draft.prize_quantity) || (draft.prize_quantity as number) < 1) {
+      message.warning(`${label}的份数至少 1 份`)
+      return
+    }
   }
   if (!form.draw_at_ms) {
     message.warning('先挑一个开奖时间')
@@ -206,8 +283,12 @@ async function save(): Promise<void> {
   }
   saving.value = true
   const payload = {
-    prize_name: form.prize_name.trim(),
-    prize_quantity: form.prize_quantity,
+    prizes: form.prizes.map((draft) => ({
+      //    只把已有档的 id 发回去：新档不带 id，后端才会 insert。
+      ...(draft.id ? { id: draft.id } : {}),
+      prize_name: draft.prize_name.trim(),
+      prize_quantity: draft.prize_quantity as number,
+    })),
     audience: form.audience,
     draw_at_ms: form.draw_at_ms,
     archive_at_ms: form.archive_at_ms,
@@ -225,7 +306,7 @@ async function save(): Promise<void> {
     //    ⚠️ 这里原本写的是「失败文案由全局层弹」——**项目里没有那个全局层**：
     //    main.ts 只挂 provider、client.ts 只 reject、feedback.ts 只注册 message 实例，
     //    没有任何地方把 ApiError 自动弹出来。照那句话写空 catch，失败的样子就是
-    //    「点创建没反应」（比如 409「已有一个进行中/未归档的抽奖」）。
+    //    「点创建没反应」。
     //    每个 catch 自己报一句，与 LogsView / MyOrdersView 同一写法。
     message.error(error instanceof ApiError ? error.message : '保存没生效 · 稍后重试')
   } finally {
@@ -298,9 +379,15 @@ async function remove(): Promise<void> {
 }
 
 // 配图上传：隐藏 input + 按钮触发（全站没有用 NUpload 的先例，见 PayQrDialog）。
+//    多奖品之后「传哪一档的图」必须由点按钮的那一行决定，所以把目标档位记在
+//    pendingPrizeId 里，选完文件再一起发。走这个变量的路径有两条：
+//    表单里某一行（新建还没 id 的档不走这里 —— 那要等这期建好），
+//    以及参与名单上方那排「已上传档位」的换图按钮。
 const imageInput = ref<HTMLInputElement | null>(null)
+const pendingPrizeId = ref<number | undefined>(undefined)
 
-function pickImage(): void {
+function pickImage(prizeId?: number): void {
+  pendingPrizeId.value = prizeId
   imageInput.value?.click()
 }
 
@@ -309,6 +396,8 @@ async function onImagePicked(event: Event): Promise<void> {
   const file = input.files?.[0]
   input.value = ''
   const target = selectedId.value
+  const prizeId = pendingPrizeId.value
+  pendingPrizeId.value = undefined
   if (!file || !target) return
   //    前端先挡一道大小与类型：与 PayQrDialog 同一判据。后端那道防线齐全
   //    （白名单 / 0 字节 / 上限 / 内容嗅探），但让 5MB 的图白传一遍再被拒，
@@ -320,15 +409,21 @@ async function onImagePicked(event: Event): Promise<void> {
   }
   acting.value = true
   try {
-    await lotteryApi.adminUploadImage(target, file)
+    await lotteryApi.adminUploadImage(target, file, prizeId)
     message.success('配图已更新')
-    await loadDetail(target)
+    //    列表与详情都要重取：列表里那一列的「图」标记也来自 prizes。
+    await load()
   } catch (error) {
     message.error(error instanceof ApiError ? error.message : '配图没更新 · 稍后重试')
   } finally {
     acting.value = false
   }
 }
+
+/** 详情里选中那一期可换图的档位（已开奖的不让换，与后端同一口径）。 */
+const editablePrizes = computed(() =>
+  detail.value && detail.value.status === 'open' ? detail.value.prizes : [],
+)
 
 // ---- 展示辅助 ----
 function notifyLabel(entry: LotteryAdminEntry): string {
@@ -369,27 +464,10 @@ onMounted(load)
         </div>
 
         <div class="mt-3 grid gap-3 sm:grid-cols-2">
-          <NFormItem label="奖品名称" :show-feedback="false">
-            <NInput
-              v-model:value="form.prize_name"
-              maxlength="40"
-              show-count
-              placeholder="例：洞洞板套件"
-              :disabled="saving"
-            />
-          </NFormItem>
-          <NFormItem label="本期总份数" :show-feedback="false">
-            <NInputNumber
-              v-model:value="form.prize_quantity"
-              :min="1"
-              :max="10000"
-              :disabled="saving"
-              class="w-full"
-            />
-          </NFormItem>
           <!-- 参与资格：**每期活动自己的设定**，不是全局开关。「谁都能抽」的
-               拉新活动和「取过件的才能抽」的回馈活动可以轮流开。
-               选了之后学生端副标题也跟着变（后端把 audience 一起发给学生端）。 -->
+               拉新活动和「取过件的才能抽」的回馈活动可以轮流开，多期并存之后
+               这两种活动同时挂着也说得清。选了之后学生端副标题也跟着变
+               （后端把 audience 一起发给学生端）。 -->
           <NFormItem label="谁可以参与" :show-feedback="false" class="sm:col-span-2">
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <NRadioGroup
@@ -432,10 +510,92 @@ onMounted(load)
           </NFormItem>
         </div>
 
-        <p v-if="carryHint && carryHint > 0" class="mt-2 px-3 py-2 text-xs" role="status"
-           style="background-color: var(--accent-tint-soft); color: var(--accent-text)">
-          上期同奖品结余 {{ carryHint }} 份 · 建议总份数不低于它（没发完的自动留到本期）
-        </p>
+        <!-- 奖品档位：一期可以有多档（一等奖 + 安慰奖）。顺序就是开奖顺序，
+             抽中的人不会进下一档的池子 —— 一人一期至多中一个奖（口径在后端）。 -->
+        <div class="mt-1 border-t pt-3" style="border-color: var(--border)">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p class="text-sm font-bold">奖品档位 · {{ form.prizes.length }}</p>
+            <span class="readout">按顺序开奖 · 一人至多中一个</span>
+          </div>
+
+          <ul class="mt-2 flex flex-col gap-2">
+            <li
+              v-for="(draft, index) in form.prizes"
+              :key="draft.key"
+              class="border p-2.5"
+              style="border-color: var(--border-subtle)"
+            >
+              <div class="flex flex-wrap items-end gap-2">
+                <span class="readout w-5 shrink-0 pb-2">{{ index + 1 }}</span>
+                <div class="min-w-40 flex-1">
+                  <NFormItem label="奖品名称" :show-feedback="false">
+                    <NInput
+                      v-model:value="draft.prize_name"
+                      maxlength="40"
+                      show-count
+                      placeholder="例：洞洞板套件"
+                      :disabled="saving"
+                    />
+                  </NFormItem>
+                </div>
+                <div class="w-32 shrink-0">
+                  <NFormItem label="份数" :show-feedback="false">
+                    <NInputNumber
+                      v-model:value="draft.prize_quantity"
+                      :min="1"
+                      :max="10000"
+                      :disabled="saving"
+                      class="w-full"
+                    />
+                  </NFormItem>
+                </div>
+                <!-- 配图挂在档位上。新建期还没存库，配图等建好之后再传
+                     （那一行的按钮就禁用 + 说明原因，不给一颗点了必失败的按钮）。 -->
+                <div class="flex shrink-0 gap-1 pb-0.5">
+                  <NButton
+                    v-if="draft.id"
+                    size="tiny"
+                    quaternary
+                    :disabled="saving"
+                    @click="pickImage(draft.id)"
+                  >
+                    <template #icon><ImageUp :size="13" /></template>
+                    {{ draft.image_version ? '换图' : '上传图' }}
+                  </NButton>
+                  <span v-else class="readout pb-1.5 text-ink-3">建好后再传图</span>
+                  <NButton
+                    size="tiny"
+                    quaternary
+                    :disabled="saving || form.prizes.length <= 1"
+                    :aria-label="`删除第 ${index + 1} 个奖品`"
+                    @click="removePrize(index)"
+                  >
+                    <template #icon><Trash2 :size="13" /></template>
+                  </NButton>
+                </div>
+              </div>
+              <p
+                v-if="carryHints[draft.key] > 0"
+                class="mt-1 px-3 py-1.5 text-xs"
+                role="status"
+                style="background-color: var(--accent-tint-soft); color: var(--accent-text)"
+              >
+                上期同名奖品结余 {{ carryHints[draft.key] }} 份 · 建议份数不低于它（没发完的自动留到本期）
+              </p>
+            </li>
+          </ul>
+
+          <NButton
+            size="small"
+            quaternary
+            class="mt-2"
+            :disabled="saving || form.prizes.length >= PRIZES_MAX"
+            @click="addPrize"
+          >
+            <template #icon><Plus :size="14" /></template>
+            再加一个奖品
+          </NButton>
+        </div>
 
         <div class="mt-3 flex flex-wrap gap-2">
           <NButton :loading="saving" @click="save">
@@ -485,11 +645,16 @@ onMounted(load)
                 @click="select(item.id)"
               >
                 <td class="px-2 py-2 font-semibold">{{ STATUS_LABEL[item.status] }}</td>
+                <!-- 列的是首奖品名 + 「等 N 档」：一期多档时把名字全列出来会把表格撑爆，
+                     档数比全名更有用；具体哪几档点进详情看。 -->
                 <td class="px-2 py-2">
-                  {{ item.prize_name }}
-                  <span v-if="item.has_image" class="readout ml-1.5">图</span>
+                  {{ item.headline }}
+                  <span v-if="item.prize_count > 1" class="readout ml-1.5">等 {{ item.prize_count }} 档</span>
+                  <span v-if="item.prizes.some((prize) => prize.has_image)" class="readout ml-1.5">图</span>
                 </td>
-                <td class="tnum px-2 py-2">{{ item.prize_quantity }}</td>
+                <td class="tnum px-2 py-2">
+                  {{ item.prizes.reduce((sum, prize) => sum + prize.prize_quantity, 0) }}
+                </td>
                 <td class="px-2 py-2">{{ AUDIENCE_LABEL[item.audience] }}</td>
                 <td class="tnum px-2 py-2">{{ item.participant_count }}</td>
                 <td class="tnum px-2 py-2">{{ item.status === 'open' ? '—' : item.winner_count }}</td>
@@ -508,34 +673,33 @@ onMounted(load)
         <!-- 快捷动作。**外层只看「选中了哪一期」**，不要求它是「在架」的那期：
              原先外层判 inShelfItem，于是选中一张已归档的历史期时整块都不渲染 ——
              连删除按钮都没有，而后端 DELETE 允许删任何期（历史列表上限 30 期，
-             攒满之后只能用改库的方式清）。开奖/归档仍然只对在架期出现，
-             它们的判据留在各自按钮上。 -->
+             攒满之后只能用改库的方式清）。开奖/归档仍然只对选中那一期出现，
+             判据留在各自按钮上（多期并存后「在架的那一期」不再是唯一说法）。 -->
         <div
           v-if="selectedId"
-          class="mt-3 flex flex-wrap gap-2 border-t pt-3"
+          class="mt-3 flex flex-wrap items-center gap-2 border-t pt-3"
           style="border-color: var(--border)"
         >
           <NButton
-            v-if="inShelfItem && selectedId === inShelfItem.id && inShelfItem.status === 'open'"
+            v-if="detail?.status === 'open'"
             size="small" :loading="acting" @click="drawNow"
           >
             <template #icon><Play :size="14" /></template>
             立即开奖
           </NButton>
           <NButton
-            v-if="inShelfItem && selectedId === inShelfItem.id && inShelfItem.status === 'drawn'"
+            v-if="detail?.status === 'drawn'"
             size="small" :loading="acting" @click="archiveNow"
           >
             立即归档
-          </NButton>
-          <NButton size="small" :loading="acting" @click="pickImage">
-            <template #icon><ImageUp :size="14" /></template>
-            {{ detail?.has_image ? '换奖品图' : '上传奖品图' }}
           </NButton>
           <NButton size="small" quaternary :loading="acting" @click="remove">
             <template #icon><Trash2 :size="14" /></template>
             删除
           </NButton>
+          <span v-if="editablePrizes.length" class="readout">
+            换图：点奖品行里的按钮
+          </span>
           <input
             ref="imageInput"
             type="file"
@@ -584,7 +748,7 @@ onMounted(load)
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">宿舍</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">QQ</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">参与时刻</th>
-                <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">中奖</th>
+                <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">中的奖品</th>
                 <th class="tech-label tech-label--cn px-2 py-2 text-xs font-bold text-ink-3">邮件</th>
               </tr>
             </thead>
@@ -602,8 +766,13 @@ onMounted(load)
                 <td class="px-2 py-2">{{ entry.dorm }}</td>
                 <td class="tnum px-2 py-2">{{ entry.qq || '—' }}</td>
                 <td class="tnum px-2 py-2">{{ fullTime(entry.joined_at) }}</td>
-                <td class="px-2 py-2 font-semibold" :style="entry.is_winner ? 'color: var(--accent-text)' : undefined">
-                  {{ entry.is_winner ? '中奖' : '' }}
+                <!--    中的是哪一档：多奖品之后「中奖」不再是一个布尔，
+                        「中了二等奖」和「中了一等奖」在柜台是两件事。 -->
+                <td
+                  class="px-2 py-2 font-semibold"
+                  :style="entry.is_winner ? 'color: var(--accent-text)' : undefined"
+                >
+                  {{ entry.win_prize_name ?? '' }}
                 </td>
                 <td class="px-2 py-2" :style="entry.notify_error ? 'color: var(--err)' : undefined">
                   {{ notifyLabel(entry) }}

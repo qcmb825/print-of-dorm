@@ -183,8 +183,12 @@ export async function put<T>(url: string, body?: unknown): Promise<T> {
   return response.data
 }
 
-export async function del<T>(url: string): Promise<T> {
-  const response = await http.delete<T>(url)
+/** DELETE。body 是可选的：抽奖的「撤回参与」要用它带 lottery_id
+ *  （多期并存后「撤哪一期」必须说清，而那条接口的路径里没有期次）。
+ *  axios 的 delete 把请求体放在 config.data 上，不是第二个参数 —— 这里包一层，
+ *  免得每个调用点都记一次这个差异。 */
+export async function del<T>(url: string, body?: unknown): Promise<T> {
+  const response = await http.delete<T>(url, body === undefined ? undefined : { data: body })
   return response.data
 }
 

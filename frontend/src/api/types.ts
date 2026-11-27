@@ -1325,14 +1325,21 @@ export interface BotHintState {
 }
 
 
-/* ---- 抽奖（v28，2026-11 加）----
+/* ---- 抽奖（v28 加，v30 起一期多奖品、可多期并存）----
  *
  * 时间字段后端已按全站约定转成本地时间（routes/lottery.py 的 _to_local），
  * 前端用 shortTime/fullTime 直接格式化，不做第二次时区换算。
  * 「参与人名单只给昵称」的分级在后端 SELECT 里就划开了 —— 学生端这个类型
- * 里**没有**姓名/学号/宿舍字段，不是「前端没显示」，是根本拿不到。 */
+ * 里**没有**姓名/学号/宿舍字段，不是「前端没显示」，是根本拿不到。
+ *
+ * 一期可以有**多档奖品**（一等奖 + 安慰奖），所以 prize 是一张列表；
+ * 顶层不再有 prize_name / prize_quantity —— 那是 v30 之前「一期一个奖品」
+ * 时代的形状，保留它等于让两处各说一份。 */
 export interface LotteryHint {
   active: boolean
+  /** 在架活动的期数（多期并存时徽标要显示「2」，不能只说「有」）。 */
+  count: number
+  /** 只要还有一期在抽就算 open —— 徽标文字靠它区分「抽奖 / 开奖」。 */
   status: 'open' | 'drawn' | null
 }
 
@@ -1341,23 +1348,34 @@ export interface LotteryHint {
  *  这是**每期活动自己的设定**，不是全局开关 —— 学生端那句副标题照它写。 */
 export type LotteryAudience = 'all' | 'pickup'
 
-export interface Lottery {
-  exists: true
+/** 一期里的一档奖品。档位顺序 = 后端 sort_order（一等奖在前）。 */
+export interface LotteryPrize {
   id: number
-  status: 'open' | 'drawn'
   prize_name: string
-  /** 本期总份数（含 carry_in） */
+  /** 这一档的总份数（含 carry_in） */
   prize_quantity: number
-  /** 建活动时带入的上期同奖品结余 */
+  /** 建这一期时带入的上期同名奖品结余 */
   carry_in: number
-  audience: LotteryAudience
-  draw_at: string
-  archive_at: string | null
-  drawn_at: string | null
+  /** 已中人数（开奖前恒 0） */
+  winner_count: number
   has_image: boolean
   /** 配图版本（= 库里的文件名）。取图 URL 带上它当缓存键：
    *  不带的话换图后浏览器 max-age 一天内仍显示旧图，而界面没有任何异常。 */
   image_version: string
+}
+
+export interface Lottery {
+  exists: true
+  id: number
+  status: 'open' | 'drawn'
+  prizes: LotteryPrize[]
+  /** 首奖品名 —— 只用于「这一期抽什么」的一句话摘要（徽标、卡片标题）。
+   *  它不是另一份真相：值就取自 prizes[0]，要显示具体奖品一律走 prizes。 */
+  headline: string
+  audience: LotteryAudience
+  draw_at: string
+  archive_at: string | null
+  drawn_at: string | null
   participant_count: number
   /** 昵称列表（上限 LOTTERY_PARTICIPANT_LIMIT，截断时看 participants_truncated） */
   participants: string[]
@@ -1369,6 +1387,8 @@ export interface Lottery {
   winners: string[]
   joined: boolean
   is_winner: boolean
+  /** 中了哪一档（没中 / 没参与都是 null）。一人一期至多中一个，所以是单值。 */
+  won_prize: LotteryPrize | null
   eligible: boolean
   /** no_pickup=近 30 天没有取件成功的订单（只有 pickup 口径会出现）；
    *  closed=已截止/已开奖 */
@@ -1379,14 +1399,19 @@ export interface LotteryNone {
   exists: false
 }
 
-export type LotteryResponse = (Lottery & { code: number }) | (LotteryNone & { code: number })
+/** 响应有两层：items 是**全部在架活动**（v30 起可以多期并存）。
+ *  顶层那几个字段是第一期的复制，留给只认单期的老逻辑 —— 新代码一律走 items。 */
+export type LotteryResponse =
+  | (Lottery & { exists: true; items: Lottery[]; code: number })
+  | (LotteryNone & { code: number })
 
 /** 管理端列表/详情共用的一期摘要 */
 export interface LotteryAdminItem {
   id: number
-  prize_name: string
-  prize_quantity: number
-  carry_in: number
+  prizes: LotteryPrize[]
+  /** 档数（列表上写「3 档」比把名字全列出来更适合表格） */
+  prize_count: number
+  headline: string
   /** 参与资格口径（见 LotteryAudience）：建活动时定，开奖前可改 */
   audience: LotteryAudience
   draw_at: string
@@ -1394,13 +1419,9 @@ export interface LotteryAdminItem {
   status: 'open' | 'drawn' | 'archived'
   drawn_at: string | null
   create_time: string
-  has_image: boolean
-  /** 配图版本（= 库里的文件名）。取图 URL 带上它当缓存键：
-   *  不带的话换图后浏览器 max-age 一天内仍显示旧图，而界面没有任何异常。 */
-  image_version: string
   participant_count: number
   winner_count: number
-  /** 份数 - 中奖数；只有开奖后才有值（它就是下期同奖品的结余） */
+  /** 各档「份数 - 已中人数」之和；只有开奖后才有值 */
   leftover: number | null
 }
 
@@ -1412,6 +1433,9 @@ export interface LotteryAdminEntry {
   dorm: string
   qq: string | null
   joined_at: string
+  /** 中的哪一档；null = 没中 */
+  win_prize_id: number | null
+  win_prize_name: string | null
   is_winner: boolean
   notify_time: string | null
   /** no_mailbox / smtp；null = 已通知或还没轮到 */
@@ -1422,11 +1446,18 @@ export interface LotteryAdminDetail extends LotteryAdminItem {
   entries: LotteryAdminEntry[]
 }
 
+/** 表单里的一档奖品。id 只有编辑已有档时才有：带上它后端才认「这是原来那一档」，
+ *  从而保住已经上传的配图和建期时定格的 carry_in。 */
+export interface LotteryPrizeInput {
+  id?: number
+  prize_name: string
+  prize_quantity: number
+}
+
 /** 建/改活动的输入。时刻用 epoch 毫秒（NDatePicker 的原生值），
  *  后端按本地时区解释再转 UTC 入库。 */
 export interface LotteryInput {
-  prize_name: string
-  prize_quantity: number
+  prizes: LotteryPrizeInput[]
   audience: LotteryAudience
   draw_at_ms: number
   archive_at_ms?: number | null
