@@ -1,0 +1,187 @@
+#################### frontend/src/layouts/StudentLayout.vue
+--- 冲突 @69 ---
+  [our] /** 页码读数：`P.02/05`。它是**导航序号**，不是虚构的文档页码 ——
+  [our]  *  学生端这一栏就是终端里的五个视图，读数说的是"你在第几个"。
+  [our]  *  当前路径不在导航里时给 `--/--`（比如从别处落到某个学生路由），
+  [our]  *  不猜一个数字出来。 */
+  [our] const pageNo = computed(() => {
+  [our]   const index = navItems.value.findIndex((item) => item.to === currentPath.value)
+  [our]   if (index < 0) return '--/--'
+  [our]   const pad = (n: number) => String(n).padStart(2, '0')
+  [our]   return `${pad(index + 1)}/${pad(navItems.value.length)}`
+  [our] })
+  · 上=我们的  下=main 的
+  [main]watch(() => auth.user?.id, syncQqReminder, { immediate: true })
+#################### frontend/src/views/LoginView.vue
+--- 冲突 @21 ---
+  [our] import { showReceipt } from '@/composables/transition-receipt'
+  [our] import { useClock } from '@/composables/clock'
+  [our] import { CONTACT_LABELS, ROLE_LABELS, type ContactType } from '@/api/types'
+  · 上=我们的  下=main 的
+  [main]import { OTHER_CONTACT_LABELS, type ContactType, type OtherContactType } from '@/api/types'
+--- 冲突 @138 ---
+  [our]   contact: [
+  [our]     { required: true, message: '填写联系方式', trigger: ['blur', 'input'] },
+  · 上=我们的  下=main 的
+  [main]  qq: [
+  [main]    { required: true, message: '请填写 QQ 号', trigger: ['blur', 'input'] },
+--- 冲突 @158 ---
+  [our]         value.length <= 50 && validateContact(registerForm.contact_type, value),
+  [our]       message: '联系方式格式不对',
+  · 上=我们的  下=main 的
+  [main]        otherContactIssue(registerForm.contact_type, value ?? '') === null,
+  [main]      message: '其他联系方式格式不正确，或者把它整组留空',
+--- 冲突 @553 ---
+  [our]               <p class="-mt-3 mb-3 text-xs text-ink-3">
+  [our]                 {{ CONTACT_HINT[registerForm.contact_type] }}
+  · 上=我们的  下=main 的
+  [main]              <p class="-mt-3 mb-3 text-[11px] text-ink-4">
+  [main]                <template v-if="registerForm.contact_type">
+  [main]                  {{ OTHER_CONTACT_HINT[registerForm.contact_type] }}
+  [main]                </template>
+  [main]                <template v-else>微信 / 邮箱只是备用线索，留空也行 —— QQ 号必填。</template>
+#################### frontend/src/views/staff/UsersView.vue
+--- 冲突 @344 ---
+  [our]   if (dorm.length < 2 || dorm.length > 50) return '宿舍 2-50 字符，写到门牌号'
+  [our]   if (!validateContact(profileForm.contact_type, profileForm.contact.trim()))
+  [our]     return CONTACT_HINT[profileForm.contact_type]
+  [our]   return null
+  · 上=我们的  下=main 的
+  [main]  if (dorm.length < 2 || dorm.length > 50) return '宿舍位置需为 2-50 个可见字符（请写到门牌号）'
+  [main]  const qqBad = qqIssue(profileForm.qq)
+  [main]  if (qqBad) return qqBad
+  [main]  return otherContactIssue(profileForm.contact_type, profileForm.contact ?? '')
+--- 冲突 @505 ---
+  [our]       width: 168,
+  [our]       render: (row) =>
+  [our]         h(
+  [our]           'span',
+  [our]           { class: 'truncate text-xs opacity-80' },
+  [our]           row.contact ? `${row.contact_type === 'wechat' ? '微信' : row.contact_type === 'qq' ? 'QQ' : '邮箱'} ${row.contact}` : '—',
+  [our]         ),
+  · 上=我们的  下=main 的
+  [main]      width: 190,
+  [main]      render: (row) => {
+  [main]        // QQ 号单独一行写：它是唯一能收到取件提醒的那一栏，
+  [main]        // 和旁边那组「补充线索」混在一格里，管理员就分不出哪个是要紧的。
+  [main]        // 老账号可能 qq 为空但 contact_type='qq'（迁移没搬到的行）——
+  [main]        // 那种情况按旧字段显示，不然会看着像这人什么联系方式都没留。
+  [main]        const legacyQq = row.contact_type === 'qq' ? (row.contact ?? '') : ''
+  [main]        const qq = (row.qq || legacyQq).trim()
+  [main]        const other =
+  [main]          row.contact_type && row.contact_type !== 'qq'
+  [main]            ? `${OTHER_CONTACT_LABELS[row.contact_type]} ${row.contact}`
+  [main]            : ''
+  [main]        if (!qq && !other) return h('span', { class: 'text-[12px] opacity-60' }, '—')
+  [main]        const lines = []
+  [main]        if (qq) lines.push(h('span', { class: 'tnum truncate text-[12px]' }, `QQ ${qq}`))
+  [main]        if (other) lines.push(h('span', { class: 'truncate text-[11px] opacity-70' }, other))
+  [main]        // 没有 QQ 号时把话说清楚：这不算「联系方式填得不对」，
+  [main]        // 而是根本没有能推出发件邮箱的联系方式 —— 取件提醒发不到他手上，
+  [main]        // 得有人去补一个。没有这行字，管理员只会以为这人留的是别的联系方式。
+  [main]        if (!qq)
+  [main]          lines.push(
+  [main]            h(
+  [main]              'span',
+  [main]              { class: 'text-[11px]', style: { color: 'var(--warn)' } },
+  [main]              '缺 QQ 号（收不到取件邮件）',
+  [main]            ),
+  [main]          )
+  [main]        return h('div', { class: 'flex min-w-0 flex-col gap-0.5' }, lines)
+  [main]      },
+--- 冲突 @801 ---
+  [our]               <span class="tech-label text-ink-3 tech-label--cn text-xs">联系方式</span>
+  · 上=我们的  下=main 的
+  [main]              <span class="tech-label text-ink-3">
+  [main]                QQ 号
+  [main]                <span class="ml-1 font-normal opacity-60">（收件提醒用，必填）</span>
+  [main]              </span>
+  [main]              <NInput
+  [main]                v-model:value="profileForm.qq"
+  [main]                :maxlength="12"
+  [main]                placeholder="5-12 位数字，不能以 0 开头"
+  [main]              />
+  [main]            </label>
+  [main]            <label class="flex flex-col gap-1">
+  [main]              <span class="tech-label text-ink-3">
+  [main]                其他联系方式
+  [main]                <span class="ml-1 font-normal opacity-60">（选填，也可整组留空）</span>
+  [main]              </span>
+--- 冲突 @843 ---
+  [our]           <p class="mt-3 text-xs leading-5 text-ink-3">
+  [our]             学号是登录名，改完本人必须用新学号登录。这里不核对名单：
+  [our]             名单是注册的闸门，改资料是人工介入。
+  · 上=我们的  下=main 的
+  [main]          <p class="mt-3 text-[12px] leading-5 text-ink-4">
+  [main]            学号是登录名，改完本人必须用新学号登录。这里不核对学生名单 ——
+  [main]            名单是注册的闸门，而改资料是人工介入，名单本身就可能落后于现实。
+  [main]            QQ 号必填的原因很实际：取件提醒只能发到 <span class="tnum">&lt;QQ号&gt;@qq.com</span>，
+  [main]            缺了它这个账号收不到任何通知（列里会标出来）。
+#################### frontend/src/views/student/BoardView.vue
+--- 冲突 @24 ---
+  [our] import { trendOption } from '@/charts/options'
+  [our] import type { ChartPalette } from '@/charts/setup'
+  [our] import ChartBox from '@/components/charts/ChartBox.vue'
+  [our] import PageHeader from '@/components/PageHeader.vue'
+  [our] import { notify } from '@/composables/feedback'
+  [our] import { useValueTick } from '@/composables/motion'
+  [our] import { useThemeStore } from '@/stores/theme'
+  · 上=我们的  下=main 的
+  [main]import { notify } from '@/composables/feedback'
+--- 冲突 @43 ---
+  [our] const palette = computed<ChartPalette>(() => {
+  [our]   const t = theme.tokens
+  [our]   return {
+  [our]     text: t.textPrimary,
+  [our]     textMuted: t.textTertiary,
+  [our]     border: t.border,
+  [our]     /* 图表序列色属于「线」：它画在图表自己的底上，浅色下是白/近白，
+  [our]        荧光黄 #fffa00 铺上去只有 1.11:1 会整条消失。走 --accent-text。
+  [our]        注意 options.ts 会在这串色值后面拼十六进制 alpha（如 `${p.primary}59`），
+  [our]        所以它必须是 6 位 hex —— --accent-text 在两套主题下都是字面 hex，成立。 */
+  [our]     primary: t.accentText,
+  [our]     secondary: t.secondary,
+  [our]     ok: t.ok,
+  [our]     err: t.err,
+  [our]     warn: t.warn,
+  [our]     info: t.info,
+  [our]     // 提示框要实心，半透明的 --card 在深色下几乎全透
+  [our]     surface: t.surfaceOverlay,
+  [our]   }
+  [our] })
+  [our] 
+  [our] const trend = computed(() => trendOption(board.value?.daily ?? [], palette.value))
+  [our] 
+  · 上=我们的  下=main 的
+--- 冲突 @123 ---
+  [our] /** 三格的"变化反馈"：值真的变了才亮一下（这一页靠手动刷新，不是轮询）。
+  [our]  *  「待我取件」那格的数字本来就是强调色，所以不接 —— 不为一格另发明一种信号。 */
+  [our] const tickActive = useValueTick(() => mine.value?.active)
+  [our] const tickTotal = useValueTick(() => mine.value?.total)
+  [our] const tickRank = useValueTick(() => mineRankText.value)
+  [our] 
+  [our] const hasTrendData = computed(() => (board.value?.daily ?? []).some((item) => item.count > 0))
+  [our] 
+  · 上=我们的  下=main 的
+--- 冲突 @198 ---
+  [our]           <h2 class="font-heading text-base font-bold">排队情况</h2>
+  [our]           <span class="text-xs text-ink-3">
+  [our]             {{ queue?.unclaimed ?? 0 }} 单还没人接
+  [our]           </span>
+  · 上=我们的  下=main 的
+  [main]          <h2 class="font-heading text-[14px] font-bold">排队情况</h2>
+  [main]          <!-- 这里原先还有一句「N 单还没人接」，那个数是**全站**未接单数、属站点规模，
+  [main]               已随 /api/board 一起撤回（后端不再发 unclaimed，类型里也没有了）。
+  [main]               不改成「前端数各档之和」替补：那仍然是在汇报站点总量。 -->
+--- 冲突 @300 ---
+  [our] 
+  [our]       <section class="panel panel-raised p-3.5 sm:p-4">
+  [our]         <h2 class="font-heading mb-2 text-base font-bold">近 14 天单量</h2>
+  [our]         <ChartBox
+  [our]           :option="trend"
+  [our]           :height="200"
+  [our]           :empty="!hasTrendData"
+  [our]           empty-text="近两周还没有订单"
+  [our]         />
+  [our]       </section>
+  · 上=我们的  下=main 的
